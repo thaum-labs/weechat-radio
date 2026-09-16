@@ -10,6 +10,11 @@ runcmd:
   - ufw allow 80/tcp
   - ufw allow 443/tcp
   - ufw --force enable
+  - fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+  - chmod 600 /swapfile
+  - mkswap /swapfile
+  - swapon /swapfile
+  - grep -q swapfile /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
   - mkdir -p /opt/wcr
   - git clone https://github.com/thaum-labs/weechat-radio.git /opt/wcr || true
-  - cd /opt/wcr && docker compose -f deploy/docker-compose.yml up -d
+  - cd /opt/wcr && docker compose -f deploy/docker-compose.yml up -d --build
