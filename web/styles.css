@@ -46,5 +46,10 @@ footer {
 .page a { color: var(--cyan); }
 .page h1 { margin-bottom: 16px; letter-spacing: .15em; }
 .page pre, .page code { background: #0b140c; padding: 2px 6px; }
-.maplibregl-ctrl-attrib { display: none; }
+.maplibregl-ctrl-attrib {
+  background: rgba(5, 8, 7, 0.9) !important;
+  color: var(--fg);
+  font-size: 10px;
+}
+.maplibregl-ctrl-attrib a { color: var(--cyan); }
 #card { margin-top: 16px; font-size: 12px; border: 1px solid var(--dim); padding: 8px; }
