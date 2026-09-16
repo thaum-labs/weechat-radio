@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WeeChat Radio — live map</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="scan"></div>
+  <header>
+    <div class="brand">WEECHAT<span>RADIO</span></div>
+    <nav>
+      <a href="/" class="on">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div id="stats">nodes <b id="n-online">—</b> · tx/min <b id="n-tx">—</b></div>
+  </header>
+  <aside id="stations">
+    <h2>stations</h2>
+    <div id="station-list"></div>
+  </aside>
+  <div id="map"></div>
+  <aside id="network">
+    <h2>network</h2>
+    <div id="hub-panel"></div>
+    <div id="card" hidden></div>
+  </aside>
+  <footer>
+    <input id="scrub" type="range" min="0" max="1440" value="1440" />
+    <div id="ticker"></div>
+  </footer>
+  <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

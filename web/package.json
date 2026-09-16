@@ -1,0 +1,11 @@
+{
+  "name": "weechat-radio-web",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "mkdir -p build && cp index.html styles.css app.js downloads.html guides.html docs.html status.html changelog.html build/ && cp -r . build/ 2>/dev/null || true",
+    "dev": "python -m http.server 5173"
+  }
+}

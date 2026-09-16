@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" /><title>Hub status — WeeChat Radio</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">WEECHAT<span>RADIO</span></div>
+    <nav>
+      <a href="/">map</a><a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a><a href="/docs.html">docs</a>
+      <a href="/status.html" class="on">hub</a><a href="/changelog.html">changelog</a>
+    </nav>
+  </header>
+  <main class="page">
+    <h1>Hub</h1>
+    <pre id="out">loading…</pre>
+  </main>
+  <script>
+    const API = location.hostname === "localhost" ? "http://127.0.0.1:7373" : "https://hub.weechatradio.com";
+    Promise.all([
+      fetch(API + "/api/v1/stats").then(r => r.json()),
+      fetch(API + "/api/v1/hubs").then(r => r.json()),
+      fetch(API + "/healthz").then(r => r.text()),
+    ]).then(([s, h, z]) => {
+      document.getElementById("out").textContent = JSON.stringify({ health: z, stats: s, hubs: h }, null, 2);
+    }).catch(e => { document.getElementById("out").textContent = String(e); });
+  </script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+WeeChat Radio
+Copyright 2026 Thaum Labs
+
+This product includes software developed by Thaum Labs.
+
+WeeChat is a trademark of Sébastien Helleu. WeeChat Radio is an independent
+project and is not affiliated with or endorsed by the WeeChat project.
+
+modem73 is Unlicense software by RFnexus. Bundled modem73 binaries, when
+included in a release archive, remain Unlicense and are redistributed as-is.
+See third_party/modem73/NOTICE in the release bundle.

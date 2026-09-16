@@ -1,0 +1,49 @@
+:root {
+  --bg: #050807;
+  --fg: #39ff14;
+  --cyan: #00e5ff;
+  --amber: #ffbf00;
+  --mag: #ff4dff;
+  --dim: #1a2e1c;
+  --font: "IBM Plex Mono", "Share Tech Mono", ui-monospace, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--bg); color: var(--fg); font-family: var(--font); }
+#scan {
+  pointer-events: none; position: fixed; inset: 0; z-index: 20;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.12) 3px);
+  mix-blend-mode: multiply;
+}
+header {
+  position: fixed; top: 0; left: 0; right: 0; height: 48px; z-index: 10;
+  display: flex; align-items: center; gap: 24px; padding: 0 16px;
+  border-bottom: 1px solid var(--dim); background: rgba(5,8,7,.92);
+}
+.brand { letter-spacing: .3em; font-weight: 700; }
+.brand span { color: var(--cyan); }
+nav a { color: var(--fg); text-decoration: none; margin-right: 16px; opacity: .7; }
+nav a.on, nav a:hover { opacity: 1; color: var(--cyan); }
+#stats { margin-left: auto; font-size: 12px; color: var(--cyan); }
+#map { position: fixed; inset: 48px 240px 72px 240px; }
+aside {
+  position: fixed; top: 48px; bottom: 72px; width: 240px; overflow: auto;
+  padding: 12px; border-color: var(--dim); border-style: solid; background: rgba(5,8,7,.88);
+}
+#stations { left: 0; border-width: 0 1px 0 0; }
+#network { right: 0; border-width: 0 0 0 1px; }
+aside h2 { font-size: 11px; letter-spacing: .2em; color: var(--cyan); margin-bottom: 8px; }
+.station { padding: 8px 0; border-bottom: 1px solid var(--dim); cursor: pointer; font-size: 12px; }
+.station b { display: block; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+footer {
+  position: fixed; left: 0; right: 0; bottom: 0; height: 72px;
+  border-top: 1px solid var(--dim); padding: 8px 16px; background: rgba(5,8,7,.95);
+}
+#ticker { font-size: 12px; color: var(--cyan); height: 36px; overflow: hidden; }
+#scrub { width: 100%; accent-color: var(--fg); }
+.page { padding: 80px 32px 32px; max-width: 860px; margin: 0 auto; line-height: 1.5; }
+.page a { color: var(--cyan); }
+.page h1 { margin-bottom: 16px; letter-spacing: .15em; }
+.page pre, .page code { background: #0b140c; padding: 2px 6px; }
+.maplibregl-ctrl-attrib { display: none; }
+#card { margin-top: 16px; font-size: 12px; border: 1px solid var(--dim); padding: 8px; }
