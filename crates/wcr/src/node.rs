@@ -75,7 +75,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     let mut _control: Option<ControlClient> = None;
     if cfg.mode.uses_radio() {
         if cfg.modem.manage {
-            match ModemProcess::spawn(&cfg) {
+            match ModemProcess::spawn(&cfg).await {
                 Ok(c) => _modem_child = Some(c),
                 Err(e) => tracing::warn!("{e}"),
             }

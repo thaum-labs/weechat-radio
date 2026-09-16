@@ -2,6 +2,7 @@
 //! modem73 integration: KISS + JSON control port + optional process supervision.
 
 pub mod control;
+pub mod ensure;
 pub mod kiss;
 pub mod supervise;
 

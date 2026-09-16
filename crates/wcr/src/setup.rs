@@ -60,6 +60,7 @@ pub fn run_wizard() -> Result<Config> {
             cfg.modem.com_port = com;
             cfg.modem.com_line = "rts".into();
             println!("  Digirig: PTT on RTS. Plug the audio jacks into the radio as in the guide.");
+            println!("  modem73 is bundled with the installer; wcr starts it for you.");
         }
         2 => {
             cfg.mode = Mode::InternetRadio;
@@ -67,6 +68,7 @@ pub fn run_wizard() -> Result<Config> {
             cfg.modem.preset = Preset::VoxSafe.as_str().into();
             println!("  VOX adds a short delay before the radio keys. We pad the start of each");
             println!("  transmission so the first symbols are not clipped.");
+            println!("  modem73 is bundled with the installer; wcr starts it for you.");
         }
         3 => {
             cfg.mode = Mode::InternetRadio;
@@ -80,6 +82,7 @@ pub fn run_wizard() -> Result<Config> {
             cfg.rig.enabled = true;
             println!("  Start rigctld for your radio before `wcr node`.");
             println!("  If that fails, you can switch PTT to VOX later with /radio ptt vox");
+            println!("  modem73 is bundled with the installer; wcr starts it for you.");
         }
         _ => {}
     }

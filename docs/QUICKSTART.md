@@ -27,6 +27,7 @@
    ```
 
    Type your callsign, grid square (for example `IO91wm`), and how you connect a radio.
+   Windows and Linux already have modem73 beside `wcr`. On macOS, install modem73 from https://modem73.app if you want radio.
 
 3. Start the node:
 

@@ -12,15 +12,19 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             asset: wcr-linux-x86_64.tar.gz
+            modem_asset: modem73-linux-x86_64
           - os: macos-latest
             target: x86_64-apple-darwin
             asset: wcr-macos-x86_64.tar.gz
+            modem_asset: ""
           - os: macos-latest
             target: aarch64-apple-darwin
             asset: wcr-macos-aarch64.tar.gz
+            modem_asset: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             asset: wcr-windows-x86_64.zip
+            modem_asset: modem73-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +41,9 @@ jobs:
           gh release download --repo RFnexus/modem73 --pattern "modem73_*_ubuntu-24.04_amd64.deb" --dir /tmp/m73
           dpkg-deb -x /tmp/m73/*.deb /tmp/m73/unpack
           find /tmp/m73/unpack -type f -name modem73 -exec cp {} dist/modem73 \;
+          test -s dist/modem73
           chmod +x dist/modem73
+          cp dist/modem73 "${{ matrix.modem_asset }}"
           cp third_party/modem73/NOTICE dist/MODEM73-NOTICE
       - name: pack unix
         if: runner.os != 'Windows'
@@ -54,16 +60,26 @@ jobs:
           mkdir dist
           gh release download --repo RFnexus/modem73-win --pattern "modem73_*_win64.zip" --dir m73
           Expand-Archive -Path (Get-ChildItem m73\modem73_*_win64.zip).FullName -DestinationPath m73\out -Force
+          if (-not (Test-Path m73\out\modem73.exe)) { throw "modem73.exe missing from upstream zip" }
           Copy-Item m73\out\modem73.exe dist\modem73.exe
+          Copy-Item m73\out\modem73.exe ${{ matrix.modem_asset }}
           if (Test-Path m73\out\LICENSE) { Copy-Item m73\out\LICENSE dist\MODEM73-LICENSE }
           Copy-Item third_party\modem73\NOTICE dist\MODEM73-NOTICE
       - name: pack windows
         if: runner.os == 'Windows'
         run: |
+          if (-not (Test-Path dist\modem73.exe)) { throw "refusing to ship a Windows zip without modem73.exe" }
           copy target\${{ matrix.target }}\release\wcr.exe dist\
           copy README.md,LICENSE,NOTICE dist\
           Compress-Archive -Path dist\* -DestinationPath ${{ matrix.asset }} -Force
+      - name: refuse unix archive without modem73
+        if: runner.os == 'Linux'
+        run: tar -tzf "${{ matrix.asset }}" | grep -E '(^|/)modem73$'
       - uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.asset }}
           generate_release_notes: true
+      - uses: softprops/action-gh-release@v2
+        if: matrix.modem_asset != ''
+        with:
+          files: ${{ matrix.modem_asset }}

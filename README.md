@@ -83,7 +83,7 @@ Full table: [docs/MODES.md](docs/MODES.md)
 
 ## Radio
 
-You need a valid licence, a radio, and audio into the PC. [modem73](https://github.com/RFnexus/modem73) is the TNC. Three common paths:
+You need a valid licence, a radio, and audio into the PC. [modem73](https://github.com/RFnexus/modem73) is the TNC. Windows and Linux installers put it next to `wcr`. Three common paths:
 
 | Path | What you need |
 |------|----------------|
