@@ -4,6 +4,7 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock* ./
 COPY crates ./crates
 COPY docs ./docs
+COPY weechat ./weechat
 COPY README.md LICENSE NOTICE ./
 RUN cargo build --release -p wcr
 

@@ -8,6 +8,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 const RADIO_PY: &str = include_str!("../../../weechat/radio.py");
+const CONFIGURE_CMDS: &str = "/server add radio 127.0.0.1/6667 -autoconnect;/set irc.server.radio.tls off;/set irc.server.radio.tls_verify off;/set irc.server.radio.capabilities message-tags,echo-message,server-time,msgid;/save;/quit";
 
 pub fn run(configure_only: bool) -> Result<()> {
     if configure_only {
@@ -92,6 +93,8 @@ fn ensure_weechat() -> Result<()> {
 }
 
 fn run_headless_configure(script: &Path) -> Result<()> {
+    #[cfg(not(windows))]
+    let _ = script;
     #[cfg(windows)]
     {
         if let Some(bash) = cygwin_root().map(|r| r.join("bin").join("bash.exe")) {
@@ -101,7 +104,8 @@ fn run_headless_configure(script: &Path) -> Result<()> {
                      mkdir -p \"$HOME/.weechat/python/autoload\"; \
                      cp \"{script}\" \"$HOME/.weechat/python/radio.py\"; \
                      cp \"$HOME/.weechat/python/radio.py\" \"$HOME/.weechat/python/autoload/radio.py\"; \
-                     weechat-headless -d \"$HOME/.weechat\" -r '/server add radio 127.0.0.1/6667 -autoconnect;/set irc.server.radio.capabilities message-tags,echo-message,server-time,msgid;/script load radio.py;/save;/quit'",
+                     weechat-headless -d \"$HOME/.weechat\" -r '{cmds}'",
+                    cmds = CONFIGURE_CMDS,
                     home = cygwin_home_unix(),
                     script = cygwin_path(script)
                 );
@@ -130,7 +134,7 @@ fn run_headless_configure(script: &Path) -> Result<()> {
             "-d",
             &home.to_string_lossy(),
             "-r",
-            "/server add radio 127.0.0.1/6667 -autoconnect;/set irc.server.radio.capabilities message-tags,echo-message,server-time,msgid;/script load radio.py;/save;/quit",
+            CONFIGURE_CMDS,
         ])
         .status()?;
     if !status.success() {
@@ -234,17 +238,13 @@ fn install_cygwin_weechat() -> Result<()> {
     let pkg = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .or_else(|| {
-            std::env::var_os("USERPROFILE")
-                .map(|p| PathBuf::from(p).join("AppData").join("Local"))
+            std::env::var_os("USERPROFILE").map(|p| PathBuf::from(p).join("AppData").join("Local"))
         })
         .unwrap_or_else(|| PathBuf::from("."))
         .join("cygwin-packages");
     std::fs::create_dir_all(&pkg)?;
     std::fs::create_dir_all(&root)?;
-    download_file(
-        "https://www.cygwin.com/setup-x86_64.exe",
-        &setup,
-    )?;
+    download_file("https://www.cygwin.com/setup-x86_64.exe", &setup)?;
     let status = Command::new(&setup)
         .args([
             "--quiet-mode",

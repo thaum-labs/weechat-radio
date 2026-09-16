@@ -59,7 +59,10 @@ def _theme():
 def _col(name):
     if _theme() == "plain":
         return ""
-    return weechat.color(name)
+    try:
+        return weechat.color(str(name)) or ""
+    except Exception:
+        return ""
 
 
 def _status():
@@ -71,43 +74,51 @@ def _status():
 
 
 def bar_item_cb(*_args):
-    s = _status()
-    if not s:
-        return _col("red") + "WCR DOWN"
-    mode = s.get("mode", "?")
-    mode_col = MODE_COLOR.get(mode, "default")
-    banner = s.get("hub_banner") or ""
-    hub = "HUB UP" if s.get("hub_ok") else "HUB DOWN"
-    audio = (s.get("audio_label") or "?").upper()
-    q = s.get("queue_out", 0)
-    snr = s.get("snr", 0)
-    freq = s.get("frequency") or s.get("preset", "")
-    ptt = "TX" if s.get("ptt_on") else (s.get("channel") or "idle").upper()
-    upd = " │ UPD" if s.get("update_available") else ""
-    sep = " │ "
-    base = _col(TRON)
-    token = _col(mode_col) + mode.upper() + base
-    text = (
-        " "
-        + token
-        + sep
-        + ptt
-        + sep
-        + str(freq).upper()
-        + sep
-        + "SNR %.0f" % snr
-        + sep
-        + audio
-        + sep
-        + "Q%s" % q
-        + sep
-        + hub
-        + upd
-        + " "
-    )
-    if banner:
-        return _col("black,yellow") + " " + banner + " " + base + text
-    return base + text
+    try:
+        s = _status()
+        if not s:
+            return _col("red") + "WCR DOWN"
+        mode = s.get("mode", "?")
+        mode_col = MODE_COLOR.get(mode, "default")
+        banner = s.get("hub_banner") or ""
+        hub = "HUB UP" if s.get("hub_ok") else "HUB DOWN"
+        audio = (s.get("audio_label") or "?").upper()
+        q = s.get("queue_out", 0)
+        snr = s.get("snr") or 0
+        freq = s.get("frequency") or s.get("preset", "")
+        ptt = "TX" if s.get("ptt_on") else (s.get("channel") or "idle").upper()
+        upd = " │ UPD" if s.get("update_available") else ""
+        sep = " │ "
+        base = _col(TRON)
+        token = _col(mode_col) + mode.upper() + base
+        text = (
+            " "
+            + token
+            + sep
+            + ptt
+            + sep
+            + str(freq).upper()
+            + sep
+            + "SNR %.0f" % float(snr)
+            + sep
+            + audio
+            + sep
+            + "Q%s" % q
+            + sep
+            + hub
+            + upd
+            + " "
+        )
+        if banner:
+            return _col("black,yellow") + " " + banner + " " + base + text
+        return base + text
+    except Exception:
+        return " WCR "
+
+
+def timer_cb(_data, _remaining):
+    weechat.bar_item_update("radio")
+    return weechat.WEECHAT_RC_OK
 
 
 def radio_cmd(data, buffer, args):
@@ -162,6 +173,7 @@ if weechat.register(SCRIPT_NAME, SCRIPT_AUTHOR, SCRIPT_VERSION, SCRIPT_LICENSE, 
     )
     weechat.hook_modifier("input_text_content", "input_cb", "")
     weechat.hook_signal("*,irc_in_TAGMSG", "tagmsg_cb", "")
-    weechat.hook_timer(4000, 0, 0, "bar_item_cb", "")
-    weechat.command("", "/bar add radio_bar window bottom 1 0 radio,radio_air")
+    weechat.hook_timer(4000, 0, 0, "timer_cb", "")
+    if not weechat.bar_search("radio_bar"):
+        weechat.command("", "/bar add radio_bar window bottom 1 0 radio,radio_air")
     weechat.config_set_plugin("draft_len", "0")

@@ -19,6 +19,7 @@ Manual steps, if you installed WeeChat yourself:
 
    ```
    /server add radio 127.0.0.1/6667 -autoconnect
+   /set irc.server.radio.tls off
    /set irc.server.radio.capabilities "message-tags,echo-message,server-time,msgid"
    /connect radio
    /script load radio.py

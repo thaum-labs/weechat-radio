@@ -25,6 +25,7 @@ jobs:
           tags: ghcr.io/thaum-labs/wcr:latest
   droplet:
     needs: image
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
