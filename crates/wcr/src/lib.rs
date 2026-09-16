@@ -22,7 +22,9 @@ pub mod status;
 pub mod store;
 pub mod telemetry;
 pub mod tui;
+pub mod ui_style;
 pub mod update;
+pub mod weechat_app;
 
 pub use error::{Error, Result};
 pub use modes::Mode;

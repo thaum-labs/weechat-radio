@@ -43,6 +43,12 @@ pub enum Command {
     Update,
     /// Offline help
     Help { topic: Option<String> },
+    /// Launch the real WeeChat client (after `wcr node`)
+    Weechat {
+        /// Write the local radio server and load radio.py, then exit
+        #[arg(long)]
+        configure: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]

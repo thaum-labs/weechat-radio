@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
-# Install wcr from GitHub Releases onto Linux or macOS.
+# Install wcr, modem73, and WeeChat. Configures WeeChat for the local node.
 set -eu
 REPO="thaum-labs/weechat-radio"
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -42,5 +42,36 @@ elif [ -n "$MODEM" ]; then
   mv "$MODEM" "$PREFIX/modem73"
   echo "Installed $PREFIX/modem73"
 fi
+RADIO=""
+if [ -f "$TMP/radio.py" ]; then RADIO="$TMP/radio.py"; fi
+if [ -z "$RADIO" ]; then RADIO=$(find "$TMP" -maxdepth 3 -type f -name radio.py 2>/dev/null | head -n 1); fi
+if [ -n "$RADIO" ]; then
+  cp "$RADIO" "$PREFIX/radio.py"
+else
+  curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/weechat/radio.py" -o "$PREFIX/radio.py"
+fi
 echo "Installed $PREFIX/wcr"
-echo "Next:  wcr setup"
+
+if [ "${WCR_SKIP_WEECHAT:-}" != "1" ]; then
+  if ! command -v weechat >/dev/null 2>&1; then
+    echo "Installing WeeChat..."
+    if [ "$OS" = "darwin" ] && command -v brew >/dev/null 2>&1; then
+      brew install weechat || true
+    elif command -v apt-get >/dev/null 2>&1; then
+      sudo apt-get update -y && sudo apt-get install -y weechat weechat-python || true
+    elif command -v dnf >/dev/null 2>&1; then
+      sudo dnf install -y weechat || true
+    else
+      echo "Install WeeChat from https://weechat.org/ then run: wcr weechat --configure"
+    fi
+  fi
+  if command -v weechat >/dev/null 2>&1 || command -v weechat-headless >/dev/null 2>&1; then
+    "$PREFIX/wcr" weechat --configure || true
+  fi
+fi
+
+echo "Next:"
+echo "  wcr setup"
+echo "  wcr node"
+echo "  wcr weechat"
+echo "Or use the built-in UI:  wcr tui"

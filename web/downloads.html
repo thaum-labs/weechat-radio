@@ -1,36 +1,53 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" /><title>Downloads — WeeChat Radio</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Downloads — WeeChat Radio</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/vendor/augmented-ui.min.css" />
+  <link rel="stylesheet" href="/styles.css?v=3" />
 </head>
-<body>
-  <header>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
     <div class="brand"><img src="/icon.png" alt="" width="28" height="28" />WEECHAT<span>RADIO</span></div>
     <nav>
-      <a href="/">map</a><a href="/downloads.html" class="on">downloads</a>
-      <a href="/guides.html">guides</a><a href="/docs.html">docs</a>
-      <a href="/status.html">hub</a><a href="/changelog.html">changelog</a>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
     </nav>
   </header>
-  <main class="page">
-    <h1>Get on the air</h1>
-    <p>5 minutes. No account. Windows and Linux installs include <code>modem73</code> next to <code>wcr</code>.</p>
-    <h2>Linux / macOS</h2>
-    <pre>curl -fsSL https://weechatradio.com/install.sh | sh</pre>
-    <h2>Windows (PowerShell)</h2>
-    <pre>irm https://weechatradio.com/install.ps1 | iex</pre>
-    <h2>Homebrew</h2>
-    <pre>brew tap thaum-labs/tap
+  <div class="page-wrap">
+    <main class="page-panel" data-augmented-ui="tl-clip br-clip both">
+      <h3 class="title"><p>GET ON THE AIR</p><p>INSTALL</p></h3>
+      <h1>Get on the air</h1>
+      <p>5 minutes. No account.</p>
+      <h2>Linux / macOS</h2>
+      <pre>curl -fsSL https://weechatradio.com/install.sh | sh</pre>
+      <h2>Windows (PowerShell)</h2>
+      <pre>irm https://weechatradio.com/install.ps1 | iex</pre>
+      <h2>Homebrew</h2>
+      <pre>brew tap thaum-labs/tap
 brew install wcr</pre>
-    <h2>winget / Scoop</h2>
-    <pre>winget install ThaumLabs.Wcr
+      <h2>winget / Scoop</h2>
+      <pre>winget install ThaumLabs.Wcr
 scoop bucket add thaum https://github.com/thaum-labs/scoop-bucket
 scoop install wcr</pre>
-    <p>Release zips: <a href="https://github.com/thaum-labs/weechat-radio/releases">GitHub Releases</a>.</p>
-    <p>Then run <code>wcr setup</code> and <code>wcr tui</code>.</p>
-  </main>
+      <p>Release zips: <a href="https://github.com/thaum-labs/weechat-radio/releases">GitHub Releases</a>.</p>
+      <p>The installer puts <code>wcr</code>, modem73, and WeeChat on the machine, then points WeeChat at <code>127.0.0.1:6667</code>.</p>
+      <p>Then run <code>wcr setup</code>, <code>wcr node</code>, and <code>wcr weechat</code> (or <code>wcr tui</code>).</p>
+    </main>
+  </div>
+  <script src="/shell.js?v=3"></script>
 </body>
 </html>

@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-# Install wcr on Windows from GitHub Releases.
+# Install wcr, modem73, and WeeChat (Cygwin) on Windows. Configures WeeChat
+# to connect to the local WeeChat Radio node.
 $ErrorActionPreference = "Stop"
 $repo = "thaum-labs/weechat-radio"
 $asset = "wcr-windows-x86_64.zip"
@@ -20,13 +21,59 @@ New-Item -ItemType Directory -Force -Path $dir | Out-Null
 Copy-Item (Join-Path $tmp "wcr.exe") (Join-Path $dir "wcr.exe") -Force
 $modem = Get-ChildItem $tmp -Filter "modem73.exe" -Recurse | Select-Object -First 1
 if (-not $modem) {
-    throw "Release zip is missing modem73.exe. Download v0.1.1 or newer from https://github.com/thaum-labs/weechat-radio/releases"
+    throw "Release zip is missing modem73.exe. Download v0.1.1 or newer from https://github.com/$repo/releases"
 }
 Copy-Item $modem.FullName (Join-Path $dir "modem73.exe") -Force
 Write-Host "Installed $($dir)\modem73.exe"
+$radio = Get-ChildItem $tmp -Filter "radio.py" -Recurse | Select-Object -First 1
+if ($radio) {
+    Copy-Item $radio.FullName (Join-Path $dir "radio.py") -Force
+} else {
+    Write-Host "Fetching radio.py"
+    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/$repo/main/weechat/radio.py" -OutFile (Join-Path $dir "radio.py")
+}
 $envPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($envPath -notlike "*$dir*") {
     [Environment]::SetEnvironmentVariable("Path", "$envPath;$dir", "User")
 }
 Write-Host "Installed $dir\wcr.exe"
-Write-Host "Open a new terminal, then:  wcr setup"
+
+if ($env:WCR_SKIP_WEECHAT -ne "1") {
+    $cyg = Join-Path $env:USERPROFILE "cygwin64"
+    $wee = Join-Path $cyg "bin\weechat.exe"
+    if (-not (Test-Path $wee)) {
+        Write-Host "Installing WeeChat via Cygwin (a few minutes)..."
+        $setup = Join-Path $env:TEMP "cygwin-setup-x86_64.exe"
+        $pkg = Join-Path $env:LOCALAPPDATA "cygwin-packages"
+        New-Item -ItemType Directory -Force -Path $pkg, $cyg | Out-Null
+        Invoke-WebRequest -Uri "https://www.cygwin.com/setup-x86_64.exe" -OutFile $setup
+        $setupArgs = @(
+            "--quiet-mode", "--only-site", "--no-admin", "--no-desktop",
+            "--no-shortcuts", "--no-startmenu",
+            "--root", $cyg,
+            "--local-package-dir", $pkg,
+            "--site", "https://mirrors.kernel.org/sourceware/cygwin/",
+            "--packages", "weechat,weechat-python"
+        )
+        $p = Start-Process -FilePath $setup -ArgumentList $setupArgs -PassThru
+        $ok = $p.WaitForExit(900000)
+        if (-not $ok) {
+            Write-Host "Cygwin setup is still running. WeeChat will finish in the background."
+        }
+    }
+    if (Test-Path $wee) {
+        Write-Host "Configuring WeeChat for 127.0.0.1:6667..."
+        & (Join-Path $dir "wcr.exe") weechat --configure
+        Write-Host "Launcher: $dir\weechat-radio.cmd"
+    } else {
+        Write-Host "WeeChat is not on disk yet. After Cygwin setup finishes, run:  wcr weechat --configure"
+    }
+}
+
+Write-Host ""
+Write-Host "Open a new terminal, then:"
+Write-Host "  wcr setup"
+Write-Host "  wcr node"
+Write-Host "  wcr weechat"
+Write-Host "Or use the built-in UI:  wcr tui"
+Write-Host "Skip WeeChat next time with:  `$env:WCR_SKIP_WEECHAT=1"

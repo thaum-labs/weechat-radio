@@ -51,6 +51,8 @@ jobs:
           mkdir -p dist
           cp target/${{ matrix.target }}/release/wcr dist/
           cp README.md LICENSE NOTICE docs/QUICKSTART.md dist/
+          cp weechat/radio.py dist/radio.py
+          cp weechat/LICENSE dist/WEECHAT-SCRIPT-LICENSE
           tar -czf ${{ matrix.asset }} -C dist .
       - name: bundle modem73 windows
         if: runner.os == 'Windows'
@@ -71,6 +73,8 @@ jobs:
           if (-not (Test-Path dist\modem73.exe)) { throw "refusing to ship a Windows zip without modem73.exe" }
           copy target\${{ matrix.target }}\release\wcr.exe dist\
           copy README.md,LICENSE,NOTICE dist\
+          copy weechat\radio.py dist\radio.py
+          copy weechat\LICENSE dist\WEECHAT-SCRIPT-LICENSE
           Compress-Archive -Path dist\* -DestinationPath ${{ matrix.asset }} -Force
       - name: refuse unix archive without modem73
         if: runner.os == 'Linux'
