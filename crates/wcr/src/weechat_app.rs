@@ -130,12 +130,7 @@ fn run_headless_configure(script: &Path) -> Result<()> {
     };
     let home = weechat_home();
     let status = Command::new(&headless)
-        .args([
-            "-d",
-            &home.to_string_lossy(),
-            "-r",
-            CONFIGURE_CMDS,
-        ])
+        .args(["-d", &home.to_string_lossy(), "-r", CONFIGURE_CMDS])
         .status()?;
     if !status.success() {
         return Err(Error::Msg(format!(
