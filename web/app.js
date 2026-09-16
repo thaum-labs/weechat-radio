@@ -34,11 +34,21 @@ const map = new maplibregl.Map({
   attributionControl: true,
 });
 
+const SPAN = 1440;
 const markers = new Map();
 const ticker = document.getElementById("ticker");
 const stationList = document.getElementById("station-list");
 const hubPanel = document.getElementById("hub-panel");
 const card = document.getElementById("card");
+const scrub = document.getElementById("scrub");
+const playBtn = document.getElementById("play");
+const clock = document.getElementById("tape-clock");
+
+let liveMode = true;
+let playing = false;
+let playTimer = 0;
+let replayCache = [];
+let replayLoadedAt = 0;
 
 function upsertNode(n) {
   if (n.lat == null || n.lon == null) return;
@@ -87,6 +97,122 @@ function tick(line) {
   while (ticker.children.length > 8) ticker.removeChild(ticker.lastChild);
 }
 
+function isLive() {
+  return Number(scrub.value) >= SPAN;
+}
+
+function clockLabel() {
+  if (isLive()) {
+    return playing
+      ? "Reaching live…"
+      : "LIVE · drag to rewind, or press Play to replay the day";
+  }
+  const ago = SPAN - Number(scrub.value);
+  const h = Math.floor(ago / 60);
+  const m = ago % 60;
+  const when = new Date(Date.now() - ago * 60000);
+  const hh = String(when.getHours()).padStart(2, "0");
+  const mm = String(when.getMinutes()).padStart(2, "0");
+  const rel = h ? `${h}h ${String(m).padStart(2, "0")}m ago` : `${m}m ago`;
+  return `${playing ? "Playing" : "Paused"} ${rel}  (${hh}:${mm})`;
+}
+
+function setPlaying(on) {
+  playing = on;
+  playBtn.textContent = on ? "Pause" : "Play";
+  playBtn.setAttribute("aria-pressed", on ? "true" : "false");
+  playBtn.setAttribute(
+    "aria-label",
+    on ? "Pause replay" : "Play last 24 hours of traffic",
+  );
+  if (!on && playTimer) {
+    clearTimeout(playTimer);
+    playTimer = 0;
+  }
+}
+
+async function ensureReplay() {
+  if (Date.now() - replayLoadedAt < 20000 && replayCache.length) return;
+  const since = Math.floor(Date.now() / 1000) - SPAN * 60;
+  try {
+    const ev = await (await fetch(`${API}/api/v1/events?since=${since}&limit=500`)).json();
+    replayCache = ev.events || [];
+    replayLoadedAt = Date.now();
+  } catch (_) {
+    replayCache = [];
+  }
+}
+
+function renderReplay() {
+  clock.textContent = clockLabel();
+  if (isLive()) {
+    liveMode = true;
+    return;
+  }
+  liveMode = false;
+  const minutesAgo = SPAN - Number(scrub.value);
+  const cutoff = Math.floor(Date.now() / 1000) - minutesAgo * 60;
+  const rows = replayCache.filter((x) => (x.ts || 0) <= cutoff).slice(0, 12);
+  ticker.innerHTML = "";
+  if (!rows.length) {
+    tick("No traffic in this part of the last 24 hours.");
+    return;
+  }
+  rows.forEach((x) => {
+    const t = x.ts ? new Date(x.ts * 1000).toISOString().slice(11, 19) : "--:--:--";
+    tick(`[${t}] ${x.origin || "?"} ${x.kind || ""} -> ${x.dest || ""}`);
+  });
+}
+
+function goLive() {
+  scrub.value = SPAN;
+  liveMode = true;
+  setPlaying(false);
+  clock.textContent = clockLabel();
+}
+
+function playStep() {
+  if (!playing) return;
+  const next = Number(scrub.value) + 5;
+  if (next >= SPAN) {
+    goLive();
+    tick("Caught up. Showing live traffic.");
+    return;
+  }
+  scrub.value = String(next);
+  renderReplay();
+  playTimer = setTimeout(playStep, 50);
+}
+
+async function applyScrub() {
+  clock.textContent = clockLabel();
+  if (isLive()) {
+    liveMode = true;
+    return;
+  }
+  await ensureReplay();
+  renderReplay();
+}
+
+playBtn.addEventListener("click", async () => {
+  if (playing) {
+    setPlaying(false);
+    clock.textContent = clockLabel();
+    return;
+  }
+  await ensureReplay();
+  if (isLive()) scrub.value = "0";
+  liveMode = false;
+  setPlaying(true);
+  renderReplay();
+  playTimer = setTimeout(playStep, 50);
+});
+
+scrub.addEventListener("input", () => {
+  setPlaying(false);
+  applyScrub();
+});
+
 async function refresh() {
   try {
     const nodes = await (await fetch(`${API}/api/v1/nodes`)).json();
@@ -111,22 +237,13 @@ function connectLive() {
     try {
       const m = JSON.parse(ev.data);
       if (m.type === "node") refresh();
+      if (!liveMode) return;
       const t = new Date().toISOString().slice(11, 19);
       tick(`[${t}] ${m.origin || m.callsign || "?"} ${m.kind || m.type || ""} -> ${m.dest || ""}`);
     } catch (_) {}
   };
   ws.onclose = () => setTimeout(connectLive, 4000);
 }
-
-document.getElementById("scrub").addEventListener("input", async (e) => {
-  const minutesAgo = 1440 - Number(e.target.value);
-  const since = Math.floor(Date.now() / 1000) - minutesAgo * 60;
-  const ev = await (await fetch(`${API}/api/v1/events?since=${since}&limit=200`)).json();
-  ticker.innerHTML = "";
-  (ev.events || []).slice(0, 12).forEach((x) => {
-    tick(`[replay] ${x.origin || "?"} ${x.kind} -> ${x.dest || ""}`);
-  });
-});
 
 refresh();
 setInterval(refresh, 15000);
