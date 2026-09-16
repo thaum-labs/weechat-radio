@@ -6,7 +6,7 @@ use crate::modes::Mode;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-pub const PUBLIC_HUB: &str = "wss://hub.weechatradio.com";
+pub const PUBLIC_HUB: &str = "wss://hub.weechatradio.com/ws";
 pub const PUBLIC_TELEMETRY: &str = "https://hub.weechatradio.com/api/v1/report";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -298,6 +298,7 @@ impl Config {
         if self.store.path.as_os_str().is_empty() {
             self.store.path = default_data_dir().join("wcr.db");
         }
+        self.hub.url = crate::net::hub_client::websocket_url(&self.hub.url);
     }
 
     pub fn default_path() -> PathBuf {

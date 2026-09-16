@@ -12,6 +12,20 @@ pub struct HubClient {
     pub tx: mpsc::Sender<Vec<u8>>,
 }
 
+/// Nodes speak WebSocket on `/ws`. A host-only URL gets that path appended.
+pub fn websocket_url(url: &str) -> String {
+    let trimmed = url.trim().trim_end_matches('/');
+    if trimmed.ends_with("/ws") || trimmed.contains("/ws/") {
+        return trimmed.to_string();
+    }
+    if let Some((_, rest)) = trimmed.split_once("://") {
+        if !rest.contains('/') {
+            return format!("{trimmed}/ws");
+        }
+    }
+    trimmed.to_string()
+}
+
 impl HubClient {
     pub async fn connect(
         url: &str,
@@ -22,7 +36,7 @@ impl HubClient {
         connected: ArcFlag,
     ) -> Result<Self> {
         let (out_tx, mut out_rx) = mpsc::channel::<Vec<u8>>(64);
-        let url = url.to_string();
+        let url = websocket_url(url);
         let callsign = callsign.to_string();
         let pubhex = keys.public_hex();
         let ts = crate::proto::now_ts() as u64;
@@ -117,5 +131,26 @@ impl ArcFlag {
     }
     pub fn get(&self) -> bool {
         self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::websocket_url;
+
+    #[test]
+    fn adds_ws_path_when_missing() {
+        assert_eq!(
+            websocket_url("wss://hub.weechatradio.com"),
+            "wss://hub.weechatradio.com/ws"
+        );
+        assert_eq!(
+            websocket_url("wss://hub.weechatradio.com/"),
+            "wss://hub.weechatradio.com/ws"
+        );
+        assert_eq!(
+            websocket_url("wss://hub.weechatradio.com/ws"),
+            "wss://hub.weechatradio.com/ws"
+        );
     }
 }
