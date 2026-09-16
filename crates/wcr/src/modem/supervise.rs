@@ -4,8 +4,46 @@
 use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::presets::Preset;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::process::{Child, Command};
+
+fn resolve_binary(configured: &str) -> PathBuf {
+    let raw = PathBuf::from(configured);
+    if raw.is_absolute() {
+        return raw;
+    }
+    let name = if cfg!(windows) && raw.extension().is_none() {
+        raw.with_extension("exe")
+    } else {
+        raw
+    };
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let beside = dir.join(&name);
+            if beside.is_file() {
+                return beside;
+            }
+        }
+    }
+    name
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_binary;
+    use std::path::Path;
+
+    #[test]
+    fn keeps_absolute_paths() {
+        let p = if cfg!(windows) {
+            r"C:\tools\modem73.exe"
+        } else {
+            "/usr/local/bin/modem73"
+        };
+        assert_eq!(resolve_binary(p), Path::new(p));
+    }
+}
 
 pub struct ModemProcess {
     child: Child,
@@ -50,7 +88,8 @@ impl ModemProcess {
             }
             _ => {}
         }
-        let child = Command::new(&cfg.modem.binary)
+        let binary = resolve_binary(&cfg.modem.binary);
+        let child = Command::new(&binary)
             .args(&args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -59,8 +98,8 @@ impl ModemProcess {
             .spawn()
             .map_err(|e| {
                 Error::Modem(format!(
-                    "could not start {}: {e}. Install modem73 or set modem.binary in wcr.toml.",
-                    cfg.modem.binary
+                    "could not start {}: {e}. Re-run the installer or set modem.binary in wcr.toml.",
+                    binary.display()
                 ))
             })?;
         Ok(Self { child })

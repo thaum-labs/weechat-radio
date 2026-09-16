@@ -1,8 +1,10 @@
 modem73 is Unlicense software by RFnexus:
 https://github.com/RFnexus/modem73
 
-Release bundles may include a modem73 (or modem73-win) binary as-is so a
-station can be installed with no extra download. That binary is not Apache-2.0.
-See the Unlicense at the upstream repository.
+Windows binaries come from the experimental Win32 port:
+https://github.com/RFnexus/modem73-win
 
-This directory is a placeholder; CI copies the upstream binary here at release time.
+Release archives include the upstream binary as-is so a station can be
+installed with no extra download. That binary is not Apache-2.0.
+See the Unlicense at the upstream repository, and MODEM73-LICENSE in the
+release zip when present.
