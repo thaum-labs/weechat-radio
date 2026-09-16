@@ -216,15 +216,19 @@ pub struct UiConfig {
     pub unicode: bool,
     pub activity_panel: bool,
     pub bell: bool,
+    /// Show a short boot sequence in the TUI (tron theme).
+    #[serde(default = "default_true")]
+    pub boot: bool,
 }
 
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
-            theme: "hacker".into(),
+            theme: "tron".into(),
             unicode: true,
             activity_panel: true,
             bell: false,
+            boot: true,
         }
     }
 }
@@ -273,6 +277,10 @@ impl Default for RigConfig {
             host: "127.0.0.1:4532".into(),
         }
     }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Config {

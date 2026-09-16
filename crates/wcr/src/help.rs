@@ -24,7 +24,8 @@ pub fn render(topic: Option<&str>) -> String {
                 .map(|(k, _)| format!("  wcr help {k}"))
                 .collect();
             format!(
-                "WeeChat Radio — offline help\n\nTopics:\n{}\n",
+                "{}\n\nTopics:\n{}\n",
+                crate::ui_style::panel_line("WEECHAT RADIO", "HELP"),
                 list.join("\n")
             )
         }

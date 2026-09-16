@@ -56,18 +56,21 @@ if ($env:WCR_SKIP_WEECHAT -ne "1") {
             "--packages", "weechat,weechat-python"
         )
         $p = Start-Process -FilePath $setup -ArgumentList $setupArgs -PassThru
-        $ok = $p.WaitForExit(900000)
-        if (-not $ok) {
-            Write-Host "Cygwin setup is still running. WeeChat will finish in the background."
+        $deadline = (Get-Date).AddMinutes(20)
+        while (-not (Test-Path $wee) -and (Get-Date) -lt $deadline) {
+            if ($p.HasExited -and -not (Test-Path $wee)) { break }
+            Start-Sleep -Seconds 5
+            Write-Host "  waiting for WeeChat..."
         }
+        if (-not $p.HasExited) { $p.WaitForExit(120000) | Out-Null }
     }
-    if (Test-Path $wee) {
-        Write-Host "Configuring WeeChat for 127.0.0.1:6667..."
-        & (Join-Path $dir "wcr.exe") weechat --configure
-        Write-Host "Launcher: $dir\weechat-radio.cmd"
-    } else {
-        Write-Host "WeeChat is not on disk yet. After Cygwin setup finishes, run:  wcr weechat --configure"
+    if (-not (Test-Path $wee)) {
+        throw "WeeChat did not install. Run the installer again, or install WeeChat from https://weechat.org/"
     }
+    Write-Host "Configuring WeeChat for 127.0.0.1:6667..."
+    & (Join-Path $dir "wcr.exe") weechat --configure
+    if ($LASTEXITCODE -ne 0) { throw "WeeChat auto-configure failed" }
+    Write-Host "Launcher: $dir\weechat-radio.cmd"
 }
 
 Write-Host ""

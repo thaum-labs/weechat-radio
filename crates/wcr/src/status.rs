@@ -3,10 +3,10 @@
 
 use crate::modes::Mode;
 use parking_lot::Mutex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusSnapshot {
     pub callsign: String,
     pub grid: String,

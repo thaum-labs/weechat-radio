@@ -88,6 +88,7 @@ async fn real_main() -> Result<()> {
             print!("{}", wcr::help::render(topic.as_deref()));
         }
         Command::Weechat { configure } => {
+            wcr::ui_style::panel("WEECHAT RADIO", "WEECHAT");
             wcr::weechat_app::run(configure)?;
         }
     }

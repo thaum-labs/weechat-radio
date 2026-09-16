@@ -48,10 +48,11 @@ discovery = true
 port = 7373
 
 [ui]
-theme = "hacker"
+theme = "tron"        # tron | hacker | terminal
 unicode = true
 activity_panel = true
 bell = false
+boot = true
 
 [status]
 bind = "127.0.0.1:8074"

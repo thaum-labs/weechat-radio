@@ -44,7 +44,7 @@ brew install wcr</pre>
 scoop bucket add thaum https://github.com/thaum-labs/scoop-bucket
 scoop install wcr</pre>
       <p>Release zips: <a href="https://github.com/thaum-labs/weechat-radio/releases">GitHub Releases</a>.</p>
-      <p>The installer puts <code>wcr</code>, modem73, and WeeChat on the machine, then points WeeChat at <code>127.0.0.1:6667</code>.</p>
+      <p>The installer always installs WeeChat (unless <code>WCR_SKIP_WEECHAT=1</code>), copies <code>radio.py</code>, and points WeeChat at <code>127.0.0.1:6667</code>. <code>wcr setup</code> repeats that configure step.</p>
       <p>Then run <code>wcr setup</code>, <code>wcr node</code>, and <code>wcr weechat</code> (or <code>wcr tui</code>).</p>
     </main>
   </div>

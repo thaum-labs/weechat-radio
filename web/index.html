@@ -7,48 +7,82 @@
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" />
-  <link rel="stylesheet" href="/styles.css?v=2" />
+  <link rel="stylesheet" href="/vendor/augmented-ui.min.css" />
+  <link rel="stylesheet" href="/styles.css?v=3" />
 </head>
-<body>
+<body class="page-map">
   <div id="scan"></div>
-  <header>
-    <div class="brand"><img src="/icon.png" alt="" width="28" height="28" />WEECHAT<span>RADIO</span></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+    <div class="brand">WEECHAT RADIO</div>
     <nav>
-      <a href="/" class="on">map</a>
+      <a href="/">map</a>
       <a href="/downloads.html">downloads</a>
       <a href="/guides.html">guides</a>
       <a href="/docs.html">docs</a>
       <a href="/status.html">hub</a>
       <a href="/changelog.html">changelog</a>
     </nav>
-    <div id="stats">nodes <b id="n-online">—</b> · tx/min <b id="n-tx">—</b></div>
+    <div id="stats">NODES <b id="n-online">—</b> · TX <b id="n-tx">—</b></div>
   </header>
-  <aside id="stations">
-    <h2>stations</h2>
-    <div id="station-list"></div>
-  </aside>
-  <div id="map"></div>
-  <aside id="network">
-    <h2>network</h2>
-    <div id="hub-panel"></div>
-    <div id="card" hidden></div>
-  </aside>
-  <footer>
-    <div class="tape">
-      <button type="button" id="play" aria-label="Play last 24 hours of traffic" aria-pressed="false">Play</button>
-      <div class="tape-copy">
-        <div class="tape-title">Last 24 hours of traffic</div>
-        <div class="tape-hint" id="tape-clock">LIVE · drag to rewind, or press Play to replay the day</div>
-      </div>
-    </div>
-    <div class="scrub-row">
-      <span>24h ago</span>
-      <input id="scrub" type="range" min="0" max="1440" value="1440" aria-valuemin="0" aria-valuemax="1440" aria-label="Traffic timeline, 24 hours ago to now" />
-      <span>now</span>
-    </div>
-    <div id="ticker" aria-live="polite"></div>
-  </footer>
+  <div class="workspace">
+    <section class="mod_column" id="mod_column_left">
+      <article class="mod">
+        <h3 class="title"><p>HUB</p><p id="hub-meta">—</p></h3>
+        <div id="hub-panel" class="mod-body"></div>
+      </article>
+      <article class="mod">
+        <h3 class="title"><p>NODES BY MODE</p><p id="mode-meta">0</p></h3>
+        <div id="mode-grid" class="mod-body"></div>
+      </article>
+      <article class="mod">
+        <h3 class="title"><p>TRAFFIC</p><p>24H</p></h3>
+        <canvas id="spark" width="320" height="80" class="mod-body"></canvas>
+      </article>
+      <article class="mod grow">
+        <h3 class="title"><p>STATIONS</p><p id="station-count">0</p></h3>
+        <div id="station-list" class="mod-body scroll"></div>
+      </article>
+    </section>
+    <section id="main_shell" data-augmented-ui="tl-clip br-clip both">
+      <article class="map-panel">
+        <h3 class="title"><p>LIVE MAP</p><p>GEO</p></h3>
+        <div id="map"></div>
+      </article>
+      <article class="log-panel">
+        <h3 class="title"><p>TRAFFIC LOG</p><p>24H TAPE</p></h3>
+        <div class="tape">
+          <button type="button" id="play" aria-label="Play last 24 hours of traffic" aria-pressed="false">Play</button>
+          <div class="tape-copy">
+            <div class="tape-title">Last 24 hours of traffic</div>
+            <div class="tape-hint" id="tape-clock">LIVE · drag to rewind, or press Play to replay the day</div>
+          </div>
+        </div>
+        <div class="scrub-row">
+          <span>24h ago</span>
+          <input id="scrub" type="range" min="0" max="1440" value="1440" aria-valuemin="0" aria-valuemax="1440" aria-label="Traffic timeline, 24 hours ago to now" />
+          <span>now</span>
+        </div>
+        <div id="ticker" aria-live="polite"></div>
+      </article>
+    </section>
+    <section class="mod_column" id="mod_column_right">
+      <article class="mod grow">
+        <h3 class="title"><p>STATION</p><p>DETAIL</p></h3>
+        <div id="card" class="mod-body">select a station</div>
+      </article>
+      <article class="mod">
+        <h3 class="title"><p>CONN INFO</p><p id="ws-state">IDLE</p></h3>
+        <div id="conn-info" class="mod-body"></div>
+      </article>
+    </section>
+  </div>
   <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
-  <script src="/app.js?v=2"></script>
+  <script src="/shell.js?v=3"></script>
+  <script src="/app.js?v=3"></script>
 </body>
 </html>

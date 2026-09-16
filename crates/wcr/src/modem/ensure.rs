@@ -130,10 +130,7 @@ async fn download(asset: &str, dest: &Path) -> Result<()> {
             res.status()
         )));
     }
-    let bytes = res
-        .bytes()
-        .await
-        .map_err(|e| Error::Net(e.to_string()))?;
+    let bytes = res.bytes().await.map_err(|e| Error::Net(e.to_string()))?;
     if bytes.len() < 1024 {
         return Err(Error::Modem(format!(
             "downloaded modem73 is too small ({})",

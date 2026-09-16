@@ -3,7 +3,7 @@
 ## What you need
 
 - A current Linux (Debian, Ubuntu, Fedora, Arch, Raspberry Pi OS)
-- Optional: WeeChat (`sudo apt install weechat`)
+- The installer installs WeeChat when apt, dnf, or brew is available, then points it at `127.0.0.1:6667`
 
 ## Steps
 
@@ -33,15 +33,7 @@
    wcr service install
    ```
 
-6. WeeChat (optional):
-
-   ```
-   /server add radio 127.0.0.1/6667
-   /connect radio
-   /script load radio.py
-   ```
-
-   Copy `weechat/radio.py` into `~/.weechat/python/`.
+6. WeeChat is installed and configured by the official installer. After `wcr node`, run `wcr weechat`. To rewrite the server and script: `wcr weechat --configure`.
 
 ## How you know it worked
 

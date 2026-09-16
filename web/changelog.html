@@ -1,24 +1,40 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" /><title>Changelog — WeeChat Radio</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Changelog — WeeChat Radio</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/vendor/augmented-ui.min.css" />
+  <link rel="stylesheet" href="/styles.css?v=3" />
 </head>
-<body>
-  <header>
-    <div class="brand"><img src="/icon.png" alt="" width="28" height="28" />WEECHAT<span>RADIO</span></div>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+    <div class="brand">WEECHAT RADIO</div>
     <nav>
-      <a href="/">map</a><a href="/downloads.html">downloads</a>
-      <a href="/guides.html">guides</a><a href="/docs.html">docs</a>
-      <a href="/status.html">hub</a><a href="/changelog.html" class="on">changelog</a>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
     </nav>
   </header>
-  <main class="page">
-    <h1>Changelog</h1>
-    <div id="log">loading GitHub releases…</div>
-  </main>
+  <div class="page-wrap">
+    <main class="page-panel" data-augmented-ui="tl-clip br-clip both">
+      <h3 class="title"><p>CHANGELOG</p><p>RELEASES</p></h3>
+      <h1>Changelog</h1>
+      <div id="log">loading GitHub releases…</div>
+    </main>
+  </div>
+  <script src="/shell.js?v=3"></script>
   <script>
     fetch("https://api.github.com/repos/thaum-labs/weechat-radio/releases")
       .then(r => r.json())
@@ -28,8 +44,9 @@
           return;
         }
         document.getElementById("log").innerHTML = list.map(r =>
-          `<h2>${r.tag_name}</h2><p>${new Date(r.published_at).toUTCString()}</p><pre>${(r.body || "").replace(/[<>]/g, "")}</pre>`
+          `<article class="release"><h3 class="title"><p>${r.tag_name}</p><p>${new Date(r.published_at).toUTCString()}</p></h3><pre>${(r.body || "").replace(/[<>]/g, "")}</pre></article>`
         ).join("");
+        if (window.WCR && window.WCR.wrapPres) window.WCR.wrapPres();
       })
       .catch(() => { document.getElementById("log").textContent = "Could not load releases."; });
   </script>
