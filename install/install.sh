@@ -66,7 +66,9 @@ if [ "${WCR_SKIP_WEECHAT:-}" != "1" ]; then
     fi
   fi
   if command -v weechat >/dev/null 2>&1 || command -v weechat-headless >/dev/null 2>&1; then
-    "$PREFIX/wcr" weechat --configure || true
+    "$PREFIX/wcr" weechat --configure
+  else
+    echo "WeeChat did not install. Install it from https://weechat.org/ then run: wcr weechat --configure" >&2
   fi
 fi
 

@@ -1,33 +1,77 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" /><title>Hub status — WeeChat Radio</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hub status — WeeChat Radio</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/vendor/augmented-ui.min.css" />
+  <link rel="stylesheet" href="/styles.css?v=3" />
 </head>
-<body>
-  <header>
-    <div class="brand"><img src="/icon.png" alt="" width="28" height="28" />WEECHAT<span>RADIO</span></div>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+    <div class="brand">WEECHAT RADIO</div>
     <nav>
-      <a href="/">map</a><a href="/downloads.html">downloads</a>
-      <a href="/guides.html">guides</a><a href="/docs.html">docs</a>
-      <a href="/status.html" class="on">hub</a><a href="/changelog.html">changelog</a>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
     </nav>
+    <div id="stats">HEALTH <b id="n-health">—</b></div>
   </header>
-  <main class="page">
-    <h1>Hub</h1>
-    <pre id="out">loading…</pre>
-  </main>
+  <div class="page-wrap">
+    <main class="page-panel" data-augmented-ui="tl-clip br-clip both">
+      <h3 class="title"><p>HUB</p><p>STATUS</p></h3>
+      <h1>Hub</h1>
+      <div class="status-grid">
+        <article class="mod activated">
+          <h3 class="title"><p>HEALTH</p><p>HTTP</p></h3>
+          <div id="health-panel" class="mod-body">loading…</div>
+        </article>
+        <article class="mod activated">
+          <h3 class="title"><p>STATS</p><p>API</p></h3>
+          <div id="stats-panel" class="mod-body">loading…</div>
+        </article>
+        <article class="mod activated" style="grid-column: 1 / -1">
+          <h3 class="title"><p>HUBS</p><p>RELAY</p></h3>
+          <div id="hubs-panel" class="mod-body">loading…</div>
+        </article>
+      </div>
+    </main>
+  </div>
+  <script src="/shell.js?v=3"></script>
   <script>
-    const API = location.hostname === "localhost" ? "http://127.0.0.1:7373" : "https://hub.weechatradio.com";
+    const API = window.WCR.API;
+    function kv(obj) {
+      if (obj == null) return "—";
+      if (typeof obj !== "object") return String(obj);
+      return '<div class="kv">' + Object.entries(obj).map(([k, v]) =>
+        `<span>${k}</span><b>${typeof v === "object" ? JSON.stringify(v) : v}</b>`
+      ).join("") + "</div>";
+    }
     Promise.all([
       fetch(API + "/api/v1/stats").then(r => r.json()),
       fetch(API + "/api/v1/hubs").then(r => r.json()),
       fetch(API + "/healthz").then(r => r.text()),
     ]).then(([s, h, z]) => {
-      document.getElementById("out").textContent = JSON.stringify({ health: z, stats: s, hubs: h }, null, 2);
-    }).catch(e => { document.getElementById("out").textContent = String(e); });
+      document.getElementById("n-health").textContent = z.trim();
+      document.getElementById("health-panel").innerHTML = kv({ health: z.trim(), api: API.replace(/^https?:\/\//, "") });
+      document.getElementById("stats-panel").innerHTML = kv(s);
+      const hubs = (h.hubs || [h]);
+      document.getElementById("hubs-panel").innerHTML = hubs.map(x => kv(x)).join("");
+    }).catch(e => {
+      document.getElementById("health-panel").textContent = String(e);
+      document.getElementById("n-health").textContent = "DOWN";
+    });
   </script>
 </body>
 </html>

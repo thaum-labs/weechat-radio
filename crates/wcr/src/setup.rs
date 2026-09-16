@@ -129,6 +129,15 @@ pub fn run_wizard() -> Result<Config> {
     config::ensure_dirs()?;
     cfg.save(&path)?;
     ui_style::panel("SAVED", path.display().to_string().as_str());
+    match crate::weechat_app::configure() {
+        Ok(msg) => {
+            println!("  {msg}");
+        }
+        Err(e) => {
+            println!("  WeeChat not configured yet: {e}");
+            println!("  Re-run the official installer, or use `wcr tui`.");
+        }
+    }
     println!("  Next:  wcr node     then  wcr weechat");
     println!("  Or use the built-in UI:  wcr tui");
     println!("  How you know it worked: the status bar shows your callsign and mode.");

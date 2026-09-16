@@ -1,7 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-const API = (window.WCR_API || (location.hostname === "localhost"
-  ? "http://127.0.0.1:7373"
-  : `${location.protocol}//hub.${location.hostname.replace(/^www\./, "")}`));
+const API = window.WCR.API;
 
 const MODE_COLOR = {
   internet: "#00e5ff",
@@ -43,16 +41,24 @@ const card = document.getElementById("card");
 const scrub = document.getElementById("scrub");
 const playBtn = document.getElementById("play");
 const clock = document.getElementById("tape-clock");
+const connInfo = document.getElementById("conn-info");
+const wsState = document.getElementById("ws-state");
 
 let liveMode = true;
 let playing = false;
 let playTimer = 0;
 let replayCache = [];
 let replayLoadedAt = 0;
+let lastMsgAt = 0;
+let wsLabel = "IDLE";
+
+function kv(rows) {
+  return `<div class="kv">${rows.map(([k, v]) => `<span>${k}</span><b>${v}</b>`).join("")}</div>`;
+}
 
 function upsertNode(n) {
   if (n.lat == null || n.lon == null) return;
-  const color = MODE_COLOR[n.mode] || "#39ff14";
+  const color = MODE_COLOR[n.mode] || "#aacfd1";
   let m = markers.get(n.callsign);
   if (!m) {
     const el = document.createElement("div");
@@ -70,8 +76,32 @@ function upsertNode(n) {
 }
 
 function showCard(n) {
-  card.hidden = false;
-  card.innerHTML = `<b>${n.callsign}</b><br>mode ${n.mode}<br>ptt ${n.ptt || "—"}<br>preset ${n.preset || "—"}<br>grid ${n.grid || "—"}<br>snr ${n.snr ?? "—"}`;
+  card.innerHTML = kv([
+    ["call", n.callsign || "—"],
+    ["mode", n.mode || "—"],
+    ["ptt", n.ptt || "—"],
+    ["preset", n.preset || "—"],
+    ["grid", n.grid || "—"],
+    ["snr", n.snr ?? "—"],
+  ]);
+}
+
+function renderModes(nodes) {
+  const counts = {};
+  nodes.forEach((n) => {
+    const m = n.mode || "unknown";
+    counts[m] = (counts[m] || 0) + 1;
+  });
+  const total = nodes.length || 1;
+  const grid = document.getElementById("mode-grid");
+  const meta = document.getElementById("mode-meta");
+  if (meta) meta.textContent = String(nodes.length);
+  if (!grid) return;
+  grid.innerHTML = Object.keys(MODE_COLOR).map((mode) => {
+    const n = counts[mode] || 0;
+    const pct = Math.round((n / total) * 100);
+    return `<div class="mode-row"><span class="dot" style="background:${MODE_COLOR[mode]}"></span>${mode}<div class="mode-bar"><i style="width:${pct}%;background:${MODE_COLOR[mode]}"></i></div>${n}</div>`;
+  }).join("");
 }
 
 function renderStations(nodes) {
@@ -79,7 +109,7 @@ function renderStations(nodes) {
   nodes.forEach((n) => {
     const d = document.createElement("div");
     d.className = "station";
-    d.innerHTML = `<span class="dot" style="background:${MODE_COLOR[n.mode] || "#39ff14"}"></span><b>${n.callsign}</b>${n.mode || ""} ${n.preset || ""}`;
+    d.innerHTML = `<span class="dot" style="background:${MODE_COLOR[n.mode] || "#aacfd1"}"></span><b>${n.callsign}</b>${n.mode || ""} ${n.preset || ""}`;
     d.onclick = () => {
       showCard(n);
       if (n.lat != null) map.flyTo({ center: [n.lon, n.lat], zoom: 6 });
@@ -88,6 +118,9 @@ function renderStations(nodes) {
     upsertNode(n);
   });
   document.getElementById("n-online").textContent = nodes.length;
+  const sc = document.getElementById("station-count");
+  if (sc) sc.textContent = String(nodes.length);
+  renderModes(nodes);
 }
 
 function tick(line) {
@@ -131,6 +164,37 @@ function setPlaying(on) {
   }
 }
 
+function drawSpark(events) {
+  const c = document.getElementById("spark");
+  if (!c) return;
+  const ctx = c.getContext("2d");
+  const w = c.width;
+  const h = c.height;
+  ctx.clearRect(0, 0, w, h);
+  const bins = 48;
+  const now = Date.now() / 1000;
+  const span = SPAN * 60;
+  const counts = new Array(bins).fill(0);
+  (events || []).forEach((x) => {
+    const ts = x.ts || 0;
+    const age = now - ts;
+    if (age < 0 || age > span) return;
+    const i = Math.min(bins - 1, Math.floor(((span - age) / span) * bins));
+    counts[i] += 1;
+  });
+  const max = Math.max(1, ...counts);
+  ctx.strokeStyle = "#aacfd1";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  counts.forEach((n, i) => {
+    const x = (i / (bins - 1)) * w;
+    const y = h - (n / max) * (h - 4) - 2;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+}
+
 async function ensureReplay() {
   if (Date.now() - replayLoadedAt < 20000 && replayCache.length) return;
   const since = Math.floor(Date.now() / 1000) - SPAN * 60;
@@ -138,6 +202,7 @@ async function ensureReplay() {
     const ev = await (await fetch(`${API}/api/v1/events?since=${since}&limit=500`, { signal: AbortSignal.timeout(4000) })).json();
     replayCache = ev.events || [];
     replayLoadedAt = Date.now();
+    drawSpark(replayCache);
   } catch (_) {
     replayCache = [];
   }
@@ -194,6 +259,23 @@ async function applyScrub() {
   renderReplay();
 }
 
+function ageLabel() {
+  if (!lastMsgAt) return "—";
+  const s = Math.max(0, Math.round((Date.now() - lastMsgAt) / 1000));
+  if (s < 60) return `${s}s ago`;
+  return `${Math.floor(s / 60)}m ago`;
+}
+
+function renderConn() {
+  if (!connInfo) return;
+  connInfo.innerHTML = kv([
+    ["api", API.replace(/^https?:\/\//, "")],
+    ["ws", wsLabel],
+    ["last", ageLabel()],
+  ]);
+  if (wsState) wsState.textContent = wsLabel;
+}
+
 playBtn.addEventListener("click", () => {
   if (playing) {
     setPlaying(false);
@@ -222,31 +304,49 @@ async function refresh() {
     const hubs = await (await fetch(`${API}/api/v1/hubs`)).json();
     const h = (hubs.hubs || [])[0];
     if (h) {
-      hubPanel.innerHTML = `<b>${h.id}</b><br>connected ${h.connected_nodes}<br>forwarded ${h.forwarded}<br>uptime ${h.uptime_secs}s`;
+      hubPanel.innerHTML = kv([
+        ["id", h.id || "—"],
+        ["nodes", h.connected_nodes ?? "—"],
+        ["fwd", h.forwarded ?? "—"],
+        ["up", `${h.uptime_secs ?? "—"}s`],
+      ]);
+      const hm = document.getElementById("hub-meta");
+      if (hm) hm.textContent = h.id || "online";
     }
     const stats = await (await fetch(`${API}/api/v1/stats`)).json();
     document.getElementById("n-tx").textContent = stats.forwarded ?? "—";
+    await ensureReplay();
   } catch (e) {
     hubPanel.textContent = "hub unreachable — showing last data";
   }
+  renderConn();
 }
 
 function connectLive() {
   const proto = API.startsWith("https") ? "wss" : "ws";
   const host = API.replace(/^https?:\/\//, "");
+  wsLabel = "CONNECT";
+  renderConn();
   const ws = new WebSocket(`${proto}://${host}/ws/live`);
+  ws.onopen = () => { wsLabel = "LIVE"; lastMsgAt = Date.now(); renderConn(); };
   ws.onmessage = (ev) => {
     try {
       const m = JSON.parse(ev.data);
+      lastMsgAt = Date.now();
       if (m.type === "node") refresh();
       if (!liveMode) return;
       const t = new Date().toISOString().slice(11, 19);
       tick(`[${t}] ${m.origin || m.callsign || "?"} ${m.kind || m.type || ""} -> ${m.dest || ""}`);
     } catch (_) {}
   };
-  ws.onclose = () => setTimeout(connectLive, 4000);
+  ws.onclose = () => {
+    wsLabel = "RETRY";
+    renderConn();
+    setTimeout(connectLive, 4000);
+  };
 }
 
+setInterval(renderConn, 1000);
 refresh();
 setInterval(refresh, 15000);
 connectLive();

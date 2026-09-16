@@ -49,6 +49,18 @@ TICKS = {
     "all": "✓✓✓",
 }
 
+TRON = "152"
+
+
+def _theme():
+    return weechat.config_get_plugin("theme") or "tron"
+
+
+def _col(name):
+    if _theme() == "plain":
+        return ""
+    return weechat.color(name)
+
 
 def _status():
     try:
@@ -61,30 +73,41 @@ def _status():
 def bar_item_cb(*_args):
     s = _status()
     if not s:
-        return weechat.color("red") + "wcr down"
+        return _col("red") + "WCR DOWN"
     mode = s.get("mode", "?")
-    col = MODE_COLOR.get(mode, "default")
+    mode_col = MODE_COLOR.get(mode, "default")
     banner = s.get("hub_banner") or ""
-    hub = "hub↑" if s.get("hub_ok") else "hub↓"
-    audio = s.get("audio_label", "?")
+    hub = "HUB UP" if s.get("hub_ok") else "HUB DOWN"
+    audio = (s.get("audio_label") or "?").upper()
     q = s.get("queue_out", 0)
     snr = s.get("snr", 0)
     freq = s.get("frequency") or s.get("preset", "")
-    ptt = "TX" if s.get("ptt_on") else s.get("channel", "idle")
-    upd = " UPD" if s.get("update_available") else ""
-    text = " %s %s %s SNR %.0f %s q%s %s%s " % (
-        mode,
-        ptt,
-        freq,
-        snr,
-        audio,
-        q,
-        hub,
-        upd,
+    ptt = "TX" if s.get("ptt_on") else (s.get("channel") or "idle").upper()
+    upd = " │ UPD" if s.get("update_available") else ""
+    sep = " │ "
+    base = _col(TRON)
+    token = _col(mode_col) + mode.upper() + base
+    text = (
+        " "
+        + token
+        + sep
+        + ptt
+        + sep
+        + str(freq).upper()
+        + sep
+        + "SNR %.0f" % snr
+        + sep
+        + audio
+        + sep
+        + "Q%s" % q
+        + sep
+        + hub
+        + upd
+        + " "
     )
     if banner:
-        return weechat.color("black,yellow") + " " + banner + " " + weechat.color(col) + text
-    return weechat.color(col) + text
+        return _col("black,yellow") + " " + banner + " " + base + text
+    return base + text
 
 
 def radio_cmd(data, buffer, args):
@@ -106,7 +129,6 @@ def air_cb(*_args):
 
 
 def tagmsg_cb(data, signal, signal_data):
-    # signal_data is the raw IRC line; look for radio/delivery
     line = signal_data or ""
     if "radio/delivery=" not in line:
         return weechat.WEECHAT_RC_OK
@@ -116,11 +138,17 @@ def tagmsg_cb(data, signal, signal_data):
     except Exception:
         pass
     tick = TICKS.get(state, "")
-    weechat.prnt("", "%s delivery %s" % (weechat.prefix("network"), tick + " " + state))
+    weechat.prnt(
+        "",
+        "%s%s delivery %s"
+        % (weechat.prefix("network"), _col(TRON), tick + " " + state),
+    )
     return weechat.WEECHAT_RC_OK
 
 
 if weechat.register(SCRIPT_NAME, SCRIPT_AUTHOR, SCRIPT_VERSION, SCRIPT_LICENSE, SCRIPT_DESC, "", ""):
+    if not weechat.config_is_set_plugin("theme"):
+        weechat.config_set_plugin("theme", "tron")
     weechat.bar_item_new("radio", "bar_item_cb", "")
     weechat.bar_item_new("radio_air", "air_cb", "")
     weechat.hook_command(

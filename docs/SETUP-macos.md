@@ -3,7 +3,7 @@
 ## What you need
 
 - macOS with Homebrew, or the release tar from GitHub
-- Optional: WeeChat (`brew install weechat`)
+- The installer installs WeeChat with Homebrew when available, then points it at `127.0.0.1:6667`
 
 ## Steps
 
@@ -34,14 +34,7 @@
    wcr service install
    ```
 
-5. WeeChat (optional):
-
-   ```
-   /server add radio 127.0.0.1/6667
-   /connect radio
-   ```
-
-   Load `weechat/radio.py` from this repo for the status bar and ticks.
+5. WeeChat is installed and configured by the official installer. After `wcr node`, run `wcr weechat`. To rewrite the server and script: `wcr weechat --configure`.
 
 ## How you know it worked
 

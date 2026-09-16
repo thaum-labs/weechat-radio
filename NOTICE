@@ -9,3 +9,10 @@ project and is not affiliated with or endorsed by the WeeChat project.
 modem73 is Unlicense software by RFnexus. Bundled modem73 binaries, when
 included in a release archive, remain Unlicense and are redistributed as-is.
 See third_party/modem73/NOTICE in the release bundle.
+
+The website vendors augmented-ui (BSD-2-Clause) by James0x57 / PropJockey.
+Fira Mono (SIL Open Font License 1.1) by Mozilla / Carrois Apostrophe.
+Rajdhani (SIL Open Font License 1.1) by Indian Type Foundry.
+
+Visual design is inspired by eDEX-UI (GPL-3.0) by GitSquared. No eDEX-UI
+source, fonts, sounds, or assets are reused.

@@ -4,7 +4,7 @@
 
 - Windows 10 or 11
 - PowerShell
-- Optional: WeeChat (WSL or Cygwin) or just use `wcr tui`
+- The installer installs WeeChat (Cygwin) and points it at `127.0.0.1:6667`. Use `wcr tui` if you skip that.
 
 ## Steps
 
@@ -30,14 +30,7 @@
    wcr service install
    ```
 
-5. WeeChat (optional): install WeeChat in WSL, then:
-
-   ```
-   /server add radio 127.0.0.1/6667
-   /connect radio
-   ```
-
-   Native Windows IRC clients (HexChat, etc.) can use the same `127.0.0.1:6667`.
+5. WeeChat is installed and configured by the official installer. After `wcr node`, run `wcr weechat`. To rewrite the server and script: `wcr weechat --configure`. Native Windows IRC clients can also use `127.0.0.1:6667`.
 
 ## How you know it worked
 
