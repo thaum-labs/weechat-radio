@@ -1,12 +1,12 @@
 {
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "WeeChat Radio node daemon",
   "homepage": "https://weechatradio.com",
   "license": "Apache-2.0",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/thaum-labs/weechat-radio/releases/download/v0.1.0/wcr-windows-x86_64.zip",
-      "bin": "wcr.exe"
+      "url": "https://github.com/thaum-labs/weechat-radio/releases/download/v0.1.1/wcr-windows-x86_64.zip",
+      "bin": ["wcr.exe", "modem73.exe"]
     }
   }
 }

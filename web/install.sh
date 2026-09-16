@@ -26,9 +26,20 @@ chmod +x "$BIN"
 PREFIX="${PREFIX:-$HOME/.local/bin}"
 mkdir -p "$PREFIX"
 mv "$BIN" "$PREFIX/wcr"
-if [ -f "$TMP/modem73" ]; then
-  chmod +x "$TMP/modem73"
-  mv "$TMP/modem73" "$PREFIX/modem73"
+MODEM=""
+if [ -f "$TMP/modem73" ]; then MODEM="$TMP/modem73"; fi
+if [ -z "$MODEM" ]; then MODEM=$(find "$TMP" -maxdepth 2 -type f -name modem73 2>/dev/null | head -n 1); fi
+if [ "$OS" = "linux" ]; then
+  if [ -z "$MODEM" ]; then
+    echo "Release archive is missing modem73. Use v0.1.1 or newer." >&2
+    exit 1
+  fi
+  chmod +x "$MODEM"
+  mv "$MODEM" "$PREFIX/modem73"
+  echo "Installed $PREFIX/modem73"
+elif [ -n "$MODEM" ]; then
+  chmod +x "$MODEM"
+  mv "$MODEM" "$PREFIX/modem73"
   echo "Installed $PREFIX/modem73"
 fi
 echo "Installed $PREFIX/wcr"
