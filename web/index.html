@@ -34,8 +34,19 @@
     <div id="card" hidden></div>
   </aside>
   <footer>
-    <input id="scrub" type="range" min="0" max="1440" value="1440" />
-    <div id="ticker"></div>
+    <div class="tape">
+      <button type="button" id="play" aria-label="Play last 24 hours of traffic" aria-pressed="false">Play</button>
+      <div class="tape-copy">
+        <div class="tape-title">Last 24 hours of traffic</div>
+        <div class="tape-hint" id="tape-clock">LIVE · drag to rewind, or press Play to replay the day</div>
+      </div>
+    </div>
+    <div class="scrub-row">
+      <span>24h ago</span>
+      <input id="scrub" type="range" min="0" max="1440" value="1440" aria-valuemin="0" aria-valuemax="1440" aria-label="Traffic timeline, 24 hours ago to now" />
+      <span>now</span>
+    </div>
+    <div id="ticker" aria-live="polite"></div>
   </footer>
   <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
   <script src="/app.js"></script>
