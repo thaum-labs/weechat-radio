@@ -15,7 +15,7 @@ async fn main() {
         .with_target(false)
         .try_init();
     if let Err(e) = real_main().await {
-        eprintln!("error: {e}");
+        eprintln!("{} {e}", wcr::ui_style::err().apply_to("ERR"));
         std::process::exit(1);
     }
 }
@@ -72,16 +72,23 @@ async fn real_main() -> Result<()> {
             let keys = wcr::proto::load_or_create(&Config::key_path())?;
             wcr::net::run_hub(&bind, store, tel, keys).await?;
         }
-        Command::Service { action } => match action {
-            ServiceAction::Install => println!("{}", wcr::service::install()?),
-            ServiceAction::Uninstall => println!("{}", wcr::service::uninstall()?),
-            ServiceAction::Status => println!("{}", wcr::service::status()?),
-        },
+        Command::Service { action } => {
+            wcr::ui_style::panel("WEECHAT RADIO", "SERVICE");
+            match action {
+                ServiceAction::Install => println!("{}", wcr::service::install()?),
+                ServiceAction::Uninstall => println!("{}", wcr::service::uninstall()?),
+                ServiceAction::Status => println!("{}", wcr::service::status()?),
+            }
+        }
         Command::Update => {
+            wcr::ui_style::panel("WEECHAT RADIO", "UPDATE");
             println!("{}", wcr::update::apply().await?);
         }
         Command::Help { topic } => {
             print!("{}", wcr::help::render(topic.as_deref()));
+        }
+        Command::Weechat { configure } => {
+            wcr::weechat_app::run(configure)?;
         }
     }
     Ok(())

@@ -29,6 +29,8 @@ With WeeChat Radio you can:
 3. Store and forward messages so stations catch up later
 4. Appear on the public map: [weechatradio.com](https://weechatradio.com)
 
+The site, TUI, and CLI share a sci-fi “tron” shell (teal on black, titled panels). Change the TUI with `/radio theme hacker` or `/radio theme terminal`.
+
 **You do not need a radio** to try internet mode.  
 **You do not need WeeChat** — the TUI is enough.
 
@@ -97,19 +99,15 @@ Run `wcr setup` and pick the path that matches your station. Suggested calling f
 
 ## Using WeeChat
 
-The TUI is enough for a station. WeeChat is the full client.
-
-1. Start `wcr tui` or `wcr node` on this computer
-2. Copy [`weechat/radio.py`](weechat/radio.py) into WeeChat's Python directory
-3. In WeeChat:
+The official installer installs WeeChat and points it at the local node.
 
 ```
-/server add radio 127.0.0.1/6667 -autoconnect
-/connect radio
-/script load radio.py
+wcr setup
+wcr node
+wcr weechat
 ```
 
-You land in `#bulletin`. `/radio help` lists node commands.
+`wcr weechat --configure` rewrites the `radio` server (`127.0.0.1:6667`) and loads [`weechat/radio.py`](weechat/radio.py). The built-in UI is still `wcr tui`.
 
 Step-by-step: [weechat/setup.md](weechat/setup.md)
 
