@@ -1,0 +1,33 @@
+services:
+  hub:
+    image: ghcr.io/thaum-labs/wcr:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["hub", "--bind", "0.0.0.0:7373"]
+    volumes:
+      - wcr-data:/data
+    environment:
+      HOME: /data
+    restart: unless-stopped
+    expose:
+      - "7373"
+
+  web:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../web:/srv/web:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - hub
+
+volumes:
+  wcr-data:
+  caddy-data:
+  caddy-config:

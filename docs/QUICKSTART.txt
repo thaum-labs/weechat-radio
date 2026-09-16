@@ -1,0 +1,24 @@
+WeeChat Radio — printable quick start
+=====================================
+
+1. Install
+   Linux/mac:  curl -fsSL https://weechatradio.com/install.sh | sh
+   Windows:    irm https://weechatradio.com/install.ps1 | iex
+
+2. wcr setup
+   Enter callsign, grid, and radio path.
+
+3. wcr tui
+   Type in #bulletin. Enter sends.
+
+Ticks:  · queued   ✓ sent   ✓✓ delivered   ✓✓✓ all group members
+
+If the internet dies, keep using the radio. Status bar: "Internet down, radio only".
+
+Calling frequencies (verify your band plan):
+  UK/EU VHF 144.950 FM  vhf-fm
+  US    VHF 145.530 FM  vhf-fm
+  UK/EU HF    7.045 USB hf-poor
+  US    HF    7.090 USB hf-poor
+
+Full guides: wcr help

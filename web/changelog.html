@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" /><title>Changelog — WeeChat Radio</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">WEECHAT<span>RADIO</span></div>
+    <nav>
+      <a href="/">map</a><a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a><a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a><a href="/changelog.html" class="on">changelog</a>
+    </nav>
+  </header>
+  <main class="page">
+    <h1>Changelog</h1>
+    <div id="log">loading GitHub releases…</div>
+  </main>
+  <script>
+    fetch("https://api.github.com/repos/thaum-labs/weechat-radio/releases")
+      .then(r => r.json())
+      .then(list => {
+        if (!Array.isArray(list) || !list.length) {
+          document.getElementById("log").textContent = "No tagged releases yet. Watch this space.";
+          return;
+        }
+        document.getElementById("log").innerHTML = list.map(r =>
+          `<h2>${r.tag_name}</h2><p>${new Date(r.published_at).toUTCString()}</p><pre>${(r.body || "").replace(/[<>]/g, "")}</pre>`
+        ).join("");
+      })
+      .catch(() => { document.getElementById("log").textContent = "Could not load releases."; });
+  </script>
+</body>
+</html>

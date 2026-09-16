@@ -1,0 +1,20 @@
+{
+  "email": "admin@weechatradio.com"
+}
+
+weechatradio.com, www.weechatradio.com {
+  encode gzip
+  root * /srv/web
+  file_server
+  try_files {path} /index.html
+}
+
+hub.weechatradio.com, api.weechatradio.com {
+  encode gzip
+  reverse_proxy hub:7373
+  @ws {
+    header Connection *Upgrade*
+    header Upgrade websocket
+  }
+  reverse_proxy @ws hub:7373
+}
