@@ -36,7 +36,9 @@ jobs:
           username: ${{ secrets.DROPLET_USER }}
           key: ${{ secrets.DROPLET_SSH_KEY }}
           script: |
+            set -eu
             cd /opt/wcr
-            git pull
+            git fetch origin
+            git reset --hard origin/main
             docker compose -f deploy/docker-compose.yml pull
             docker compose -f deploy/docker-compose.yml up -d --no-build
