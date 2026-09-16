@@ -28,6 +28,17 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - run: cargo build --release --target ${{ matrix.target }} -p wcr
+      - name: bundle modem73 linux
+        if: runner.os == 'Linux'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dist
+          gh release download --repo RFnexus/modem73 --pattern "modem73_*_ubuntu-24.04_amd64.deb" --dir /tmp/m73
+          dpkg-deb -x /tmp/m73/*.deb /tmp/m73/unpack
+          find /tmp/m73/unpack -type f -name modem73 -exec cp {} dist/modem73 \;
+          chmod +x dist/modem73
+          cp third_party/modem73/NOTICE dist/MODEM73-NOTICE
       - name: pack unix
         if: runner.os != 'Windows'
         run: |
@@ -35,13 +46,23 @@ jobs:
           cp target/${{ matrix.target }}/release/wcr dist/
           cp README.md LICENSE NOTICE docs/QUICKSTART.md dist/
           tar -czf ${{ matrix.asset }} -C dist .
+      - name: bundle modem73 windows
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir dist
+          gh release download --repo RFnexus/modem73-win --pattern "modem73_*_win64.zip" --dir m73
+          Expand-Archive -Path (Get-ChildItem m73\modem73_*_win64.zip).FullName -DestinationPath m73\out -Force
+          Copy-Item m73\out\modem73.exe dist\modem73.exe
+          if (Test-Path m73\out\LICENSE) { Copy-Item m73\out\LICENSE dist\MODEM73-LICENSE }
+          Copy-Item third_party\modem73\NOTICE dist\MODEM73-NOTICE
       - name: pack windows
         if: runner.os == 'Windows'
         run: |
-          mkdir dist
           copy target\${{ matrix.target }}\release\wcr.exe dist\
           copy README.md,LICENSE,NOTICE dist\
-          Compress-Archive -Path dist\* -DestinationPath ${{ matrix.asset }}
+          Compress-Archive -Path dist\* -DestinationPath ${{ matrix.asset }} -Force
       - uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.asset }}

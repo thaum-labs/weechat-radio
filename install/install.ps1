@@ -18,6 +18,11 @@ Expand-Archive -Path $zip -DestinationPath $tmp -Force
 $dir = Join-Path $env:LOCALAPPDATA "wcr"
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 Copy-Item (Join-Path $tmp "wcr.exe") (Join-Path $dir "wcr.exe") -Force
+$modem = Get-ChildItem $tmp -Filter "modem73.exe" -Recurse | Select-Object -First 1
+if ($modem) {
+    Copy-Item $modem.FullName (Join-Path $dir "modem73.exe") -Force
+    Write-Host "Installed $($dir)\modem73.exe"
+}
 $envPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($envPath -notlike "*$dir*") {
     [Environment]::SetEnvironmentVariable("Path", "$envPath;$dir", "User")

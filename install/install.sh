@@ -26,5 +26,10 @@ chmod +x "$BIN"
 PREFIX="${PREFIX:-$HOME/.local/bin}"
 mkdir -p "$PREFIX"
 mv "$BIN" "$PREFIX/wcr"
+if [ -f "$TMP/modem73" ]; then
+  chmod +x "$TMP/modem73"
+  mv "$TMP/modem73" "$PREFIX/modem73"
+  echo "Installed $PREFIX/modem73"
+fi
 echo "Installed $PREFIX/wcr"
 echo "Next:  wcr setup"
