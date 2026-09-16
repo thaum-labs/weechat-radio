@@ -10,6 +10,8 @@ const MODE_COLOR = {
   "radio-plus": "#ff4dff",
 };
 
+const CARTO_KEY = "cb1_3nxz_1_dba340f0a1c8450af09da179";
+
 const map = new maplibregl.Map({
   container: "map",
   style: {
@@ -17,15 +19,19 @@ const map = new maplibregl.Map({
     sources: {
       osm: {
         type: "raster",
-        tiles: ["https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png"],
+        tiles: [
+          `https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png?key=${CARTO_KEY}`,
+        ],
         tileSize: 256,
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions">CARTO</a>',
       },
     },
     layers: [{ id: "osm", type: "raster", source: "osm" }],
   },
   center: [0, 20],
   zoom: 1.4,
-  attributionControl: false,
+  attributionControl: true,
 });
 
 const markers = new Map();
