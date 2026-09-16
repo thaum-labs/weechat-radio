@@ -49,4 +49,4 @@ v1 can also run SQLite only (no Postgres) by setting `DATABASE_PATH=/data/wcr.db
 
 - `https://weechatradio.com` shows the map
 - `https://hub.weechatradio.com/healthz` prints `ok`
-- `wcr node` on a laptop connects to `wss://hub.weechatradio.com`
+- `wcr node` on a laptop connects to `wss://hub.weechatradio.com/ws`

@@ -24,7 +24,7 @@ cm108_gpio = 3
 rigctl = "127.0.0.1:4532"
 
 [hub]
-url = "wss://hub.weechatradio.com"
+url = "wss://hub.weechatradio.com/ws"
 peers = []
 
 [telemetry]

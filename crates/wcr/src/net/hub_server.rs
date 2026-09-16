@@ -67,6 +67,7 @@ pub async fn run_hub(
         identity: keys,
     };
     let app = Router::new()
+        .route("/", get(ws_upgrade))
         .route("/ws", get(ws_upgrade))
         .route("/ws/live", get(ws_live))
         .route("/api/v1/report", post(telemetry::ingest_report))
