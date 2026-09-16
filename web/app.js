@@ -135,7 +135,7 @@ async function ensureReplay() {
   if (Date.now() - replayLoadedAt < 20000 && replayCache.length) return;
   const since = Math.floor(Date.now() / 1000) - SPAN * 60;
   try {
-    const ev = await (await fetch(`${API}/api/v1/events?since=${since}&limit=500`)).json();
+    const ev = await (await fetch(`${API}/api/v1/events?since=${since}&limit=500`, { signal: AbortSignal.timeout(4000) })).json();
     replayCache = ev.events || [];
     replayLoadedAt = Date.now();
   } catch (_) {
@@ -194,18 +194,20 @@ async function applyScrub() {
   renderReplay();
 }
 
-playBtn.addEventListener("click", async () => {
+playBtn.addEventListener("click", () => {
   if (playing) {
     setPlaying(false);
     clock.textContent = clockLabel();
     return;
   }
-  await ensureReplay();
   if (isLive()) scrub.value = "0";
   liveMode = false;
   setPlaying(true);
   renderReplay();
   playTimer = setTimeout(playStep, 50);
+  ensureReplay().then(() => {
+    if (!isLive()) renderReplay();
+  });
 });
 
 scrub.addEventListener("input", () => {
