@@ -37,5 +37,5 @@ jobs:
           script: |
             cd /opt/wcr
             git pull
-            docker compose -f deploy/docker-compose.yml pull || true
-            docker compose -f deploy/docker-compose.yml up -d --build
+            docker compose -f deploy/docker-compose.yml pull
+            docker compose -f deploy/docker-compose.yml up -d --no-build

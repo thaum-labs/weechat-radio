@@ -97,8 +97,8 @@ impl Store {
         }
         let conn = Connection::open(path)?;
         conn.execute_batch(SCHEMA)?;
-        conn.execute("PRAGMA journal_mode = WAL;", [])?;
-        conn.execute("PRAGMA synchronous = FULL;", [])?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "FULL")?;
         let s = Self {
             conn: Mutex::new(conn),
             max_age_hours,
@@ -734,5 +734,15 @@ mod tests {
         assert!(!s.group_all_received("net", &env.msg_id).unwrap());
         s.receipt("net", &env.msg_id, "M0XYZ").unwrap();
         assert!(s.group_all_received("net", &env.msg_id).unwrap());
+    }
+
+    #[test]
+    fn open_file_sets_wal() {
+        let dir = std::env::temp_dir().join("wcr-store-wal-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("hub.db");
+        Store::open(&p, 1, 10).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
