@@ -19,7 +19,8 @@ header {
   display: flex; align-items: center; gap: 24px; padding: 0 16px;
   border-bottom: 1px solid var(--dim); background: rgba(5,8,7,.92);
 }
-.brand { letter-spacing: .3em; font-weight: 700; }
+.brand { letter-spacing: .3em; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+.brand img { width: 28px; height: 28px; flex-shrink: 0; }
 .brand span { color: var(--cyan); }
 nav a { color: var(--fg); text-decoration: none; margin-right: 16px; opacity: .7; }
 nav a.on, nav a:hover { opacity: 1; color: var(--cyan); }
