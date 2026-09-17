@@ -87,6 +87,19 @@ async fn real_main() -> Result<()> {
         Command::Help { topic } => {
             print!("{}", wcr::help::render(topic.as_deref()));
         }
+        Command::Gui => {
+            #[cfg(feature = "desktop")]
+            {
+                wcr::gui::run()?;
+            }
+            #[cfg(not(feature = "desktop"))]
+            {
+                return Err(wcr::Error::Msg(
+                    "this build has no desktop GUI; install the official binary or build with --features desktop"
+                        .into(),
+                ));
+            }
+        }
         Command::Weechat { configure } => {
             wcr::ui_style::panel("WEECHAT RADIO", "WEECHAT");
             wcr::weechat_app::run(configure)?;

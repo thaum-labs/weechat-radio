@@ -19,6 +19,10 @@ Expand-Archive -Path $zip -DestinationPath $tmp -Force
 $dir = Join-Path $env:LOCALAPPDATA "wcr"
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 Copy-Item (Join-Path $tmp "wcr.exe") (Join-Path $dir "wcr.exe") -Force
+$gui = Get-ChildItem $tmp -Filter "wcr-gui.exe" -Recurse | Select-Object -First 1
+if ($gui) { Copy-Item $gui.FullName (Join-Path $dir "wcr-gui.exe") -Force }
+$minttyrc = Get-ChildItem $tmp -Filter "minttyrc" -Recurse | Select-Object -First 1
+if ($minttyrc) { Copy-Item $minttyrc.FullName (Join-Path $dir "minttyrc") -Force }
 $modem = Get-ChildItem $tmp -Filter "modem73.exe" -Recurse | Select-Object -First 1
 if (-not $modem) {
     throw "Release zip is missing modem73.exe. Download v0.1.1 or newer from https://github.com/$repo/releases"
@@ -69,14 +73,34 @@ if ($env:WCR_SKIP_WEECHAT -ne "1") {
     }
     Write-Host "Configuring WeeChat for 127.0.0.1:6667..."
     & (Join-Path $dir "wcr.exe") weechat --configure
-    if ($LASTEXITCODE -ne 0) { throw "WeeChat auto-configure failed" }
     Write-Host "Launcher: $dir\weechat-radio.cmd"
 }
 
+function New-WcrShortcut([string]$path, [string]$target, [string]$arguments) {
+    $s = (New-Object -ComObject WScript.Shell).CreateShortcut($path)
+    $s.TargetPath = $target
+    $s.Arguments = $arguments
+    $s.WorkingDirectory = $dir
+    $s.WindowStyle = 1
+    $s.Description = "WeeChat Radio"
+    $s.Save()
+}
+$guiExe = Join-Path $dir "wcr-gui.exe"
+$shortcutTarget = $guiExe
+$shortcutArgs = ""
+if (-not (Test-Path $guiExe)) {
+    $shortcutTarget = Join-Path $dir "wcr.exe"
+    $shortcutArgs = "gui"
+}
+$programs = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"
+New-Item -ItemType Directory -Force -Path $programs | Out-Null
+New-WcrShortcut (Join-Path $programs "WeeChat Radio.lnk") $shortcutTarget $shortcutArgs
+$desktop = [Environment]::GetFolderPath("Desktop")
+if ($desktop) {
+    New-WcrShortcut (Join-Path $desktop "WeeChat Radio.lnk") $shortcutTarget $shortcutArgs
+}
+
 Write-Host ""
-Write-Host "Open a new terminal, then:"
-Write-Host "  wcr setup"
-Write-Host "  wcr node"
-Write-Host "  wcr weechat"
-Write-Host "Or use the built-in UI:  wcr tui"
+Write-Host "Open WeeChat Radio from the Start menu or the desktop shortcut."
+Write-Host "The window starts the station and chat. No terminal needed."
 Write-Host "Skip WeeChat next time with:  `$env:WCR_SKIP_WEECHAT=1"

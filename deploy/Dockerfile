@@ -6,7 +6,7 @@ COPY crates ./crates
 COPY docs ./docs
 COPY weechat ./weechat
 COPY README.md LICENSE NOTICE ./
-RUN cargo build --release -p wcr
+RUN cargo build --release -p wcr --bin wcr --no-default-features
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*

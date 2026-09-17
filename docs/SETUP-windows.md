@@ -18,22 +18,18 @@ On the web: https://weechatradio.com/guides/windows.html
 
    Or download the zip from GitHub Releases and put `wcr.exe` on your PATH.
 
-2. Run `wcr setup` and answer the questions.
+2. Open <strong>WeeChat Radio</strong> from the Start menu or the desktop shortcut. First launch asks for your callsign; after that it starts the station and chat.
 
-3. Start chatting:
+   The terminal is optional: `wcr gui` is the same window. `wcr tui` / `wcr weechat` still work.
 
-   ```
-   wcr tui
-   ```
-
-4. To keep relaying when the window is closed, open PowerShell as Administrator and run:
+3. To keep relaying when the window is closed, open PowerShell as Administrator and run:
 
    ```
    wcr service install
    ```
 
-5. WeeChat is installed and configured by the official installer. After `wcr node`, run `wcr weechat`. To rewrite the server and script: `wcr weechat --configure`. Native Windows IRC clients can also use `127.0.0.1:6667`.
+4. WeeChat is still installed. Use **Open WeeChat** in the GUI, or `wcr weechat`. Native IRC clients can use `127.0.0.1:6667`.
 
 ## How you know it worked
 
-`wcr tui` shows your callsign in the status bar. Sending a message in `#bulletin` adds a `✓`.
+The GUI status column shows your callsign and mode. A message in `#bulletin` is heard as modem audio if radio is enabled.

@@ -56,8 +56,13 @@ wcr tui
 
 ```powershell
 irm https://weechatradio.com/install.ps1 | iex
-wcr setup
-wcr tui
+```
+
+Open **WeeChat Radio** from the Start menu. First launch is setup; then you chat in the window.
+
+```powershell
+# optional, same window from a terminal:
+wcr gui
 ```
 
 How you know it worked: the status bar shows your callsign. Send a line in `#bulletin`. A `✓` means it went out.
