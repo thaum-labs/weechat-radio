@@ -63,12 +63,13 @@ Every station talking on radio with this hub should run this build.</pre>
       const seen = new Set();
       return (body || "")
         .replace(/[<>]/g, "")
+        .replace(/\*\*([^*]+)\*\*/g, "$1")
         .split(/\r?\n/)
         .filter((line) => {
           const t = line.trim();
-          if (!t.startsWith("**Full Changelog**")) return true;
-          if (seen.has(t)) return false;
-          seen.add(t);
+          if (!/^Full Changelog\s*:/i.test(t)) return true;
+          if (seen.has("full")) return false;
+          seen.add("full");
           return true;
         })
         .join("\n")
@@ -82,9 +83,12 @@ Every station talking on radio with this hub should run this build.</pre>
           document.getElementById("log").textContent = "";
           return;
         }
-        document.getElementById("log").innerHTML = list.map(r =>
-          `<article class="release"><h3 class="title"><p>${r.tag_name}</p><p>${new Date(r.published_at).toUTCString()}</p></h3><pre>${tidyNotes(r.body)}</pre></article>`
-        ).join("");
+        document.getElementById("log").innerHTML = list.map(r => {
+          const notes = tidyNotes(r.body);
+          if (!notes) return "";
+          const when = r.published_at ? new Date(r.published_at).toUTCString() : "";
+          return `<article class="release"><h3 class="title"><p>${r.tag_name}</p><p>${when}</p></h3><pre>${notes}</pre></article>`;
+        }).join("");
         if (window.WCR && window.WCR.wrapPres) window.WCR.wrapPres();
       })
       .catch(() => { document.getElementById("log").textContent = "Could not load releases."; });

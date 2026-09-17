@@ -27,3 +27,4 @@ Cargo.lock.bak
 coverage/
 playwright-report/
 test-results/
+.tmp-notes/
