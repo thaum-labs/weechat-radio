@@ -121,13 +121,20 @@ impl Engine {
         Self { store, our_call }
     }
 
-    pub fn on_rx(&self, env: &Envelope, medium: &str, snr: Option<f32>) -> Result<RelayDecision> {
+    pub fn on_rx(
+        &self,
+        env: &Envelope,
+        medium: &str,
+        snr: Option<f32>,
+        freq_khz: Option<u32>,
+    ) -> Result<RelayDecision> {
         self.store.heard_touch(
             env.origin.as_str(),
             snr,
             None,
             env.kind == MsgType::Beacon,
             medium,
+            freq_khz,
         )?;
         self.store
             .add_hop(&env.msg_id, env.origin.as_str(), medium, snr)?;

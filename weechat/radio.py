@@ -144,7 +144,14 @@ def bar_item_cb(*_args):
         audio = (s.get("audio_label") or "?").upper()
         q = s.get("queue_out", 0)
         snr = s.get("snr") or 0
-        freq = s.get("frequency") or s.get("preset", "")
+        khz = s.get("freq_khz") or 0
+        band = (s.get("band") or "").upper()
+        if khz:
+            freq = "%.3f" % (float(khz) / 1000.0)
+            if band:
+                freq = "%s %s" % (freq, band)
+        else:
+            freq = s.get("frequency") or s.get("preset", "")
         if s.get("ptt_on"):
             ptt = _col(ORANGE) + "TX"
         else:
@@ -180,7 +187,87 @@ def bar_item_cb(*_args):
 
 def timer_cb(_data, _remaining):
     weechat.bar_item_update("radio")
+    s = _status()
+    if s:
+        _sync_nicks(s)
     return weechat.WEECHAT_RC_OK
+
+
+def _band_tag(h):
+    band = (h.get("band") or "").strip()
+    if band:
+        return band
+    medium = h.get("medium") or ""
+    call = h.get("callsign") or ""
+    if medium in ("inet", "lan") or call.startswith("~"):
+        return "inet"
+    return "?"
+
+
+def _sync_nicks(s):
+    heard = s.get("heard") or []
+    infolist = weechat.infolist_get("buffer", "", "")
+    if not infolist:
+        return
+    while weechat.infolist_next(infolist):
+        plugin = weechat.infolist_string(infolist, "plugin") or ""
+        if plugin != "irc":
+            continue
+        buf = weechat.infolist_pointer(infolist, "pointer")
+        if not buf:
+            continue
+        chan = weechat.buffer_get_string(buf, "localvar_channel") or ""
+        _sync_buffer_nicks(buf, chan, heard)
+    weechat.infolist_free(infolist)
+
+
+def _sync_buffer_nicks(buf, channel, heard):
+    group = weechat.nicklist_search_group(buf, "", "radio")
+    if not group:
+        group = weechat.nicklist_add_group(
+            buf, "", "radio", "weechat.color.nicklist_group", 1
+        )
+    chan = (channel or "").lower()
+    wanted = []
+    for h in heard:
+        call = h.get("callsign") or ""
+        if not call:
+            continue
+        chans = [c.lower() for c in (h.get("channels") or [])]
+        if chan.startswith("#") or chan.startswith("&"):
+            if chans and chan not in chans:
+                continue
+        elif chan and call.lower() != chan.lower():
+            continue
+        wanted.append(h)
+    if not wanted:
+        wanted = [h for h in heard if h.get("callsign")]
+    wanted_calls = set()
+    for h in wanted:
+        call = h.get("callsign") or ""
+        if not call:
+            continue
+        wanted_calls.add(call)
+        prefix = "[%s] " % _band_tag(h)
+        nick = weechat.nicklist_search_nick(buf, group, call)
+        if nick:
+            weechat.nicklist_nick_set(buf, nick, "prefix", prefix)
+        else:
+            weechat.nicklist_add_nick(buf, group, call, "111", prefix, "209", 1)
+    inf = weechat.infolist_get("nicklist", buf, "")
+    stale = []
+    if inf:
+        while weechat.infolist_next(inf):
+            gname = weechat.infolist_string(inf, "group_name") or ""
+            nname = weechat.infolist_string(inf, "name") or ""
+            kind = weechat.infolist_string(inf, "type") or ""
+            if gname == "radio" and kind == "nick" and nname not in wanted_calls:
+                stale.append(nname)
+        weechat.infolist_free(inf)
+    for n in stale:
+        ptr = weechat.nicklist_search_nick(buf, group, n)
+        if ptr:
+            weechat.nicklist_remove_nick(buf, ptr)
 
 
 def radio_cmd(data, buffer, args):

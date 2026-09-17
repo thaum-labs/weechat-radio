@@ -325,8 +325,13 @@ pub async fn run(cfg: &Config) -> Result<()> {
                     }
                     KeyCode::Tab => {
                         if let Some(prefix) = app.input.split_whitespace().last() {
-                            if let Some(n) = app.cur().nicks.iter().find(|n| n.starts_with(prefix))
-                            {
+                            let from_heard = tagged_heard(&app, Some(&app.cur().name));
+                            let hit = from_heard
+                                .iter()
+                                .map(|(c, _)| c.as_str())
+                                .chain(app.cur().nicks.iter().map(|s| s.as_str()))
+                                .find(|n| n.starts_with(prefix));
+                            if let Some(n) = hit {
                                 let p = prefix.to_string();
                                 app.input = app.input.replacen(&p, n, 1);
                             }
@@ -593,13 +598,17 @@ fn draw(f: &mut Frame, app: &App) {
         left[1],
     );
 
-    let heard: Vec<ListItem> = if app.heard.is_empty() {
+    let heard_rows = tagged_heard(app, None);
+    let heard: Vec<ListItem> = if heard_rows.is_empty() {
         vec![ListItem::new("—")]
     } else {
-        app.heard.iter().map(|n| ListItem::new(n.clone())).collect()
+        heard_rows
+            .iter()
+            .map(|(_, d)| ListItem::new(d.clone()))
+            .collect()
     };
     f.render_widget(
-        List::new(heard).block(panel("HEARD", &format!("{}", app.heard.len()), app)),
+        List::new(heard).block(panel("HEARD", &format!("{}", heard_rows.len()), app)),
         left[2],
     );
 
@@ -635,14 +644,32 @@ fn draw(f: &mut Frame, app: &App) {
 
     if app.show_nicks {
         let right = Layout::vertical([Constraint::Min(4), Constraint::Length(9)]).split(body[2]);
-        let nicks: Vec<ListItem> = app
-            .cur()
-            .nicks
-            .iter()
-            .map(|n| ListItem::new(n.clone()))
-            .collect();
+        let nick_rows = tagged_heard(app, Some(&app.cur().name));
+        let nicks: Vec<ListItem> = if nick_rows.is_empty() {
+            app.cur()
+                .nicks
+                .iter()
+                .map(|n| ListItem::new(n.clone()))
+                .collect()
+        } else {
+            nick_rows
+                .iter()
+                .map(|(_, d)| ListItem::new(d.clone()))
+                .collect()
+        };
         f.render_widget(
-            List::new(nicks).block(panel("NICKS", &format!("{}", app.cur().nicks.len()), app)),
+            List::new(nicks).block(panel(
+                "NICKS",
+                &format!(
+                    "{}",
+                    if nick_rows.is_empty() {
+                        app.cur().nicks.len()
+                    } else {
+                        nick_rows.len()
+                    }
+                ),
+                app,
+            )),
             right[0],
         );
         let net_rows = [
@@ -659,10 +686,23 @@ fn draw(f: &mut Frame, app: &App) {
             (
                 "freq",
                 snap.map(|s| {
-                    if s.frequency.is_empty() {
+                    if s.freq_khz == 0 {
                         s.preset.clone()
                     } else {
-                        s.frequency.clone()
+                        format!(
+                            "{} {} ({})",
+                            crate::band::fmt_mhz(s.freq_khz),
+                            if s.band.is_empty() {
+                                "?"
+                            } else {
+                                s.band.as_str()
+                            },
+                            if s.freq_source.is_empty() {
+                                "manual"
+                            } else {
+                                s.freq_source.as_str()
+                            }
+                        )
                     }
                 })
                 .unwrap_or_else(|| app.preset.as_str().into()),
@@ -692,6 +732,46 @@ fn draw(f: &mut Frame, app: &App) {
             .block(panel("INPUT", "ENTER SEND", app)),
         chunks[3],
     );
+}
+
+fn tagged_heard(app: &App, channel: Option<&str>) -> Vec<(String, String)> {
+    let Some(s) = app.snapshot.as_ref() else {
+        return Vec::new();
+    };
+    let ch = channel.unwrap_or("");
+    let ch_buf = ch.starts_with('#') || ch.starts_with('&');
+    let mut rows: Vec<(String, String)> = s
+        .heard
+        .iter()
+        .filter(|h| {
+            if channel.is_none() || ch.is_empty() {
+                true
+            } else if ch_buf {
+                h.channels.iter().any(|c| c.eq_ignore_ascii_case(ch)) || h.channels.is_empty()
+            } else {
+                h.callsign.eq_ignore_ascii_case(ch)
+            }
+        })
+        .map(|h| {
+            (
+                h.callsign.clone(),
+                format!("{} [{}]", h.callsign, h.band_tag()),
+            )
+        })
+        .collect();
+    if rows.is_empty() && channel.is_some() {
+        rows = s
+            .heard
+            .iter()
+            .map(|h| {
+                (
+                    h.callsign.clone(),
+                    format!("{} [{}]", h.callsign, h.band_tag()),
+                )
+            })
+            .collect();
+    }
+    rows
 }
 
 fn draw_boot(f: &mut Frame, app: &App) {

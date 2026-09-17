@@ -92,6 +92,9 @@
       </ul>
       <p><code>!!</code> at the start of a message is emergency (sent twice). <code>!</code> is priority. Unacked frames are retried and the modem steps down: QPSK 1/2 → RDM-1200S → RDM-600S → RDM-300S → MFSK-32R.</p>
 
+      <h2>BEACON</h2>
+      <p>Type BEACON. Body is UTF-8 <code>B|&lt;mode&gt;|&lt;khz&gt;</code> (example <code>B|internet-radio|144950</code>). The kHz field is the origin’s dial so gateways and the map know which band a station is on. Legacy <code>B|&lt;mode&gt;</code> is still decoded. Beacons heard on RF are also tagged with the receiving station’s own dial.</p>
+
       <h2>Callsign packing</h2>
       <p>6 bits per character, 8 characters, alphabet:</p>
       <pre class="plain"> space A–Z 0–9 / - ~</pre>

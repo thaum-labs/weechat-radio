@@ -30,9 +30,11 @@ Body is JSON metadata only. Never send message text.
   "ber": 0.0,
   "queue": 0,
   "hub_ok": true,
-  "settings": { "frequency": "144.950" },
+  "freq_khz": 144950,
+  "band": "2m",
+  "settings": { "frequency": "144.950 MHz", "band": "2m" },
   "events": [
-    { "ts": 1710000000, "kind": "tx", "origin": "G4ABC", "dest": "NET", "hops": 3 }
+    { "ts": 1710000000, "kind": "tx", "origin": "G4ABC", "dest": "NET", "hops": 3, "band": "2m" }
   ]
 }
 ```
@@ -41,9 +43,10 @@ Body is JSON metadata only. Never send message text.
 
 ## Read
 
-- `GET /api/v1/nodes` — live stations and settings
+- `GET /api/v1/nodes` — live stations and settings (`band`, `freq_khz`, `frequency`)
 - `GET /api/v1/events?since=&limit=` — TX/RX/relay events
-- `GET /api/v1/hubs` — hub/relay status
+- `GET /api/v1/hubs` — hub/relay status, including `bands`
+- `GET /api/v1/bands` — stations grouped by band (`band`, `freq_khz`, `gateways`, `stations`)
 - `GET /api/v1/stats` — totals
 - `GET /ws/live` — WebSocket firehose of the same events
 - `GET /healthz` — `ok`

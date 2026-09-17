@@ -189,9 +189,16 @@ const COMMANDS: &[Cmd] = &[
         send_bare: true,
     },
     Cmd {
+        name: "freq",
+        usage: "/freq [MHz]",
+        summary: "Show or set this station's frequency",
+        args: &[],
+        send_bare: true,
+    },
+    Cmd {
         name: "qsy",
         usage: "/qsy [MHz]",
-        summary: "Show or request frequency",
+        summary: "Change frequency (CAT if available)",
         args: &[],
         send_bare: true,
     },

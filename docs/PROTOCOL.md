@@ -60,6 +60,10 @@ Well-known group indices: `0` = `BULLETIN`, `1` = `BEACON`.
 
 Slow HF presets (`hf-poor`, `hf-weak`, `hf-deep`) send unsigned on RF so a chat line fits one PHY frame. Internet copies are still signed when the mode uses the hub.
 
+## BEACON
+
+Type BEACON. Body is UTF-8 `B|<mode>|<khz>` (example `B|internet-radio|144950`). The kHz field is the origin's dial so gateways and the map know which band a station is on. Legacy `B|<mode>` is still decoded; frequency is unknown. Beacons heard on RF are also tagged with the receiving station's own dial.
+
 ## Callsign packing
 
 6 bits per character, 8 characters, alphabet:

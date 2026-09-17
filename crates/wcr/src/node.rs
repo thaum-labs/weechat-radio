@@ -69,6 +69,14 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         s.mode = cfg.mode;
         s.ptt = cfg.modem.ptt.clone();
         s.preset = cfg.modem.preset.clone();
+        s.set_freq(
+            cfg.rf.frequency_khz,
+            if cfg.rf.frequency_khz > 0 {
+                "manual"
+            } else {
+                "none"
+            },
+        );
     }
 
     let (irc_tx, mut irc_rx) = mpsc::channel(64);
@@ -171,6 +179,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             &cfg.callsign,
             &keys,
             vec![],
+            cfg.rf.frequency_khz,
             hub_in_tx,
             hub_flag.clone(),
         )
@@ -373,12 +382,62 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     origin,
                     dest,
                     seq,
-                    format!("B|{}", cfg.mode.as_str()).into_bytes(),
+                    format!("B|{}|{}", cfg.mode.as_str(), rt_b.snap.lock().freq_khz).into_bytes(),
                     1,
                     flags,
                 ) {
                     env.kind = MsgType::Beacon;
                     let _ = dispatch(&rt_b, &env).await;
+                }
+            }
+        });
+    }
+
+    // Rigctl poll + heard refresh + hub frequency announce
+    {
+        let rt_f = rt.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(5));
+            let mut last_hub_khz = u32::MAX;
+            let mut last_hub = std::time::Instant::now()
+                .checked_sub(Duration::from_secs(60))
+                .unwrap_or_else(std::time::Instant::now);
+            let mut last_rig = std::time::Instant::now()
+                .checked_sub(Duration::from_secs(10))
+                .unwrap_or_else(std::time::Instant::now);
+            loop {
+                tick.tick().await;
+                if rt_f.cfg.lock().rig.enabled && last_rig.elapsed() >= Duration::from_secs(10) {
+                    last_rig = std::time::Instant::now();
+                    if let Some(c) = &rt_f.control {
+                        if let Ok(resp) = c.rigctl("f").await {
+                            if let Some(khz) = crate::band::parse_rigctl_hz(&resp) {
+                                rt_f.snap.lock().set_freq(khz, "rig");
+                            }
+                        }
+                    }
+                }
+                refresh_heard(&rt_f);
+                if let Some(h) = &rt_f.hub {
+                    let (khz, heard, hub_ok) = {
+                        let s = rt_f.snap.lock();
+                        (
+                            s.freq_khz,
+                            s.heard
+                                .iter()
+                                .map(|x| x.callsign.clone())
+                                .collect::<Vec<_>>(),
+                            s.hub_ok,
+                        )
+                    };
+                    if hub_ok
+                        && (khz != last_hub_khz || last_hub.elapsed() >= Duration::from_secs(60))
+                    {
+                        let body = serde_json::json!({"heard": heard, "freq_khz": khz}).to_string();
+                        let _ = h.send_text(&body).await;
+                        last_hub_khz = khz;
+                        last_hub = std::time::Instant::now();
+                    }
                 }
             }
         });
@@ -453,7 +512,7 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
             send_chat(rt, &target, &text).await?;
         }
         IrcEventKind::Radio { args } => {
-            let reply = radio_cmd(&rt.cfg, &rt.store, &rt.snap, &args, ev.client_id).await;
+            let reply = radio_cmd(rt, &args).await;
             rt.irc.send_radio_reply(ev.client_id, &reply).await;
         }
         IrcEventKind::Join { channel } => {
@@ -521,6 +580,14 @@ async fn send_chat(rt: &Runtime, target: &str, text: &str) -> Result<()> {
         let _ = rt.store.set_hold(&env.msg_id, hold, env.hops_left);
     }
     rt.irc.tagmsg_delivery(&env.msg_id.hex(), "sent").await;
+    let band = {
+        let s = rt.snap.lock();
+        if s.band.is_empty() {
+            None
+        } else {
+            Some(s.band.clone())
+        }
+    };
     let _ = rt.tel.send(TelemetryEvent {
         ts: env.ts as u64,
         kind: "tx".into(),
@@ -529,6 +596,7 @@ async fn send_chat(rt: &Runtime, target: &str, text: &str) -> Result<()> {
         hops: Some(env.hops_left),
         snr: None,
         msgid: Some(env.msg_id.hex()),
+        band,
     });
     if prio == Priority::Emergency && cfg_g.mode.uses_radio() {
         let delay = Duration::from_millis(cfg_g.rf.emergency_dup_ms as u64);
@@ -679,14 +747,16 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
     }
     if env.kind == MsgType::Frag {
         let reconstructed = rt.assembler.lock().push(&env)?;
-        let _ = rt.engine.on_rx(&env, medium, snr)?;
+        let freq = heard_freq(rt, &env, medium);
+        let _ = rt.engine.on_rx(&env, medium, snr, freq)?;
         forward_gateway(rt, &env, medium).await?;
         if let Some(full) = reconstructed {
             return Box::pin(on_envelope(rt, full, medium, snr)).await;
         }
         return Ok(());
     }
-    let decision = rt.engine.on_rx(&env, medium, snr)?;
+    let freq = heard_freq(rt, &env, medium);
+    let decision = rt.engine.on_rx(&env, medium, snr, freq)?;
     if decision.action == Action::Suppress {
         if let Some(air) = &rt.air {
             air.cancel(env.msg_id);
@@ -802,9 +872,14 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
         MsgType::Want => {
             handle_want(rt, &env).await?;
         }
-        MsgType::Beacon | MsgType::Ping | MsgType::File => {}
+        MsgType::Beacon => {}
+        MsgType::Ping | MsgType::File => {}
         MsgType::Frag => {}
     }
+    let band = {
+        let s = rt.snap.lock();
+        s.band.clone()
+    };
     let _ = rt.tel.send(TelemetryEvent {
         ts: crate::proto::now_ts() as u64,
         kind: "rx".into(),
@@ -813,7 +888,9 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
         hops: Some(env.hops_left),
         snr,
         msgid: Some(env.msg_id.hex()),
+        band: if band.is_empty() { None } else { Some(band) },
     });
+    refresh_heard(rt);
     forward_gateway(rt, &env, medium).await
 }
 
@@ -903,13 +980,71 @@ async fn handle_want(rt: &Runtime, env: &Envelope) -> Result<()> {
     Ok(())
 }
 
-async fn radio_cmd(
-    cfg: &Arc<Mutex<Config>>,
-    store: &Arc<Store>,
-    snap: &Arc<SharedStatus>,
-    args: &str,
-    _id: u64,
-) -> String {
+fn heard_freq(rt: &Runtime, env: &Envelope, medium: &str) -> Option<u32> {
+    if env.kind == MsgType::Beacon {
+        if let Some(khz) = crate::band::beacon_khz(&env.body) {
+            return Some(khz);
+        }
+    }
+    if medium == "rf" {
+        let khz = rt.snap.lock().freq_khz;
+        if khz > 0 {
+            return Some(khz);
+        }
+    }
+    None
+}
+
+fn refresh_heard(rt: &Runtime) {
+    let now = crate::proto::now_ts();
+    let cutoff = now.saturating_sub(600);
+    let Ok(list) = rt.store.heard_list() else {
+        return;
+    };
+    let mut briefs = Vec::new();
+    for h in list.into_iter().filter(|h| h.last_heard >= cutoff).take(64) {
+        let channels = rt
+            .store
+            .channels_for(&h.callsign, cutoff)
+            .unwrap_or_default();
+        let band = h
+            .band
+            .clone()
+            .filter(|b| !b.is_empty())
+            .or_else(|| crate::band::band_for_khz(h.freq_khz).map(|s| s.to_string()))
+            .unwrap_or_default();
+        briefs.push(crate::status::HeardBrief {
+            callsign: h.callsign,
+            band,
+            freq_khz: h.freq_khz,
+            medium: h.medium,
+            last_heard: h.last_heard,
+            snr: h.snr,
+            gateway: h.gateway,
+            channels,
+        });
+    }
+    rt.snap.lock().heard = briefs;
+}
+
+fn persist_cfg(cfg: &Config) {
+    let _ = cfg.save(&Config::default_path());
+}
+
+fn set_manual_freq(rt: &Runtime, khz: u32) -> String {
+    {
+        let mut cfg = rt.cfg.lock();
+        cfg.rf.frequency_khz = khz;
+        persist_cfg(&cfg);
+    }
+    rt.snap.lock().set_freq(khz, "manual");
+    crate::band::describe(khz)
+}
+
+async fn radio_cmd(rt: &Runtime, args: &str) -> String {
+    let cfg = &rt.cfg;
+    let store = &rt.store;
+    let snap = &rt.snap;
     let mut sp = args.split_whitespace();
     let cmd = sp.next().unwrap_or("").to_ascii_lowercase();
     match cmd.as_str() {
@@ -964,10 +1099,11 @@ async fn radio_cmd(
                 format!(" | tnc {}", s.tnc)
             };
             format!(
-                "{} | {} | {} | {} | SNR {:.1} | tx {} | retry {} | audio {} | q {}/{} | occ {}% air {} | hub {}{}",
+                "{} | {} | {} {} | {} | SNR {:.1} | tx {} | retry {} | audio {} | q {}/{} | occ {}% air {} | hub {}{}",
                 s.mode.display_name(),
                 if s.deferred { "wait" } else { &s.channel },
-                s.frequency,
+                if s.frequency.is_empty() { "—" } else { s.frequency.trim_end_matches(" MHz") },
+                if s.band.is_empty() { "—" } else { &s.band },
                 s.preset,
                 s.snr,
                 if s.tx_rung.is_empty() { "—" } else { &s.tx_rung },
@@ -1040,11 +1176,40 @@ async fn radio_cmd(
                 "usage: /radio history purge [target]".into()
             }
         }
+        "freq" => {
+            if let Some(mhz) = sp.next() {
+                match crate::band::parse_mhz(mhz) {
+                    Some(khz) => set_manual_freq(rt, khz),
+                    None => "usage: /radio freq <MHz>  (example: 144.950)".into(),
+                }
+            } else {
+                let s = snap.lock();
+                crate::band::describe(s.freq_khz)
+            }
+        }
         "qsy" => {
             if let Some(mhz) = sp.next() {
-                format!("qsy requested to {mhz} MHz (send via rigctl if configured)")
+                let Some(khz) = crate::band::parse_mhz(mhz) else {
+                    return "usage: /radio qsy <MHz>".into();
+                };
+                let rig_on = cfg.lock().rig.enabled;
+                if rig_on {
+                    if let Some(c) = &rt.control {
+                        let hz = khz as u64 * 1000;
+                        if c.rigctl(&format!("F {hz}")).await.is_ok() {
+                            snap.lock().set_freq(khz, "rig");
+                            return format!(
+                                "qsy {} ({})",
+                                crate::band::fmt_mhz(khz),
+                                crate::band::band_label(khz)
+                            );
+                        }
+                    }
+                }
+                set_manual_freq(rt, khz)
             } else {
-                snap.lock().frequency.clone()
+                let s = snap.lock();
+                crate::band::describe(s.freq_khz)
             }
         }
         "ptt" => {
@@ -1112,7 +1277,7 @@ async fn radio_cmd(
             }
         }
         "" | "help" => {
-            "RADIO commands: mode preset status group queue trace history qsy ptt checkin net mute theme update. Channels: /join #name  /invite CALL"
+            "RADIO commands: mode preset status group queue trace history freq qsy ptt checkin net mute theme update. Channels: /join #name  /invite CALL"
                 .into()
         }
         other => format!("unknown RADIO subcommand '{other}'. Try /radio help"),

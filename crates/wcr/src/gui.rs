@@ -277,6 +277,7 @@ struct GuiApp {
     bt_name: String,
     /// Serial path for a KISS TNC on a port (`COM7`, `/dev/rfcomm0`).
     serial_path: String,
+    freq_mhz: String,
     /// Re-open the setup panel from the toolbar to change the radio path.
     show_setup: bool,
     error: String,
@@ -340,6 +341,7 @@ impl GuiApp {
                 form.bt_name
             },
             serial_path: form.serial,
+            freq_mhz: form.freq_mhz,
             show_setup: false,
             error: String::new(),
             draft: String::new(),
@@ -457,6 +459,15 @@ impl GuiApp {
             cfg.modem.manage = true;
         }
         cfg.ui.theme = "tron".into();
+        if self.path != 0 {
+            if let Some(khz) = crate::band::parse_mhz(&self.freq_mhz) {
+                cfg.rf.frequency_khz = khz;
+            } else if self.path == 3 {
+                cfg.rf.frequency_khz = 7045;
+            } else {
+                cfg.rf.frequency_khz = 144950;
+            }
+        }
         if let Err(e) = config::ensure_dirs() {
             self.error = e.to_string();
             return;
@@ -1029,6 +1040,22 @@ impl eframe::App for GuiApp {
                             );
                         });
                     }
+                    if self.path != 0 {
+                        ui.horizontal(|ui| {
+                            ui.add_space(20.0);
+                            ui.label(RichText::new("Freq   ").color(DIM));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.freq_mhz)
+                                    .desired_width(120.0)
+                                    .hint_text(if self.path == 3 { "7.045" } else { "144.950" }),
+                            );
+                            ui.label(
+                                RichText::new("MHz — what the radio is on")
+                                    .color(DIM)
+                                    .font(FontId::monospace(11.0)),
+                            );
+                        });
+                    }
                     ui.add_space(16.0);
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
@@ -1111,6 +1138,22 @@ impl eframe::App for GuiApp {
                         s.channel.to_uppercase()
                     };
                     kv(ui, "PTT", &ptt_label, if s.ptt_on { ORANGE } else { DIM });
+                    let freq_row = if s.freq_khz == 0 {
+                        s.preset.clone()
+                    } else {
+                        let src = if s.freq_source.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" ({})", s.freq_source)
+                        };
+                        format!(
+                            "{} {}{}",
+                            crate::band::fmt_mhz(s.freq_khz),
+                            if s.band.is_empty() { "?" } else { &s.band },
+                            src
+                        )
+                    };
+                    kv(ui, "FREQ", &freq_row, PURPLE);
                     if !s.tnc.is_empty() {
                         kv(
                             ui,
@@ -1412,6 +1455,41 @@ impl eframe::App for GuiApp {
                             .color(DIM)
                             .font(FontId::monospace(11.0)),
                     );
+                }
+                if let Some(s) = &self.status {
+                    let ch = self.active_channel.clone();
+                    let rows: Vec<&crate::status::HeardBrief> = {
+                        let ch_buf = ch.starts_with('#') || ch.starts_with('&');
+                        let filtered: Vec<_> = s
+                            .heard
+                            .iter()
+                            .filter(|h| {
+                                if ch_buf {
+                                    h.channels.iter().any(|c| c.eq_ignore_ascii_case(&ch))
+                                        || h.channels.is_empty()
+                                } else {
+                                    h.callsign.eq_ignore_ascii_case(&ch)
+                                }
+                            })
+                            .collect();
+                        if filtered.is_empty() {
+                            s.heard.iter().collect()
+                        } else {
+                            filtered
+                        }
+                    };
+                    let rows = rows.into_iter().take(16).collect::<Vec<_>>();
+                    if !rows.is_empty() {
+                        ui.add_space(4.0);
+                        ui.label(RichText::new("stations").color(DIM).monospace());
+                        for h in rows {
+                            ui.label(
+                                RichText::new(format!("{} [{}]", h.callsign, h.band_tag()))
+                                    .color(ACCENT)
+                                    .font(FontId::monospace(12.0)),
+                            );
+                        }
+                    }
                 }
                 ui.add_space(6.0);
                 let active = self.active_channel.clone();
@@ -1885,6 +1963,7 @@ struct Form {
     bt_name: String,
     bt_addr: String,
     serial: String,
+    freq_mhz: String,
 }
 
 fn load_form() -> Form {
@@ -1911,6 +1990,11 @@ fn load_form() -> Form {
             bt_name: cfg.tnc.bt_name,
             bt_addr: cfg.tnc.bt_addr,
             serial: cfg.tnc.serial,
+            freq_mhz: if cfg.rf.frequency_khz > 0 {
+                crate::band::fmt_mhz(cfg.rf.frequency_khz)
+            } else {
+                String::new()
+            },
         };
     }
     Form::default()

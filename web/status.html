@@ -48,6 +48,10 @@
           <h3 class="title"><p>hubs</p><p>relay</p></h3>
           <div id="hubs-panel" class="mod-body">loading…</div>
         </article>
+        <article class="mod activated" style="grid-column: 1 / -1">
+          <h3 class="title"><p>bands</p><p>rf</p></h3>
+          <div id="bands-panel" class="mod-body">loading…</div>
+        </article>
       </div>
     </main>
   </div>
@@ -65,12 +69,17 @@
       fetch(API + "/api/v1/stats").then(r => r.json()),
       fetch(API + "/api/v1/hubs").then(r => r.json()),
       fetch(API + "/healthz").then(r => r.text()),
-    ]).then(([s, h, z]) => {
+      fetch(API + "/api/v1/bands").then(r => r.json()).catch(() => ({ bands: [] })),
+    ]).then(([s, h, z, b]) => {
       document.getElementById("n-health").textContent = z.trim();
       document.getElementById("health-panel").innerHTML = kv({ health: z.trim(), api: API.replace(/^https?:\/\//, "") });
       document.getElementById("stats-panel").innerHTML = kv(s);
       const hubs = (h.hubs || [h]);
       document.getElementById("hubs-panel").innerHTML = hubs.map(x => kv(x)).join("");
+      const bands = b.bands || hubs[0] && hubs[0].bands || [];
+      document.getElementById("bands-panel").innerHTML = bands.length
+        ? bands.map(x => kv(x)).join("")
+        : "no RF bands reported yet";
     }).catch(e => {
       document.getElementById("health-panel").textContent = String(e);
       document.getElementById("n-health").textContent = "down";

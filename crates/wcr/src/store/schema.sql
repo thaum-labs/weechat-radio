@@ -65,7 +65,9 @@ CREATE TABLE IF NOT EXISTS heard (
     mode TEXT,
     grid TEXT,
     gateway INTEGER NOT NULL DEFAULT 0,
-    medium TEXT NOT NULL DEFAULT 'rf'
+    medium TEXT NOT NULL DEFAULT 'rf',
+    freq_khz INTEGER NOT NULL DEFAULT 0,
+    band TEXT
 );
 
 CREATE TABLE IF NOT EXISTS hops (

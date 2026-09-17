@@ -34,7 +34,9 @@ CREATE TABLE IF NOT EXISTS nodes (
     queue INTEGER,
     hub_ok INTEGER,
     last_seen INTEGER NOT NULL,
-    settings TEXT
+    settings TEXT,
+    freq_khz INTEGER NOT NULL DEFAULT 0,
+    band TEXT
 );
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,6 +66,7 @@ impl TelemetryDb {
         }
         let conn = Connection::open(path)?;
         conn.execute_batch(SCHEMA)?;
+        Self::migrate(&conn);
         Ok(Self {
             conn: Mutex::new(conn),
             last_ts: Mutex::new(HashMap::new()),
@@ -73,10 +76,19 @@ impl TelemetryDb {
     pub fn open_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
+        Self::migrate(&conn);
         Ok(Self {
             conn: Mutex::new(conn),
             last_ts: Mutex::new(HashMap::new()),
         })
+    }
+
+    fn migrate(conn: &Connection) {
+        let _ = conn.execute(
+            "ALTER TABLE nodes ADD COLUMN freq_khz INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute("ALTER TABLE nodes ADD COLUMN band TEXT", []);
     }
 
     pub fn bind_callsign(&self, call: &str, pk: &[u8; 32]) -> Result<()> {
@@ -129,13 +141,13 @@ impl TelemetryDb {
         };
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT INTO nodes(callsign, grid, lat, lon, mode, ptt, preset, snr, ber, queue, hub_ok, last_seen, settings)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
+            "INSERT INTO nodes(callsign, grid, lat, lon, mode, ptt, preset, snr, ber, queue, hub_ok, last_seen, settings, freq_khz, band)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)
              ON CONFLICT(callsign) DO UPDATE SET
                 grid=excluded.grid, lat=excluded.lat, lon=excluded.lon, mode=excluded.mode,
                 ptt=excluded.ptt, preset=excluded.preset, snr=excluded.snr, ber=excluded.ber,
                 queue=excluded.queue, hub_ok=excluded.hub_ok, last_seen=excluded.last_seen,
-                settings=excluded.settings",
+                settings=excluded.settings, freq_khz=excluded.freq_khz, band=excluded.band",
             params![
                 report.callsign.to_ascii_uppercase(),
                 report.grid,
@@ -150,6 +162,8 @@ impl TelemetryDb {
                 report.hub_ok as i64,
                 report.ts as i64,
                 serde_json::to_string(&report.settings).unwrap_or_else(|_| "{}".into()),
+                report.freq_khz as i64,
+                report.band,
             ],
         )?;
         Ok(())
@@ -179,10 +193,17 @@ impl TelemetryDb {
     pub fn nodes(&self) -> Vec<serde_json::Value> {
         let conn = self.conn.lock();
         let mut stmt = conn
-            .prepare("SELECT callsign, grid, lat, lon, mode, ptt, preset, snr, ber, queue, hub_ok, last_seen, settings FROM nodes")
+            .prepare("SELECT callsign, grid, lat, lon, mode, ptt, preset, snr, ber, queue, hub_ok, last_seen, settings, freq_khz, band FROM nodes")
             .unwrap();
         let rows = stmt
             .query_map([], |r| {
+                let freq_khz = r.get::<_, i64>(13).unwrap_or(0) as u32;
+                let band: Option<String> = r.get(14)?;
+                let frequency = if freq_khz == 0 {
+                    serde_json::Value::Null
+                } else {
+                    serde_json::Value::String(crate::band::fmt_mhz(freq_khz))
+                };
                 Ok(serde_json::json!({
                     "callsign": r.get::<_, String>(0)?,
                     "grid": r.get::<_, Option<String>>(1)?,
@@ -197,6 +218,9 @@ impl TelemetryDb {
                     "hub_ok": r.get::<_, Option<i64>>(10)? == Some(1),
                     "last_seen": r.get::<_, i64>(11)?,
                     "settings": serde_json::from_str::<serde_json::Value>(&r.get::<_, String>(12).unwrap_or_else(|_| "{}".into())).unwrap_or(serde_json::json!({})),
+                    "freq_khz": freq_khz,
+                    "band": band.unwrap_or_default(),
+                    "frequency": frequency,
                 }))
             })
             .unwrap();
@@ -256,6 +280,10 @@ pub struct NodeReport {
     pub settings: serde_json::Value,
     #[serde(default)]
     pub events: Vec<TelemetryEvent>,
+    #[serde(default)]
+    pub freq_khz: u32,
+    #[serde(default)]
+    pub band: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -272,6 +300,8 @@ pub struct TelemetryEvent {
     pub snr: Option<f32>,
     #[serde(default)]
     pub msgid: Option<String>,
+    #[serde(default)]
+    pub band: Option<String>,
 }
 
 pub async fn ingest_report(
@@ -329,6 +359,8 @@ pub async fn ingest_report(
         "callsign": report.callsign,
         "mode": report.mode,
         "grid": report.grid,
+        "band": report.band,
+        "freq_khz": report.freq_khz,
     }));
     Ok(Json(serde_json::json!({"ok": true})))
 }
@@ -382,8 +414,11 @@ pub async fn reporter_loop(
                             settings: serde_json::json!({
                                 "frequency": s.frequency,
                                 "audio": s.audio_label,
+                                "band": s.band,
                             }),
                             events: std::mem::take(&mut pending),
+                            freq_khz: s.freq_khz,
+                            band: s.band.clone(),
                         })
                     }
                 };

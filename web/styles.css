@@ -283,6 +283,10 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   height: 19px;
 }
 .mode-row .mode-name { min-width: 10em; }
+.band-row { cursor: pointer; }
+.band-row.on, .band-row.on .mode-name { color: var(--orange); }
+.band-row .band-freq { color: var(--purple); min-width: 4.5em; }
+.band-row .band-n { margin-left: auto; color: var(--accent); }
 .mode-bar {
   flex: 1;
   height: 4px;

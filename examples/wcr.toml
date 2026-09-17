@@ -76,6 +76,7 @@ congested_pct = 60    # drop beacons / defer relays at or above this occupancy
 ack_dither_ms = 800
 beacon_jitter_s = 15
 retry_jitter = true
+frequency_khz = 0     # dial in kHz; 0 unknown. Set by wizard / /radio freq; CAT overrides.
 
 [rig]
 enabled = false

@@ -48,6 +48,66 @@ pub struct StatusSnapshot {
     /// True while the KISS link to the radio is up.
     #[serde(default)]
     pub tnc_ok: bool,
+    /// Dial frequency in kHz (0 = unknown).
+    #[serde(default)]
+    pub freq_khz: u32,
+    /// Amateur / licence-free band name (`2m`, `40m`, `PMR446`, …).
+    #[serde(default)]
+    pub band: String,
+    /// `manual`, `rig`, or `none`.
+    #[serde(default)]
+    pub freq_source: String,
+    /// Stations heard recently, with band tags for nicklists.
+    #[serde(default)]
+    pub heard: Vec<HeardBrief>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HeardBrief {
+    pub callsign: String,
+    #[serde(default)]
+    pub band: String,
+    #[serde(default)]
+    pub freq_khz: u32,
+    #[serde(default)]
+    pub medium: String,
+    #[serde(default)]
+    pub last_heard: u32,
+    #[serde(default)]
+    pub snr: Option<f32>,
+    #[serde(default)]
+    pub gateway: bool,
+    #[serde(default)]
+    pub channels: Vec<String>,
+}
+
+impl HeardBrief {
+    pub fn band_tag(&self) -> &str {
+        if !self.band.is_empty() {
+            &self.band
+        } else if self.medium == "inet" || self.medium == "lan" || self.callsign.starts_with('~') {
+            "inet"
+        } else {
+            "?"
+        }
+    }
+}
+
+impl StatusSnapshot {
+    pub fn set_freq(&mut self, khz: u32, source: &str) {
+        self.freq_khz = khz;
+        self.band = crate::band::band_for_khz(khz).unwrap_or("").into();
+        self.freq_source = if khz == 0 {
+            "none".into()
+        } else {
+            source.into()
+        };
+        self.frequency = if khz == 0 {
+            String::new()
+        } else {
+            format!("{} MHz", crate::band::fmt_mhz(khz))
+        };
+    }
 }
 
 impl Default for StatusSnapshot {
@@ -79,6 +139,10 @@ impl Default for StatusSnapshot {
             deferred: false,
             tnc: String::new(),
             tnc_ok: false,
+            freq_khz: 0,
+            band: String::new(),
+            freq_source: "none".into(),
+            heard: Vec::new(),
         }
     }
 }
