@@ -92,6 +92,7 @@ if (mapStyleSelect) {
     const id = MAP_STYLES[mapStyleSelect.value] ? mapStyleSelect.value : "satellite";
     localStorage.setItem(MAP_STYLE_KEY, id);
     map.setStyle(rasterStyle(id));
+    map.once("idle", () => updateDayNight(true));
   });
 }
 
@@ -106,6 +107,190 @@ const playBtn = document.getElementById("play");
 const clock = document.getElementById("tape-clock");
 const connInfo = document.getElementById("conn-info");
 const wsState = document.getElementById("ws-state");
+const nightToggle = document.getElementById("map-night");
+const NIGHT_KEY = "wcr-map-night";
+const NIGHT_SRC = "daynight";
+const NIGHT_FILL = "daynight-fill";
+const TWILIGHT_ALTS = [0, -2, -4, -6, -8, -10, -12, -14, -16, -18];
+const TWILIGHT_OPACITY = [0.06, 0.11, 0.16, 0.21, 0.26, 0.31, 0.36, 0.41, 0.46];
+let lastNightWall = 0;
+
+if (nightToggle) {
+  const savedNight = localStorage.getItem(NIGHT_KEY);
+  nightToggle.checked = savedNight !== "0";
+}
+
+function wrapDeg(x, span) {
+  return ((x % span) + span) % span;
+}
+
+function julianDay(date) {
+  return date.getTime() / 86400000 + 2440587.5;
+}
+
+function gmstHours(jd) {
+  const d = jd - 2451545.0;
+  return wrapDeg(18.697374558 + 24.06570982441908 * d, 24);
+}
+
+function sunEquatorial(jd) {
+  const n = jd - 2451545.0;
+  const L = wrapDeg(280.46 + 0.9856474 * n, 360);
+  const g = wrapDeg(357.528 + 0.9856003 * n, 360) * (Math.PI / 180);
+  const lambda = wrapDeg(L + 1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g), 360) * (Math.PI / 180);
+  const eps = (23.4393 - 3.563e-7 * n) * (Math.PI / 180);
+  return {
+    alpha: Math.atan2(Math.cos(eps) * Math.sin(lambda), Math.cos(lambda)),
+    delta: Math.asin(Math.sin(eps) * Math.sin(lambda)),
+  };
+}
+
+function sunAltitude(latDeg, sun, ha) {
+  const lat = latDeg * (Math.PI / 180);
+  const s = Math.sin(lat) * Math.sin(sun.delta) + Math.cos(lat) * Math.cos(sun.delta) * Math.cos(ha);
+  return Math.asin(Math.max(-1, Math.min(1, s))) * (180 / Math.PI);
+}
+
+function terminatorLat(lng, sun, gst, altDeg) {
+  const ha = (gst + lng / 15) * 15 * (Math.PI / 180) - sun.alpha;
+  const target = altDeg || 0;
+  const nightPole = sun.delta < 0 ? 89.9 : -89.9;
+  let day = -nightPole;
+  let night = nightPole;
+  for (let i = 0; i < 22; i++) {
+    const mid = (day + night) / 2;
+    if (sunAltitude(mid, sun, ha) > target) day = mid;
+    else night = mid;
+  }
+  return Math.max(-89.9, Math.min(89.9, (day + night) / 2));
+}
+
+function shiftRing(ring, dLng) {
+  return ring.map(([lng, lat]) => [lng + dLng, lat]);
+}
+
+function worldPolys(ring) {
+  return [[ring], [shiftRing(ring, -360)], [shiftRing(ring, 360)]];
+}
+
+function closeBand(outer, inner) {
+  const ring = outer.concat(inner.slice().reverse());
+  ring.push(ring[0]);
+  return ring;
+}
+
+function nightGeoJSON(date) {
+  const jd = julianDay(date);
+  const gst = gmstHours(jd);
+  const sun = sunEquatorial(jd);
+  const step = 2;
+  const poleLat = sun.delta < 0 ? 89.9 : -89.9;
+  const lines = TWILIGHT_ALTS.map((alt) => {
+    const line = [];
+    for (let lng = -180; lng <= 180; lng += step) {
+      line.push([lng, terminatorLat(lng, sun, gst, alt)]);
+    }
+    return line;
+  });
+
+  const features = lines.slice(0, -1).map((outer, i) => ({
+    type: "Feature",
+    properties: { kind: `twilight-${i}` },
+    geometry: {
+      type: "MultiPolygon",
+      coordinates: worldPolys(closeBand(outer, lines[i + 1])),
+    },
+  }));
+
+  const coreLine = lines[lines.length - 1];
+  const core = [[-180, poleLat], ...coreLine, [180, poleLat], [-180, poleLat]];
+  features.push({
+    type: "Feature",
+    properties: { kind: "night" },
+    geometry: { type: "MultiPolygon", coordinates: worldPolys(core) },
+  });
+  return { type: "FeatureCollection", features };
+}
+
+function overlayDate() {
+  if (!scrub || Number(scrub.value) >= SPAN) return new Date();
+  return new Date(Date.now() - (SPAN - Number(scrub.value)) * 60000);
+}
+
+function nightOn() {
+  return !nightToggle || nightToggle.checked;
+}
+
+function twilightLayerId(i) {
+  return `daynight-twilight-${i}`;
+}
+
+function ensureDayNightLayers() {
+  if (!map.getSource(NIGHT_SRC)) {
+    map.addSource(NIGHT_SRC, { type: "geojson", data: nightGeoJSON(overlayDate()) });
+  }
+  TWILIGHT_OPACITY.forEach((opacity, i) => {
+    const id = twilightLayerId(i);
+    if (map.getLayer(id)) return;
+    map.addLayer({
+      id,
+      type: "fill",
+      source: NIGHT_SRC,
+      filter: ["==", ["get", "kind"], `twilight-${i}`],
+      paint: {
+        "fill-color": "#020617",
+        "fill-opacity": opacity,
+        "fill-antialias": true,
+      },
+    });
+  });
+  if (!map.getLayer(NIGHT_FILL)) {
+    map.addLayer({
+      id: NIGHT_FILL,
+      type: "fill",
+      source: NIGHT_SRC,
+      filter: ["==", ["get", "kind"], "night"],
+      paint: {
+        "fill-color": "#020617",
+        "fill-opacity": 0.5,
+        "fill-antialias": true,
+      },
+    });
+  }
+  const vis = nightOn() ? "visible" : "none";
+  TWILIGHT_OPACITY.forEach((_, i) => {
+    map.setLayoutProperty(twilightLayerId(i), "visibility", vis);
+  });
+  map.setLayoutProperty(NIGHT_FILL, "visibility", vis);
+}
+
+function updateDayNight(force) {
+  const now = Date.now();
+  if (!force && now - lastNightWall < 200 && map.getLayer(NIGHT_FILL)) return;
+  lastNightWall = now;
+  try {
+    ensureDayNightLayers();
+    const src = map.getSource(NIGHT_SRC);
+    if (src) src.setData(nightGeoJSON(overlayDate()));
+  } catch (_) {}
+}
+
+function onMapReadyForNight() {
+  updateDayNight(true);
+}
+map.on("load", onMapReadyForNight);
+map.on("style.load", onMapReadyForNight);
+if (map.loaded()) onMapReadyForNight();
+setInterval(() => {
+  if (nightOn() && (!scrub || Number(scrub.value) >= SPAN)) updateDayNight();
+}, 60000);
+
+if (nightToggle) {
+  nightToggle.addEventListener("change", () => {
+    localStorage.setItem(NIGHT_KEY, nightToggle.checked ? "1" : "0");
+    updateDayNight(true);
+  });
+}
 
 let liveMode = true;
 let playing = false;
@@ -273,6 +458,7 @@ async function ensureReplay() {
 
 function renderReplay() {
   clock.textContent = clockLabel();
+  updateDayNight();
   if (isLive()) {
     liveMode = true;
     return;
@@ -297,6 +483,7 @@ function goLive() {
   liveMode = true;
   setPlaying(false);
   clock.textContent = clockLabel();
+  updateDayNight();
 }
 
 function playStep() {
@@ -314,6 +501,7 @@ function playStep() {
 
 async function applyScrub() {
   clock.textContent = clockLabel();
+  updateDayNight();
   if (isLive()) {
     liveMode = true;
     return;
