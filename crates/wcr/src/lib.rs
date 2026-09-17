@@ -2,6 +2,7 @@
 //! WeeChat Radio library.
 
 pub mod air;
+pub mod band;
 pub mod cli;
 pub mod config;
 pub mod emcomm;

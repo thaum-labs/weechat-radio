@@ -82,6 +82,8 @@ pub struct HeardStation {
     pub grid: Option<String>,
     pub gateway: bool,
     pub medium: String,
+    pub freq_khz: u32,
+    pub band: Option<String>,
 }
 
 pub struct Store {
@@ -99,6 +101,7 @@ impl Store {
         conn.execute_batch(SCHEMA)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "FULL")?;
+        Self::migrate_heard(&conn);
         let s = Self {
             conn: Mutex::new(conn),
             max_age_hours,
@@ -111,11 +114,20 @@ impl Store {
     pub fn open_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
+        Self::migrate_heard(&conn);
         Ok(Self {
             conn: Mutex::new(conn),
             max_age_hours: 72,
             max_msgs: 10_000,
         })
+    }
+
+    fn migrate_heard(conn: &Connection) {
+        let _ = conn.execute(
+            "ALTER TABLE heard ADD COLUMN freq_khz INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute("ALTER TABLE heard ADD COLUMN band TEXT", []);
     }
 
     fn now() -> u32 {
@@ -403,24 +415,31 @@ impl Store {
         mode: Option<&str>,
         gateway: bool,
         medium: &str,
+        freq_khz: Option<u32>,
     ) -> Result<()> {
+        let khz = freq_khz.filter(|k| *k > 0);
+        let band = khz.and_then(crate::band::band_for_khz);
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO heard(callsign, last_heard, snr, mode, gateway, medium)
-             VALUES(?1,?2,?3,?4,?5,?6)
+            "INSERT INTO heard(callsign, last_heard, snr, mode, gateway, medium, freq_khz, band)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
              ON CONFLICT(callsign) DO UPDATE SET
                 last_heard = excluded.last_heard,
                 snr = COALESCE(excluded.snr, heard.snr),
                 mode = COALESCE(excluded.mode, heard.mode),
                 gateway = excluded.gateway,
-                medium = excluded.medium",
+                medium = excluded.medium,
+                freq_khz = CASE WHEN excluded.freq_khz > 0 THEN excluded.freq_khz ELSE heard.freq_khz END,
+                band = CASE WHEN excluded.freq_khz > 0 THEN excluded.band ELSE heard.band END",
             params![
                 callsign,
                 Self::now() as i64,
                 snr,
                 mode,
                 gateway as i64,
-                medium
+                medium,
+                khz.unwrap_or(0) as i64,
+                band,
             ],
         )?;
         Ok(())
@@ -429,7 +448,7 @@ impl Store {
     pub fn heard_list(&self) -> Result<Vec<HeardStation>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT callsign, last_heard, snr, mode, grid, gateway, medium FROM heard ORDER BY last_heard DESC",
+            "SELECT callsign, last_heard, snr, mode, grid, gateway, medium, freq_khz, band FROM heard ORDER BY last_heard DESC",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok(HeardStation {
@@ -440,9 +459,31 @@ impl Store {
                 grid: r.get(4)?,
                 gateway: r.get::<_, i64>(5)? != 0,
                 medium: r.get(6)?,
+                freq_khz: r.get::<_, i64>(7).unwrap_or(0) as u32,
+                band: r.get(8)?,
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    pub fn channels_for(&self, callsign: &str, since: u32) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT dest FROM messages
+             WHERE origin = ?1 AND is_group = 1 AND rx_time >= ?2",
+        )?;
+        let rows = stmt.query_map(params![callsign, since as i64], |r| r.get::<_, String>(0))?;
+        Ok(rows
+            .filter_map(|r| r.ok())
+            .filter(|d| !d.is_empty())
+            .map(|d| {
+                if d.starts_with('#') || d.starts_with('&') {
+                    d
+                } else {
+                    format!("#{d}")
+                }
+            })
+            .collect())
     }
 
     pub fn recently_heard(&self, callsign: &str, within_secs: u32) -> Result<bool> {

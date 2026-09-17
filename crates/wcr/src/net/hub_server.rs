@@ -39,6 +39,7 @@ pub struct Session {
     pub serves: HashSet<String>,
     pub tx: mpsc::Sender<Vec<u8>>,
     pub connected_at: std::time::Instant,
+    pub freq_khz: u32,
 }
 
 #[derive(Deserialize)]
@@ -50,6 +51,8 @@ struct Hello {
     ts: u64,
     #[serde(default)]
     heard: Vec<String>,
+    #[serde(default)]
+    freq_khz: u32,
 }
 
 pub async fn run_hub(
@@ -77,6 +80,7 @@ pub async fn run_hub(
         .route("/api/v1/nodes", get(telemetry::get_nodes))
         .route("/api/v1/events", get(get_events))
         .route("/api/v1/hubs", get(get_hubs))
+        .route("/api/v1/bands", get(get_bands))
         .route("/api/v1/stats", get(get_stats))
         .route("/healthz", get(|| async { "ok" }))
         .layer(CorsLayer::permissive())
@@ -185,6 +189,7 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
                 serves,
                 tx,
                 connected_at: std::time::Instant::now(),
+                freq_khz: hello.freq_khz,
             },
         );
     }
@@ -217,41 +222,50 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
                     }
                     let _ = st.store.insert(&env, crate::store::Delivery::Queued);
                     *st.forwarded.lock() += 1;
-                    route(&st, &env, &bin, &call);
+                    let (from_khz, from_band, to_bands) = route(&st, &env, &bin, &call);
                     let _ = st.live.send(serde_json::json!({
                         "type": "hub_forward",
                         "origin": env.origin.to_string(),
                         "dest": env.dest.to_string(),
                         "kind": env.kind.as_str(),
                         "id": env.msg_id.hex(),
+                        "from_band": from_band,
+                        "from_freq_khz": from_khz,
+                        "to_bands": to_bands,
                     }));
                     for full in extras {
                         if let Ok(raw) = full.encode() {
                             let _ = st.store.insert(&full, crate::store::Delivery::Queued);
                             *st.forwarded.lock() += 1;
-                            route(&st, &full, &raw, &call);
+                            let (from_khz, from_band, to_bands) = route(&st, &full, &raw, &call);
                             let _ = st.live.send(serde_json::json!({
                                 "type": "hub_forward",
                                 "origin": full.origin.to_string(),
                                 "dest": full.dest.to_string(),
                                 "kind": full.kind.as_str(),
                                 "id": full.msg_id.hex(),
+                                "from_band": from_band,
+                                "from_freq_khz": from_khz,
+                                "to_bands": to_bands,
                             }));
                         }
                     }
                 }
             }
             Message::Text(t) => {
-                if t.contains("heard") {
+                if t.contains("heard") || t.contains("freq_khz") {
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
-                        if let Some(list) = v.get("heard").and_then(|x| x.as_array()) {
-                            let mut g = st.sessions.lock();
-                            if let Some(s) = g.get_mut(&call) {
+                        let mut g = st.sessions.lock();
+                        if let Some(s) = g.get_mut(&call) {
+                            if let Some(list) = v.get("heard").and_then(|x| x.as_array()) {
                                 for h in list {
                                     if let Some(c) = h.as_str() {
                                         s.serves.insert(c.to_ascii_uppercase());
                                     }
                                 }
+                            }
+                            if let Some(khz) = v.get("freq_khz").and_then(|x| x.as_u64()) {
+                                s.freq_khz = khz as u32;
                             }
                         }
                     }
@@ -265,19 +279,88 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
     drop(writer);
 }
 
-fn route(st: &HubState, env: &Envelope, raw: &[u8], from: &str) {
+fn route(st: &HubState, env: &Envelope, raw: &[u8], from: &str) -> (u32, String, Vec<String>) {
     let dest = env.dest.to_string().to_ascii_uppercase();
-    let sessions: Vec<(String, mpsc::Sender<Vec<u8>>)> = {
+    let (from_khz, sessions) = {
         let g = st.sessions.lock();
-        g.iter()
+        let from_khz = g.get(from).map(|s| s.freq_khz).unwrap_or(0);
+        let sessions: Vec<(u32, mpsc::Sender<Vec<u8>>)> = g
+            .iter()
             .filter(|(call, s)| *call != from && (s.serves.contains(&dest) || *call == &dest))
-            .map(|(c, s)| (c.clone(), s.tx.clone()))
-            .collect()
+            .map(|(_, s)| (s.freq_khz, s.tx.clone()))
+            .collect();
+        (from_khz, sessions)
     };
-    for (_c, tx) in sessions {
+    let to_khz: Vec<u32> = sessions.iter().map(|(k, _)| *k).collect();
+    for (_khz, tx) in sessions {
         let _ = tx.try_send(raw.to_vec());
     }
-    // If nobody is serving dest, the store already holds it for later.
+    (
+        from_khz,
+        crate::band::band_label(from_khz),
+        crate::band::to_bands(to_khz),
+    )
+}
+
+fn collect_bands(st: &HubState) -> Vec<serde_json::Value> {
+    #[derive(Default)]
+    struct Acc {
+        freq_khz: u32,
+        gateways: u32,
+        stations: std::collections::BTreeSet<String>,
+    }
+    let mut map: std::collections::BTreeMap<String, Acc> = std::collections::BTreeMap::new();
+    {
+        let g = st.sessions.lock();
+        for (call, s) in g.iter() {
+            let band = crate::band::band_label(s.freq_khz);
+            let e = map.entry(band).or_default();
+            e.stations.insert(call.clone());
+            if s.freq_khz > 0 {
+                e.gateways += 1;
+                if e.freq_khz == 0 {
+                    e.freq_khz = s.freq_khz;
+                }
+            }
+        }
+    }
+    for n in st.telemetry.nodes() {
+        let call = n
+            .get("callsign")
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .to_string();
+        if call.is_empty() {
+            continue;
+        }
+        let khz = n.get("freq_khz").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let band = n
+            .get("band")
+            .and_then(|b| b.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| crate::band::band_label(khz));
+        let e = map.entry(band).or_default();
+        e.stations.insert(call);
+        if khz > 0 && e.freq_khz == 0 {
+            e.freq_khz = khz;
+        }
+    }
+    map.into_iter()
+        .map(|(band, acc)| {
+            serde_json::json!({
+                "band": band,
+                "freq_khz": acc.freq_khz,
+                "frequency": if acc.freq_khz == 0 {
+                    serde_json::Value::Null
+                } else {
+                    serde_json::Value::String(crate::band::fmt_mhz(acc.freq_khz))
+                },
+                "gateways": acc.gateways,
+                "stations": acc.stations.len(),
+            })
+        })
+        .collect()
 }
 
 async fn ws_live(ws: WebSocketUpgrade, State(st): State<HubState>) -> impl IntoResponse {
@@ -314,14 +397,20 @@ async fn get_events(
 async fn get_hubs(State(st): State<HubState>) -> Json<serde_json::Value> {
     let n = st.sessions.lock().len();
     let fwd = *st.forwarded.lock();
+    let bands = collect_bands(&st);
     Json(serde_json::json!({
         "hubs": [{
             "id": "hub.weechatradio.com",
             "connected_nodes": n,
             "forwarded": fwd,
-            "uptime_secs": st.started.elapsed().as_secs()
+            "uptime_secs": st.started.elapsed().as_secs(),
+            "bands": bands
         }]
     }))
+}
+
+async fn get_bands(State(st): State<HubState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "bands": collect_bands(&st) }))
 }
 
 async fn get_stats(State(st): State<HubState>) -> Json<serde_json::Value> {

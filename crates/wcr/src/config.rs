@@ -354,6 +354,9 @@ pub struct RfConfig {
     pub beacon_jitter_s: u32,
     /// Randomise ARQ retry hold (±25%).
     pub retry_jitter: bool,
+    /// Dial frequency in kHz (0 = unknown). Manual; rigctl overrides when CAT is up.
+    #[serde(default)]
+    pub frequency_khz: u32,
 }
 
 impl Default for RfConfig {
@@ -373,6 +376,7 @@ impl Default for RfConfig {
             ack_dither_ms: 800,
             beacon_jitter_s: 15,
             retry_jitter: true,
+            frequency_khz: 0,
         }
     }
 }

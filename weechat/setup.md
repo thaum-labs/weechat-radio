@@ -28,6 +28,7 @@ Manual steps, if you installed WeeChat yourself:
    ```
 
 3. You land in `#bulletin`. Chat as usual. `/radio help` lists node commands.
+   The nicklist shows each station's band (`[2m] G4ABC`). Tell the app your dial with `/radio freq 144.950` if you have no CAT.
 
 4. The script defaults to theme `tron` (indigo / orange, same as the site and `wcr tui`). It restyles WeeChat bars on load. Switch it off with:
 

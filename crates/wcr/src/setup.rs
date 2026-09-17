@@ -159,6 +159,25 @@ pub fn run_wizard() -> Result<Config> {
             })
             .interact()?;
         cfg.modem.preset = Preset::all()[idx].as_str().into();
+        let default_mhz = if path == 3 { "7.045" } else { "144.950" };
+        let freq: String = Input::with_theme(&theme)
+            .with_prompt(if path == 3 {
+                "Frequency on the dial (MHz) — CAT will override when the rig is connected"
+            } else {
+                "Frequency your radio is on (MHz)"
+            })
+            .default(default_mhz.into())
+            .interact_text()?;
+        if let Some(khz) = crate::band::parse_mhz(&freq) {
+            cfg.rf.frequency_khz = khz;
+            println!(
+                "  {}",
+                ui_style::dim().apply_to(format!(
+                    "Stored {}. Change later with /radio freq",
+                    crate::band::describe(khz)
+                ))
+            );
+        }
     }
 
     println!();
@@ -272,14 +291,14 @@ fn bluetooth_pick(theme: &dyn dialoguer::theme::Theme, cfg: &mut Config) -> Resu
 pub fn calling_card() -> &'static str {
     r#"WeeChat Radio — suggested calling presets (verify your band plan)
 
-UK  VHF  144.950 MHz FM   preset vhf-fm
-EU  VHF  144.950 MHz FM   preset vhf-fm
-US  VHF  145.530 MHz FM   preset vhf-fm
-AU  VHF  146.550 MHz FM   preset vhf-fm
-UK  HF   7.045 MHz USB    preset hf-poor
-EU  HF   7.045 MHz USB    preset hf-poor
-US  HF   7.090 MHz USB    preset hf-poor
-AU  HF   7.090 MHz USB    preset hf-poor
+UK  2m   144.950 MHz FM   preset vhf-fm
+EU  2m   144.950 MHz FM   preset vhf-fm
+US  2m   145.530 MHz FM   preset vhf-fm
+AU  2m   146.550 MHz FM   preset vhf-fm
+UK  40m    7.045 MHz USB  preset hf-poor
+EU  40m    7.045 MHz USB  preset hf-poor
+US  40m    7.090 MHz USB  preset hf-poor
+AU  40m    7.090 MHz USB  preset hf-poor
 
 The wizard can set frequency via rigctl only if you confirm.
 "#

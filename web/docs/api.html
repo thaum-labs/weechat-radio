@@ -73,9 +73,11 @@
   "ber": 0.0,
   "queue": 0,
   "hub_ok": true,
-  "settings": { "frequency": "144.950" },
+  "freq_khz": 144950,
+  "band": "2m",
+  "settings": { "frequency": "144.950 MHz", "band": "2m" },
   "events": [
-    { "ts": 1710000000, "kind": "tx", "origin": "G4ABC", "dest": "NET", "hops": 3 }
+    { "ts": 1710000000, "kind": "tx", "origin": "G4ABC", "dest": "NET", "hops": 3, "band": "2m" }
   ]
 }</pre>
       <p><code>ts</code> must be within 5 minutes of the hub clock.</p>
@@ -87,9 +89,10 @@
             <tr><th>Path</th><th>What you get</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>GET /api/v1/nodes</code></td><td>live stations and settings</td></tr>
+            <tr><td><code>GET /api/v1/nodes</code></td><td>live stations and settings (<code>band</code>, <code>freq_khz</code>, <code>frequency</code>)</td></tr>
             <tr><td><code>GET /api/v1/events?since=&amp;limit=</code></td><td>TX/RX/relay events</td></tr>
-            <tr><td><code>GET /api/v1/hubs</code></td><td>hub/relay status</td></tr>
+            <tr><td><code>GET /api/v1/hubs</code></td><td>hub/relay status, including <code>bands</code></td></tr>
+            <tr><td><code>GET /api/v1/bands</code></td><td>stations grouped by band</td></tr>
             <tr><td><code>GET /api/v1/stats</code></td><td>totals</td></tr>
             <tr><td><code>GET /ws/live</code></td><td>WebSocket firehose of the same events</td></tr>
             <tr><td><code>GET /healthz</code></td><td><code>ok</code></td></tr>

@@ -112,6 +112,9 @@ const clock = document.getElementById("tape-clock");
 const connInfo = document.getElementById("conn-info");
 const wsState = document.getElementById("ws-state");
 const nightToggle = document.getElementById("map-night");
+let selectedBand = null;
+let lastNodes = [];
+let lastBands = [];
 const NIGHT_KEY = "wcr-map-night";
 const NIGHT_SRC = "daynight";
 const NIGHT_FILL = "daynight-fill";
@@ -304,6 +307,21 @@ let replayLoadedAt = 0;
 let lastMsgAt = 0;
 let wsLabel = "IDLE";
 
+function nodeBand(n) {
+  const band = (n && n.band) || "";
+  if (band) return band;
+  const khz = n && n.freq_khz;
+  if (!khz) return "inet";
+  return "?";
+}
+
+function nodeFreq(n) {
+  if (n && n.frequency) return String(n.frequency).replace(/ MHz$/i, "");
+  const khz = n && n.freq_khz;
+  if (!khz) return "";
+  return (Number(khz) / 1000).toFixed(3);
+}
+
 function kv(rows) {
   return `<div class="kv">${rows.map(([k, v]) => `<span>${k}</span><b>${v}</b>`).join("")}</div>`;
 }
@@ -320,6 +338,8 @@ function upsertNode(n) {
     const el = document.createElement("div");
     el.className = "map-mark-wrap";
     el.dataset.mode = mode;
+    el.dataset.band = nodeBand(n);
+    el.style.opacity = selectedBand && nodeBand(n) !== selectedBand ? "0.25" : "";
     el.innerHTML = modeMark(mode, "map-mark");
     m = new maplibregl.Marker({ element: el }).setLngLat([n.lon, n.lat]).addTo(map);
     el.addEventListener("click", () => showCard(n));
@@ -331,6 +351,8 @@ function upsertNode(n) {
       el.dataset.mode = mode;
       el.innerHTML = modeMark(mode, "map-mark");
     }
+    el.dataset.band = nodeBand(n);
+    el.style.opacity = selectedBand && nodeBand(n) !== selectedBand ? "0.25" : "";
   }
 }
 
@@ -342,6 +364,8 @@ function showCard(n) {
     ["mode", n.mode || "—"],
     ["ptt", n.ptt || "—"],
     ["preset", n.preset || "—"],
+    ["band", nodeBand(n)],
+    ["freq", nodeFreq(n) || "—"],
     ["grid", n.grid || "—"],
     ["snr", n.snr ?? "—"],
   ]);
@@ -370,13 +394,45 @@ function renderModes(nodes) {
   }).join("");
 }
 
+function renderBands(bands) {
+  lastBands = bands || [];
+  const grid = document.getElementById("band-grid");
+  const meta = document.getElementById("band-meta");
+  if (meta) meta.textContent = String(lastBands.length);
+  if (!grid) return;
+  if (!lastBands.length) {
+    grid.innerHTML = `<div class="mode-row"><span class="mode-name">no RF yet</span></div>`;
+    return;
+  }
+  grid.innerHTML = lastBands.map((b) => {
+    const name = b.band || "inet";
+    const freq = b.frequency || (b.freq_khz ? (b.freq_khz / 1000).toFixed(3) : "");
+    const on = selectedBand === name ? " on" : "";
+    return `<div class="mode-row band-row${on}" data-band="${name}"><span class="mode-name">${name}</span><span class="band-freq">${freq}</span><span class="band-n">${b.stations ?? 0}</span></div>`;
+  }).join("");
+  grid.querySelectorAll(".band-row").forEach((el) => {
+    el.onclick = () => {
+      const band = el.dataset.band;
+      selectedBand = selectedBand === band ? null : band;
+      renderBands(lastBands);
+      renderStations(lastNodes);
+    };
+  });
+}
+
 function renderStations(nodes) {
+  lastNodes = nodes || [];
+  const shown = selectedBand
+    ? lastNodes.filter((n) => nodeBand(n) === selectedBand)
+    : lastNodes;
   stationList.innerHTML = "";
-  nodes.forEach((n) => {
+  shown.forEach((n) => {
     const d = document.createElement("div");
     d.className = "station";
     d.dataset.call = n.callsign || "";
-    d.innerHTML = `${modeMark(n.mode)}<span><b>${n.callsign}</b>${n.mode || ""} ${n.preset || ""}</span>`;
+    const band = nodeBand(n);
+    const freq = nodeFreq(n);
+    d.innerHTML = `${modeMark(n.mode)}<span><b>${n.callsign}</b>${n.mode || ""} ${band}${freq ? " " + freq : ""}</span>`;
     d.onclick = () => {
       showCard(n);
       if (n.lat != null) map.flyTo({ center: [n.lon, n.lat], zoom: 6 });
@@ -384,10 +440,11 @@ function renderStations(nodes) {
     stationList.appendChild(d);
     upsertNode(n);
   });
-  document.getElementById("n-online").textContent = nodes.length;
+  lastNodes.forEach((n) => upsertNode(n));
+  document.getElementById("n-online").textContent = lastNodes.length;
   const sc = document.getElementById("station-count");
-  if (sc) sc.textContent = String(nodes.length);
-  renderModes(nodes);
+  if (sc) sc.textContent = String(lastNodes.length);
+  renderModes(lastNodes);
 }
 
 function tick(line) {
@@ -502,7 +559,7 @@ function renderReplay() {
   }
   rows.forEach((x) => {
     const t = x.ts ? new Date(x.ts * 1000).toISOString().slice(11, 19) : "--:--:--";
-    tick(`[${t}] ${x.origin || "?"} ${x.kind || ""} -> ${x.dest || ""}`);
+    tick(`[${t}] ${x.origin || "?"} ${x.band || ""} ${x.kind || ""} -> ${x.dest || ""}`.replace(/  +/g, " "));
   });
 }
 
@@ -580,6 +637,12 @@ async function refresh() {
   try {
     const nodes = await (await fetch(`${API}/api/v1/nodes`)).json();
     renderStations(nodes.nodes || []);
+    try {
+      const bands = await (await fetch(`${API}/api/v1/bands`)).json();
+      renderBands(bands.bands || []);
+    } catch (_) {
+      renderBands([]);
+    }
     const hubs = await (await fetch(`${API}/api/v1/hubs`)).json();
     const h = (hubs.hubs || [])[0];
     if (h) {
@@ -615,7 +678,14 @@ function connectLive() {
       if (m.type === "node") refresh();
       if (!liveMode) return;
       const t = new Date().toISOString().slice(11, 19);
-      tick(`[${t}] ${m.origin || m.callsign || "?"} ${m.kind || m.type || ""} -> ${m.dest || ""}`);
+      const origin = m.origin || m.callsign || "?";
+      const from = m.from_band || m.band || "";
+      const dest = m.dest || "";
+      const kind = m.kind || m.type || "";
+      const to = Array.isArray(m.to_bands) && m.to_bands.length
+        ? ` -> ${m.to_bands.join(", ")}`
+        : "";
+      tick(`[${t}] ${origin}${from ? " " + from : ""} ${kind}${dest ? " -> " + dest : ""}${to}`);
     } catch (_) {}
   };
   ws.onclose = () => {

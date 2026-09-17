@@ -205,10 +205,36 @@ mod tests {
     #[test]
     fn gateway_bridge_two_frequencies() {
         use crate::relay::may_rf_egress;
+        use crate::store::Store;
         // Node on freq A is a gateway, dest recently heard on A
         assert!(may_rf_egress(true, true, true, false, false, true, false));
         // Same frame must not go on air from a radio-only node
         assert!(!may_rf_egress(false, true, true, false, false, true, false));
+
+        let store = Store::open_memory().unwrap();
+        store
+            .heard_touch(
+                "G4AAA",
+                None,
+                Some("internet-radio"),
+                true,
+                "rf",
+                Some(144950),
+            )
+            .unwrap();
+        store
+            .heard_touch("M0ZZZ", None, Some("radio-plus"), false, "inet", Some(7045))
+            .unwrap();
+        let list = store.heard_list().unwrap();
+        let vhf = list.iter().find(|h| h.callsign == "G4AAA").unwrap();
+        let hf = list.iter().find(|h| h.callsign == "M0ZZZ").unwrap();
+        assert_eq!(vhf.band.as_deref(), Some("2m"));
+        assert_eq!(hf.band.as_deref(), Some("40m"));
+        assert_eq!(
+            crate::band::beacon_khz(b"B|internet-radio|7045"),
+            Some(7045)
+        );
+        assert_eq!(crate::band::to_bands([144950, 7045]), vec!["2m", "40m"]);
     }
 
     #[tokio::test]

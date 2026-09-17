@@ -8,9 +8,14 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
+enum HubOut {
+    Bin(Vec<u8>),
+    Text(String),
+}
+
 #[derive(Clone)]
 pub struct HubClient {
-    pub tx: mpsc::Sender<Vec<u8>>,
+    tx: mpsc::Sender<HubOut>,
 }
 
 /// Nodes speak WebSocket on `/ws`. A host-only URL gets that path appended.
@@ -33,10 +38,11 @@ impl HubClient {
         callsign: &str,
         keys: &IdentityKeys,
         heard: Vec<String>,
+        freq_khz: u32,
         incoming: mpsc::Sender<Envelope>,
         connected: ArcFlag,
     ) -> Result<Self> {
-        let (out_tx, mut out_rx) = mpsc::channel::<Vec<u8>>(64);
+        let (out_tx, mut out_rx) = mpsc::channel::<HubOut>(64);
         let url = websocket_url(url);
         let callsign = callsign.to_string();
         let pubhex = keys.public_hex();
@@ -50,6 +56,7 @@ impl HubClient {
             "sig": sig,
             "ts": ts,
             "heard": heard,
+            "freq_khz": freq_khz,
         })
         .to_string();
         tokio::spawn(async move {
@@ -72,8 +79,13 @@ impl HubClient {
                             tokio::select! {
                                 outgoing = out_rx.recv() => {
                                     match outgoing {
-                                        Some(bin) => {
+                                        Some(HubOut::Bin(bin)) => {
                                             if sink.send(Message::Binary(bin.into())).await.is_err() {
+                                                break;
+                                            }
+                                        }
+                                        Some(HubOut::Text(t)) => {
+                                            if sink.send(Message::Text(t.into())).await.is_err() {
                                                 break;
                                             }
                                         }
@@ -121,7 +133,14 @@ impl HubClient {
     pub async fn send(&self, env: &Envelope) -> Result<()> {
         let bytes = env.encode()?;
         self.tx
-            .send(bytes)
+            .send(HubOut::Bin(bytes))
+            .await
+            .map_err(|_| crate::error::Error::Net("hub send buffer closed".into()))
+    }
+
+    pub async fn send_text(&self, text: &str) -> Result<()> {
+        self.tx
+            .send(HubOut::Text(text.to_string()))
             .await
             .map_err(|_| crate::error::Error::Net("hub send buffer closed".into()))
     }

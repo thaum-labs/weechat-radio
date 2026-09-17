@@ -27,7 +27,7 @@ On the web: https://weechatradio.com/guides/handheld.html
    - Linux: `ls /dev/ttyUSB* /dev/ttyACM*`
    - macOS: `ls /dev/cu.usb*`
 4. Run `wcr setup` and choose **Handheld + Digirig**. Enter that port.
-5. Start with `wcr tui`. Watch the status bar: audio should read `good`, not `low` or `hot`.
+5. Start with `wcr tui`. Watch the status bar: audio should read `good`, not `low` or `hot`. Tell the app the frequency on the dial: `/radio freq 144.950`.
 6. Ask a second station on the same frequency to send a short test. You should see their callsign in the heard list.
 
 ### How you know it worked
@@ -53,7 +53,7 @@ VOX means the radio transmits when it hears sound.
 1. Connect computer headphone-out to radio mic-in, radio speaker-out to computer mic-in.
 2. On the radio, turn **VOX on**. Start with a medium VOX delay.
 3. Run `wcr setup` and choose **Any radio with a plain audio cable (VOX)**. This selects the `vox-safe` preset, which waits a moment so the radio is fully keyed before data starts.
-4. Start `wcr tui`. Send a short test to `#bulletin`.
+4. Start `wcr tui`. Send a short test to `#bulletin`. Tell the app the frequency on the dial: `/radio freq 144.950`.
 5. If the other station hears a clipped first character, raise `modem.vox_lead_ms` in `wcr.toml` (try 700).
 
 ### How you know it worked
