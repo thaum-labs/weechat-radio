@@ -410,15 +410,21 @@ impl GuiApp {
         if let Some(mut c) = self.node.take() {
             kill_pid_tree(c.id());
             let _ = c.kill();
-            let _ = c.wait();
+            let deadline = Instant::now() + Duration::from_millis(400);
+            while Instant::now() < deadline {
+                if c.try_wait().ok().flatten().is_some() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(40));
+            }
         }
         kill_sidecars();
-        for _ in 0..15 {
+        for _ in 0..8 {
             if fetch_status().is_none() {
                 break;
             }
             kill_sidecars();
-            std::thread::sleep(Duration::from_millis(80));
+            std::thread::sleep(Duration::from_millis(50));
         }
         self.irc_tx = None;
         self.irc_rx = None;
@@ -456,10 +462,16 @@ impl GuiApp {
         }
     }
 
-    fn quit_app(&mut self, _ctx: &egui::Context) {
-        self.stop_station();
+    fn quit_app(&mut self, ctx: &egui::Context) {
         self.allow_close = true;
-        std::process::exit(0);
+        drop(self.tray.take());
+        self.stop_station();
+        ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(ViewportCommand::Close);
+        std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(400));
+            std::process::exit(0);
+        });
     }
 
     fn install_tray(&mut self) {
@@ -1492,6 +1504,8 @@ fn fetch_status() -> Option<StatusSnapshot> {
     let mut stream =
         TcpStream::connect_timeout(&"127.0.0.1:8074".parse().ok()?, Duration::from_millis(250))
             .ok()?;
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
     stream
         .write_all(b"GET /status HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
         .ok()?;
