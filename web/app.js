@@ -9,7 +9,7 @@ const MODE_COLOR = {
 };
 
 const CARTO_KEY = "cb1_3nxz_1_dba340f0a1c8450af09da179";
-const MAP_STYLE_KEY = "wcr-map-style";
+const MAP_STYLE_KEY = "wcr-map-style-v2";
 const OSM_CARTO =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions">CARTO</a>';
 
@@ -43,7 +43,7 @@ const MAP_STYLES = {
 };
 
 function rasterStyle(id) {
-  const spec = MAP_STYLES[id] || MAP_STYLES.voyager;
+  const spec = MAP_STYLES[id] || MAP_STYLES.satellite;
   return {
     version: 8,
     sources: {
@@ -60,7 +60,7 @@ function rasterStyle(id) {
 
 function preferredMapStyle() {
   const saved = localStorage.getItem(MAP_STYLE_KEY);
-  return MAP_STYLES[saved] ? saved : "voyager";
+  return MAP_STYLES[saved] ? saved : "satellite";
 }
 
 const mapStyleSelect = document.getElementById("map-style");
@@ -77,7 +77,7 @@ const map = new maplibregl.Map({
 
 if (mapStyleSelect) {
   mapStyleSelect.addEventListener("change", () => {
-    const id = MAP_STYLES[mapStyleSelect.value] ? mapStyleSelect.value : "voyager";
+    const id = MAP_STYLES[mapStyleSelect.value] ? mapStyleSelect.value : "satellite";
     localStorage.setItem(MAP_STYLE_KEY, id);
     map.setStyle(rasterStyle(id));
   });
