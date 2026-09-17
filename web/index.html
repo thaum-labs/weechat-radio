@@ -7,18 +7,13 @@
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" />
-  <link rel="stylesheet" href="/vendor/augmented-ui.min.css" />
-  <link rel="stylesheet" href="/styles.css?v=3" />
+  <link rel="stylesheet" href="/styles.css?v=8" />
 </head>
 <body class="page-map">
   <div id="scan"></div>
   <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
   <header class="topbar">
-    <div class="clock-mod">
-      <div id="clock-utc">UTC --:--:--</div>
-      <div class="sub" id="clock-local">LCL --:--</div>
-    </div>
-    <div class="brand">WEECHAT RADIO</div>
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
     <nav>
       <a href="/">map</a>
       <a href="/downloads.html">downloads</a>
@@ -27,7 +22,11 @@
       <a href="/status.html">hub</a>
       <a href="/changelog.html">changelog</a>
     </nav>
-    <div id="stats">NODES <b id="n-online">—</b> · TX <b id="n-tx">—</b></div>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+    <div id="stats">nodes <b id="n-online">—</b> · tx <b id="n-tx">—</b></div>
   </header>
   <div class="workspace">
     <section class="mod_column" id="mod_column_left">
@@ -48,9 +47,20 @@
         <div id="station-list" class="mod-body scroll"></div>
       </article>
     </section>
-    <section id="main_shell" data-augmented-ui="tl-clip br-clip both">
+    <section id="main_shell">
       <article class="map-panel">
-        <h3 class="title"><p>LIVE MAP</p><p>GEO</p></h3>
+        <h3 class="title">
+          <p>LIVE MAP</p>
+          <label class="map-style">
+            <select id="map-style" aria-label="Map type">
+              <option value="voyager">voyager</option>
+              <option value="light">light</option>
+              <option value="dark">dark</option>
+              <option value="terrain">terrain</option>
+              <option value="satellite">satellite</option>
+            </select>
+          </label>
+        </h3>
         <div id="map"></div>
       </article>
       <article class="log-panel">
@@ -82,7 +92,7 @@
     </section>
   </div>
   <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
-  <script src="/shell.js?v=3"></script>
-  <script src="/app.js?v=3"></script>
+  <script src="/shell.js?v=6"></script>
+  <script src="/app.js?v=8"></script>
 </body>
 </html>

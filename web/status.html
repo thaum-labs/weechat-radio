@@ -6,18 +6,13 @@
   <title>Hub status — WeeChat Radio</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/vendor/augmented-ui.min.css" />
-  <link rel="stylesheet" href="/styles.css?v=3" />
+  <link rel="stylesheet" href="/styles.css?v=5" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
   <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
   <header class="topbar">
-    <div class="clock-mod">
-      <div id="clock-utc">UTC --:--:--</div>
-      <div class="sub" id="clock-local">LCL --:--</div>
-    </div>
-    <div class="brand">WEECHAT RADIO</div>
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
     <nav>
       <a href="/">map</a>
       <a href="/downloads.html">downloads</a>
@@ -26,29 +21,32 @@
       <a href="/status.html">hub</a>
       <a href="/changelog.html">changelog</a>
     </nav>
-    <div id="stats">HEALTH <b id="n-health">—</b></div>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+    <div id="stats">health <b id="n-health">—</b></div>
   </header>
   <div class="page-wrap">
-    <main class="page-panel" data-augmented-ui="tl-clip br-clip both">
-      <h3 class="title"><p>HUB</p><p>STATUS</p></h3>
-      <h1>Hub</h1>
+    <main class="page-panel">
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> hub</h1>
       <div class="status-grid">
         <article class="mod activated">
-          <h3 class="title"><p>HEALTH</p><p>HTTP</p></h3>
+          <h3 class="title"><p>health</p><p>http</p></h3>
           <div id="health-panel" class="mod-body">loading…</div>
         </article>
         <article class="mod activated">
-          <h3 class="title"><p>STATS</p><p>API</p></h3>
+          <h3 class="title"><p>stats</p><p>api</p></h3>
           <div id="stats-panel" class="mod-body">loading…</div>
         </article>
         <article class="mod activated" style="grid-column: 1 / -1">
-          <h3 class="title"><p>HUBS</p><p>RELAY</p></h3>
+          <h3 class="title"><p>hubs</p><p>relay</p></h3>
           <div id="hubs-panel" class="mod-body">loading…</div>
         </article>
       </div>
     </main>
   </div>
-  <script src="/shell.js?v=3"></script>
+  <script src="/shell.js?v=5"></script>
   <script>
     const API = window.WCR.API;
     function kv(obj) {
@@ -70,7 +68,7 @@
       document.getElementById("hubs-panel").innerHTML = hubs.map(x => kv(x)).join("");
     }).catch(e => {
       document.getElementById("health-panel").textContent = String(e);
-      document.getElementById("n-health").textContent = "DOWN";
+      document.getElementById("n-health").textContent = "down";
     });
   </script>
 </body>

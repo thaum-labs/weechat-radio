@@ -6,18 +6,13 @@
   <title>Downloads — WeeChat Radio</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/vendor/augmented-ui.min.css" />
-  <link rel="stylesheet" href="/styles.css?v=3" />
+  <link rel="stylesheet" href="/styles.css?v=5" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
   <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
   <header class="topbar">
-    <div class="clock-mod">
-      <div id="clock-utc">UTC --:--:--</div>
-      <div class="sub" id="clock-local">LCL --:--</div>
-    </div>
-    <div class="brand"><img src="/icon.png" alt="" width="28" height="28" />WEECHAT<span>RADIO</span></div>
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
     <nav>
       <a href="/">map</a>
       <a href="/downloads.html">downloads</a>
@@ -26,20 +21,23 @@
       <a href="/status.html">hub</a>
       <a href="/changelog.html">changelog</a>
     </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
   </header>
   <div class="page-wrap">
-    <main class="page-panel" data-augmented-ui="tl-clip br-clip both">
-      <h3 class="title"><p>GET ON THE AIR</p><p>INSTALL</p></h3>
-      <h1>Get on the air</h1>
+    <main class="page-panel">
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> downloads</h1>
       <p>5 minutes. No account.</p>
-      <h2>Linux / macOS</h2>
+      <h2>linux / macos</h2>
       <pre>curl -fsSL https://weechatradio.com/install.sh | sh</pre>
-      <h2>Windows (PowerShell)</h2>
+      <h2>windows (powershell)</h2>
       <pre>irm https://weechatradio.com/install.ps1 | iex</pre>
-      <h2>Homebrew</h2>
+      <h2>homebrew</h2>
       <pre>brew tap thaum-labs/tap
 brew install wcr</pre>
-      <h2>winget / Scoop</h2>
+      <h2>winget / scoop</h2>
       <pre>winget install ThaumLabs.Wcr
 scoop bucket add thaum https://github.com/thaum-labs/scoop-bucket
 scoop install wcr</pre>
@@ -48,6 +46,6 @@ scoop install wcr</pre>
       <p>Then run <code>wcr setup</code>, <code>wcr node</code>, and <code>wcr weechat</code> (or <code>wcr tui</code>).</p>
     </main>
   </div>
-  <script src="/shell.js?v=3"></script>
+  <script src="/shell.js?v=5"></script>
 </body>
 </html>

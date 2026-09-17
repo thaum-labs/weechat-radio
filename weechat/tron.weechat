@@ -4,15 +4,15 @@
 # (or `plain` to drop 256-colour tints)
 
 /set weechat.bar.status.color_bg 0
-/set weechat.bar.status.color_fg 152
+/set weechat.bar.status.color_fg 111
 /set weechat.bar.input.color_bg 0
-/set weechat.bar.input.color_fg 152
+/set weechat.bar.input.color_fg 111
 /set weechat.bar.title.color_bg 0
-/set weechat.bar.title.color_fg 152
+/set weechat.bar.title.color_fg 111
 /set weechat.look.color_inactive_window 240
 /set weechat.look.color_nicklist_away 240
-/set weechat.color.chat_nick 152
-/set weechat.color.chat_prefix_network 152
+/set weechat.color.chat_nick 111
+/set weechat.color.chat_prefix_network 209
 /set weechat.color.separator 240
-/set weechat.bar.nicklist.color_fg 152
+/set weechat.bar.nicklist.color_fg 111
 /set weechat.bar.nicklist.separator on

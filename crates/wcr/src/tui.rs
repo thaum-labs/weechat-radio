@@ -90,13 +90,13 @@ struct Theme {
 impl Theme {
     fn tron() -> Self {
         Self {
-            bg: Color::Rgb(5, 8, 13),
-            fg: Color::Rgb(170, 207, 209),
-            accent: Color::Rgb(170, 207, 209),
-            warn: Color::Rgb(255, 191, 0),
-            border: Color::Rgb(38, 40, 40),
-            title: Color::Rgb(170, 207, 209),
-            dim: Color::Rgb(80, 100, 102),
+            bg: Color::Rgb(7, 7, 10),
+            fg: Color::Rgb(216, 208, 232),
+            accent: Color::Rgb(125, 155, 255),
+            warn: Color::Rgb(255, 122, 61),
+            border: Color::Rgb(40, 36, 48),
+            title: Color::Rgb(125, 155, 255),
+            dim: Color::Rgb(122, 115, 136),
         }
     }
     fn hacker() -> Self {
