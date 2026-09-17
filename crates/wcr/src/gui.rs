@@ -8,11 +8,14 @@ use crate::presets::Preset;
 use crate::proto::Callsign;
 use crate::status::StatusSnapshot;
 use eframe::egui::{self, Color32, FontId, IconData, RichText, Stroke, ViewportCommand};
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
@@ -29,6 +32,13 @@ const DIM: Color32 = Color32::from_rgb(122, 115, 136);
 const LINE: Color32 = Color32::from_rgb(33, 40, 64);
 const GREEN: Color32 = Color32::from_rgb(57, 255, 20);
 const CODE: Color32 = Color32::from_rgb(18, 18, 24);
+
+static TRAY_QUIT_ID: OnceLock<MenuId> = OnceLock::new();
+static TRAY_SHOW_ID: OnceLock<MenuId> = OnceLock::new();
+static TRAY_STOP_ID: OnceLock<MenuId> = OnceLock::new();
+static TRAY_ACTION: AtomicU8 = AtomicU8::new(0);
+static TRAY_WATCH: AtomicBool = AtomicBool::new(false);
+static GUI_CTX: OnceLock<egui::Context> = OnceLock::new();
 
 pub fn run() -> Result<()> {
     let icon = app_icon();
@@ -242,11 +252,14 @@ struct ChatLine {
     nick: String,
     text: String,
     sys: bool,
+    channel: String,
 }
 
 enum IrcEvent {
     Line(ChatLine),
     Status(String),
+    Joined(String),
+    Invited { from: String, channel: String },
 }
 
 struct GuiApp {
@@ -275,6 +288,11 @@ struct GuiApp {
     tray_icon_key: i8,
     allow_close: bool,
     user_stopped: bool,
+    active_channel: String,
+    joined: Vec<String>,
+    chan_new: String,
+    invite_draft: String,
+    members: HashMap<String, Vec<String>>,
 }
 
 impl GuiApp {
@@ -315,6 +333,11 @@ impl GuiApp {
             tray_icon_key: 0,
             allow_close: false,
             user_stopped: false,
+            active_channel: "#bulletin".into(),
+            joined: vec!["#bulletin".into()],
+            chan_new: String::new(),
+            invite_draft: String::new(),
+            members: HashMap::new(),
         };
         app.install_tray();
         app
@@ -382,6 +405,7 @@ impl GuiApp {
             nick: String::new(),
             text: format!("saved {}", Config::default_path().display()),
             sys: true,
+            channel: String::new(),
         });
     }
 
@@ -399,6 +423,7 @@ impl GuiApp {
                     nick: String::new(),
                     text: "station starting…".into(),
                     sys: true,
+                    channel: String::new(),
                 });
             }
             Err(e) => self.error = e.to_string(),
@@ -410,34 +435,17 @@ impl GuiApp {
         if let Some(mut c) = self.node.take() {
             kill_pid_tree(c.id());
             let _ = c.kill();
-            let deadline = Instant::now() + Duration::from_millis(400);
-            while Instant::now() < deadline {
-                if c.try_wait().ok().flatten().is_some() {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(40));
-            }
         }
         kill_sidecars();
-        for _ in 0..8 {
-            if fetch_status().is_none() {
-                break;
-            }
-            kill_sidecars();
-            std::thread::sleep(Duration::from_millis(50));
-        }
         self.irc_tx = None;
         self.irc_rx = None;
         self.status = None;
-        if fetch_status().is_some() {
-            self.error = "station did not stop — try Quit from the tray".into();
-        } else {
-            self.chat.push(ChatLine {
-                nick: String::new(),
-                text: "station stopped".into(),
-                sys: true,
-            });
-        }
+        self.chat.push(ChatLine {
+            nick: String::new(),
+            text: "station stopped".into(),
+            sys: true,
+            channel: String::new(),
+        });
         if let Some(tray) = &self.tray {
             let _ = tray.set_tooltip(Some("WeeChat Radio — station stopped"));
         }
@@ -464,14 +472,13 @@ impl GuiApp {
 
     fn quit_app(&mut self, ctx: &egui::Context) {
         self.allow_close = true;
+        self.user_stopped = true;
         drop(self.tray.take());
-        self.stop_station();
-        ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+        if let Some(mut c) = self.node.take() {
+            let _ = c.kill();
+        }
         ctx.send_viewport_cmd(ViewportCommand::Close);
-        std::thread::spawn(|| {
-            std::thread::sleep(Duration::from_millis(400));
-            std::process::exit(0);
-        });
+        force_quit();
     }
 
     fn install_tray(&mut self) {
@@ -481,6 +488,10 @@ impl GuiApp {
         self.tray_show = show.id().clone();
         self.tray_stop = stop.id().clone();
         self.tray_quit = quit.id().clone();
+        let _ = TRAY_SHOW_ID.set(self.tray_show.clone());
+        let _ = TRAY_STOP_ID.set(self.tray_stop.clone());
+        let _ = TRAY_QUIT_ID.set(self.tray_quit.clone());
+        start_tray_watch();
         let menu = Menu::new();
         if menu
             .append_items(&[&show, &stop, &PredefinedMenuItem::separator(), &quit])
@@ -505,30 +516,16 @@ impl GuiApp {
     }
 
     fn poll_tray(&mut self, ctx: &egui::Context) {
-        while let Ok(event) = TrayIconEvent::receiver().try_recv() {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                self.show_window(ctx);
-            }
-        }
-        while let Ok(event) = MenuEvent::receiver().try_recv() {
-            if event.id == self.tray_show {
-                self.show_window(ctx);
-            } else if event.id == self.tray_stop {
-                self.stop_station();
-            } else if event.id == self.tray_quit {
-                self.quit_app(ctx);
-            }
+        let _ = GUI_CTX.set(ctx.clone());
+        match TRAY_ACTION.swap(0, Ordering::SeqCst) {
+            1 => self.show_window(ctx),
+            2 => self.stop_station(),
+            _ => {}
         }
         if ctx.input(|i| i.viewport().close_requested()) {
             if self.allow_close || self.tray.is_none() {
-                if !self.allow_close {
-                    self.stop_station();
-                }
+                self.allow_close = true;
+                force_quit();
             } else {
                 self.hide_to_tray(ctx);
             }
@@ -568,23 +565,100 @@ impl GuiApp {
         if text.is_empty() {
             return;
         }
-        if let Some(tx) = &self.irc_tx {
-            if crate::slash::to_radio_args(text).is_some() {
-                self.chat.push(ChatLine {
-                    nick: String::new(),
-                    text: format!("▸ {text}"),
-                    sys: true,
-                });
-            } else {
-                self.chat.push(ChatLine {
-                    nick: self.callsign.to_ascii_uppercase(),
-                    text: text.to_string(),
-                    sys: false,
-                });
-            }
-            let _ = tx.send(text.to_string());
-        } else {
+        let wires = crate::slash::to_wire(text, &self.active_channel);
+        if wires.is_empty() {
+            self.error = "need a channel name or callsign".into();
+            return;
+        }
+        if self.irc_tx.is_none() {
             self.error = "station is not connected — press Start".into();
+            return;
+        }
+        if text.starts_with('/') {
+            self.chat.push(ChatLine {
+                nick: String::new(),
+                text: format!("▸ {text}"),
+                sys: true,
+                channel: self.active_channel.clone(),
+            });
+        } else {
+            self.chat.push(ChatLine {
+                nick: self.callsign.to_ascii_uppercase(),
+                text: text.to_string(),
+                sys: false,
+                channel: self.active_channel.clone(),
+            });
+        }
+        for line in &wires {
+            if let Some(ch) = line.strip_prefix("JOIN ") {
+                self.ensure_joined(ch);
+                self.active_channel = ch.to_string();
+            }
+        }
+        if let Some(tx) = &self.irc_tx {
+            for line in wires {
+                let _ = tx.send(line);
+            }
+        }
+    }
+
+    fn ensure_joined(&mut self, ch: &str) {
+        let ch = crate::slash::normalize_channel(ch);
+        if !self.joined.iter().any(|c| c.eq_ignore_ascii_case(&ch)) {
+            self.joined.push(ch);
+        }
+    }
+
+    fn create_channel(&mut self) {
+        self.error.clear();
+        let ch = crate::slash::normalize_channel(&self.chan_new);
+        if ch.len() < 3 {
+            self.error = "channel name is too short".into();
+            return;
+        }
+        self.chan_new.clear();
+        self.ensure_joined(&ch);
+        self.active_channel = ch.clone();
+        let me = self.callsign.to_ascii_uppercase();
+        if !crate::slash::is_bulletin(&ch) {
+            self.members
+                .entry(ch.clone())
+                .or_insert_with(|| vec![me.clone()]);
+            self.send_line(&format!("/join {ch}"));
+            self.send_line(&format!(
+                "/group create {} {me}",
+                ch.trim_start_matches('#')
+            ));
+        } else {
+            self.send_line(&format!("/join {ch}"));
+        }
+    }
+
+    fn invite_to_current(&mut self) {
+        self.error.clear();
+        if crate::slash::is_bulletin(&self.active_channel) {
+            self.error = "create a closed channel first — #bulletin is public".into();
+            return;
+        }
+        let nick = self.invite_draft.trim().to_ascii_uppercase();
+        if nick.is_empty() || Callsign::parse(&nick).is_err() {
+            self.error = "invite needs a callsign (or ~NICK)".into();
+            return;
+        }
+        self.invite_draft.clear();
+        self.members
+            .entry(self.active_channel.clone())
+            .or_default()
+            .push(nick.clone());
+        self.send_line(&format!("/invite {nick}"));
+    }
+
+    fn switch_channel(&mut self, ch: String) {
+        let ch = crate::slash::normalize_channel(&ch);
+        self.ensure_joined(&ch);
+        if !ch.eq_ignore_ascii_case(&self.active_channel) {
+            self.active_channel = ch.clone();
+            self.send_line(&format!("/join {ch}"));
         }
     }
 
@@ -610,7 +684,22 @@ impl GuiApp {
                     nick: String::new(),
                     text: s,
                     sys: true,
+                    channel: self.active_channel.clone(),
                 }),
+                IrcEvent::Joined(ch) => {
+                    self.ensure_joined(&ch);
+                }
+                IrcEvent::Invited { from, channel } => {
+                    self.ensure_joined(&channel);
+                    self.chat.push(ChatLine {
+                        nick: String::new(),
+                        text: format!("{from} invited you to {channel}"),
+                        sys: true,
+                        channel: channel.clone(),
+                    });
+                    self.active_channel = crate::slash::normalize_channel(&channel);
+                    self.send_line(&format!("/join {channel}"));
+                }
             }
         }
     }
@@ -1051,7 +1140,7 @@ impl eframe::App for GuiApp {
                     let resp = ui.add(
                         egui::TextEdit::singleline(&mut self.draft)
                             .desired_width(ui.available_width() - 90.0)
-                            .hint_text("message, or / for commands")
+                            .hint_text("message in this channel, or /join /invite")
                             .font(FontId::monospace(14.0)),
                     );
                     if enter {
@@ -1075,13 +1164,132 @@ impl eframe::App for GuiApp {
         egui::CentralPanel::default()
             .frame(chrome(SHELL))
             .show(ctx, |ui| {
-                module_title(ui, "LIVE CHAT", "#bulletin");
-                ui.add_space(4.0);
+                module_title(ui, "LIVE CHAT", &self.active_channel);
+                ui.add_space(6.0);
+                let mut switch_to = None;
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("channel").color(DIM).monospace());
+                    let current = self.active_channel.clone();
+                    egui::ComboBox::from_id_salt("chan_pick")
+                        .selected_text(RichText::new(&current).color(ACCENT).monospace())
+                        .width(140.0)
+                        .show_ui(ui, |ui| {
+                            for ch in &self.joined {
+                                if ui
+                                    .selectable_label(
+                                        ch.eq_ignore_ascii_case(&current),
+                                        RichText::new(ch).color(ACCENT).monospace(),
+                                    )
+                                    .clicked()
+                                {
+                                    switch_to = Some(ch.clone());
+                                }
+                            }
+                        });
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.chan_new)
+                            .desired_width(110.0)
+                            .hint_text("new name")
+                            .font(FontId::monospace(13.0)),
+                    );
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new("create").color(ORANGE).monospace())
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(hairline(ORANGE)),
+                        )
+                        .clicked()
+                    {
+                        self.create_channel();
+                    }
+                });
+                if let Some(ch) = switch_to {
+                    self.switch_channel(ch);
+                }
+                let (access, crypto) = channel_security(
+                    &self.active_channel,
+                    self.status.as_ref().map(|s| s.mode),
+                    self.status.as_ref().map(|s| s.preset.as_str()).unwrap_or(""),
+                    self.status.as_ref().map(|s| s.hub_ok).unwrap_or(false),
+                );
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(&access)
+                            .color(if crate::slash::is_bulletin(&self.active_channel) {
+                                PURPLE
+                            } else {
+                                GREEN
+                            })
+                            .font(FontId::monospace(12.0)),
+                    );
+                    ui.label(RichText::new("·").color(DIM).monospace());
+                    ui.label(
+                        RichText::new(&crypto)
+                            .color(ORANGE)
+                            .font(FontId::monospace(12.0)),
+                    );
+                });
+                ui.label(
+                    RichText::new(
+                        "Amateur radio cannot hide message text on RF. Closed channels are invite lists; hub traffic is TLS.",
+                    )
+                    .color(DIM)
+                    .font(FontId::monospace(11.0)),
+                );
+                if !crate::slash::is_bulletin(&self.active_channel) {
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("invite").color(DIM).monospace());
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.invite_draft)
+                                .desired_width(120.0)
+                                .hint_text("M0ABC")
+                                .font(FontId::monospace(13.0)),
+                        );
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("send invite").color(ACCENT).monospace(),
+                                )
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(hairline(ACCENT)),
+                            )
+                            .clicked()
+                        {
+                            self.invite_to_current();
+                        }
+                    });
+                    let people = self
+                        .members
+                        .get(&self.active_channel)
+                        .cloned()
+                        .unwrap_or_default();
+                    if !people.is_empty() {
+                        ui.label(
+                            RichText::new(format!("members {}", people.join(" ")))
+                                .color(PURPLE)
+                                .font(FontId::monospace(12.0)),
+                        );
+                    }
+                } else {
+                    ui.label(
+                        RichText::new("anyone on the network can read #bulletin")
+                            .color(DIM)
+                            .font(FontId::monospace(11.0)),
+                    );
+                }
+                ui.add_space(6.0);
+                let active = self.active_channel.clone();
                 egui::ScrollArea::vertical()
                     .stick_to_bottom(true)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         for line in &self.chat {
+                            if !line.channel.is_empty()
+                                && !line.channel.eq_ignore_ascii_case(&active)
+                            {
+                                continue;
+                            }
                             if line.sys {
                                 ui.label(RichText::new(&line.text).color(PURPLE).monospace());
                             } else {
@@ -1364,7 +1572,79 @@ fn run_hidden(cmd: &mut Command) {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let _ = cmd.status();
+    let Ok(mut child) = cmd.spawn() else {
+        return;
+    };
+    let deadline = Instant::now() + Duration::from_millis(400);
+    while Instant::now() < deadline {
+        if child.try_wait().ok().flatten().is_some() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let _ = child.kill();
+}
+
+fn force_quit() -> ! {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        for name in ["wcr.exe", "modem73.exe"] {
+            let _ = Command::new(system32("taskkill.exe"))
+                .args(["/F", "/T", "/IM", name])
+                .creation_flags(CREATE_NO_WINDOW)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        for name in ["wcr", "modem73"] {
+            let _ = Command::new("pkill").args(["-x", name]).spawn();
+        }
+    }
+    std::process::exit(0);
+}
+
+fn request_show() {
+    TRAY_ACTION.store(1, Ordering::SeqCst);
+    if let Some(ctx) = GUI_CTX.get() {
+        ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(ViewportCommand::Focus);
+        ctx.request_repaint();
+    }
+}
+
+fn start_tray_watch() {
+    if TRAY_WATCH.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    MenuEvent::set_event_handler(Some(|ev: MenuEvent| {
+        if TRAY_QUIT_ID.get().is_some_and(|id| &ev.id == id) {
+            force_quit();
+        } else if TRAY_SHOW_ID.get().is_some_and(|id| &ev.id == id) {
+            request_show();
+        } else if TRAY_STOP_ID.get().is_some_and(|id| &ev.id == id) {
+            TRAY_ACTION.store(2, Ordering::SeqCst);
+            if let Some(ctx) = GUI_CTX.get() {
+                ctx.request_repaint();
+            }
+        }
+    }));
+    TrayIconEvent::set_event_handler(Some(|event| {
+        if let TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        } = event
+        {
+            request_show();
+        }
+    }));
 }
 
 fn kill_pid_tree(pid: u32) {
@@ -1552,8 +1832,8 @@ fn irc_session(nick: String, outgoing: Receiver<String>, events: Sender<IrcEvent
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         loop {
             while let Ok(msg) = outgoing.try_recv() {
-                let line = if let Some(args) = crate::slash::to_radio_args(&msg) {
-                    format!("RADIO {args}\r\n")
+                let line = if irc_command(&msg) {
+                    format!("{}\r\n", msg.trim_end())
                 } else {
                     format!("PRIVMSG #bulletin :{msg}\r\n")
                 };
@@ -1571,7 +1851,11 @@ fn irc_session(nick: String, outgoing: Receiver<String>, events: Sender<IrcEvent
                         let _ = stream.write_all(pong.as_bytes());
                         continue;
                     }
-                    if let Some(chat) = parse_privmsg(&line) {
+                    if let Some((from, ch)) = parse_invite(&line) {
+                        let _ = events.send(IrcEvent::Invited { from, channel: ch });
+                    } else if let Some(ch) = parse_join(&line) {
+                        let _ = events.send(IrcEvent::Joined(ch));
+                    } else if let Some(chat) = parse_privmsg(&line) {
                         if !chat.nick.eq_ignore_ascii_case(&nick) {
                             let _ = events.send(IrcEvent::Line(chat));
                         }
@@ -1589,8 +1873,29 @@ fn irc_session(nick: String, outgoing: Receiver<String>, events: Sender<IrcEvent
     }
 }
 
+fn irc_payload(line: &str) -> &str {
+    if let Some(rest) = line.strip_prefix('@') {
+        rest.split_once(' ').map(|(_, c)| c).unwrap_or(rest)
+    } else {
+        line
+    }
+}
+
+fn irc_command(msg: &str) -> bool {
+    let head = msg
+        .trim()
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_uppercase();
+    matches!(
+        head.as_str(),
+        "PRIVMSG" | "JOIN" | "PART" | "INVITE" | "RADIO" | "PONG" | "NICK" | "USER" | "QUIT"
+    )
+}
+
 fn parse_notice(line: &str) -> Option<String> {
-    let rest = line.strip_prefix(':')?;
+    let rest = irc_payload(line).strip_prefix(':')?;
     let (_, cmd) = rest.split_once(' ')?;
     if !cmd.starts_with("NOTICE ") {
         return None;
@@ -1599,17 +1904,63 @@ fn parse_notice(line: &str) -> Option<String> {
 }
 
 fn parse_privmsg(line: &str) -> Option<ChatLine> {
-    // :nick!user@host PRIVMSG #bulletin :text
-    let rest = line.strip_prefix(':')?;
+    let rest = irc_payload(line).strip_prefix(':')?;
     let (prefix, cmd) = rest.split_once(' ')?;
     if !cmd.starts_with("PRIVMSG ") {
         return None;
     }
     let nick = prefix.split('!').next().unwrap_or(prefix).to_string();
-    let text = cmd.split_once(" :")?.1.to_string();
+    let (target, text) = cmd.strip_prefix("PRIVMSG ")?.split_once(" :")?;
     Some(ChatLine {
         nick,
-        text,
+        text: text.to_string(),
         sys: false,
+        channel: target.to_string(),
     })
+}
+
+fn parse_join(line: &str) -> Option<String> {
+    let rest = irc_payload(line).strip_prefix(':')?;
+    let (_, cmd) = rest.split_once(' ')?;
+    let ch = cmd.strip_prefix("JOIN ")?;
+    Some(ch.split_whitespace().next()?.to_string())
+}
+
+fn parse_invite(line: &str) -> Option<(String, String)> {
+    let rest = irc_payload(line).strip_prefix(':')?;
+    let (prefix, cmd) = rest.split_once(' ')?;
+    let rest = cmd.strip_prefix("INVITE ")?;
+    let mut bits = rest.split_whitespace();
+    bits.next()?;
+    let ch = bits.next()?.to_string();
+    let from = prefix.split('!').next().unwrap_or(prefix).to_string();
+    Some((from, ch))
+}
+
+fn channel_security(
+    channel: &str,
+    mode: Option<Mode>,
+    preset: &str,
+    hub_ok: bool,
+) -> (String, String) {
+    let access = if crate::slash::is_bulletin(channel) {
+        "PUBLIC".to_string()
+    } else {
+        "CLOSED · invite only".to_string()
+    };
+    let signed = mode.map(|m| m.uses_internet()).unwrap_or(false);
+    let unsigned_hf = matches!(preset, "hf-poor" | "hf-weak" | "hf-deep");
+    let mut bits = Vec::new();
+    bits.push(if signed {
+        "identity SIGNED"
+    } else {
+        "identity UNSIGNED"
+    });
+    bits.push(if hub_ok { "hub TLS" } else { "hub OFF" });
+    bits.push(if unsigned_hf {
+        "RF plaintext (unsigned HF)"
+    } else {
+        "RF plaintext"
+    });
+    (access, bits.join(" · "))
 }

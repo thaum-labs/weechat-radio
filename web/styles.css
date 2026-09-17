@@ -233,6 +233,7 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
 }
 .station b { display: block; font-weight: 400; color: var(--accent); }
 .station:hover { color: var(--orange); }
+.station.on, .station.on b { color: var(--orange); }
 .station .mode-mark {
   width: 22px;
   height: 21px;
@@ -308,6 +309,7 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   display: flex;
   flex-direction: column;
   padding: 10px 12px 0;
+  position: relative;
 }
 #map {
   flex: 1;
@@ -366,8 +368,8 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
 }
 
 .log-panel {
-  flex: 0 0 140px;
-  min-height: 112px;
+  flex: 0 0 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   border-top: 1px solid var(--line);
@@ -412,6 +414,34 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   overflow: hidden;
   margin-top: 4px;
   color: var(--purple);
+}
+#ticker.reel {
+  height: auto;
+  overflow: auto;
+  margin-top: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--purple);
+}
+#ticker.reel .reel-line {
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(125, 155, 255, 0.1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#ticker.reel .reel-line:first-child { color: var(--fg); }
+.station-pop {
+  position: absolute;
+  top: 40px;
+  left: 12px;
+  z-index: 3;
+  min-width: 168px;
+  max-width: 240px;
+  padding: 8px 10px;
+  background: rgba(7, 7, 10, 0.92);
+  border: 1px solid var(--line);
+  font-size: 11px;
 }
 
 .page-wrap {
@@ -735,12 +765,65 @@ figure.diagram figcaption {
 #boot_screen[hidden] { display: none !important; }
 #boot_log { width: min(80vw, 560px); white-space: pre-wrap; }
 
-.maplibregl-ctrl-attrib {
-  background: rgba(0, 0, 0, 0.85) !important;
-  color: var(--dim);
-  font-size: 10px;
+.maplibregl-ctrl-bottom-right {
+  z-index: 2;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  width: 100%;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
 }
-.maplibregl-ctrl-attrib a { color: var(--orange); }
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl {
+  pointer-events: auto;
+  margin: 0 !important;
+  float: none !important;
+}
+.maplibregl-ctrl-attrib {
+  background: rgba(7, 7, 10, 0.88) !important;
+  color: var(--dim) !important;
+  font: 10px/1.35 var(--font-mono) !important;
+  margin: 0 !important;
+  padding: 4px 8px !important;
+  border: 0 !important;
+  border-top: 1px solid var(--line) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  width: 100%;
+  max-width: none;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.maplibregl-ctrl-attrib,
+.maplibregl-ctrl-attrib.maplibregl-compact,
+.maplibregl-ctrl-attrib.maplibregl-compact-show,
+details.maplibregl-ctrl-attrib:not([open]) {
+  min-height: 0 !important;
+  background-color: rgba(7, 7, 10, 0.88) !important;
+}
+.maplibregl-ctrl-attrib-inner {
+  display: inline !important;
+  position: static !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  color: var(--dim);
+  white-space: nowrap;
+  background: transparent !important;
+}
+.maplibregl-ctrl-attrib a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.maplibregl-ctrl-attrib a:hover { color: var(--orange); }
+.maplibregl-ctrl-attrib-button,
+.maplibregl-ctrl-attrib summary {
+  display: none !important;
+}
 
 @keyframes fadeIn {
   from { opacity: 0; }
@@ -792,7 +875,7 @@ figure.diagram figcaption {
     height: 52dvh;
     min-height: 280px;
   }
-  .log-panel { flex: none; }
+  .log-panel { flex: none; min-height: 0; }
   .status-grid { grid-template-columns: 1fr; }
   .page-wrap {
     height: auto;
@@ -951,5 +1034,5 @@ figure.diagram figcaption {
     height: 72dvh;
     min-height: 180px;
   }
-  .log-panel { min-height: 96px; }
+  .log-panel { min-height: 0; }
 }

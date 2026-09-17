@@ -808,12 +808,21 @@ async fn radio_cmd(
                     let _ = store.group_create(&name, &members);
                     format!("group {name} created")
                 }
+                "invite" | "add" => {
+                    let name = sp.next().unwrap_or("").to_string();
+                    let members: Vec<String> = sp.map(|s| s.to_ascii_uppercase()).collect();
+                    if name.is_empty() || members.is_empty() {
+                        return "usage: /radio group invite <name> <callsigns...>".into();
+                    }
+                    let _ = store.group_create(&name, &members);
+                    format!("invited {} to {name}", members.join(", "))
+                }
                 "list" => store.group_list().unwrap_or_default().join(", "),
                 "members" => {
                     let name = sp.next().unwrap_or("");
                     store.group_members(name).unwrap_or_default().join(", ")
                 }
-                _ => "usage: /radio group create|list|members".into(),
+                _ => "usage: /radio group create|list|members|invite".into(),
             }
         }
         "queue" => {
@@ -898,7 +907,7 @@ async fn radio_cmd(
         "update" => "run `wcr update` in a terminal".into(),
         "modem" => format!("kiss {}:{}", cfg.lock().modem.host, cfg.lock().modem.kiss_port),
         "" | "help" => {
-            "RADIO commands: mode preset status group queue trace history qsy ptt checkin net mute theme update"
+            "RADIO commands: mode preset status group queue trace history qsy ptt checkin net mute theme update. Channels: /join #name  /invite CALL"
                 .into()
         }
         other => format!("unknown RADIO subcommand '{other}'. Try /radio help"),

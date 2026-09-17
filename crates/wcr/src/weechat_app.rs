@@ -32,6 +32,7 @@ pub fn configure() -> Result<String> {
     )?;
 
     run_headless_configure(&script)?;
+    quiet_core_logs(&home);
     write_minttyrc()?;
     write_launcher()?;
     Ok(format!(
@@ -97,16 +98,42 @@ fn ensure_weechat() -> Result<()> {
 
 fn configure_cmds() -> String {
     let mut cmds = String::from(
-        "/server add radio 127.0.0.1/6667 -autoconnect;/set irc.server.radio.tls off;/set irc.server.radio.tls_verify off;/set irc.server.radio.capabilities message-tags,echo-message,server-time,msgid",
+        "/server add radio 127.0.0.1/6667 -autoconnect;\
+         /mute -all /set irc.server.radio.tls off;\
+         /mute -all /set irc.server.radio.tls_verify off;\
+         /mute -all /set irc.server.radio.capabilities message-tags,echo-message,server-time,msgid;\
+         /mute -all /set irc.server.radio.autojoin #bulletin;\
+         /mute -all /set irc.look.server_buffer independent;\
+         /mute -all /set weechat.startup.display_logo off;\
+         /mute -all /set weechat.startup.display_version off;\
+         /mute -all /set logger.level.core 0",
     );
     if let Ok(cfg) = crate::config::Config::load(&crate::config::Config::default_path()) {
         let nick = cfg.callsign.trim();
         if !nick.is_empty() {
-            cmds.push_str(&format!(";/set irc.server.radio.nicks {nick}"));
+            cmds.push_str(&format!(";/mute -all /set irc.server.radio.nicks {nick}"));
         }
     }
     cmds.push_str(";/save;/quit");
     cmds
+}
+
+fn quiet_core_logs(home: &Path) {
+    let logs = home.join("logs");
+    let Ok(entries) = std::fs::read_dir(&logs) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        let drop = name.contains("core")
+            || name.contains("weechat.weechatlog")
+            || name.contains("server.radio")
+            || name == "radio.weechatlog"
+            || name == "irc.radio.weechatlog";
+        if drop {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 fn run_headless_configure(script: &Path) -> Result<()> {

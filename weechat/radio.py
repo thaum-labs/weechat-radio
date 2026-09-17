@@ -54,37 +54,56 @@ ACCENT = "111"
 ORANGE = "209"
 DIM = "243"
 
+# Applied via the config API so WeeChat does not dump "/set" into the chat.
 CHROME = (
-    "/set weechat.bar.status.color_bg 232",
-    "/set weechat.bar.status.color_fg 111",
-    "/set weechat.bar.input.color_bg 232",
-    "/set weechat.bar.input.color_fg 111",
-    "/set weechat.bar.input.color_delim 209",
-    "/set weechat.bar.title.color_bg 232",
-    "/set weechat.bar.title.color_fg 111",
-    "/set weechat.bar.buflist.color_fg 111",
-    "/set weechat.bar.buflist.color_bg 232",
-    "/set weechat.bar.nicklist.color_fg 111",
-    "/set weechat.bar.nicklist.color_bg 232",
-    "/set weechat.bar.nicklist.separator on",
-    "/set weechat.bar.radio_bar.color_fg 111",
-    "/set weechat.bar.radio_bar.color_bg 232",
-    "/set weechat.look.color_inactive_window 243",
-    "/set weechat.look.color_nicklist_away 243",
-    "/set weechat.color.chat 189",
-    "/set weechat.color.chat_time 243",
-    "/set weechat.color.chat_time_delimiters 243",
-    "/set weechat.color.chat_nick 111",
-    "/set weechat.color.chat_nick_self 209",
-    "/set weechat.color.chat_prefix_network 209",
-    "/set weechat.color.chat_prefix_join 46",
-    "/set weechat.color.chat_highlight 209,232",
-    "/set weechat.color.separator 243",
-    "/set weechat.color.status_name 111",
-    "/set weechat.color.status_name_insecure 209",
-    "/set weechat.color.status_time 243",
-    "/set weechat.color.status_data_msg 111",
+    ("weechat.startup.display_logo", "off"),
+    ("weechat.startup.display_version", "off"),
+    ("logger.level.core", "0"),
+    ("irc.look.server_buffer", "independent"),
+    ("irc.look.display_host_join", "off"),
+    ("irc.look.display_host_quit", "off"),
+    ("irc.server.radio.autojoin", "#bulletin"),
+    ("weechat.bar.status.color_bg", "232"),
+    ("weechat.bar.status.color_fg", "111"),
+    ("weechat.bar.input.color_bg", "232"),
+    ("weechat.bar.input.color_fg", "111"),
+    ("weechat.bar.input.color_delim", "209"),
+    ("weechat.bar.title.color_bg", "232"),
+    ("weechat.bar.title.color_fg", "111"),
+    ("weechat.bar.buflist.color_fg", "111"),
+    ("weechat.bar.buflist.color_bg", "232"),
+    ("weechat.bar.nicklist.color_fg", "111"),
+    ("weechat.bar.nicklist.color_bg", "232"),
+    ("weechat.bar.nicklist.separator", "on"),
+    ("weechat.bar.radio_bar.color_fg", "111"),
+    ("weechat.bar.radio_bar.color_bg", "232"),
+    ("weechat.color.chat_inactive_window", "243"),
+    ("weechat.color.nicklist_away", "243"),
+    ("weechat.color.chat", "189"),
+    ("weechat.color.chat_time", "243"),
+    ("weechat.color.chat_time_delimiters", "243"),
+    ("weechat.color.chat_nick", "111"),
+    ("weechat.color.chat_nick_self", "209"),
+    ("weechat.color.chat_prefix_network", "209"),
+    ("weechat.color.chat_prefix_join", "46"),
+    ("weechat.color.chat_highlight", "209"),
+    ("weechat.color.chat_highlight_bg", "232"),
+    ("weechat.color.separator", "243"),
+    ("weechat.color.status_name", "111"),
+    ("weechat.color.status_name_insecure", "209"),
+    ("weechat.color.status_time", "243"),
+    ("weechat.color.status_data_msg", "111"),
 )
+
+BANNER = (
+    " __      _____ ___ ___ _  _   _ _____    ___    _   ___ ___ ___",
+    " \\ \\    / / __| __/ __| || | /_\\_   _|  | _ \\  /_\\ |   \\_ _/ _ \\",
+    "  \\ \\/\\/ /| _|| _| (__| __ |/ _ \\| |    |   / / _ \\| |) | | (_) |",
+    "   \\_/\\_/ |___|___\\___|_||_/_/ \\_\\_|    |_|_\\/_/ \\_\\___/___\\___/",
+)
+
+
+_banner_shown = False
 
 
 def _theme():
@@ -182,6 +201,73 @@ def air_cb(*_args):
     return "%d B" % n
 
 
+def _set(name, value):
+    ptr = weechat.config_get(name)
+    if ptr:
+        weechat.config_option_set(ptr, value, 1)
+
+
+def _mute(cmd):
+    weechat.command("", "/mute -all " + cmd)
+
+
+def apply_chrome():
+    if _theme() != "tron":
+        return
+    for name, value in CHROME:
+        _set(name, value)
+    _mute("/filter addreplace wcr_cap * irc_cap *")
+    _mute("/filter addreplace wcr_motd * irc_372,irc_375,irc_376,irc_422 *")
+    _mute("/filter addreplace wcr_welcome * irc_001,irc_002,irc_003,irc_004,irc_005 *")
+
+
+def _clear_buffer(plugin, name):
+    buf = weechat.buffer_search(plugin, name)
+    if buf:
+        weechat.command(buf, "/mute /buffer clear")
+
+
+def _print_banner(buf):
+    global _banner_shown
+    if _banner_shown or not buf:
+        return
+    name = weechat.buffer_get_string(buf, "full_name") or ""
+    if "bulletin" not in name:
+        return
+    _banner_shown = True
+    weechat.prnt(buf, "")
+    for line in BANNER:
+        weechat.prnt(buf, "%s%s" % (_col(ACCENT), line))
+    weechat.prnt(
+        buf,
+        "%s  weechat-radio:%s$"
+        % (_col(ACCENT), _col(ORANGE)),
+    )
+    weechat.prnt(
+        buf,
+        "%s  Type a message and press Enter.  /radio help for station commands."
+        % _col(DIM),
+    )
+    weechat.prnt(buf, "")
+
+
+def welcome_cb(_data, _remaining):
+    _clear_buffer("core", "weechat")
+    _clear_buffer("irc", "server.radio")
+    _clear_buffer("irc", "radio")
+    weechat.command("", "/buffer irc.radio.#bulletin")
+    buf = weechat.buffer_search("irc", "radio.#bulletin")
+    if not buf:
+        buf = weechat.current_buffer()
+    _print_banner(buf)
+    return weechat.WEECHAT_RC_OK
+
+
+def connected_cb(_data, _signal, _signal_data):
+    weechat.hook_timer(250, 0, 1, "welcome_cb", "")
+    return weechat.WEECHAT_RC_OK
+
+
 def tagmsg_cb(data, signal, signal_data):
     line = signal_data or ""
     if "radio/delivery=" not in line:
@@ -217,9 +303,9 @@ if weechat.register(SCRIPT_NAME, SCRIPT_AUTHOR, SCRIPT_VERSION, SCRIPT_LICENSE, 
     weechat.hook_modifier("input_text_content", "input_cb", "")
     weechat.hook_signal("*,irc_in_TAGMSG", "tagmsg_cb", "")
     weechat.hook_timer(4000, 0, 0, "timer_cb", "")
+    weechat.hook_signal("irc_server_connected", "connected_cb", "")
     if not weechat.bar_search("radio_bar"):
-        weechat.command("", "/bar add radio_bar window bottom 1 0 radio,radio_air")
-    if _theme() == "tron":
-        for cmd in CHROME:
-            weechat.command("", cmd)
+        _mute("/bar add radio_bar window bottom 1 0 radio,radio_air")
+    apply_chrome()
     weechat.config_set_plugin("draft_len", "0")
+    weechat.hook_timer(800, 0, 1, "welcome_cb", "")
