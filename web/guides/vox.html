@@ -11,7 +11,7 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=16" />
+  <link rel="stylesheet" href="/styles.css?v=19" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -38,19 +38,28 @@
       <p class="lead">VOX means the radio transmits when it hears sound. A plain audio cable is enough. About five minutes.</p>
 
       <figure class="diagram">
-        <div class="flow">
-          <div class="flow-col">
-            <div class="flow-row">
-              <div class="flow-box orange">radio speaker</div>
-              <span class="flow-arrow" aria-hidden="true">→</span>
-              <div class="flow-box accent">computer mic</div>
-            </div>
-            <div class="flow-row">
-              <div class="flow-box accent">computer headphones</div>
-              <span class="flow-arrow" aria-hidden="true">→</span>
-              <div class="flow-box orange">radio mic</div>
-            </div>
-          </div>
+        <div class="dgm-wrap">
+          <svg class="dgm" viewBox="0 0 720 210" role="img" aria-labelledby="v1t v1d">
+            <title id="v1t">Two audio cables between radio and computer</title>
+            <desc id="v1d">The radio speaker feeds the computer microphone input, and the computer headphone output feeds the radio microphone input. The radio keys itself on the data tones using VOX.</desc>
+            <defs>
+              <marker id="mrfV" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
+              </marker>
+            </defs>
+            <text class="tag" x="16" y="20">TWO CABLES · NO USB</text>
+            <line class="rf" marker-end="url(#mrfV)" x1="222" y1="82" x2="494" y2="82" />
+            <text class="sub" x="358" y="74" text-anchor="middle">radio speaker → computer mic</text>
+            <line class="rf" marker-end="url(#mrfV)" x1="494" y1="130" x2="222" y2="130" />
+            <text class="sub" x="358" y="150" text-anchor="middle">computer headphones → radio mic</text>
+            <rect class="box orange" x="16" y="48" width="204" height="116" />
+            <text class="on-orange" x="118" y="98" text-anchor="middle">radio</text>
+            <text class="sub" x="118" y="116" text-anchor="middle">keys itself on VOX</text>
+            <rect class="box accent" x="496" y="48" width="208" height="116" />
+            <text class="on-accent" x="600" y="98" text-anchor="middle">this computer</text>
+            <text class="sub" x="600" y="116" text-anchor="middle">sound card in and out</text>
+            <text class="sub" x="16" y="192">set the volume so the radio keys on data tones, not on room noise</text>
+          </svg>
         </div>
         <figcaption>Sound out of the radio into the computer, and sound out of the computer into the radio. Two 3.5&nbsp;mm cables, or one combined cable.</figcaption>
       </figure>

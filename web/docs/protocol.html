@@ -11,7 +11,7 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=16" />
+  <link rel="stylesheet" href="/styles.css?v=19" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -40,18 +40,56 @@
       <p>This hub build (17 Sep 2026, <code>ce4a108</code>) uses version 2 on radio (KISS) and internet (WebSocket). Version 1 frames are still decoded. <code>msg_id</code> is not sent on v2: the receiver recomputes it from origin, dest, seq, and the uncompressed body.</p>
 
       <figure class="diagram">
-        <div class="pkt" aria-label="Packet fields in order">
-          <i>ver<span>1 byte</span></i>
-          <i>type+flags<span>2</span></i>
-          <i>origin<span>6</span></i>
-          <i>dest<span>1 or 6</span></i>
-          <i>hops<span>1</span></i>
-          <i>ts<span>2</span></i>
-          <i>seq<span>varint</span></i>
-          <i>len<span>varint</span></i>
-          <i>body<span>n, max 300</span></i>
-          <i>crc<span>2</span></i>
-          <i>sig<span>64 optional</span></i>
+        <div class="dgm-wrap">
+          <svg class="dgm" viewBox="0 0 720 180" role="img" aria-labelledby="p1t p1d">
+            <title id="p1t">Packet layout in order</title>
+            <desc id="p1d">Header fields in order: ver 1 byte, type and flags 2, origin 6, dest 1 or 6, hops 1, ts 2, seq varint, len varint. Then the body up to 300 bytes, a 2 byte CRC, and an optional 64 byte signature.</desc>
+            <text class="tag" x="16" y="20">ONE FRAME, LEFT TO RIGHT</text>
+            <path class="lane" d="M16 60 V 50 H 451 V 60" />
+            <text class="sub" x="233" y="44" text-anchor="middle">header · 16–22 bytes</text>
+            <path class="lane" d="M454 60 V 50 H 574 V 60" />
+            <text class="sub" x="514" y="44" text-anchor="middle">payload</text>
+            <path class="lane" d="M620 60 V 50 H 704 V 60" />
+            <text class="sub" x="662" y="44" text-anchor="middle">optional</text>
+
+            <rect class="box" x="16" y="64" width="40" height="52" />
+            <text class="sub" x="36" y="88" text-anchor="middle">ver</text>
+            <text class="sub" x="36" y="104" text-anchor="middle">1</text>
+            <rect class="box gate" x="59" y="64" width="62" height="52" />
+            <text class="sub" x="90" y="84" text-anchor="middle">type+</text>
+            <text class="sub" x="90" y="97" text-anchor="middle">flags</text>
+            <text class="sub" x="90" y="110" text-anchor="middle">2</text>
+            <rect class="box" x="124" y="64" width="62" height="52" />
+            <text class="sub" x="155" y="88" text-anchor="middle">origin</text>
+            <text class="sub" x="155" y="104" text-anchor="middle">6</text>
+            <rect class="box" x="189" y="64" width="66" height="52" />
+            <text class="sub" x="222" y="88" text-anchor="middle">dest</text>
+            <text class="sub" x="222" y="104" text-anchor="middle">1 or 6</text>
+            <rect class="box" x="258" y="64" width="40" height="52" />
+            <text class="sub" x="278" y="88" text-anchor="middle">hops</text>
+            <text class="sub" x="278" y="104" text-anchor="middle">1</text>
+            <rect class="box" x="301" y="64" width="40" height="52" />
+            <text class="sub" x="321" y="88" text-anchor="middle">ts</text>
+            <text class="sub" x="321" y="104" text-anchor="middle">2</text>
+            <rect class="box" x="344" y="64" width="52" height="52" />
+            <text class="sub" x="370" y="88" text-anchor="middle">seq</text>
+            <text class="sub" x="370" y="104" text-anchor="middle">varint</text>
+            <rect class="box" x="399" y="64" width="52" height="52" />
+            <text class="sub" x="425" y="88" text-anchor="middle">len</text>
+            <text class="sub" x="425" y="104" text-anchor="middle">varint</text>
+            <rect class="box orange" x="454" y="64" width="120" height="52" />
+            <text class="on-orange" x="514" y="88" text-anchor="middle">body</text>
+            <text class="sub" x="514" y="104" text-anchor="middle">n, max 300</text>
+            <rect class="box" x="577" y="64" width="40" height="52" />
+            <text class="sub" x="597" y="88" text-anchor="middle">crc</text>
+            <text class="sub" x="597" y="104" text-anchor="middle">2</text>
+            <rect class="box off" x="620" y="64" width="84" height="52" />
+            <text class="on-off" x="662" y="88" text-anchor="middle">sig</text>
+            <text class="sub" x="662" y="104" text-anchor="middle">64</text>
+
+            <text class="sub" x="16" y="142">the body may be compressed; it is never encrypted on RF</text>
+            <text class="sub" x="16" y="160">sig is dropped on the slow HF presets, where 64 bytes cost too much air time</text>
+          </svg>
         </div>
         <figcaption>About 16–22 bytes of header, then the message text (optionally compressed), then a checksum. Signature is optional and omitted on slow HF.</figcaption>
       </figure>

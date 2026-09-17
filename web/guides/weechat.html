@@ -11,7 +11,7 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=16" />
+  <link rel="stylesheet" href="/styles.css?v=19" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -38,14 +38,40 @@
       <p class="lead">WeeChat is a separate chat program. The built-in window (<code>wcr tui</code>) is enough for most people. Use this page if you want WeeChat instead.</p>
 
       <figure class="diagram">
-        <div class="flow">
-          <div class="flow-row">
-            <div class="flow-box">WeeChat<span>what you type in</span></div>
-            <span class="flow-arrow" aria-hidden="true">→</span>
-            <div class="flow-box accent">wcr node<span>127.0.0.1:6667</span></div>
-            <span class="flow-arrow" aria-hidden="true">→</span>
-            <div class="flow-box cyan">hub / radio</div>
-          </div>
+        <div class="dgm-wrap">
+          <svg class="dgm" viewBox="0 0 720 196" role="img" aria-labelledby="wc1t wc1d">
+            <title id="wc1t">Where WeeChat sits</title>
+            <desc id="wc1d">WeeChat connects to the wcr node on this computer over loopback IRC on port 6667. The node is the only part that talks to the hub or the radio.</desc>
+            <defs>
+              <marker id="maccWC" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
+              </marker>
+              <marker id="mnetWC" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
+              </marker>
+              <marker id="mrfWC" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
+              </marker>
+            </defs>
+            <text class="tag" x="16" y="20">ONE HOP ON THIS COMPUTER</text>
+            <line class="wire" marker-start="url(#maccWC)" marker-end="url(#maccWC)" x1="212" y1="88" x2="252" y2="88" />
+            <text class="sub" x="232" y="80" text-anchor="middle">IRC</text>
+            <line class="net" marker-start="url(#mnetWC)" marker-end="url(#mnetWC)" x1="460" y1="76" x2="500" y2="60" />
+            <line class="rf" marker-start="url(#mrfWC)" marker-end="url(#mrfWC)" x1="460" y1="100" x2="500" y2="126" />
+            <rect class="box" x="16" y="62" width="194" height="54" />
+            <text x="113" y="84" text-anchor="middle">WeeChat</text>
+            <text class="sub" x="113" y="102" text-anchor="middle">what you type in</text>
+            <rect class="box accent" x="254" y="62" width="204" height="54" />
+            <text class="on-accent" x="356" y="84" text-anchor="middle">wcr node</text>
+            <text class="sub" x="356" y="102" text-anchor="middle">127.0.0.1:6667</text>
+            <rect class="box hub" x="502" y="36" width="202" height="48" />
+            <text class="on-hub" x="603" y="56" text-anchor="middle">hub</text>
+            <text class="sub" x="603" y="72" text-anchor="middle">internet</text>
+            <rect class="box orange" x="502" y="104" width="202" height="48" />
+            <text class="on-orange" x="603" y="124" text-anchor="middle">radio</text>
+            <text class="sub" x="603" y="140" text-anchor="middle">on the air</text>
+            <text class="sub" x="16" y="180">WeeChat never talks to the internet by itself; the node decides what leaves</text>
+          </svg>
         </div>
         <figcaption>WeeChat talks to WeeChat Radio on this computer, on port 6667. It never talks to the internet by itself.</figcaption>
       </figure>
