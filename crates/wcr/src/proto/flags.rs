@@ -9,6 +9,10 @@ pub const FLAG_SIGNED: u16 = 1 << 2;
 pub const FLAG_REQ_ACK: u16 = 1 << 3;
 pub const FLAG_THIRD_PARTY: u16 = 1 << 4;
 pub const FLAG_NO_INET: u16 = 1 << 7;
+/// Wire-only: dest is a 1-byte well-known group index (v2).
+pub const FLAG_GROUP_IDX: u16 = 1 << 8;
+/// Wire-only: body is smaz-compressed (v2). Cleared after decode.
+pub const FLAG_COMPRESSED: u16 = 1 << 9;
 pub const FLAG_PRIORITY_SHIFT: u16 = 5;
 pub const FLAG_PRIORITY_MASK: u16 = 0b11 << FLAG_PRIORITY_SHIFT;
 
@@ -119,6 +123,14 @@ impl Flags {
 
     pub fn third_party(self) -> bool {
         self.has(FLAG_THIRD_PARTY)
+    }
+
+    pub fn group_idx(self) -> bool {
+        self.has(FLAG_GROUP_IDX)
+    }
+
+    pub fn compressed(self) -> bool {
+        self.has(FLAG_COMPRESSED)
     }
 
     pub fn priority(self) -> Priority {

@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
+#[derive(Clone)]
 pub struct HubClient {
     pub tx: mpsc::Sender<Vec<u8>>,
 }
@@ -64,7 +65,7 @@ impl HubClient {
                             .await
                             .is_err()
                         {
-                            connected.set(false);
+                            connected.fail("hub hello send failed");
                             continue;
                         }
                         loop {
@@ -88,6 +89,11 @@ impl HubClient {
                                         }
                                         Some(Ok(Message::Text(t))) => {
                                             tracing::debug!("hub text {t}");
+                                            if t.contains("\"ok\":false") {
+                                                let why = hub_error_text(&t);
+                                                connected.fail(why);
+                                                break;
+                                            }
                                         }
                                         Some(Ok(Message::Close(_))) | None => break,
                                         Some(Err(_)) => break,
@@ -96,11 +102,13 @@ impl HubClient {
                                 }
                             }
                         }
-                        connected.set(false);
+                        if connected.get() {
+                            connected.fail("hub disconnected");
+                        }
                     }
                     Err(e) => {
                         tracing::warn!("hub connect failed: {e}");
-                        connected.set(false);
+                        connected.fail(format!("hub connect failed: {e}"));
                     }
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(backoff)).await;
@@ -120,18 +128,40 @@ impl HubClient {
 }
 
 #[derive(Clone, Default)]
-pub struct ArcFlag(std::sync::Arc<std::sync::atomic::AtomicBool>);
+pub struct ArcFlag {
+    ok: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    err: std::sync::Arc<parking_lot::Mutex<String>>,
+}
 
 impl ArcFlag {
     pub fn new() -> Self {
         Self::default()
     }
     pub fn set(&self, v: bool) {
-        self.0.store(v, std::sync::atomic::Ordering::SeqCst);
+        self.ok.store(v, std::sync::atomic::Ordering::SeqCst);
+        if v {
+            self.err.lock().clear();
+        }
+    }
+    pub fn fail(&self, msg: impl Into<String>) {
+        self.ok.store(false, std::sync::atomic::Ordering::SeqCst);
+        *self.err.lock() = msg.into();
     }
     pub fn get(&self) -> bool {
-        self.0.load(std::sync::atomic::Ordering::SeqCst)
+        self.ok.load(std::sync::atomic::Ordering::SeqCst)
     }
+    pub fn error(&self) -> String {
+        self.err.lock().clone()
+    }
+}
+
+fn hub_error_text(t: &str) -> String {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(t) {
+        if let Some(e) = v.get("error").and_then(|e| e.as_str()) {
+            return format!("hub refused: {e}");
+        }
+    }
+    format!("hub refused: {t}")
 }
 
 #[cfg(test)]

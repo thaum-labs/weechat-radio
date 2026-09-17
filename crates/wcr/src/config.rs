@@ -27,6 +27,7 @@ pub struct Config {
     pub status: StatusConfig,
     pub relay: RelayConfig,
     pub rig: RigConfig,
+    pub rf: RfConfig,
 }
 
 impl Default for Config {
@@ -47,6 +48,7 @@ impl Default for Config {
             status: StatusConfig::default(),
             relay: RelayConfig::default(),
             rig: RigConfig::default(),
+            rf: RfConfig::default(),
         }
     }
 }
@@ -259,6 +261,30 @@ impl Default for RelayConfig {
         Self {
             default_ttl: 3,
             max_message_bytes: 300,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RfConfig {
+    /// Retransmit our own unacked RF messages this many times.
+    pub max_retries: u32,
+    /// Data shards when erasure-coding a group / oversized frame.
+    pub frag_k: u8,
+    /// Parity shards (any k of k+m reconstruct).
+    pub frag_m: u8,
+    /// Delay before a second copy of an emergency (`!!`) frame.
+    pub emergency_dup_ms: u32,
+}
+
+impl Default for RfConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            frag_k: 2,
+            frag_m: 1,
+            emergency_dup_ms: 400,
         }
     }
 }

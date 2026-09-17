@@ -20,6 +20,7 @@ pub mod relay;
 pub mod service;
 pub mod setup;
 pub mod sim;
+pub mod slash;
 pub mod status;
 pub mod store;
 pub mod telemetry;

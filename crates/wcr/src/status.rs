@@ -27,6 +27,12 @@ pub struct StatusSnapshot {
     pub lan_peers: usize,
     pub update_available: Option<String>,
     pub clock_warn: bool,
+    /// Current TX robustness rung (e.g. `RDM-300S`).
+    #[serde(default)]
+    pub tx_rung: String,
+    /// Last ARQ retry count shown in the bar.
+    #[serde(default)]
+    pub retries: u32,
 }
 
 impl Default for StatusSnapshot {
@@ -51,6 +57,8 @@ impl Default for StatusSnapshot {
             lan_peers: 0,
             update_available: None,
             clock_warn: false,
+            tx_rung: String::new(),
+            retries: 0,
         }
     }
 }

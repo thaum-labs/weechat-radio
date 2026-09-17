@@ -327,6 +327,60 @@ impl Store {
         Ok(())
     }
 
+    pub fn retries_of(&self, id: &MsgId) -> Result<u32> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT retries FROM messages WHERE msg_id = ?1",
+                params![id.hex()],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?
+            .unwrap_or(0) as u32)
+    }
+
+    /// Our own unacked messages whose retry timer has fired.
+    pub fn retry_due(
+        &self,
+        now: u32,
+        origin: &str,
+        max_retries: u32,
+    ) -> Result<Vec<(StoredMsg, u32)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT msg_id, kind, origin, dest, flags, hops_left, ts, seq, body, signature, rx_time, delivery, retries
+             FROM messages
+             WHERE origin = ?1
+               AND delivery = 'sent'
+               AND hold_until > 0 AND hold_until <= ?2
+               AND retries < ?3",
+        )?;
+        let rows = stmt.query_map(params![origin, now as i64, max_retries as i64], |r| {
+            let hex: String = r.get(0)?;
+            let id = MsgId::parse_hex(&hex).unwrap_or(MsgId([0; 8]));
+            let t: RowTuple = (
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+                r.get(7)?,
+                r.get(8)?,
+                r.get(9)?,
+                r.get(10)?,
+                r.get(11)?,
+            );
+            let retries: i64 = r.get(12)?;
+            Ok((row_to_stored(id, t), retries as u32))
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
     pub fn queue_depth(&self) -> Result<(u64, u64)> {
         let conn = self.conn.lock().unwrap();
         let outbound: u64 = conn.query_row(
@@ -663,6 +717,7 @@ fn tuple_to_env(
         "status" => MsgType::Status,
         "form" => MsgType::Form,
         "file" => MsgType::File,
+        "frag" => MsgType::Frag,
         _ => MsgType::Msg,
     };
     let mut signature = None;
@@ -713,6 +768,29 @@ mod tests {
             s.delivery_of(&env.msg_id).unwrap(),
             Some(Delivery::Delivered)
         );
+    }
+
+    #[test]
+    fn retry_due_lists_unacked_sent() {
+        let s = Store::open_memory().unwrap();
+        let env = Envelope::new_msg(
+            Callsign::parse("G4ABC").unwrap(),
+            Callsign::parse("M0XYZ").unwrap(),
+            1,
+            b"hi".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        s.insert(&env, Delivery::Sent).unwrap();
+        s.set_hold(&env.msg_id, 1, 3).unwrap();
+        let due = s.retry_due(10, "G4ABC", 3).unwrap();
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].1, 0);
+        s.bump_retry(&env.msg_id, 20).unwrap();
+        assert_eq!(s.retries_of(&env.msg_id).unwrap(), 1);
+        assert!(s.retry_due(10, "G4ABC", 3).unwrap().is_empty());
+        assert_eq!(s.retry_due(20, "G4ABC", 3).unwrap().len(), 1);
     }
 
     #[test]

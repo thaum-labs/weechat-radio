@@ -94,7 +94,7 @@ impl Theme {
             fg: Color::Rgb(216, 208, 232),
             accent: Color::Rgb(125, 155, 255),
             warn: Color::Rgb(255, 122, 61),
-            border: Color::Rgb(40, 36, 48),
+            border: Color::Rgb(55, 68, 112),
             title: Color::Rgb(125, 155, 255),
             dim: Color::Rgb(122, 115, 136),
         }
@@ -514,7 +514,7 @@ fn draw(f: &mut Frame, app: &App) {
 
     let left = Layout::vertical([
         Constraint::Length(8),
-        Constraint::Length(10),
+        Constraint::Length(12),
         Constraint::Min(4),
     ])
     .split(body[0]);
@@ -552,6 +552,22 @@ fn draw(f: &mut Frame, app: &App) {
         (
             "snr",
             snap.map(|s| format!("{:.0}", s.snr))
+                .unwrap_or_else(|| "—".into()),
+        ),
+        (
+            "tx",
+            snap.map(|s| {
+                if s.tx_rung.is_empty() {
+                    "—".into()
+                } else {
+                    s.tx_rung.clone()
+                }
+            })
+            .unwrap_or_else(|| "—".into()),
+        ),
+        (
+            "retry",
+            snap.map(|s| format!("{}", s.retries))
                 .unwrap_or_else(|| "—".into()),
         ),
         (
