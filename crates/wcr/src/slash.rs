@@ -131,6 +131,21 @@ const GROUP_ARGS: &[Arg] = &[
     },
 ];
 
+const PRIO_ARGS: &[Arg] = &[
+    Arg {
+        value: "routine",
+        hint: "Normal traffic (TTL 3)",
+    },
+    Arg {
+        value: "priority",
+        hint: "Faster relays (TTL 4)",
+    },
+    Arg {
+        value: "emergency",
+        hint: "Highest — double TX on RF (TTL 5)",
+    },
+];
+
 const COMMANDS: &[Cmd] = &[
     Cmd {
         name: "help",
@@ -193,6 +208,13 @@ const COMMANDS: &[Cmd] = &[
         usage: "/freq [MHz]",
         summary: "Show or set this station's frequency",
         args: &[],
+        send_bare: true,
+    },
+    Cmd {
+        name: "prio",
+        usage: "/prio [routine|priority|emergency]",
+        summary: "Channel default priority (synced)",
+        args: PRIO_ARGS,
         send_bare: true,
     },
     Cmd {
@@ -296,7 +318,7 @@ pub fn to_radio_args(raw: &str) -> Option<String> {
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
-    if matches!(head.as_str(), "join" | "j" | "part" | "invite") {
+    if matches!(head.as_str(), "join" | "j" | "part" | "invite" | "prio" | "priority") {
         return None;
     }
     Some(rest.to_string())
@@ -361,6 +383,17 @@ pub fn to_wire(raw: &str, channel: &str) -> Vec<String> {
                     "PRIVMSG {nick} :You are invited to {channel} on WeeChat Radio. Join that channel to talk."
                 ),
             ]
+        }
+        "prio" | "priority" => {
+            if channel.starts_with('#') || channel.starts_with('&') {
+                if tail.is_empty() {
+                    vec![format!("RADIO prio {channel}")]
+                } else {
+                    vec![format!("RADIO prio {channel} {tail}")]
+                }
+            } else {
+                Vec::new()
+            }
         }
         _ => {
             if let Some(args) = to_radio_args(t) {

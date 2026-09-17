@@ -1,4 +1,6 @@
 Term=xterm-256color
+Columns=110
+Rows=36
 ForegroundColour=216,208,232
 BackgroundColour=7,7,10
 CursorColour=255,122,61

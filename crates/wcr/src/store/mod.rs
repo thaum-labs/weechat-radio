@@ -101,7 +101,7 @@ impl Store {
         conn.execute_batch(SCHEMA)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "FULL")?;
-        Self::migrate_heard(&conn);
+        Self::migrate(&conn);
         let s = Self {
             conn: Mutex::new(conn),
             max_age_hours,
@@ -114,7 +114,7 @@ impl Store {
     pub fn open_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
-        Self::migrate_heard(&conn);
+        Self::migrate(&conn);
         Ok(Self {
             conn: Mutex::new(conn),
             max_age_hours: 72,
@@ -122,12 +122,16 @@ impl Store {
         })
     }
 
-    fn migrate_heard(conn: &Connection) {
+    fn migrate(conn: &Connection) {
         let _ = conn.execute(
             "ALTER TABLE heard ADD COLUMN freq_khz INTEGER NOT NULL DEFAULT 0",
             [],
         );
         let _ = conn.execute("ALTER TABLE heard ADD COLUMN band TEXT", []);
+        let _ = conn.execute(
+            "ALTER TABLE groups ADD COLUMN default_prio INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
     }
 
     fn now() -> u32 {
@@ -264,11 +268,17 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let mut out = Vec::new();
         if let Some(t) = target {
+            let key = t
+                .trim()
+                .trim_start_matches('#')
+                .trim_start_matches('&')
+                .to_ascii_uppercase();
             let mut stmt = conn.prepare(
                 "SELECT msg_id, kind, origin, dest, flags, hops_left, ts, seq, body, signature, rx_time, delivery
-                 FROM messages WHERE dest = ?1 OR origin = ?1 ORDER BY rx_time ASC LIMIT ?2",
+                 FROM messages WHERE upper(dest) = ?1 OR upper(origin) = ?1
+                 ORDER BY rx_time ASC LIMIT ?2",
             )?;
-            let rows = stmt.query_map(params![t, limit as i64], map_full_row)?;
+            let rows = stmt.query_map(params![key, limit as i64], map_full_row)?;
             for r in rows {
                 out.push(r?);
             }
@@ -523,7 +533,7 @@ impl Store {
     pub fn group_create(&self, name: &str, members: &[String]) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR IGNORE INTO groups(name, closed, created) VALUES(?1, 1, ?2)",
+            "INSERT OR IGNORE INTO groups(name, closed, created, default_prio) VALUES(?1, 1, ?2, 0)",
             params![name, Self::now() as i64],
         )?;
         for m in members {
@@ -547,6 +557,51 @@ impl Store {
         let mut stmt = conn.prepare("SELECT name FROM groups ORDER BY name")?;
         let rows = stmt.query_map([], |r| r.get(0))?;
         Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Ensure a group row exists so channel defaults can be stored.
+    pub fn group_ensure(&self, name: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO groups(name, closed, created, default_prio) VALUES(?1, 1, ?2, 0)",
+            params![name, Self::now() as i64],
+        )?;
+        Ok(())
+    }
+
+    pub fn group_set_prio(&self, name: &str, prio: u8) -> Result<()> {
+        self.group_ensure(name)?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE groups SET default_prio = ?1 WHERE name = ?2",
+            params![prio as i64, name],
+        )?;
+        Ok(())
+    }
+
+    pub fn group_prio(&self, name: &str) -> Result<u8> {
+        let conn = self.conn.lock().unwrap();
+        let p: Option<i64> = conn
+            .query_row(
+                "SELECT default_prio FROM groups WHERE name = ?1",
+                params![name],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(p.unwrap_or(0).clamp(0, 2) as u8)
+    }
+
+    /// All stored channel default priorities as `(group_name, prio_bits)`.
+    pub fn group_prios(&self) -> Result<Vec<(String, u8)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT name, default_prio FROM groups ORDER BY name")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u8))
+        })?;
+        Ok(rows
+            .filter_map(|r| r.ok())
+            .map(|(n, p)| (n, p.clamp(0, 2)))
+            .collect())
     }
 
     pub fn receipt(&self, group: &str, msg_id: &MsgId, callsign: &str) -> Result<()> {

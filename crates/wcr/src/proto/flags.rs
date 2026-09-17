@@ -74,6 +74,20 @@ impl Priority {
             (Self::Routine, t)
         }
     }
+
+    /// True when the line starts with `!` or `!!` (explicit override of a channel default).
+    pub fn has_prefix(text: &str) -> bool {
+        text.trim_start().starts_with('!')
+    }
+
+    pub fn parse_name(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "routine" | "0" | "r" | "normal" => Some(Self::Routine),
+            "priority" | "1" | "p" | "prio" => Some(Self::Priority),
+            "emergency" | "2" | "e" | "em" | "emerg" => Some(Self::Emergency),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -164,5 +178,17 @@ mod tests {
         assert_eq!(Priority::parse_prefix("!!help").0, Priority::Emergency);
         assert_eq!(Priority::parse_prefix("!net").0, Priority::Priority);
         assert_eq!(Priority::parse_prefix("hello").0, Priority::Routine);
+        assert!(Priority::has_prefix("!x"));
+        assert!(Priority::has_prefix("!!x"));
+        assert!(!Priority::has_prefix("x"));
+        assert_eq!(Priority::parse_name("emergency"), Some(Priority::Emergency));
+        assert_eq!(Priority::parse_name("prio"), Some(Priority::Priority));
+    }
+
+    #[test]
+    fn chan_meta_roundtrip_names() {
+        for p in [Priority::Routine, Priority::Priority, Priority::Emergency] {
+            assert_eq!(Priority::parse_name(p.as_str()), Some(p));
+        }
     }
 }
