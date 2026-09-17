@@ -276,6 +276,22 @@ pub struct RfConfig {
     pub frag_m: u8,
     /// Delay before a second copy of an emergency (`!!`) frame.
     pub emergency_dup_ms: u32,
+    /// Application-layer busy gate / p-persistence (modem73 CSMA is separate).
+    pub csma: bool,
+    pub slot_ms: u32,
+    pub quiet_ms: u32,
+    pub max_defer_ms: u32,
+    pub emergency_max_defer_ms: u32,
+    /// Extra pause after a TX so ACKs can be heard before we key again.
+    pub turnaround_ms: u32,
+    /// Occupancy at or above this drops beacons/HAVE and defers relays.
+    pub congested_pct: u8,
+    /// Random delay before a group ACK so responders do not collide.
+    pub ack_dither_ms: u32,
+    /// Beacon interval is 60 s ± this many seconds.
+    pub beacon_jitter_s: u32,
+    /// Randomise ARQ retry hold (±25%).
+    pub retry_jitter: bool,
 }
 
 impl Default for RfConfig {
@@ -285,6 +301,16 @@ impl Default for RfConfig {
             frag_k: 2,
             frag_m: 1,
             emergency_dup_ms: 400,
+            csma: true,
+            slot_ms: 100,
+            quiet_ms: 300,
+            max_defer_ms: 15_000,
+            emergency_max_defer_ms: 3_000,
+            turnaround_ms: 250,
+            congested_pct: 60,
+            ack_dither_ms: 800,
+            beacon_jitter_s: 15,
+            retry_jitter: true,
         }
     }
 }

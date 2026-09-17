@@ -27,6 +27,29 @@ On radio, `wcr` does not demodulate audio — [modem73](https://github.com/RFnex
 
 The status bar shows the current TX rung and retry count.
 
+## Busy channel
+
+When several stations talk at once, frames would otherwise pile onto the KISS port and key over each other. Two layers stop that:
+
+1. **modem73 CSMA** is on for every preset (VHF and HF). The modem itself waits for a quiet carrier before PTT.
+2. **`wcr` air queue** serialises our own traffic. It waits while the channel is `rx`/`tx`, spreads retries and group ACKs so they do not land on the same slot, skips beacons when occupancy is high, and leaves a turnaround gap after each TX so an ACK can be heard.
+
+The status bar **PTT** field shows `wait` while the queue is holding a frame. **OCC** is occupancy 0–100 from the modem. **QUEUE** includes how many frames are in the air queue (`air N`).
+
+```
+[rf]
+csma = true
+slot_ms = 100
+quiet_ms = 300
+max_defer_ms = 15000          # then send anyway; modem73 CSMA still gates PTT
+emergency_max_defer_ms = 3000
+turnaround_ms = 250
+congested_pct = 60            # drop beacons / defer relays at or above this
+ack_dither_ms = 800
+beacon_jitter_s = 15
+retry_jitter = true
+```
+
 Operator guide: [weak signals](https://weechatradio.com/docs/weak.html). Same text offline: `wcr help weak`.
 
 ## Gateway knobs

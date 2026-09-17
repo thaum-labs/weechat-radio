@@ -91,7 +91,12 @@
         <li>When an ACK comes back, it includes how strong they heard you. A good report steps the waveform back up.</li>
         <li>Lines that start with <code>!!</code> (emergency) go out twice, a moment apart, so a fade is less likely to take both.</li>
         <li>Group chat on HF is split into pieces. Any two of three pieces rebuild the message. If several internet gateways each hear a different piece, the hub stitches them.</li>
+        <li>If the frequency is already busy, the program waits for a gap (status bar <strong>PTT</strong> reads <code>wait</code>). Beacons stay off while occupancy is high. Group ACKs and retries are staggered so they do not all key at once.</li>
       </ol>
+
+      <h2>Busy channel</h2>
+      <p>modem73 carrier-sense is on for every preset. On top of that, <code>wcr</code> keeps a single air queue: one frame (or fragment burst) at a time, emergency first, then ACKs, then your chat, then relays, then beacons.</p>
+      <p><strong>OCC</strong> in the station panel is channel occupancy 0–100. <code>wait</code> means a frame is queued until the channel is idle. After <code>max_defer_ms</code> (3 s for emergency) it sends anyway — the modem still will not key over a carrier it can hear.</p>
 
       <h2>Steps (HF fading)</h2>
       <ol class="steps">
@@ -118,7 +123,17 @@
 max_retries = 3       # extra sends of your own unacked messages
 frag_k = 2            # pieces of data
 frag_m = 1            # spare pieces; any 2 of 3 rebuild the message
-emergency_dup_ms = 400</pre>
+emergency_dup_ms = 400
+csma = true
+slot_ms = 100
+quiet_ms = 300
+max_defer_ms = 15000
+emergency_max_defer_ms = 3000
+turnaround_ms = 250
+congested_pct = 60
+ack_dither_ms = 800
+beacon_jitter_s = 15
+retry_jitter = true</pre>
 
       <div class="ok">
         <h2>How you know it worked</h2>
@@ -126,6 +141,7 @@ emergency_dup_ms = 400</pre>
           <li>A faint station's callsign appears in <strong>HEARD</strong> with a low or negative SNR.</li>
           <li>Your line gets <code>✓</code> then <code>✓✓</code> (delivered), even if <strong>RETRY</strong> was 1 or 2 first.</li>
           <li><strong>TX</strong> may show a slower mode than your preset. That is expected on a rough path.</li>
+          <li>On a busy frequency, <strong>OCC</strong> climbs and <strong>PTT</strong> may show <code>wait</code> instead of <code>idle</code>. That is the air queue holding your frame.</li>
         </ul>
       </div>
 

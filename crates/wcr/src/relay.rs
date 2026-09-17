@@ -57,13 +57,29 @@ pub fn jitter_ms(priority: Priority) -> u64 {
     rand::thread_rng().gen_range(range)
 }
 
-pub fn next_retry_hold(retries: u32, now: u32, priority: Priority) -> u32 {
+pub fn next_retry_hold_base(retries: u32, now: u32, priority: Priority) -> u32 {
     let base: u32 = match priority {
         Priority::Emergency => 8,
         Priority::Priority => 20,
         Priority::Routine => 45,
     };
     let delay = base.saturating_mul(1u32 << retries.min(4));
+    now.saturating_add(delay)
+}
+
+/// ARQ hold with ±25% jitter so colliding stations do not retry in lockstep.
+pub fn next_retry_hold(retries: u32, now: u32, priority: Priority) -> u32 {
+    next_retry_hold_jittered(retries, now, priority, true)
+}
+
+pub fn next_retry_hold_jittered(retries: u32, now: u32, priority: Priority, jitter: bool) -> u32 {
+    let target = next_retry_hold_base(retries, 0, priority);
+    let delay = if jitter {
+        let factor = rand::thread_rng().gen_range(0.75f64..=1.25);
+        ((target as f64) * factor).round() as u32
+    } else {
+        target
+    };
     now.saturating_add(delay)
 }
 
@@ -192,5 +208,37 @@ mod tests {
         assert!(!may_inet_forward(true, true, true));
         assert!(may_inet_forward(true, true, false));
         assert!(!may_inet_forward(false, true, false));
+    }
+
+    #[test]
+    fn retry_hold_is_monotonic_without_jitter() {
+        let a = next_retry_hold_base(0, 0, Priority::Routine);
+        let b = next_retry_hold_base(1, 0, Priority::Routine);
+        let c = next_retry_hold_base(2, 0, Priority::Routine);
+        assert!(b > a && c > b);
+        assert_eq!(a, 45);
+        assert_eq!(b, 90);
+    }
+
+    #[test]
+    fn retry_hold_jitter_stays_in_bounds() {
+        let now = 1_000u32;
+        for retries in 0..5u32 {
+            let base = next_retry_hold_base(retries, 0, Priority::Routine);
+            let lo = ((base as f64) * 0.75).floor() as u32;
+            let hi = ((base as f64) * 1.25).ceil() as u32;
+            for _ in 0..40 {
+                let t = next_retry_hold(retries, now, Priority::Routine);
+                let delay = t.saturating_sub(now);
+                assert!(
+                    delay >= lo && delay <= hi,
+                    "retry {retries}: delay {delay} not in {lo}..={hi}"
+                );
+            }
+        }
+        assert_eq!(
+            next_retry_hold_jittered(0, 100, Priority::Emergency, false),
+            108
+        );
     }
 }

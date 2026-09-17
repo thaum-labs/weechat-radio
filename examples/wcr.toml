@@ -66,6 +66,16 @@ max_retries = 3       # ARQ attempts for our own unacked RF messages
 frag_k = 2            # erasure-coding data shards (group / oversized frames)
 frag_m = 1            # parity shards; any k of k+m reconstruct
 emergency_dup_ms = 400
+csma = true           # wait for a quiet channel before sending
+slot_ms = 100
+quiet_ms = 300
+max_defer_ms = 15000
+emergency_max_defer_ms = 3000
+turnaround_ms = 250
+congested_pct = 60    # drop beacons / defer relays at or above this occupancy
+ack_dither_ms = 800
+beacon_jitter_s = 15
+retry_jitter = true
 
 [rig]
 enabled = false

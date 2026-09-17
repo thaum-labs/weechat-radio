@@ -541,6 +541,8 @@ fn draw(f: &mut Frame, app: &App) {
         .map(|s| {
             if s.ptt_on {
                 "TX".into()
+            } else if s.deferred {
+                "wait".into()
             } else {
                 s.channel.clone()
             }
@@ -571,13 +573,18 @@ fn draw(f: &mut Frame, app: &App) {
                 .unwrap_or_else(|| "—".into()),
         ),
         (
+            "occ",
+            snap.map(|s| format!("{}%", s.occupancy_pct))
+                .unwrap_or_else(|| "—".into()),
+        ),
+        (
             "audio",
             snap.map(|s| s.audio_label.clone())
                 .unwrap_or_else(|| "—".into()),
         ),
         (
             "queue",
-            snap.map(|s| format!("{}", s.queue_out))
+            snap.map(|s| format!("{} air {}", s.queue_out, s.queue_air))
                 .unwrap_or_else(|| "—".into()),
         ),
     ];
