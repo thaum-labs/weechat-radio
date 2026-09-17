@@ -13,6 +13,7 @@ pub fn topics() -> &'static [(&'static str, &'static str)] {
         ("api", include_str!("../../../docs/API.md")),
         ("style", include_str!("../../../docs/STYLE.md")),
         ("calling", include_str!("../../../docs/CALLING.md")),
+        ("weak", include_str!("../../../docs/WEAK.md")),
     ]
 }
 

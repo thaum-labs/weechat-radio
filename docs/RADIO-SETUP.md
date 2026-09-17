@@ -105,6 +105,17 @@ The status bar reads the receive level from modem73.
 
 ---
 
+## When the path is weak
+
+If the other station is faint, or HF is fading, do not turn the audio up into **hot**. Pick a slower preset and let the program retry.
+
+- `hf-poor` is the usual HF calling preset. `hf-weak` and `hf-deep` are slower.
+- The status bar **TX** and **RETRY** fields show when the program has stepped down on its own.
+
+Guide: https://weechatradio.com/docs/weak.html (offline: `wcr help weak`).
+
+---
+
 ## Suggested calling frequencies
 
 See `wcr help calling` or https://weechatradio.com/docs/calling.html. Always verify the band plan for your country before you transmit.

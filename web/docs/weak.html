@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Weak signals — WeeChat Radio</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=11" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/docs.html">docs</a> / weak signals</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> weak signals</h1>
+      <p class="lead">Chat still works when the path is noisy, fading, or barely above the noise. You pick a slower preset. The program retries and steps down if the other station does not acknowledge.</p>
+
+      <div class="warn-box">
+        <h2>Upgrade every station first</h2>
+        <p>This hub build (17 Sep 2026, <code>ce4a108</code>) speaks protocol version 2. Older nodes speak a different packet layout. Version 1 frames are still decoded, but every station that wants to talk on radio with this hub should run this build.</p>
+      </div>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="flow-row">
+            <div class="flow-box orange">faint radio<span>noise, fade, clip</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box">modem73<span>turns audio into a frame</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box accent">wcr<span>retry, slower mode, smaller packet</span></div>
+          </div>
+        </div>
+        <figcaption>The sound program decodes the signal. WeeChat Radio retries, shrinks the packet, and asks modem73 for a tougher waveform.</figcaption>
+      </figure>
+
+      <div class="need">
+        <h2>What you need</h2>
+        <ul>
+          <li>This build of <code>wcr</code></li>
+          <li>A radio path that already works on a clear signal. See <a href="/guides/radio.html">radio setup</a>.</li>
+          <li>For HF: start with <code>hf-poor</code>. Drop to <code>hf-weak</code> or <code>hf-deep</code> only if frames keep failing.</li>
+        </ul>
+      </div>
+
+      <h2>Presets</h2>
+      <p>Switch with <code>/radio preset &lt;name&gt;</code> or <code>/preset &lt;name&gt;</code> in the window.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Preset</th><th>Use when</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>vhf-fm</code></td><td>Local VHF/UHF FM, a clean signal</td></tr>
+            <tr><td><code>vox-safe</code></td><td>Any radio keyed by VOX (extra lead-in so the first symbols are not clipped)</td></tr>
+            <tr><td><code>hf-good</code></td><td>Steady HF SSB</td></tr>
+            <tr><td><code>hf-poor</code></td><td>Fading HF / NVIS (the usual HF calling preset)</td></tr>
+            <tr><td><code>hf-weak</code></td><td>The other station is faint</td></tr>
+            <tr><td><code>hf-deep</code></td><td>Last resort. Very slow. Short messages only</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The receiver hears all of these at once. You can send <code>hf-weak</code> while they are still set to <code>hf-poor</code>.</p>
+
+      <h2>What the program does for you</h2>
+      <ol>
+        <li>If nobody ACKs your message, it sends it again (three tries by default).</li>
+        <li>Each retry uses a slower, tougher waveform. The status bar <strong>TX</strong> field shows the current one (for example <code>RDM-300S</code>).</li>
+        <li><strong>RETRY</strong> counts how many extra sends have gone out.</li>
+        <li>When an ACK comes back, it includes how strong they heard you. A good report steps the waveform back up.</li>
+        <li>Lines that start with <code>!!</code> (emergency) go out twice, a moment apart, so a fade is less likely to take both.</li>
+        <li>Group chat on HF is split into pieces. Any two of three pieces rebuild the message. If several internet gateways each hear a different piece, the hub stitches them.</li>
+      </ol>
+
+      <h2>Steps (HF fading)</h2>
+      <ol class="steps">
+        <li>
+          <p>Confirm audio is <strong>good</strong>, not <strong>low</strong> or <strong>hot</strong>. Distortion is worse than a weak but clean signal.</p>
+        </li>
+        <li>
+          <p>Set a starting preset:</p>
+          <pre>/radio preset hf-poor</pre>
+        </li>
+        <li>
+          <p>Send a short test to a station you can already hear, or to <code>#bulletin</code>.</p>
+        </li>
+        <li>
+          <p>Watch the status bar. If <strong>RETRY</strong> climbs and <strong>TX</strong> changes (QPSK → RDM-1200S → RDM-600S → RDM-300S → MFSK-32R), the program is already stepping down. Leave it.</p>
+        </li>
+        <li>
+          <p>If nothing decodes after several tries, set <code>hf-weak</code> yourself, then <code>hf-deep</code> for a one-line check.</p>
+        </li>
+      </ol>
+
+      <h2>Knobs in <code>wcr.toml</code></h2>
+      <pre class="plain">[rf]
+max_retries = 3       # extra sends of your own unacked messages
+frag_k = 2            # pieces of data
+frag_m = 1            # spare pieces; any 2 of 3 rebuild the message
+emergency_dup_ms = 400</pre>
+
+      <div class="ok">
+        <h2>How you know it worked</h2>
+        <ul>
+          <li>A faint station's callsign appears in <strong>HEARD</strong> with a low or negative SNR.</li>
+          <li>Your line gets <code>✓</code> then <code>✓✓</code> (delivered), even if <strong>RETRY</strong> was 1 or 2 first.</li>
+          <li><strong>TX</strong> may show a slower mode than your preset. That is expected on a rough path.</li>
+        </ul>
+      </div>
+
+      <p class="next">Packet layout for developers: <a href="/docs/protocol.html">wire protocol</a>. HF cable: <a href="/guides/hf.html">HF rig with CAT</a>. Same text offline: <code>wcr help weak</code>.</p>
+    </main>
+  </div>
+  <script src="/shell.js?v=7"></script>
+</body>
+</html>
