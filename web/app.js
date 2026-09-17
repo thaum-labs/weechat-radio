@@ -323,7 +323,16 @@ function nodeFreq(n) {
 }
 
 function kv(rows) {
-  return `<div class="kv">${rows.map(([k, v]) => `<span>${k}</span><b>${v}</b>`).join("")}</div>`;
+  return `<div class="kv">${rows.map(([k, v]) => `<span>${escapeHtml(k)}</span><b>${escapeHtml(v)}</b>`).join("")}</div>`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function modeMark(mode, cls) {
@@ -390,7 +399,7 @@ function renderModes(nodes) {
   grid.innerHTML = Object.keys(MODE_COLOR).map((mode) => {
     const n = counts[mode] || 0;
     const pct = Math.round((n / total) * 100);
-    return `<div class="mode-row">${modeMark(mode)}<span class="mode-name">${mode}</span><div class="mode-bar"><i style="width:${pct}%;background:${MODE_COLOR[mode]}"></i></div>${n}</div>`;
+    return `<div class="mode-row">${modeMark(mode)}<span class="mode-name">${escapeHtml(mode)}</span><div class="mode-bar"><i style="width:${pct}%;background:${MODE_COLOR[mode]}"></i></div>${n}</div>`;
   }).join("");
 }
 
@@ -408,7 +417,7 @@ function renderBands(bands) {
     const name = b.band || "inet";
     const freq = b.frequency || (b.freq_khz ? (b.freq_khz / 1000).toFixed(3) : "");
     const on = selectedBand === name ? " on" : "";
-    return `<div class="mode-row band-row${on}" data-band="${name}"><span class="mode-name">${name}</span><span class="band-freq">${freq}</span><span class="band-n">${b.stations ?? 0}</span></div>`;
+    return `<div class="mode-row band-row${on}" data-band="${escapeHtml(name)}"><span class="mode-name">${escapeHtml(name)}</span><span class="band-freq">${escapeHtml(freq)}</span><span class="band-n">${escapeHtml(b.stations ?? 0)}</span></div>`;
   }).join("");
   grid.querySelectorAll(".band-row").forEach((el) => {
     el.onclick = () => {
@@ -432,7 +441,7 @@ function renderStations(nodes) {
     d.dataset.call = n.callsign || "";
     const band = nodeBand(n);
     const freq = nodeFreq(n);
-    d.innerHTML = `${modeMark(n.mode)}<span><b>${n.callsign}</b>${n.mode || ""} ${band}${freq ? " " + freq : ""}</span>`;
+    d.innerHTML = `${modeMark(n.mode)}<span><b>${escapeHtml(n.callsign)}</b>${escapeHtml(n.mode || "")} ${escapeHtml(band)}${freq ? " " + escapeHtml(freq) : ""}</span>`;
     d.onclick = () => {
       showCard(n);
       if (n.lat != null) map.flyTo({ center: [n.lon, n.lat], zoom: 6 });

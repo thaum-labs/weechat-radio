@@ -318,7 +318,10 @@ pub fn to_radio_args(raw: &str) -> Option<String> {
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
-    if matches!(head.as_str(), "join" | "j" | "part" | "invite" | "prio" | "priority") {
+    if matches!(
+        head.as_str(),
+        "join" | "j" | "part" | "invite" | "prio" | "priority"
+    ) {
         return None;
     }
     Some(rest.to_string())

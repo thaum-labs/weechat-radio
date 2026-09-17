@@ -17,6 +17,7 @@ use parking_lot::Mutex;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tower_http::cors::CorsLayer;
@@ -31,6 +32,7 @@ pub struct HubState {
     pub forwarded: Arc<Mutex<u64>>,
     pub identity: IdentityKeys,
     pub assembler: Arc<Mutex<FragAssembler>>,
+    pub next_conn: Arc<AtomicU64>,
 }
 
 pub struct Session {
@@ -40,6 +42,7 @@ pub struct Session {
     pub tx: mpsc::Sender<Vec<u8>>,
     pub connected_at: std::time::Instant,
     pub freq_khz: u32,
+    pub conn_id: u64,
 }
 
 #[derive(Deserialize)]
@@ -71,6 +74,7 @@ pub async fn run_hub(
         forwarded: Arc::new(Mutex::new(0)),
         identity: keys,
         assembler: Arc::new(Mutex::new(FragAssembler::new())),
+        next_conn: Arc::new(AtomicU64::new(1)),
     };
     let app = Router::new()
         .route("/", get(ws_upgrade))
@@ -159,6 +163,14 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
             .await;
         return;
     }
+    if !st.telemetry.check_replay(&hello.callsign, hello.ts) {
+        let _ = socket
+            .send(Message::Text(
+                "{\"ok\":false,\"error\":\"replay or clock skew\"}".into(),
+            ))
+            .await;
+        return;
+    }
     // first key wins
     if let Some(existing) = st.telemetry.get_pubkey(&hello.callsign) {
         if existing != pk {
@@ -179,6 +191,7 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
         .map(|s| s.to_ascii_uppercase())
         .collect();
     serves.insert(hello.callsign.to_ascii_uppercase());
+    let conn_id = st.next_conn.fetch_add(1, Ordering::Relaxed);
     {
         let mut g = st.sessions.lock();
         g.insert(
@@ -190,6 +203,7 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
                 tx,
                 connected_at: std::time::Instant::now(),
                 freq_khz: hello.freq_khz,
+                conn_id,
             },
         );
     }
@@ -204,18 +218,26 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
         }
     });
     while let Some(Ok(msg)) = stream.next().await {
+        if !session_is_current(&st, &call, conn_id) {
+            break;
+        }
         match msg {
             Message::Binary(bin) => {
                 if let Ok(env) = Envelope::decode(&bin) {
-                    if env.flags.signed() {
-                        if let Ok(vk2) = VerifyingKey::from_bytes(&pk) {
-                            let _ = verify_envelope(&env, &vk2);
-                        }
+                    if !verify_inbound(&st, &env, &call, &pk) {
+                        tracing::debug!(
+                            "hub drop unverified {} from {call} kind={}",
+                            env.origin,
+                            env.kind.as_str()
+                        );
+                        continue;
                     }
                     let mut extras: Vec<Envelope> = Vec::new();
                     if env.kind == MsgType::Frag {
                         if let Ok(Some(full)) = st.assembler.lock().push(&env) {
-                            if st.store.seen_before(&full.msg_id).ok() != Some(true) {
+                            if st.store.seen_before(&full.msg_id).ok() != Some(true)
+                                && verify_inbound(&st, &full, &call, &pk)
+                            {
                                 extras.push(full);
                             }
                         }
@@ -257,6 +279,9 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
                         let mut g = st.sessions.lock();
                         if let Some(s) = g.get_mut(&call) {
+                            if s.conn_id != conn_id {
+                                break;
+                            }
                             if let Some(list) = v.get("heard").and_then(|x| x.as_array()) {
                                 for h in list {
                                     if let Some(c) = h.as_str() {
@@ -275,8 +300,41 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
             _ => {}
         }
     }
-    st.sessions.lock().remove(&call);
+    {
+        let mut g = st.sessions.lock();
+        if g.get(&call).map(|s| s.conn_id) == Some(conn_id) {
+            g.remove(&call);
+        }
+    }
     drop(writer);
+}
+
+fn session_is_current(st: &HubState, call: &str, conn_id: u64) -> bool {
+    st.sessions.lock().get(call).map(|s| s.conn_id) == Some(conn_id)
+}
+
+/// Unsigned frames (typical RF) pass. Signed frames must match the origin's bound key.
+pub(crate) fn verify_inbound(
+    st: &HubState,
+    env: &Envelope,
+    session_call: &str,
+    session_pk: &[u8; 32],
+) -> bool {
+    if !env.flags.signed() {
+        return true;
+    }
+    let origin = env.origin.as_str();
+    let pk = if let Some(existing) = st.telemetry.get_pubkey(origin) {
+        existing
+    } else if origin.eq_ignore_ascii_case(session_call) {
+        *session_pk
+    } else {
+        return false;
+    };
+    let Ok(vk) = VerifyingKey::from_bytes(&pk) else {
+        return false;
+    };
+    verify_envelope(env, &vk).is_ok()
 }
 
 fn route(st: &HubState, env: &Envelope, raw: &[u8], from: &str) -> (u32, String, Vec<String>) {
@@ -423,4 +481,115 @@ async fn get_stats(State(st): State<HubState>) -> Json<serde_json::Value> {
 
 pub fn release_callsign(db: &TelemetryDb, call: &str) -> Result<()> {
     db.release_callsign(call)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::{Callsign, Envelope, Flags, IdentityKeys};
+    use crate::store::Store;
+
+    fn test_state() -> HubState {
+        let (live, _) = broadcast::channel(8);
+        HubState {
+            store: Arc::new(Store::open_memory().unwrap()),
+            telemetry: Arc::new(TelemetryDb::open_memory().unwrap()),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            live,
+            started: std::time::Instant::now(),
+            forwarded: Arc::new(Mutex::new(0)),
+            identity: IdentityKeys::generate(),
+            assembler: Arc::new(Mutex::new(FragAssembler::new())),
+            next_conn: Arc::new(AtomicU64::new(1)),
+        }
+    }
+
+    fn sample_msg(origin: &str) -> Envelope {
+        Envelope::new_msg(
+            Callsign::parse(origin).unwrap(),
+            Callsign::parse("M0XYZ").unwrap(),
+            1,
+            b"hi".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn unsigned_frames_forward() {
+        let st = test_state();
+        let env = sample_msg("G4ABC");
+        assert!(verify_inbound(&st, &env, "G4ABC", &[0u8; 32]));
+    }
+
+    #[test]
+    fn signed_wrong_key_rejected() {
+        let st = test_state();
+        let origin = IdentityKeys::generate();
+        let other = IdentityKeys::generate();
+        st.telemetry
+            .bind_callsign("G4ABC", &origin.public_bytes())
+            .unwrap();
+        let mut env = sample_msg("G4ABC");
+        other.sign_envelope(&mut env).unwrap();
+        assert!(!verify_inbound(&st, &env, "G4ABC", &origin.public_bytes()));
+        let mut good = sample_msg("G4ABC");
+        origin.sign_envelope(&mut good).unwrap();
+        assert!(verify_inbound(&st, &good, "G4ABC", &origin.public_bytes()));
+    }
+
+    #[test]
+    fn signed_uses_session_key_when_unbound() {
+        let st = test_state();
+        let origin = IdentityKeys::generate();
+        let other = IdentityKeys::generate();
+        let mut env = sample_msg("G4ABC");
+        origin.sign_envelope(&mut env).unwrap();
+        assert!(verify_inbound(&st, &env, "G4ABC", &origin.public_bytes()));
+        assert!(!verify_inbound(&st, &env, "M0XYZ", &other.public_bytes()));
+    }
+
+    #[test]
+    fn session_replace_invalidates_old_conn() {
+        let st = test_state();
+        let (tx1, _rx1) = mpsc::channel(1);
+        let (tx2, _rx2) = mpsc::channel(1);
+        {
+            let mut g = st.sessions.lock();
+            g.insert(
+                "G4ABC".into(),
+                Session {
+                    callsign: "G4ABC".into(),
+                    pubkey: [0u8; 32],
+                    serves: HashSet::new(),
+                    tx: tx1,
+                    connected_at: std::time::Instant::now(),
+                    freq_khz: 0,
+                    conn_id: 1,
+                },
+            );
+            g.insert(
+                "G4ABC".into(),
+                Session {
+                    callsign: "G4ABC".into(),
+                    pubkey: [1u8; 32],
+                    serves: HashSet::new(),
+                    tx: tx2,
+                    connected_at: std::time::Instant::now(),
+                    freq_khz: 0,
+                    conn_id: 2,
+                },
+            );
+        }
+        assert!(!session_is_current(&st, "G4ABC", 1));
+        assert!(session_is_current(&st, "G4ABC", 2));
+        {
+            let mut g = st.sessions.lock();
+            if g.get("G4ABC").map(|s| s.conn_id) == Some(1) {
+                g.remove("G4ABC");
+            }
+        }
+        assert!(session_is_current(&st, "G4ABC", 2));
+    }
 }

@@ -25,6 +25,13 @@ pub enum Action {
     DropRelay,
 }
 
+impl Action {
+    /// First-seen frames get IRC, ACKs, and gateway work. Duplicates do not.
+    pub fn applies_local_effects(self) -> bool {
+        matches!(self, Self::Accept | Self::DropRelay)
+    }
+}
+
 pub fn decide(store: &Store, env: &Envelope, we_are_waiting: bool) -> Result<RelayDecision> {
     let seen = store.seen_before(&env.msg_id)?;
     if seen {
@@ -172,7 +179,8 @@ impl Engine {
                 self.store.suppress(&env.msg_id)?;
                 self.store.set_delivery(&env.msg_id, Delivery::Relayed)?;
             }
-            Action::Ignore | Action::DropRelay => {
+            Action::Ignore => {}
+            Action::DropRelay => {
                 let _ = self.store.insert(env, Delivery::Queued);
             }
         }
@@ -204,6 +212,69 @@ mod tests {
         assert_eq!(d2.action, Action::Ignore);
         let d3 = decide(&store, &env, true).unwrap();
         assert_eq!(d3.action, Action::Suppress);
+    }
+
+    #[test]
+    fn local_effects_only_on_first_seen() {
+        assert!(Action::Accept.applies_local_effects());
+        assert!(Action::DropRelay.applies_local_effects());
+        assert!(!Action::Ignore.applies_local_effects());
+        assert!(!Action::Suppress.applies_local_effects());
+    }
+
+    #[test]
+    fn ignore_does_not_insert_again() {
+        let store = Store::open_memory().unwrap();
+        let engine = Engine::new(std::sync::Arc::new(store), "M0XYZ".into());
+        let env = Envelope::new_msg(
+            Callsign::parse("G4ABC").unwrap(),
+            Callsign::parse("M0XYZ").unwrap(),
+            1,
+            b"ping".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        let d1 = engine.on_rx(&env, "rf", None, None).unwrap();
+        assert_eq!(d1.action, Action::Accept);
+        assert!(d1.action.applies_local_effects());
+        assert_eq!(engine.store.hear_count(&env.msg_id).unwrap(), 1);
+        let d2 = engine.on_rx(&env, "rf", None, None).unwrap();
+        assert_eq!(d2.action, Action::Suppress);
+        assert!(!d2.action.applies_local_effects());
+        assert_eq!(engine.store.hear_count(&env.msg_id).unwrap(), 1);
+        engine
+            .store
+            .set_delivery(&env.msg_id, Delivery::Relayed)
+            .unwrap();
+        let d3 = engine.on_rx(&env, "rf", None, None).unwrap();
+        assert_eq!(d3.action, Action::Ignore);
+        assert!(!d3.action.applies_local_effects());
+        assert_eq!(engine.store.hear_count(&env.msg_id).unwrap(), 1);
+        assert_eq!(
+            engine.store.delivery_of(&env.msg_id).unwrap(),
+            Some(Delivery::Relayed)
+        );
+    }
+
+    #[test]
+    fn drop_relay_still_stores_first_seen() {
+        let store = Store::open_memory().unwrap();
+        let engine = Engine::new(std::sync::Arc::new(store), "M0XYZ".into());
+        let mut env = Envelope::new_msg(
+            Callsign::parse("G4ABC").unwrap(),
+            Callsign::parse("M0XYZ").unwrap(),
+            1,
+            b"late".to_vec(),
+            1,
+            Flags::new(),
+        )
+        .unwrap();
+        env.hops_left = 0;
+        let d = engine.on_rx(&env, "rf", None, None).unwrap();
+        assert_eq!(d.action, Action::DropRelay);
+        assert!(d.action.applies_local_effects());
+        assert!(engine.store.get(&env.msg_id).unwrap().is_some());
     }
 
     #[test]

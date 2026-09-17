@@ -45,20 +45,7 @@ impl HubClient {
         let (out_tx, mut out_rx) = mpsc::channel::<HubOut>(64);
         let url = websocket_url(url);
         let callsign = callsign.to_string();
-        let pubhex = keys.public_hex();
-        let ts = crate::proto::now_ts() as u64;
-        let payload = format!("{callsign}|{ts}");
-        let sig = hex::encode(keys.sign_bytes(payload.as_bytes()));
-        let hello = serde_json::json!({
-            "v": 1,
-            "callsign": callsign,
-            "pubkey": pubhex,
-            "sig": sig,
-            "ts": ts,
-            "heard": heard,
-            "freq_khz": freq_khz,
-        })
-        .to_string();
+        let keys = keys.clone();
         tokio::spawn(async move {
             let mut backoff = 1u64;
             loop {
@@ -67,11 +54,9 @@ impl HubClient {
                         connected.set(true);
                         backoff = 1;
                         let (mut sink, mut stream) = ws.split();
-                        if sink
-                            .send(Message::Text(hello.clone().into()))
-                            .await
-                            .is_err()
-                        {
+                        let ts = crate::proto::now_ts() as u64;
+                        let hello = build_hello(&callsign, &keys, &heard, freq_khz, ts);
+                        if sink.send(Message::Text(hello.into())).await.is_err() {
                             connected.fail("hub hello send failed");
                             continue;
                         }
@@ -183,9 +168,31 @@ fn hub_error_text(t: &str) -> String {
     format!("hub refused: {t}")
 }
 
+pub(crate) fn build_hello(
+    callsign: &str,
+    keys: &IdentityKeys,
+    heard: &[String],
+    freq_khz: u32,
+    ts: u64,
+) -> String {
+    let payload = format!("{callsign}|{ts}");
+    let sig = hex::encode(keys.sign_bytes(payload.as_bytes()));
+    serde_json::json!({
+        "v": 1,
+        "callsign": callsign,
+        "pubkey": keys.public_hex(),
+        "sig": sig,
+        "ts": ts,
+        "heard": heard,
+        "freq_khz": freq_khz,
+    })
+    .to_string()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::websocket_url;
+    use super::{build_hello, websocket_url};
+    use crate::proto::IdentityKeys;
 
     #[test]
     fn adds_ws_path_when_missing() {
@@ -200,6 +207,32 @@ mod tests {
         assert_eq!(
             websocket_url("wss://hub.weechatradio.com/ws"),
             "wss://hub.weechatradio.com/ws"
+        );
+    }
+
+    #[test]
+    fn hello_ts_is_monotonic_across_reconnects() {
+        let keys = IdentityKeys::generate();
+        let a = build_hello("G4ABC", &keys, &[], 0, 1_700_000_000);
+        let b = build_hello("G4ABC", &keys, &[], 0, 1_700_000_001);
+        let ta = serde_json::from_str::<serde_json::Value>(&a)
+            .unwrap()
+            .get("ts")
+            .and_then(|v| v.as_u64())
+            .unwrap();
+        let tb = serde_json::from_str::<serde_json::Value>(&b)
+            .unwrap()
+            .get("ts")
+            .and_then(|v| v.as_u64())
+            .unwrap();
+        assert!(tb > ta);
+        assert_ne!(
+            serde_json::from_str::<serde_json::Value>(&a)
+                .unwrap()
+                .get("sig"),
+            serde_json::from_str::<serde_json::Value>(&b)
+                .unwrap()
+                .get("sig")
         );
     }
 }
