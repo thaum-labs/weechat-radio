@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://weechatradio.com">
-    <img src="branding/weechat-radio.svg" alt="WeeChat Radio" width="440" />
+    <img src="branding/weechat-radio.svg" alt="WeeChat Radio" width="440" height="116" />
   </a>
 </p>
 
