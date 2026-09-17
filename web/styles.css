@@ -250,7 +250,7 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: #000;
+  background: #15151e;
 }
 
 .map-panel {
@@ -263,6 +263,7 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
 #map {
   flex: 1;
   min-height: 12vh;
+  border: 1px solid var(--line);
 }
 
 .map-tools {
