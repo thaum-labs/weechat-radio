@@ -289,18 +289,6 @@ fn bluetooth_pick(theme: &dyn dialoguer::theme::Theme, cfg: &mut Config) -> Resu
     Ok(())
 }
 
-pub fn calling_card() -> &'static str {
-    r#"WeeChat Radio — suggested calling presets (verify your band plan)
-
-UK  2m   144.950 MHz FM   preset vhf-fm
-EU  2m   144.950 MHz FM   preset vhf-fm
-US  2m   145.530 MHz FM   preset vhf-fm
-AU  2m   146.550 MHz FM   preset vhf-fm
-UK  40m    7.045 MHz USB  preset hf-poor
-EU  40m    7.045 MHz USB  preset hf-poor
-US  40m    7.090 MHz USB  preset hf-poor
-AU  40m    7.090 MHz USB  preset hf-poor
-
-The wizard can set frequency via rigctl only if you confirm.
-"#
+pub fn calling_card() -> String {
+    crate::band::calling_card_text()
 }

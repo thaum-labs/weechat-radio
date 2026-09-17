@@ -140,20 +140,29 @@ fn module_title(ui: &mut egui::Ui, left: &str, right: &str) {
     });
 }
 
-fn prompt_mark(ui: &mut egui::Ui, wave: Color32) {
-    paint_brand_mark(ui, wave, 26.0);
-    ui.add_space(8.0);
-    ui.label(
-        RichText::new("weechat")
-            .color(FG)
-            .strong()
-            .font(FontId::monospace(18.0)),
-    );
-    ui.label(
-        RichText::new("radio")
-            .color(ACCENT)
-            .font(FontId::monospace(18.0)),
-    );
+fn prompt_mark(ui: &mut egui::Ui, wave: Color32) -> egui::Response {
+    let inner = ui.horizontal(|ui| {
+        paint_brand_mark(ui, wave, 26.0);
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new("weechat")
+                .color(FG)
+                .strong()
+                .font(FontId::monospace(18.0)),
+        );
+        ui.label(
+            RichText::new("radio")
+                .color(ACCENT)
+                .font(FontId::monospace(18.0)),
+        );
+    });
+    ui.interact(
+        inner.response.rect,
+        ui.id().with("brand_home"),
+        egui::Sense::click(),
+    )
+    .on_hover_cursor(egui::CursorIcon::PointingHand)
+    .on_hover_text("Back to live chat")
 }
 
 fn paint_brand_mark(ui: &mut egui::Ui, wave: Color32, height: f32) {
@@ -412,6 +421,8 @@ struct GuiApp {
     members: HashMap<String, Vec<String>>,
     /// Optimistic dial frequency until /status catches up after /qsy.
     freq_pending: Option<u32>,
+    /// Last FREQ-list row picked (keeps CB region/mode when several share a kHz).
+    freq_pick_last: Option<crate::band::CallingFreq>,
     /// Channels already JOINed on the current IRC connection (avoid duplicate history).
     irc_joined: Vec<String>,
 }
@@ -479,6 +490,7 @@ impl GuiApp {
             invite_draft: String::new(),
             members: session.members,
             freq_pending: None,
+            freq_pick_last: None,
             irc_joined: Vec::new(),
         };
         app.install_tray();
@@ -694,7 +706,7 @@ impl GuiApp {
         {
             return;
         }
-        let (rgba, w, h) = raster_mark(32, [125, 155, 255], true);
+        let (rgba, w, h) = raster_mark(32, [125, 155, 255], true, true);
         let Ok(icon) = tray_icon::Icon::from_rgba(rgba, w, h) else {
             return;
         };
@@ -1022,7 +1034,10 @@ impl eframe::App for GuiApp {
                         .as_ref()
                         .map(|s| mode_color(s.mode))
                         .unwrap_or(ACCENT);
-                    prompt_mark(ui, wave);
+                    if prompt_mark(ui, wave).clicked() && self.configured() {
+                        self.show_setup = false;
+                        self.error.clear();
+                    }
                     ui.add_space(14.0);
                     let running = self.status.is_some();
                     if running {
@@ -1252,7 +1267,7 @@ impl eframe::App for GuiApp {
         }
 
         egui::SidePanel::left("status")
-            .exact_width(260.0)
+            .exact_width(280.0)
             .frame(chrome(TOPBAR))
             .show(ctx, |ui| {
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
@@ -1275,6 +1290,7 @@ impl eframe::App for GuiApp {
                         let mut preset_cmd = None;
                         let mut freq_cmd = None;
                         let mut freq_pending_set = None;
+                        let mut freq_pick_last_set = None;
                         let mut want_radio_confirm = false;
                         if let Some(s) = &self.status {
                             let display_khz = self.freq_pending.unwrap_or(s.freq_khz);
@@ -1295,10 +1311,14 @@ impl eframe::App for GuiApp {
                                 s.channel.to_uppercase()
                             };
                             kv(ui, "PTT", &ptt_label, if s.ptt_on { ORANGE } else { DIM });
-                            if let Some(khz) = freq_pick(ui, display_khz, &s.freq_source) {
-                                if khz != display_khz {
-                                    freq_pending_set = Some(khz);
-                                    freq_cmd = Some(format!("/qsy {}", crate::band::fmt_mhz(khz)));
+                            if let Some(c) =
+                                freq_pick(ui, display_khz, &s.freq_source, self.freq_pick_last)
+                            {
+                                freq_pick_last_set = Some(c);
+                                if c.khz != display_khz {
+                                    freq_pending_set = Some(c.khz);
+                                    freq_cmd =
+                                        Some(format!("/qsy {}", crate::band::fmt_mhz(c.khz)));
                                 }
                             }
                             if !s.tnc.is_empty() {
@@ -1362,6 +1382,9 @@ impl eframe::App for GuiApp {
                         }
                         if let Some(khz) = freq_pending_set {
                             self.freq_pending = Some(khz);
+                        }
+                        if let Some(c) = freq_pick_last_set {
+                            self.freq_pick_last = Some(c);
                         }
                         if let Some(cmd) = mode_cmd {
                             self.send_cmd(&cmd);
@@ -1428,67 +1451,19 @@ impl eframe::App for GuiApp {
         } else {
             (suggestions.len().min(8) as f32) * 28.0 + 28.0
         };
-        egui::TopBottomPanel::bottom("input")
-            .exact_height(78.0 + palette_h)
-            .frame(chrome(TOPBAR))
-            .show(ctx, |ui| {
-                module_title(ui, "TRAFFIC LOG", "INPUT");
-                if !suggestions.is_empty() {
-                    ui.label(
-                        RichText::new("tab complete  ·  ↑↓ pick  ·  enter run")
-                            .color(DIM)
-                            .small()
-                            .monospace(),
-                    );
-                    egui::ScrollArea::vertical()
-                        .max_height(palette_h - 8.0)
-                        .show(ui, |ui| {
-                            for (i, s) in suggestions.iter().enumerate() {
-                                let selected = i == self.palette_i;
-                                let row = format!("{:<22}  {}", s.label, s.hint);
-                                let color = if selected { ORANGE } else { PURPLE };
-                                let resp = ui.selectable_label(
-                                    selected,
-                                    RichText::new(row).color(color).monospace(),
-                                );
-                                if resp.clicked() {
-                                    self.apply_suggestion(s, true);
-                                }
-                            }
-                        });
-                }
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("$")
-                            .color(ACCENT)
-                            .font(FontId::monospace(14.0)),
-                    );
-                    let resp = ui.add(
-                        egui::TextEdit::singleline(&mut self.draft)
-                            .desired_width(ui.available_width() - 90.0)
-                            .hint_text("message in this channel, or /join /invite")
-                            .font(FontId::monospace(14.0)),
-                    );
-                    if enter {
-                        resp.request_focus();
-                    }
-                    if ui
-                        .add(
-                            egui::Button::new(RichText::new("send").color(ACCENT).monospace())
-                                .fill(Color32::TRANSPARENT)
-                                .stroke(hairline(ACCENT))
-                                .min_size(egui::vec2(72.0, 28.0)),
-                        )
-                        .clicked()
-                    {
-                        self.send_chat();
-                        resp.request_focus();
-                    }
-                });
-            });
-
         egui::CentralPanel::default()
-            .frame(chrome(SHELL))
+            .frame(
+                egui::Frame::none()
+                    .fill(SHELL)
+                    .stroke(hairline(LINE))
+                    .inner_margin(egui::Margin {
+                        left: 12.0,
+                        right: 12.0,
+                        top: 8.0,
+                        bottom: 16.0,
+                    })
+                    .rounding(0.0),
+            )
             .show(ctx, |ui| {
                 module_title(ui, "LIVE CHAT", &self.active_channel);
                 ui.add_space(6.0);
@@ -1658,31 +1633,95 @@ impl eframe::App for GuiApp {
                 }
                 ui.add_space(6.0);
                 let active = self.active_channel.clone();
-                egui::ScrollArea::vertical()
-                    .stick_to_bottom(true)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        for line in &self.chat {
-                            if !line.channel.is_empty()
-                                && !line.channel.eq_ignore_ascii_case(&active)
-                            {
-                                continue;
-                            }
-                            if line.sys {
-                                ui.label(RichText::new(&line.text).color(PURPLE).monospace());
-                            } else {
-                                let mine = line.nick.eq_ignore_ascii_case(&self.callsign);
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.label(
-                                        RichText::new(format!("[{}]", line.nick))
-                                            .color(if mine { ORANGE } else { ACCENT })
-                                            .monospace(),
-                                    );
-                                    ui.label(RichText::new(&line.text).color(FG).monospace());
-                                });
-                            }
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("$")
+                                .color(ACCENT)
+                                .font(FontId::monospace(14.0)),
+                        );
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut self.draft)
+                                .desired_width(ui.available_width() - 90.0)
+                                .hint_text("message in this channel, or /join /invite")
+                                .font(FontId::monospace(14.0)),
+                        );
+                        if enter {
+                            resp.request_focus();
+                        }
+                        if ui
+                            .add(
+                                egui::Button::new(RichText::new("send").color(ACCENT).monospace())
+                                    .fill(Color32::TRANSPARENT)
+                                    .stroke(hairline(ACCENT))
+                                    .min_size(egui::vec2(72.0, 28.0)),
+                            )
+                            .clicked()
+                        {
+                            self.send_chat();
+                            resp.request_focus();
                         }
                     });
+                    if !suggestions.is_empty() {
+                        ui.label(
+                            RichText::new("tab complete  ·  ↑↓ pick  ·  enter run")
+                                .color(DIM)
+                                .small()
+                                .monospace(),
+                        );
+                        egui::ScrollArea::vertical()
+                            .id_salt("slash_palette")
+                            .max_height(palette_h.max(8.0))
+                            .show(ui, |ui| {
+                                for (i, s) in suggestions.iter().enumerate() {
+                                    let selected = i == self.palette_i;
+                                    let row = format!("{:<22}  {}", s.label, s.hint);
+                                    let color = if selected { ORANGE } else { PURPLE };
+                                    let resp = ui.selectable_label(
+                                        selected,
+                                        RichText::new(row).color(color).monospace(),
+                                    );
+                                    if resp.clicked() {
+                                        self.apply_suggestion(s, true);
+                                    }
+                                }
+                            });
+                    }
+                    ui.add_space(4.0);
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                        egui::ScrollArea::vertical()
+                            .stick_to_bottom(true)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                for line in &self.chat {
+                                    if !line.channel.is_empty()
+                                        && !line.channel.eq_ignore_ascii_case(&active)
+                                    {
+                                        continue;
+                                    }
+                                    if line.sys {
+                                        ui.label(
+                                            RichText::new(&line.text).color(PURPLE).monospace(),
+                                        );
+                                    } else {
+                                        let mine =
+                                            line.nick.eq_ignore_ascii_case(&self.callsign);
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.label(
+                                                RichText::new(format!("[{}]", line.nick))
+                                                    .color(if mine { ORANGE } else { ACCENT })
+                                                    .monospace(),
+                                            );
+                                            ui.label(
+                                                RichText::new(&line.text).color(FG).monospace(),
+                                            );
+                                        });
+                                    }
+                                }
+                            });
+                    });
+                });
             });
         self.sync_tray();
         paint_scan(ctx);
@@ -1700,13 +1739,14 @@ impl GuiApp {
             return;
         }
         self.tray_icon_key = key;
-        let (rgba, w, h) = raster_mark(32, wave_rgb(mode), true);
+        let stopped = mode.is_none();
+        let (rgba, w, h) = raster_mark(32, wave_rgb(mode), true, stopped);
         let Ok(icon) = tray_icon::Icon::from_rgba(rgba, w, h) else {
             return;
         };
         let tip = match mode {
             Some(m) => format!("WeeChat Radio — {}", m.as_str()),
-            None => "WeeChat Radio".into(),
+            None => "WeeChat Radio — station stopped".into(),
         };
         if let Some(tray) = &self.tray {
             let _ = tray.set_icon(Some(icon));
@@ -1719,15 +1759,25 @@ fn kv(ui: &mut egui::Ui, k: &str, v: &str, color: Color32) {
     kv_tip(ui, k, v, color, None);
 }
 
+fn station_key(ui: &mut egui::Ui, k: &str) {
+    ui.add_sized(
+        [56.0, ui.spacing().interact_size.y],
+        egui::Label::new(RichText::new(k).color(DIM).monospace()),
+    );
+}
+
 fn kv_tip(ui: &mut egui::Ui, k: &str, v: &str, color: Color32, tip: Option<&str>) {
-    ui.horizontal(|ui| {
-        let key = ui.label(RichText::new(format!("{k:7}")).color(DIM).monospace());
-        let val = ui.label(RichText::new(v).color(color).monospace());
-        if let Some(tip) = tip {
-            key.on_hover_text(tip);
-            val.on_hover_text(tip);
-        }
+    let resp = ui.horizontal(|ui| {
+        station_key(ui, k);
+        let w = ui.available_width();
+        ui.add_sized(
+            [w, ui.spacing().interact_size.y],
+            egui::Label::new(RichText::new(v).color(color).monospace()).truncate(),
+        );
     });
+    if let Some(tip) = tip {
+        resp.response.on_hover_text(tip);
+    }
 }
 
 fn cheat_line(ui: &mut egui::Ui, key: &str, tip: &str) {
@@ -1767,19 +1817,18 @@ fn cheat_sheet(ui: &mut egui::Ui) {
 fn mode_pick(ui: &mut egui::Ui, current: Mode) -> Option<Mode> {
     let mut chosen = None;
     ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(format!("{:7}", "MODE"))
-                .color(DIM)
-                .monospace(),
-        );
+        station_key(ui, "MODE");
+        let w = ui.available_width();
         egui::ComboBox::from_id_salt("mode_pick")
             .selected_text(
                 RichText::new(current.as_str())
                     .color(mode_color(current))
                     .monospace(),
             )
-            .width(168.0)
+            .width(w)
+            .truncate()
             .show_ui(ui, |ui| {
+                ui.set_min_width(w.max(160.0));
                 for m in Mode::all() {
                     if ui
                         .selectable_label(
@@ -1800,15 +1849,14 @@ fn mode_pick(ui: &mut egui::Ui, current: Mode) -> Option<Mode> {
 fn preset_pick(ui: &mut egui::Ui, current: &str) -> Option<String> {
     let mut chosen = None;
     ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(format!("{:7}", "PRESET"))
-                .color(DIM)
-                .monospace(),
-        );
+        station_key(ui, "PRESET");
+        let w = ui.available_width();
         egui::ComboBox::from_id_salt("preset_pick")
             .selected_text(RichText::new(current).color(PURPLE).monospace())
-            .width(168.0)
+            .width(w)
+            .truncate()
             .show_ui(ui, |ui| {
+                ui.set_min_width(w.max(160.0));
                 for p in Preset::all() {
                     let value = p.as_str();
                     if ui
@@ -1827,73 +1875,307 @@ fn preset_pick(ui: &mut egui::Ui, current: &str) -> Option<String> {
     chosen
 }
 
-/// Calling-frequency picker. Returns the selected kHz when the operator picks a row.
-fn freq_pick(ui: &mut egui::Ui, current_khz: u32, source: &str) -> Option<u32> {
+/// Calling-frequency picker. Returns the selected row when the operator picks one.
+fn freq_pick(
+    ui: &mut egui::Ui,
+    current_khz: u32,
+    source: &str,
+    last: Option<crate::band::CallingFreq>,
+) -> Option<crate::band::CallingFreq> {
     let options = crate::band::calling_freqs();
-    let mut selected = current_khz;
+    let current_row = last
+        .filter(|c| c.khz == current_khz)
+        .or_else(|| options.iter().copied().find(|c| c.khz == current_khz));
+    let mut selected = current_row;
     let current_label = if current_khz == 0 {
         "set frequency…".to_string()
-    } else if let Some(c) = options.iter().find(|c| c.khz == current_khz) {
-        format!("{} {}", c.region, c.short_label())
+    } else if let Some(c) = current_row {
+        c.closed_label()
     } else {
         match crate::band::band_for_khz(current_khz) {
-            Some(b) => format!("{} · {b}", crate::band::fmt_mhz(current_khz)),
-            None => format!("{} · ?", crate::band::fmt_mhz(current_khz)),
+            Some(b) => format!("{} {b}", crate::band::fmt_mhz(current_khz)),
+            None => crate::band::fmt_mhz(current_khz),
         }
     };
     let hover = if current_khz == 0 {
-        "Pick a suggested calling frequency. Dial the radio to match (CAT follows if configured)."
-            .to_string()
+        "Suggested calling spots. Type to filter. HF data is USB; CB is per region.".to_string()
+    } else if let Some(c) = current_row {
+        if source.is_empty() || source == "none" {
+            c.detail()
+        } else {
+            format!("{} · {source}", c.detail())
+        }
     } else if source.is_empty() || source == "none" {
         crate::band::describe(current_khz)
     } else {
         format!("{} · {source}", crate::band::describe(current_khz))
     };
     ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(format!("{:7}", "FREQ"))
-                .color(DIM)
-                .monospace(),
-        );
-        egui::ComboBox::from_id_salt("freq_pick")
-            .selected_text(
-                RichText::new(&current_label)
+        station_key(ui, "FREQ");
+        let w = ui.available_width();
+        let popup_id = ui.make_persistent_id("freq_pick_popup");
+        let button = ui.add_sized(
+            [w, ui.spacing().interact_size.y],
+            egui::Button::new(
+                RichText::new(format!("{current_label}  ▾"))
                     .color(if current_khz == 0 { DIM } else { PURPLE })
                     .monospace(),
             )
-            .width(168.0)
-            .height(280.0)
-            .show_ui(ui, |ui| {
-                ui.set_min_width(200.0);
-                if current_khz > 0 && !options.iter().any(|c| c.khz == current_khz) {
-                    let label = match crate::band::band_for_khz(current_khz) {
-                        Some(b) => format!("{} · {b} (current)", crate::band::fmt_mhz(current_khz)),
-                        None => format!("{} · ? (current)", crate::band::fmt_mhz(current_khz)),
-                    };
-                    ui.selectable_value(
-                        &mut selected,
-                        current_khz,
-                        RichText::new(label).color(PURPLE).monospace(),
-                    );
+            .wrap_mode(egui::TextWrapMode::Truncate),
+        );
+        if button.clicked() {
+            ui.memory_mut(|m| m.toggle_popup(popup_id));
+        }
+        egui::popup::popup_below_widget(
+            ui,
+            popup_id,
+            &button,
+            egui::popup::PopupCloseBehavior::CloseOnClickOutside,
+            |ui| {
+                ui.set_min_width(268.0);
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                egui::ScrollArea::vertical()
+                    .max_height(360.0)
+                    .show(ui, |ui| {
+                        let filter_id = egui::Id::new("wcr_freq_pick_filter");
+                        let mut filter =
+                            ui.data_mut(|d| d.get_temp::<String>(filter_id).unwrap_or_default());
+                        ui.add(
+                            egui::TextEdit::singleline(&mut filter)
+                                .hint_text("filter band, USB, UK…")
+                                .font(FontId::monospace(12.0))
+                                .desired_width(f32::INFINITY),
+                        );
+                        ui.data_mut(|d| d.insert_temp(filter_id, filter.clone()));
+                        let q = filter.trim().to_ascii_lowercase();
+                        let filtering = !q.is_empty();
+                        ui.add_space(4.0);
+
+                        if current_khz > 0 && !options.iter().any(|c| c.khz == current_khz) {
+                            let label = match crate::band::band_for_khz(current_khz) {
+                                Some(b) => {
+                                    format!("{} {b}  current", crate::band::fmt_mhz(current_khz))
+                                }
+                                None => format!("{}  current", crate::band::fmt_mhz(current_khz)),
+                            };
+                            ui.label(RichText::new(label).color(PURPLE).monospace());
+                            ui.separator();
+                        }
+
+                        let current_is_cb = current_row.map(|c| c.band() == "CB").unwrap_or(false);
+                        let current_is_lf = current_row
+                            .map(|c| matches!(c.band(), "MURS" | "PMR446" | "FRS"))
+                            .unwrap_or(false);
+
+                        freq_group_block(
+                            ui,
+                            "HF",
+                            &mut selected,
+                            |c| freq_kind(c) == FreqKind::Hf,
+                            options,
+                            &q,
+                        );
+                        freq_group_block(
+                            ui,
+                            "VHF / UHF",
+                            &mut selected,
+                            |c| freq_kind(c) == FreqKind::Vhf,
+                            options,
+                            &q,
+                        );
+
+                        let cb_rows = freq_filtered(options, &q, FreqKind::Cb);
+                        if !cb_rows.is_empty() {
+                            freq_fold(
+                                ui,
+                                "wcr_freq_cb_open",
+                                "CB  11m",
+                                current_is_cb || filtering,
+                                |ui| freq_cb_rows(ui, &mut selected, &cb_rows),
+                            );
+                        }
+
+                        let lf_rows = freq_filtered(options, &q, FreqKind::LicenceFree);
+                        if !lf_rows.is_empty() {
+                            freq_fold(
+                                ui,
+                                "wcr_freq_lf_open",
+                                "licence-free",
+                                current_is_lf || filtering,
+                                |ui| {
+                                    for c in lf_rows {
+                                        freq_row(ui, &mut selected, c);
+                                    }
+                                },
+                            );
+                        }
+                    });
+                if selected != current_row {
+                    ui.memory_mut(|m| m.close_popup());
                 }
-                for c in options {
-                    let line = format!("{}  {}", c.region, c.short_label());
-                    ui.selectable_value(
-                        &mut selected,
-                        c.khz,
-                        RichText::new(line).color(PURPLE).monospace(),
-                    )
-                    .on_hover_text(c.detail());
-                }
-            })
-            .response
-            .on_hover_text(hover);
+            },
+        );
+        button.on_hover_text(hover);
     });
-    if selected != current_khz && selected > 0 {
-        Some(selected)
-    } else {
-        None
+    let picked = match (selected, current_row) {
+        (Some(next), Some(cur)) if next == cur => None,
+        (Some(next), _) => Some(next),
+        (None, _) => None,
+    };
+    if picked.is_some() {
+        ui.data_mut(|d| d.insert_temp(egui::Id::new("wcr_freq_pick_filter"), String::new()));
     }
+    picked
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FreqKind {
+    Hf,
+    Vhf,
+    Cb,
+    LicenceFree,
+}
+
+fn freq_kind(c: &crate::band::CallingFreq) -> FreqKind {
+    match c.band() {
+        "CB" => FreqKind::Cb,
+        "MURS" | "PMR446" | "FRS" => FreqKind::LicenceFree,
+        "6m" | "4m" | "2m" | "1.25m" | "70cm" | "23cm" => FreqKind::Vhf,
+        _ => FreqKind::Hf,
+    }
+}
+
+fn freq_matches(c: &crate::band::CallingFreq, q: &str) -> bool {
+    if q.is_empty() {
+        return true;
+    }
+    format!(
+        "{} {} {} {} {} {}",
+        c.region,
+        c.band(),
+        c.mode,
+        c.note,
+        crate::band::fmt_mhz(c.khz),
+        c.preset
+    )
+    .to_ascii_lowercase()
+    .contains(q)
+}
+
+fn freq_filtered(
+    options: &[crate::band::CallingFreq],
+    q: &str,
+    kind: FreqKind,
+) -> Vec<crate::band::CallingFreq> {
+    options
+        .iter()
+        .copied()
+        .filter(|c| freq_kind(c) == kind && freq_matches(c, q))
+        .collect()
+}
+
+fn freq_fold(
+    ui: &mut egui::Ui,
+    id: &'static str,
+    title: &str,
+    force_open: bool,
+    add: impl FnOnce(&mut egui::Ui),
+) {
+    let store = egui::Id::new(id);
+    let mut open = ui.data_mut(|d| d.get_temp::<bool>(store).unwrap_or(false));
+    let arrow = if open { "▾" } else { "▸" };
+    let header = ui.add(
+        egui::Label::new(
+            RichText::new(format!("{arrow}  {title}"))
+                .color(DIM)
+                .monospace(),
+        )
+        .sense(egui::Sense::click()),
+    );
+    if header.clicked() {
+        open = !open;
+    }
+    if force_open {
+        open = true;
+    }
+    ui.data_mut(|d| d.insert_temp(store, open));
+    if open {
+        ui.indent(id, |ui| add(ui));
+    }
+}
+
+fn freq_group_block(
+    ui: &mut egui::Ui,
+    title: &str,
+    selected: &mut Option<crate::band::CallingFreq>,
+    keep: impl Fn(&crate::band::CallingFreq) -> bool,
+    options: &[crate::band::CallingFreq],
+    q: &str,
+) {
+    let rows: Vec<_> = options
+        .iter()
+        .copied()
+        .filter(|c| keep(c) && freq_matches(c, q))
+        .collect();
+    if rows.is_empty() {
+        return;
+    }
+    ui.label(RichText::new(title).color(DIM).monospace());
+    for c in rows {
+        freq_row(ui, selected, c);
+    }
+    ui.add_space(2.0);
+}
+
+fn freq_cb_rows(
+    ui: &mut egui::Ui,
+    selected: &mut Option<crate::band::CallingFreq>,
+    rows: &[crate::band::CallingFreq],
+) {
+    let mut rows = rows.to_vec();
+    rows.sort_by_key(|c| (cb_region_rank(c.region), cb_mode_rank(c.mode), c.khz));
+    let mut last_region = "";
+    for c in rows {
+        if c.region != last_region {
+            last_region = c.region;
+            ui.label(RichText::new(last_region).color(ACCENT).small().monospace());
+        }
+        freq_row(ui, selected, c);
+    }
+}
+
+fn cb_region_rank(region: &str) -> u8 {
+    match region {
+        "US/CA" => 0,
+        "EU" => 1,
+        "UK" => 2,
+        "DE" => 3,
+        "AU" => 4,
+        "NZ" => 5,
+        _ => 9,
+    }
+}
+
+fn cb_mode_rank(mode: &str) -> u8 {
+    match mode {
+        "AM" | "FM" => 0,
+        "USB" => 1,
+        "LSB" => 2,
+        _ => 3,
+    }
+}
+
+fn freq_row(
+    ui: &mut egui::Ui,
+    selected: &mut Option<crate::band::CallingFreq>,
+    c: crate::band::CallingFreq,
+) {
+    ui.selectable_value(
+        selected,
+        Some(c),
+        RichText::new(c.list_label()).color(PURPLE).monospace(),
+    )
+    .on_hover_text(c.detail());
 }
 
 fn prio_pick(ui: &mut egui::Ui, current: &str) -> Option<&'static str> {
@@ -1960,7 +2242,7 @@ fn wave_rgb(mode: Option<Mode>) -> [u8; 3] {
 }
 
 fn app_icon() -> IconData {
-    let (rgba, width, height) = raster_mark(256, [125, 155, 255], true);
+    let (rgba, width, height) = raster_mark(256, [125, 155, 255], true, false);
     IconData {
         rgba,
         width,
@@ -2016,10 +2298,19 @@ fn over(dst: &mut [u8; 4], r: u8, g: u8, b: u8, a: f32) {
     dst[3] = (255.0 * (a + (dst[3] as f32 / 255.0) * inv)).round() as u8;
 }
 
-fn raster_mark(size: u32, wave: [u8; 3], framed: bool) -> (Vec<u8>, u32, u32) {
+fn to_grey(c: [u8; 3]) -> [u8; 3] {
+    let y = ((c[0] as u16 * 77 + c[1] as u16 * 150 + c[2] as u16 * 29) / 256) as u8;
+    [y, y, y]
+}
+
+fn raster_mark(size: u32, wave: [u8; 3], framed: bool, grey: bool) -> (Vec<u8>, u32, u32) {
     const CHEVRON: [u8; 3] = [216, 208, 232];
     const TILE: [u8; 3] = [7, 7, 10];
     const BORDER: [u8; 3] = [125, 155, 255];
+    let wave = if grey { to_grey(wave) } else { wave };
+    let chevron = if grey { to_grey(CHEVRON) } else { CHEVRON };
+    let tile = TILE;
+    let border = if grey { to_grey(BORDER) } else { BORDER };
     let n = size as usize;
     let mut rgba = vec![0u8; n * n * 4];
     let dim = size as f32;
@@ -2046,12 +2337,12 @@ fn raster_mark(size: u32, wave: [u8; 3], framed: bool) -> (Vec<u8>, u32, u32) {
                     dim * 0.5 - 0.5,
                     radius,
                 );
-                over(&mut pix, TILE[0], TILE[1], TILE[2], cover(sdf, aa));
+                over(&mut pix, tile[0], tile[1], tile[2], cover(sdf, aa));
                 over(
                     &mut pix,
-                    BORDER[0],
-                    BORDER[1],
-                    BORDER[2],
+                    border[0],
+                    border[1],
+                    border[2],
                     cover(sdf.abs() - border_w * 0.5, aa) * 0.22,
                 );
             }
@@ -2062,9 +2353,9 @@ fn raster_mark(size: u32, wave: [u8; 3], framed: bool) -> (Vec<u8>, u32, u32) {
                 .min(dist_seg(mx, my, 20.0, 30.0, 8.0, 40.0));
             over(
                 &mut pix,
-                CHEVRON[0],
-                CHEVRON[1],
-                CHEVRON[2],
+                chevron[0],
+                chevron[1],
+                chevron[2],
                 cover(d_chev - 2.5, aa_v),
             );
             let d_bar = rbox(mx, my, 32.5, 38.5, 7.5, 2.5, 1.0);

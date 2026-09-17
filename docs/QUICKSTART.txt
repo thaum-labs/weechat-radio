@@ -17,9 +17,11 @@ Ticks:  · queued   ✓ sent   ✓✓ delivered   ✓✓✓ all group members
 If the internet dies, keep using the radio. Status bar: "Internet down, radio only".
 
 Calling frequencies (verify your band plan):
-  UK/EU 2m  144.950 FM  vhf-fm
-  US    2m  145.530 FM  vhf-fm
-  UK/EU 40m   7.045 USB hf-poor
-  US    40m   7.090 USB hf-poor
+  UK/EU 2m   144.950 FM  vhf-fm
+  US    2m   145.010 FM  vhf-fm
+  UK/EU 40m    7.045 USB hf-poor
+  WW    20m   14.070 USB hf-poor
+  UK/EU 70cm 433.625 FM  vhf-fm
+  Full list (160m–23cm, CB, PMR446, MURS, FRS): wcr help calling
 
 Full guides: wcr help
