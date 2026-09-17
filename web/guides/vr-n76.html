@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>VR-N76 / UV-PRO over Bluetooth — WeeChat Radio</title>
+  <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=16" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/guides.html">guides</a> / <a href="/guides/radio.html">radio</a> / vr-n76</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> VR-N76 / UV-PRO over Bluetooth</h1>
+      <p class="lead">No cable. The radio has its own packet TNC; the app talks to it over Bluetooth. About three minutes.</p>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="flow-row">
+            <div class="flow-box orange">VR-N76<span>built-in KISS TNC</span></div>
+            <span class="flow-arrow" aria-hidden="true">⇢</span>
+            <div class="flow-box">Bluetooth<span>SPP / RFCOMM</span></div>
+            <span class="flow-arrow" aria-hidden="true">⇢</span>
+            <div class="flow-box accent">this computer<span>wcr only</span></div>
+          </div>
+        </div>
+        <figcaption>The radio turns chat into 1200 bd packet itself. No sound card, no modem73.</figcaption>
+      </figure>
+
+      <div class="need">
+        <h2>What you need</h2>
+        <ul>
+          <li>A Vero VR-N76, BTECH UV-PRO, Radioddity GA-5WB or VR-N7500, firmware <strong>0.7.11+</strong> (update in the HT app if the KISS menu is missing)</li>
+          <li>A computer with Bluetooth</li>
+          <li>WeeChat Radio 0.1.9 or newer</li>
+        </ul>
+      </div>
+
+      <h2>On the radio (once)</h2>
+      <ol class="steps">
+        <li><p><strong>Menu → General Settings → KISS TNC → Enable.</strong></p></li>
+        <li><p><strong>General Settings → Digital Mode → off.</strong> The radio’s own APRS logic otherwise fights the KISS stream.</p></li>
+        <li><p>Pick a simplex FM frequency for packet, low power. Leave the APRS frequency alone.</p></li>
+        <li><p><strong>Menu → Pairing.</strong> Close the HT phone app — the radio takes one Bluetooth client at a time.</p></li>
+      </ol>
+
+      <h2>In the app</h2>
+      <ol class="steps">
+        <li><p>Choose <strong>VR-N76 / UV-PRO (Bluetooth)</strong> in setup (toolbar → <code>setup</code> if you are already configured).</p></li>
+        <li><p>Press <strong>Find radio</strong>. The app finds a paired radio or scans for ~8 s and pairs it for you (PIN <code>0000</code> is answered automatically).</p></li>
+        <li><p>Press <strong>Save and start</strong>. The station panel shows <strong>RADIO · VR-N76 linked</strong> in green and the radio shows its Bluetooth-data icon next to the power level.</p></li>
+      </ol>
+      <p>Terminal: <code>wcr tnc find</code> does the same. <code>wcr tnc scan --inquiry</code> lists what the computer sees. <code>wcr tnc test --tx</code> sends one identified test frame and prints anything heard.</p>
+
+      <div class="ok">
+        <h2>How you know it worked</h2>
+        <p><strong>RADIO</strong> reads <code>VR-N76 linked</code>. Send a line in <code>#bulletin</code>: the radio’s TX light comes on for about two seconds. Other packet stations see you as <code>M7TJF&gt;WCR UI</code>, a plain AX.25 frame with your callsign.</p>
+      </div>
+
+      <h2>Quirks of the built-in TNC</h2>
+      <ul>
+        <li><strong>One frame per PTT.</strong> The radio unkeys between frames, so the app paces them (<code>frame_gap_ms</code>). Long messages take a little longer than on a sound-card modem.</li>
+        <li><strong>TXDELAY 600 ms.</strong> Lower clips the start of a frame; this is the default.</li>
+        <li><strong>Keep frames short.</strong> Under ~200 bytes; the app fragments longer lines.</li>
+        <li><strong>Linux:</strong> pair with <code>bluetoothctl</code> (pair + trust), then set <code>tnc.bt_addr</code>. If the desktop grabs the radio as a headset, add <code>[General] Disable=Headset</code> to <code>/etc/bluetooth/input.conf</code>.</li>
+        <li><strong>macOS:</strong> use <em>KISS TNC on a serial port</em> with <code>/dev/cu.VR-N76</code>.</li>
+      </ul>
+
+      <p class="next">Other paths: <a href="/guides/handheld.html">handheld + Digirig</a> · <a href="/guides/vox.html">VOX cable</a> · <a href="/guides/hf.html">HF + CAT</a>. Frequencies: <a href="/docs/calling.html">calling</a>.</p>
+    </main>
+  </div>
+  <script src="/shell.js?v=8"></script>
+</body>
+</html>

@@ -270,6 +270,15 @@ struct GuiApp {
     grid_rx: Option<Receiver<Option<crate::grid::DetectedGrid>>>,
     path: usize,
     com_port: String,
+    /// Bluetooth radio chosen in setup (VR-N76 / UV-PRO / GA-5WB).
+    bt_found: Option<crate::tnc::BtDevice>,
+    bt_note: String,
+    bt_rx: Option<Receiver<crate::tnc::FindOutcome>>,
+    bt_name: String,
+    /// Serial path for a KISS TNC on a port (`COM7`, `/dev/rfcomm0`).
+    serial_path: String,
+    /// Re-open the setup panel from the toolbar to change the radio path.
+    show_setup: bool,
     error: String,
     draft: String,
     chat: Vec<ChatLine>,
@@ -297,11 +306,18 @@ struct GuiApp {
 
 impl GuiApp {
     fn new() -> Self {
-        let (callsign, grid, path, com_port) = load_form();
-        let need_grid = grid.is_empty();
+        let form = load_form();
+        let need_grid = form.grid.is_empty();
+        let bt_found =
+            crate::tnc::bluetooth::parse_addr(&form.bt_addr).map(|addr| crate::tnc::BtDevice {
+                name: form.bt_name.clone(),
+                addr,
+                paired: true,
+                connected: false,
+            });
         let mut app = Self {
-            callsign,
-            grid,
+            callsign: form.callsign,
+            grid: form.grid,
             grid_note: if need_grid {
                 "detecting from IP…".into()
             } else {
@@ -313,8 +329,18 @@ impl GuiApp {
             } else {
                 None
             },
-            path,
-            com_port,
+            path: form.path,
+            com_port: form.com_port,
+            bt_found,
+            bt_note: String::new(),
+            bt_rx: None,
+            bt_name: if form.bt_name.is_empty() {
+                "VR-N76".into()
+            } else {
+                form.bt_name
+            },
+            serial_path: form.serial,
+            show_setup: false,
             error: String::new(),
             draft: String::new(),
             chat: Vec::new(),
@@ -386,10 +412,49 @@ impl GuiApp {
             }
             3 => {
                 cfg.mode = Mode::InternetRadio;
+                cfg.modem.backend = "modem73".into();
                 cfg.modem.ptt = "rigctl".into();
                 cfg.modem.preset = Preset::HfGood.as_str().into();
             }
+            4 => {
+                cfg.mode = Mode::InternetRadio;
+                cfg.modem.backend = "bluetooth".into();
+                cfg.modem.manage = false;
+                cfg.modem.ptt = "tnc".into();
+                cfg.modem.preset = Preset::Afsk1200.as_str().into();
+                match &self.bt_found {
+                    Some(dev) => {
+                        cfg.tnc.bt_name = dev.short_name();
+                        cfg.tnc.bt_addr = dev.addr_str();
+                    }
+                    None => {
+                        // No device picked yet: the node will look for a paired radio by name.
+                        cfg.tnc.bt_name = if self.bt_name.trim().is_empty() {
+                            "VR-N76".into()
+                        } else {
+                            self.bt_name.trim().to_string()
+                        };
+                        cfg.tnc.bt_addr.clear();
+                    }
+                }
+            }
+            5 => {
+                if self.serial_path.trim().is_empty() {
+                    self.error = "enter the TNC serial port (COM7 or /dev/rfcomm0)".into();
+                    return;
+                }
+                cfg.mode = Mode::InternetRadio;
+                cfg.modem.backend = "serial".into();
+                cfg.modem.manage = false;
+                cfg.modem.ptt = "tnc".into();
+                cfg.modem.preset = Preset::Afsk1200.as_str().into();
+                cfg.tnc.serial = self.serial_path.trim().to_string();
+            }
             _ => {}
+        }
+        if matches!(self.path, 1 | 2) {
+            cfg.modem.backend = "modem73".into();
+            cfg.modem.manage = true;
         }
         cfg.ui.theme = "tron".into();
         if let Err(e) = config::ensure_dirs() {
@@ -709,6 +774,7 @@ impl eframe::App for GuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint_after(Duration::from_millis(250));
         self.poll_grid_detect();
+        self.poll_find_radio();
         self.poll_tray(ctx);
         if self.last_poll.elapsed() > Duration::from_millis(800) {
             self.last_poll = Instant::now();
@@ -815,6 +881,10 @@ impl eframe::App for GuiApp {
                     if nav_link(ui, "map").clicked() {
                         let _ = open::that("https://weechatradio.com/");
                     }
+                    if self.configured() && nav_link(ui, "setup").clicked() {
+                        self.show_setup = !self.show_setup;
+                        self.error.clear();
+                    }
                     if nav_link(ui, "quit").clicked() {
                         self.quit_app(ctx);
                     }
@@ -857,12 +927,13 @@ impl eframe::App for GuiApp {
                 });
             });
 
-        if !self.configured() {
+        if !self.configured() || self.show_setup {
+            let reopened = self.configured();
             egui::CentralPanel::default()
                 .frame(chrome(SHELL))
                 .show(ctx, |ui| {
                     ui.add_space(8.0);
-                    module_title(ui, "SETUP", "FIRST RUN");
+                    module_title(ui, "SETUP", if reopened { "STATION" } else { "FIRST RUN" });
                     ui.add_space(12.0);
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
@@ -914,9 +985,14 @@ impl eframe::App for GuiApp {
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
                         ui.radio_value(&mut self.path, 0, "Internet only");
+                        ui.radio_value(&mut self.path, 4, "VR-N76 / UV-PRO (Bluetooth)");
                         ui.radio_value(&mut self.path, 1, "Handheld + Digirig");
                         ui.radio_value(&mut self.path, 2, "Audio cable (VOX)");
+                    });
+                    ui.horizontal(|ui| {
+                        ui.add_space(20.0);
                         ui.radio_value(&mut self.path, 3, "HF rig (CAT)");
+                        ui.radio_value(&mut self.path, 5, "KISS TNC on a serial port");
                     });
                     if self.path == 1 {
                         ui.horizontal(|ui| {
@@ -926,6 +1002,30 @@ impl eframe::App for GuiApp {
                                 egui::TextEdit::singleline(&mut self.com_port)
                                     .desired_width(160.0)
                                     .hint_text("COM5"),
+                            );
+                        });
+                    }
+                    if self.path == 4 {
+                        self.bluetooth_setup_ui(ui);
+                    }
+                    if self.path == 5 {
+                        ui.horizontal(|ui| {
+                            ui.add_space(20.0);
+                            ui.label(RichText::new("Port  ").color(DIM));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.serial_path)
+                                    .desired_width(200.0)
+                                    .hint_text("COM7 or /dev/rfcomm0"),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.add_space(20.0);
+                            ui.label(
+                                RichText::new(
+                                    "Any KISS TNC: Mobilinkd, a Bluetooth COM port, or rfcomm bind on Linux.",
+                                )
+                                .color(DIM)
+                                .font(FontId::monospace(11.0)),
                             );
                         });
                     }
@@ -944,9 +1044,28 @@ impl eframe::App for GuiApp {
                         {
                             self.save_setup();
                             if self.error.is_empty() {
+                                if reopened {
+                                    // The node reads wcr.toml at start: restart it on the new path.
+                                    self.stop_station();
+                                    self.show_setup = false;
+                                }
                                 self.auto_started = true;
                                 self.start_station();
                             }
+                        }
+                        if reopened
+                            && ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new("Back").color(DIM).monospace(),
+                                    )
+                                    .fill(Color32::TRANSPARENT)
+                                    .stroke(hairline(LINE)),
+                                )
+                                .clicked()
+                        {
+                            self.show_setup = false;
+                            self.error.clear();
                         }
                     });
                     if !self.error.is_empty() {
@@ -992,7 +1111,15 @@ impl eframe::App for GuiApp {
                         s.channel.to_uppercase()
                     };
                     kv(ui, "PTT", &ptt_label, if s.ptt_on { ORANGE } else { DIM });
-                    if let Some(next) = preset_pick(ui, &s.preset) {
+                    if !s.tnc.is_empty() {
+                        kv(
+                            ui,
+                            "RADIO",
+                            &s.tnc,
+                            if s.tnc_ok { GREEN } else { ORANGE },
+                        );
+                        kv(ui, "PRESET", &s.preset, PURPLE);
+                    } else if let Some(next) = preset_pick(ui, &s.preset) {
                         if next != s.preset {
                             preset_cmd = Some(format!("/preset {next}"));
                         }
@@ -1749,18 +1876,194 @@ impl GuiApp {
     }
 }
 
-fn load_form() -> (String, String, usize, String) {
+#[derive(Default)]
+struct Form {
+    callsign: String,
+    grid: String,
+    path: usize,
+    com_port: String,
+    bt_name: String,
+    bt_addr: String,
+    serial: String,
+}
+
+fn load_form() -> Form {
     if let Ok(cfg) = Config::load(&Config::default_path()) {
-        let path = match (cfg.mode, cfg.modem.ptt.as_str()) {
-            (Mode::Internet, _) => 0,
-            (_, "digirig") => 1,
-            (_, "vox") => 2,
-            (_, "rigctl") => 3,
-            _ => 0,
+        let path = if cfg.mode == Mode::Internet {
+            0
+        } else if cfg.modem.is_bluetooth() {
+            4
+        } else if cfg.modem.uses_tnc() {
+            5
+        } else {
+            match cfg.modem.ptt.as_str() {
+                "digirig" => 1,
+                "vox" => 2,
+                "rigctl" => 3,
+                _ => 0,
+            }
         };
-        return (cfg.callsign, cfg.grid, path, cfg.modem.com_port);
+        return Form {
+            callsign: cfg.callsign,
+            grid: cfg.grid,
+            path,
+            com_port: cfg.modem.com_port,
+            bt_name: cfg.tnc.bt_name,
+            bt_addr: cfg.tnc.bt_addr,
+            serial: cfg.tnc.serial,
+        };
     }
-    (String::new(), String::new(), 0, String::new())
+    Form::default()
+}
+
+fn spawn_find_radio(wanted: String) -> Receiver<crate::tnc::FindOutcome> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(crate::tnc::bluetooth::find_radio(&wanted));
+    });
+    rx
+}
+
+impl GuiApp {
+    fn start_find_radio(&mut self) {
+        if self.bt_rx.is_some() {
+            return;
+        }
+        self.bt_note =
+            "looking for a paired radio, then scanning (put the radio in Pairing mode)…".into();
+        self.bt_rx = Some(spawn_find_radio(self.bt_name.clone()));
+    }
+
+    fn poll_find_radio(&mut self) {
+        let outcome = match &self.bt_rx {
+            Some(rx) => match rx.try_recv() {
+                Ok(v) => Some(v),
+                Err(mpsc::TryRecvError::Empty) => None,
+                Err(mpsc::TryRecvError::Disconnected) => Some(
+                    crate::tnc::FindOutcome::Unsupported("scan thread died".into()),
+                ),
+            },
+            None => return,
+        };
+        let Some(outcome) = outcome else {
+            return;
+        };
+        self.bt_rx = None;
+        use crate::tnc::FindOutcome;
+        match outcome {
+            FindOutcome::Ready(dev) => {
+                self.bt_note = format!("{} is paired and ready", dev.label());
+                self.bt_name = dev.short_name();
+                self.bt_found = Some(dev);
+            }
+            FindOutcome::Paired(dev) => {
+                self.bt_note = format!("paired with {}", dev.label());
+                self.bt_name = dev.short_name();
+                self.bt_found = Some(dev);
+            }
+            FindOutcome::PairFailed(dev, why) => {
+                self.bt_note = format!(
+                    "found {} but pairing failed ({why}). Pair it in Bluetooth settings (PIN 0000), then press Find radio again.",
+                    dev.label()
+                );
+                self.bt_found = None;
+            }
+            FindOutcome::NotFound { paired_others } => {
+                self.bt_found = None;
+                self.bt_note = if paired_others.is_empty() {
+                    "no radio found. On the radio: Menu → Pairing, and General Settings → KISS TNC → Enable. Then press Find radio."
+                        .into()
+                } else {
+                    format!(
+                        "no VR-N76 / UV-PRO / GA-5WB seen. Paired devices: {}. Put the radio in Pairing mode and try again.",
+                        paired_others
+                            .iter()
+                            .map(|d| d.short_name())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+            }
+            FindOutcome::Unsupported(why) => {
+                self.bt_found = None;
+                self.bt_note = why;
+            }
+        }
+    }
+
+    fn bluetooth_setup_ui(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.add_space(20.0);
+            ui.label(RichText::new("Radio ").color(DIM));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.bt_name)
+                    .desired_width(120.0)
+                    .hint_text("VR-N76"),
+            );
+            let busy = self.bt_rx.is_some();
+            let label = if busy { "Searching…" } else { "Find radio" };
+            if ui
+                .add_enabled(
+                    !busy,
+                    egui::Button::new(RichText::new(label).color(PURPLE).monospace())
+                        .fill(Color32::TRANSPARENT)
+                        .stroke(hairline(LINE)),
+                )
+                .clicked()
+            {
+                self.start_find_radio();
+            }
+            if cfg!(windows)
+                && ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new("Bluetooth settings").color(DIM).monospace(),
+                        )
+                        .fill(Color32::TRANSPARENT)
+                        .stroke(hairline(LINE)),
+                    )
+                    .clicked()
+            {
+                let _ = open::that("ms-settings:bluetooth");
+            }
+        });
+        if let Some(dev) = &self.bt_found {
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                ui.label(
+                    RichText::new(format!("● {}", dev.label()))
+                        .color(GREEN)
+                        .font(FontId::monospace(11.0)),
+                );
+            });
+        }
+        if !self.bt_note.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(&self.bt_note)
+                            .color(DIM)
+                            .font(FontId::monospace(11.0)),
+                    )
+                    .wrap(),
+                );
+            });
+        }
+        ui.horizontal(|ui| {
+            ui.add_space(20.0);
+            ui.add(
+                egui::Label::new(
+                    RichText::new(
+                        "On the radio: General Settings → KISS TNC → Enable, Digital Mode off. Close the HT phone app — the radio takes one Bluetooth client at a time.",
+                    )
+                    .color(DIM)
+                    .font(FontId::monospace(11.0)),
+                )
+                .wrap(),
+            );
+        });
+    }
 }
 
 fn spawn_node() -> Result<Child> {

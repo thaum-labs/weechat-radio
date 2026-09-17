@@ -12,6 +12,8 @@ pub enum Preset {
     HfWeak,
     VoxSafe,
     HfDeep,
+    /// Radio with a built-in 1200 bd AFSK KISS TNC (VR-N76, UV-PRO, GA-5WB).
+    Afsk1200,
 }
 
 impl Preset {
@@ -23,6 +25,7 @@ impl Preset {
             "hf-weak" | "hfweak" => Some(Self::HfWeak),
             "vox-safe" | "vox" => Some(Self::VoxSafe),
             "hf-deep" | "hfdeep" => Some(Self::HfDeep),
+            "afsk-1200" | "afsk1200" | "afsk" | "tnc" | "packet" => Some(Self::Afsk1200),
             _ => None,
         }
     }
@@ -35,10 +38,11 @@ impl Preset {
             Self::HfWeak => "hf-weak",
             Self::VoxSafe => "vox-safe",
             Self::HfDeep => "hf-deep",
+            Self::Afsk1200 => "afsk-1200",
         }
     }
 
-    pub fn all() -> [Preset; 6] {
+    pub fn all() -> [Preset; 7] {
         [
             Self::VhfFm,
             Self::HfGood,
@@ -46,6 +50,7 @@ impl Preset {
             Self::HfWeak,
             Self::VoxSafe,
             Self::HfDeep,
+            Self::Afsk1200,
         ]
     }
 
@@ -59,7 +64,15 @@ impl Preset {
                 "Any radio with VOX: extra lead/tail so the first symbols are not clipped"
             }
             Self::HfDeep => "Deep-fade HF backup (MFSK-32R, below the noise floor)",
+            Self::Afsk1200 => {
+                "Radio's own KISS TNC over Bluetooth (VR-N76, UV-PRO, GA-5WB): 1200 bd AFSK packet"
+            }
         }
+    }
+
+    /// The radio does the modulation itself; modem73 is not used.
+    pub fn is_radio_tnc(self) -> bool {
+        matches!(self, Self::Afsk1200)
     }
 
     /// Approximate payload bitrate in bits per second (after FEC).
@@ -71,6 +84,7 @@ impl Preset {
             Self::HfWeak => 194,
             Self::VoxSafe => 1200,
             Self::HfDeep => 99,
+            Self::Afsk1200 => 1200,
         }
     }
 
@@ -83,6 +97,8 @@ impl Preset {
             Self::HfWeak => 170,
             Self::VoxSafe => 256,
             Self::HfDeep => 55,
+            // AX.25 info field; the built-in TNC is happiest well under 256.
+            Self::Afsk1200 => 200,
         }
     }
 
@@ -90,6 +106,8 @@ impl Preset {
     pub fn overhead_ms(self) -> u32 {
         match self {
             Self::VoxSafe => 900,
+            // TXDELAY 600 ms + HDLC flags + 18-byte AX.25 header.
+            Self::Afsk1200 => 900,
             _ => 400,
         }
     }
@@ -126,7 +144,7 @@ impl Preset {
     /// Starting index on the robustness ladder (0 = fastest).
     pub fn ladder_start(self) -> usize {
         match self {
-            Self::VhfFm | Self::VoxSafe | Self::HfGood => 0,
+            Self::VhfFm | Self::VoxSafe | Self::HfGood | Self::Afsk1200 => 0,
             Self::HfPoor => 2,
             Self::HfWeak => 3,
             Self::HfDeep => 4,
@@ -136,7 +154,9 @@ impl Preset {
     pub fn modem73_args(self) -> Vec<String> {
         let band = self.csma_band_name();
         match self {
-            Self::VhfFm => vec![
+            // modem73 has no AFSK mode; if someone forces this preset onto a
+            // sound-card modem, fall back to the plain VHF profile.
+            Self::VhfFm | Self::Afsk1200 => vec![
                 "-m".into(),
                 "QPSK".into(),
                 "-r".into(),
@@ -185,7 +205,7 @@ impl Preset {
 
     pub fn control_config(self) -> serde_json::Value {
         match self {
-            Self::VhfFm => serde_json::json!({
+            Self::VhfFm | Self::Afsk1200 => serde_json::json!({
                 "cmd": "set_config",
                 "modem_type": 0,
                 "modulation": "QPSK",
@@ -407,6 +427,19 @@ mod tests {
         assert_eq!(Preset::parse("hf-deep"), Some(Preset::HfDeep));
         assert!(Preset::HfDeep.unsigned_on_rf());
         assert_eq!(Preset::HfPoor.payload_bytes(), 170);
+    }
+
+    #[test]
+    fn afsk_preset_is_radio_tnc() {
+        assert_eq!(Preset::parse("afsk-1200"), Some(Preset::Afsk1200));
+        assert_eq!(Preset::parse("tnc"), Some(Preset::Afsk1200));
+        assert!(Preset::Afsk1200.is_radio_tnc());
+        assert!(!Preset::Afsk1200.is_hf());
+        assert!(!Preset::Afsk1200.unsigned_on_rf());
+        assert_eq!(Preset::Afsk1200.bitrate_bps(), 1200);
+        // 200 bytes at 1200 bd plus 600 ms TXDELAY: a chat line is a couple of seconds.
+        let t = airtime_secs(Preset::Afsk1200, 200, 0);
+        assert!(t > 2.0 && t < 3.0, "{t}");
     }
 
     #[test]

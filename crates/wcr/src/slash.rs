@@ -68,6 +68,10 @@ const PRESET_ARGS: &[Arg] = &[
         value: "vox-safe",
         hint: "VOX audio cable — extra lead/tail",
     },
+    Arg {
+        value: "afsk-1200",
+        hint: "Radio's own KISS TNC (VR-N76, UV-PRO) — fixed",
+    },
 ];
 
 const PTT_ARGS: &[Arg] = &[
@@ -151,7 +155,7 @@ const COMMANDS: &[Cmd] = &[
     },
     Cmd {
         name: "preset",
-        usage: "/preset vhf-fm|hf-good|hf-poor|hf-weak|hf-deep|vox-safe",
+        usage: "/preset vhf-fm|hf-good|hf-poor|hf-weak|hf-deep|vox-safe|afsk-1200",
         summary: "Modem waveform",
         args: PRESET_ARGS,
         send_bare: false,

@@ -28,6 +28,7 @@ pub struct Config {
     pub relay: RelayConfig,
     pub rig: RigConfig,
     pub rf: RfConfig,
+    pub tnc: TncConfig,
 }
 
 impl Default for Config {
@@ -49,6 +50,7 @@ impl Default for Config {
             relay: RelayConfig::default(),
             rig: RigConfig::default(),
             rf: RfConfig::default(),
+            tnc: TncConfig::default(),
         }
     }
 }
@@ -70,12 +72,14 @@ impl Default for IrcConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ModemConfig {
+    /// modem73 (sound-card modem) | bluetooth (radio with built-in KISS TNC) | serial (KISS TNC on a port)
+    pub backend: String,
     pub host: String,
     pub kiss_port: u16,
     pub control_port: u16,
     pub manage: bool,
     pub binary: String,
-    /// vox | digirig | cm108 | rigctl | none
+    /// vox | digirig | cm108 | rigctl | tnc | none
     pub ptt: String,
     pub preset: String,
     pub com_port: String,
@@ -89,6 +93,7 @@ pub struct ModemConfig {
 impl Default for ModemConfig {
     fn default() -> Self {
         Self {
+            backend: "modem73".into(),
             host: "127.0.0.1".into(),
             kiss_port: 8001,
             control_port: 8073,
@@ -102,6 +107,63 @@ impl Default for ModemConfig {
             vox_tail_ms: 150,
             cm108_gpio: 3,
             rigctl: "127.0.0.1:4532".into(),
+        }
+    }
+}
+
+impl ModemConfig {
+    /// The radio has its own TNC (VR-N76, UV-PRO, GA-5WB, Mobilinkd…): no modem73.
+    pub fn uses_tnc(&self) -> bool {
+        matches!(
+            self.backend.trim().to_ascii_lowercase().as_str(),
+            "bluetooth" | "bt" | "serial" | "tnc"
+        )
+    }
+
+    pub fn is_bluetooth(&self) -> bool {
+        matches!(
+            self.backend.trim().to_ascii_lowercase().as_str(),
+            "bluetooth" | "bt"
+        )
+    }
+}
+
+/// Radio-side KISS TNC (Bluetooth SPP or a serial port).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TncConfig {
+    /// Bluetooth device name to look for (VR-N76, UV-PRO, GA-5WB…). Case-insensitive.
+    pub bt_name: String,
+    /// Bluetooth address `38:D2:00:01:03:49`. Empty = find by name among paired devices.
+    pub bt_addr: String,
+    /// Serial path for `backend = "serial"`: `COM7`, `/dev/rfcomm0`, `/dev/cu.VR-N76`.
+    pub serial: String,
+    /// KISS TXDELAY. The VR-N76 clips the first symbols below ~600 ms.
+    pub txdelay_ms: u32,
+    /// KISS persistence 0–255.
+    pub persist: u8,
+    /// KISS slot time.
+    pub slot_ms: u32,
+    /// Wrap frames in an AX.25 UI header so other packet stations see your callsign.
+    pub ax25: bool,
+    /// AX.25 destination for those UI frames.
+    pub ax25_dest: String,
+    /// Pause between frames so the radio's one-frame-per-PTT TNC keeps up.
+    pub frame_gap_ms: u32,
+}
+
+impl Default for TncConfig {
+    fn default() -> Self {
+        Self {
+            bt_name: "VR-N76".into(),
+            bt_addr: String::new(),
+            serial: String::new(),
+            txdelay_ms: 600,
+            persist: 63,
+            slot_ms: 100,
+            ax25: true,
+            ax25_dest: "WCR".into(),
+            frame_gap_ms: 400,
         }
     }
 }
@@ -359,6 +421,14 @@ impl Config {
             self.store.path = default_data_dir().join("wcr.db");
         }
         self.hub.url = crate::net::hub_client::websocket_url(&self.hub.url);
+        if self.modem.uses_tnc() {
+            // The radio's TNC is fixed 1200 bd AFSK; modem73 is not involved.
+            self.modem.manage = false;
+            self.modem.preset = crate::presets::Preset::Afsk1200.as_str().into();
+            if self.modem.ptt == "none" || self.modem.ptt.is_empty() {
+                self.modem.ptt = "tnc".into();
+            }
+        }
     }
 
     pub fn default_path() -> PathBuf {
@@ -399,5 +469,21 @@ mod tests {
         let back: Config = toml::from_str(&s).unwrap();
         assert_eq!(back.mode, Mode::InternetRadio);
         assert_eq!(back.hub.url, PUBLIC_HUB);
+        assert_eq!(back.modem.backend, "modem73");
+        assert_eq!(back.tnc.bt_name, "VR-N76");
+    }
+
+    #[test]
+    fn tnc_backend_forces_afsk_and_no_modem73() {
+        let mut cfg = Config::default();
+        cfg.modem.backend = "bluetooth".into();
+        cfg.modem.manage = true;
+        cfg.modem.preset = "hf-good".into();
+        cfg.normalize();
+        assert!(cfg.modem.uses_tnc());
+        assert!(cfg.modem.is_bluetooth());
+        assert!(!cfg.modem.manage);
+        assert_eq!(cfg.modem.preset, "afsk-1200");
+        assert_eq!(cfg.modem.ptt, "tnc");
     }
 }

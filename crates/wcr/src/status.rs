@@ -42,6 +42,12 @@ pub struct StatusSnapshot {
     /// True while the air-queue pacer is waiting for a clear channel.
     #[serde(default)]
     pub deferred: bool,
+    /// Radio TNC link (Bluetooth/serial KISS), e.g. `VR-N76 linked`. Empty with modem73.
+    #[serde(default)]
+    pub tnc: String,
+    /// True while the KISS link to the radio is up.
+    #[serde(default)]
+    pub tnc_ok: bool,
 }
 
 impl Default for StatusSnapshot {
@@ -71,6 +77,8 @@ impl Default for StatusSnapshot {
             occupancy_pct: 0,
             queue_air: 0,
             deferred: false,
+            tnc: String::new(),
+            tnc_ok: false,
         }
     }
 }

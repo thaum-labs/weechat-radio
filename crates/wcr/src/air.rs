@@ -98,10 +98,25 @@ struct SenseInner {
 
 pub struct ModemSense {
     inner: Mutex<SenseInner>,
+    /// No modem73 status poller: only RX frames tell us the channel is busy,
+    /// so `Rx` decays back to `Idle` on its own.
+    passive: bool,
 }
+
+/// How long after the last decoded frame a passive sense still reports `Rx`.
+const PASSIVE_RX_HOLD: Duration = Duration::from_millis(800);
 
 impl ModemSense {
     pub fn new() -> Self {
+        Self::with_passive(false)
+    }
+
+    /// Sense for radios with their own TNC (no channel-state feed from a modem).
+    pub fn passive() -> Self {
+        Self::with_passive(true)
+    }
+
+    fn with_passive(passive: bool) -> Self {
         Self {
             inner: Mutex::new(SenseInner {
                 state: ChannelState::Idle,
@@ -109,6 +124,7 @@ impl ModemSense {
                 last_rx: Instant::now() - Duration::from_secs(3600),
                 ptt_on: false,
             }),
+            passive,
         }
     }
 
@@ -161,7 +177,14 @@ impl Default for ModemSense {
 
 impl ChannelSense for ModemSense {
     fn state(&self) -> ChannelState {
-        self.inner.lock().state
+        let g = self.inner.lock();
+        if self.passive
+            && g.state == ChannelState::Rx
+            && Instant::now().saturating_duration_since(g.last_rx) > PASSIVE_RX_HOLD
+        {
+            return ChannelState::Idle;
+        }
+        g.state
     }
 
     fn occupancy_pct(&self) -> u8 {
@@ -519,6 +542,21 @@ mod tests {
             out.push(f);
         }
         out
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn passive_sense_decays_to_idle() {
+        let s = ModemSense::passive();
+        assert_eq!(s.state(), ChannelState::Idle);
+        s.note_rx();
+        assert_eq!(s.state(), ChannelState::Rx);
+        tokio::time::advance(Duration::from_millis(1000)).await;
+        assert_eq!(s.state(), ChannelState::Idle);
+        // A poller-driven sense keeps whatever the modem last reported.
+        let m = ModemSense::new();
+        m.note_rx();
+        tokio::time::advance(Duration::from_millis(1000)).await;
+        assert_eq!(m.state(), ChannelState::Rx);
     }
 
     #[test]

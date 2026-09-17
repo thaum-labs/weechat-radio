@@ -100,8 +100,28 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     let mut control: Option<ControlClient> = None;
     let last_rx_snr = Arc::new(Mutex::new(None::<f32>));
     let air_q = AirQueue::new();
-    let sense = Arc::new(ModemSense::new());
-    if cfg.mode.uses_radio() {
+    let radio_tnc = cfg.modem.uses_tnc();
+    let sense = Arc::new(if radio_tnc {
+        ModemSense::passive()
+    } else {
+        ModemSense::new()
+    });
+    if cfg.mode.uses_radio() && radio_tnc {
+        // Radio with its own KISS TNC (VR-N76 / UV-PRO / GA-5WB over Bluetooth,
+        // or any TNC on a serial port). No modem73, no control port.
+        {
+            let mut s = snap.lock();
+            s.ptt = "tnc".into();
+            s.tnc = if cfg.modem.is_bluetooth() {
+                format!("searching for {}…", cfg.tnc.bt_name)
+            } else {
+                format!("opening {}…", cfg.tnc.serial)
+            };
+        }
+        let (k, rx) = crate::tnc::start_link(&cfg, snap.clone(), sense.clone());
+        kiss = Some(k);
+        kiss_rx = Some(rx);
+    } else if cfg.mode.uses_radio() {
         if cfg.modem.manage {
             match ModemProcess::spawn(&cfg).await {
                 Ok(c) => _modem_child = Some(c),
@@ -915,12 +935,16 @@ async fn radio_cmd(
         }
         "preset" => {
             if let Some(p) = sp.next() {
+                if cfg.lock().modem.uses_tnc() {
+                    return "preset is fixed at afsk-1200: the radio's own TNC does the modulation"
+                        .into();
+                }
                 if let Some(pr) = Preset::parse(p) {
                     cfg.lock().modem.preset = pr.as_str().into();
                     snap.lock().preset = pr.as_str().into();
                     format!("preset {}", pr.as_str())
                 } else {
-                    "unknown preset. Use vhf-fm, hf-good, hf-poor, hf-weak, hf-deep, vox-safe.".into()
+                    "unknown preset. Use vhf-fm, hf-good, hf-poor, hf-weak, hf-deep, vox-safe, afsk-1200.".into()
                 }
             } else {
                 format!("preset {}", cfg.lock().modem.preset)
@@ -934,8 +958,13 @@ async fn radio_cmd(
                 }
             }
             let s = snap.lock().clone();
+            let tnc = if s.tnc.is_empty() {
+                String::new()
+            } else {
+                format!(" | tnc {}", s.tnc)
+            };
             format!(
-                "{} | {} | {} | {} | SNR {:.1} | tx {} | retry {} | audio {} | q {}/{} | occ {}% air {} | hub {}",
+                "{} | {} | {} | {} | SNR {:.1} | tx {} | retry {} | audio {} | q {}/{} | occ {}% air {} | hub {}{}",
                 s.mode.display_name(),
                 if s.deferred { "wait" } else { &s.channel },
                 s.frequency,
@@ -948,7 +977,8 @@ async fn radio_cmd(
                 s.queue_hold,
                 s.occupancy_pct,
                 s.queue_air,
-                if s.hub_ok { "up" } else { "down" }
+                if s.hub_ok { "up" } else { "down" },
+                tnc
             )
         }
         "group" => {
@@ -1060,7 +1090,27 @@ async fn radio_cmd(
             }
         }
         "update" => "run `wcr update` in a terminal".into(),
-        "modem" => format!("kiss {}:{}", cfg.lock().modem.host, cfg.lock().modem.kiss_port),
+        "modem" | "tnc" => {
+            let c = cfg.lock();
+            if c.modem.is_bluetooth() {
+                let s = snap.lock();
+                format!(
+                    "bluetooth kiss tnc {} {} — {}",
+                    c.tnc.bt_name,
+                    c.tnc.bt_addr,
+                    if s.tnc.is_empty() { "starting" } else { &s.tnc }
+                )
+            } else if c.modem.uses_tnc() {
+                let s = snap.lock();
+                format!(
+                    "serial kiss tnc {} — {}",
+                    c.tnc.serial,
+                    if s.tnc.is_empty() { "starting" } else { &s.tnc }
+                )
+            } else {
+                format!("kiss {}:{}", c.modem.host, c.modem.kiss_port)
+            }
+        }
         "" | "help" => {
             "RADIO commands: mode preset status group queue trace history qsy ptt checkin net mute theme update. Channels: /join #name  /invite CALL"
                 .into()

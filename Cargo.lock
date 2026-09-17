@@ -5889,6 +5889,7 @@ dependencies = [
  "hex",
  "hostname",
  "http",
+ "libc",
  "mdns-sd",
  "notify-rust",
  "open",
@@ -5913,6 +5914,7 @@ dependencies = [
  "tray-icon",
  "url",
  "whoami",
+ "windows-sys 0.59.0",
  "winresource",
  "zeroize",
 ]

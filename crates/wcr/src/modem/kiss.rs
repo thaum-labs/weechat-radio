@@ -12,11 +12,27 @@ pub const FESC: u8 = 0xDB;
 pub const TFEND: u8 = 0xDC;
 pub const TFESC: u8 = 0xDD;
 
+/// KISS TNC parameter commands (port 0).
+pub const CMD_TXDELAY: u8 = 0x01;
+pub const CMD_PERSIST: u8 = 0x02;
+pub const CMD_SLOTTIME: u8 = 0x03;
+pub const CMD_TXTAIL: u8 = 0x04;
+pub const CMD_FULLDUPLEX: u8 = 0x05;
+
 /// Encode a KISS data frame (port 0, command 0).
 pub fn encode_frame(payload: &[u8]) -> Vec<u8> {
+    encode_with_command(0x00, payload)
+}
+
+/// Encode a one-byte KISS parameter command such as TXDELAY (in 10 ms units).
+pub fn encode_param(cmd: u8, value: u8) -> Vec<u8> {
+    encode_with_command(cmd & 0x0F, &[value])
+}
+
+fn encode_with_command(command: u8, payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(payload.len() + 16);
     out.push(FEND);
-    out.push(0x00); // port 0, data
+    out.push(command);
     for &b in payload {
         match b {
             FEND => {
@@ -97,6 +113,11 @@ impl Clone for KissClient {
 }
 
 impl KissClient {
+    /// Wrap an already-running transport (Bluetooth / serial link thread).
+    pub fn from_sender(tx: mpsc::Sender<Vec<u8>>) -> Self {
+        Self { tx }
+    }
+
     pub async fn connect(addr: &str) -> Result<(Self, mpsc::Receiver<Vec<u8>>)> {
         let stream = TcpStream::connect(addr).await.map_err(|e| {
             Error::Modem(format!(
@@ -161,6 +182,17 @@ mod tests {
         let mut dec = KissDecoder::new();
         let frames = dec.push(&encoded);
         assert_eq!(frames, vec![payload]);
+    }
+
+    #[test]
+    fn param_command_encodes_low_nibble() {
+        // TXDELAY 600 ms = 60 units.
+        assert_eq!(encode_param(CMD_TXDELAY, 60), vec![FEND, 0x01, 60, FEND]);
+        // Values that collide with FEND must still be escaped.
+        assert_eq!(
+            encode_param(CMD_PERSIST, FEND),
+            vec![FEND, 0x02, FESC, TFEND, FEND]
+        );
     }
 
     #[test]

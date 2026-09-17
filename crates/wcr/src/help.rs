@@ -5,6 +5,7 @@ pub fn topics() -> &'static [(&'static str, &'static str)] {
     &[
         ("setup", include_str!("../../../docs/QUICKSTART.md")),
         ("radio", include_str!("../../../docs/RADIO-SETUP.md")),
+        ("vr-n76", include_str!("../../../docs/VR-N76.md")),
         ("windows", include_str!("../../../docs/SETUP-windows.md")),
         ("macos", include_str!("../../../docs/SETUP-macos.md")),
         ("linux", include_str!("../../../docs/SETUP-linux.md")),

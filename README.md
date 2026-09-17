@@ -67,7 +67,7 @@ wcr gui
 
 How you know it worked: the status bar shows your callsign. Send a line in `#bulletin`. A `✓` means it went out.
 
-Radio guides: [handheld + Digirig](https://weechatradio.com/guides/handheld.html) · [VOX cable](https://weechatradio.com/guides/vox.html) · [HF + CAT](https://weechatradio.com/guides/hf.html)
+Radio guides: [VR-N76 / UV-PRO over Bluetooth](https://weechatradio.com/guides/vr-n76.html) · [handheld + Digirig](https://weechatradio.com/guides/handheld.html) · [VOX cable](https://weechatradio.com/guides/vox.html) · [HF + CAT](https://weechatradio.com/guides/hf.html)
 
 ---
 
@@ -94,6 +94,8 @@ You need a valid licence, a radio, and audio into the PC. [modem73](https://gith
 
 | Path | What you need |
 |------|----------------|
+| VR-N76 / UV-PRO (Bluetooth) | Vero VR-N76, BTECH UV-PRO or Radioddity GA-5WB — built-in KISS TNC, no cable; the app pairs and connects (`wcr tnc find`) |
+| KISS TNC on a serial port | Mobilinkd, `/dev/rfcomm0`, or any KISS TNC on a COM port |
 | Handheld + Digirig | VHF/UHF HT and a [Digirig](https://digirig.net/) (or AIOC) USB cable |
 | VOX cable | Any radio that keys on VOX, plus a 3.5 mm audio cable |
 | HF + CAT | HF rig with `rigctl` (Hamlib) for PTT and frequency |

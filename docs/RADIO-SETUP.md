@@ -2,7 +2,7 @@ On the web (with pictures): https://weechatradio.com/guides/radio.html
 
 # Radio setup
 
-Three paths. Pick the one that matches your station. All of them work **without the internet**.
+Four paths. Pick the one that matches your station. All of them work **without the internet**.
 
 Legal note: you are the control operator. Stay in your licence privileges. Suggested calling frequencies are only suggestions — check your band plan before you transmit.
 
@@ -92,6 +92,26 @@ CAT means the computer can talk to the radio over USB (change frequency, press t
 ### How you know it worked
 
 The status bar shows the frequency the radio reports. A decoded frame shows SNR. If CAT fails, run `/radio ptt vox` and use Path B until CAT is sorted.
+
+---
+
+## Path D — VR-N76 / UV-PRO / GA-5WB over Bluetooth (3 minutes)
+
+On the web: https://weechatradio.com/guides/vr-n76.html · offline: `wcr help vr-n76`
+
+These handhelds have a built-in 1200 bd packet TNC that speaks KISS over Bluetooth. No cable, no sound card, no modem73.
+
+### Steps
+
+1. On the radio: **General Settings → KISS TNC → Enable**, **Digital Mode → off**, then **Menu → Pairing**. Close the HT phone app.
+2. In the app choose **VR-N76 / UV-PRO (Bluetooth)** and press **Find radio**. It pairs (PIN 0000) and saves the address. Terminal: `wcr tnc find`.
+3. **Save and start**. The station panel shows `RADIO VR-N76 linked`.
+
+### How you know it worked
+
+The radio shows its Bluetooth-data icon; its TX light comes on for ~2 s when you send. `wcr tnc test --tx` sends one identified test frame and prints what it hears.
+
+Also in setup: **KISS TNC on a serial port** for Mobilinkd, `/dev/rfcomm0`, or a Bluetooth COM port.
 
 ---
 
