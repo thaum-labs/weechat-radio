@@ -52,12 +52,12 @@
   }
 
   const BOOT_LINES = [
-    "WEECHAT RADIO  //  TRON SHELL",
-    "> load fonts ………… OK",
-    "> telemetry link …… OK",
-    `> hub ${API.replace(/^https?:\/\//, "")} …… OK`,
-    "> map tiles ………… OK",
-    "READY.",
+    "weechat-radio:$ boot",
+    "> fonts ………… ok",
+    "> telemetry …… ok",
+    `> hub ${API.replace(/^https?:\/\//, "")} …… ok`,
+    "> map …………… ok",
+    "ready.",
   ];
 
   function skipBoot(screen) {

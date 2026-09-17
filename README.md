@@ -29,7 +29,7 @@ With WeeChat Radio you can:
 3. Store and forward messages so stations catch up later
 4. Appear on the public map: [weechatradio.com](https://weechatradio.com)
 
-The site, TUI, and CLI share a sci-fi “tron” shell (teal on black, titled panels). Change the TUI with `/radio theme hacker` or `/radio theme terminal`.
+The site, TUI, and CLI share a dark terminal shell (indigo prompts, orange accents). Change the TUI with `/radio theme hacker` or `/radio theme terminal`.
 
 **You do not need a radio** to try internet mode.  
 **You do not need WeeChat** — the TUI is enough.

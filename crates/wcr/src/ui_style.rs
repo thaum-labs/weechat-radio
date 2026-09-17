@@ -1,13 +1,13 @@
 //! SPDX-License-Identifier: Apache-2.0
-//! Tron-style console helpers for CLI output.
+//! Terminal-style console helpers for CLI output.
 
 use console::Style;
 use dialoguer::theme::ColorfulTheme;
 
-/// Approximate #aacfd1 in xterm-256.
-const TEAL: u8 = 152;
+/// Approximate #7d9bff / #ff7a3d in xterm-256.
+const ACCENT: u8 = 111;
 const DIM: u8 = 240;
-const WARN: u8 = 214;
+const WARN: u8 = 209;
 const ERR: u8 = 196;
 
 pub fn color_enabled() -> bool {
@@ -23,7 +23,7 @@ fn style(code: u8) -> Style {
 }
 
 pub fn main_style() -> Style {
-    style(TEAL)
+    style(ACCENT)
 }
 
 pub fn dim() -> Style {
@@ -31,7 +31,7 @@ pub fn dim() -> Style {
 }
 
 pub fn ok() -> Style {
-    style(TEAL)
+    style(ACCENT)
 }
 
 pub fn warn() -> Style {
@@ -72,13 +72,13 @@ pub fn step(n: u8, of: u8, prompt: &str) -> String {
 }
 
 pub fn prompt_theme() -> ColorfulTheme {
-    let teal = main_style();
+    let accent = main_style();
     ColorfulTheme {
-        prompt_prefix: teal.clone().apply_to("▸".to_string()),
-        prompt_style: teal.clone(),
-        values_style: teal.clone(),
-        active_item_style: teal.clone().bold(),
-        success_prefix: teal.clone().apply_to("OK".to_string()),
+        prompt_prefix: accent.clone().apply_to("▸".to_string()),
+        prompt_style: accent.clone(),
+        values_style: accent.clone(),
+        active_item_style: accent.clone().bold(),
+        success_prefix: accent.clone().apply_to("OK".to_string()),
         hint_style: dim(),
         ..ColorfulTheme::default()
     }

@@ -9,28 +9,79 @@ const MODE_COLOR = {
 };
 
 const CARTO_KEY = "cb1_3nxz_1_dba340f0a1c8450af09da179";
+const MAP_STYLE_KEY = "wcr-map-style";
+const OSM_CARTO =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions">CARTO</a>';
 
-const map = new maplibregl.Map({
-  container: "map",
-  style: {
+const MAP_STYLES = {
+  voyager: {
+    tiles: [`https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png?key=${CARTO_KEY}`],
+    attribution: OSM_CARTO,
+  },
+  light: {
+    tiles: [`https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png?key=${CARTO_KEY}`],
+    attribution: OSM_CARTO,
+  },
+  dark: {
+    tiles: [`https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png?key=${CARTO_KEY}`],
+    attribution: OSM_CARTO,
+  },
+  terrain: {
+    tiles: [
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}",
+    ],
+    attribution:
+      "Tiles &copy; <a href=\"https://www.esri.com/\">Esri</a> — Esri, USGS, NOAA",
+  },
+  satellite: {
+    tiles: [
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    ],
+    attribution:
+      "Tiles &copy; <a href=\"https://www.esri.com/\">Esri</a> — Esri, Maxar, Earthstar Geographics",
+  },
+};
+
+function rasterStyle(id) {
+  const spec = MAP_STYLES[id] || MAP_STYLES.voyager;
+  return {
     version: 8,
     sources: {
       osm: {
         type: "raster",
-        tiles: [
-          `https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png?key=${CARTO_KEY}`,
-        ],
+        tiles: spec.tiles,
         tileSize: 256,
-        attribution:
-          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        attribution: spec.attribution,
       },
     },
     layers: [{ id: "osm", type: "raster", source: "osm" }],
-  },
+  };
+}
+
+function preferredMapStyle() {
+  const saved = localStorage.getItem(MAP_STYLE_KEY);
+  return MAP_STYLES[saved] ? saved : "voyager";
+}
+
+const mapStyleSelect = document.getElementById("map-style");
+const initialMapStyle = preferredMapStyle();
+if (mapStyleSelect) mapStyleSelect.value = initialMapStyle;
+
+const map = new maplibregl.Map({
+  container: "map",
+  style: rasterStyle(initialMapStyle),
   center: [0, 20],
   zoom: 1.4,
   attributionControl: true,
 });
+
+if (mapStyleSelect) {
+  mapStyleSelect.addEventListener("change", () => {
+    const id = MAP_STYLES[mapStyleSelect.value] ? mapStyleSelect.value : "voyager";
+    localStorage.setItem(MAP_STYLE_KEY, id);
+    map.setStyle(rasterStyle(id));
+  });
+}
 
 const SPAN = 1440;
 const markers = new Map();
@@ -183,7 +234,7 @@ function drawSpark(events) {
     counts[i] += 1;
   });
   const max = Math.max(1, ...counts);
-  ctx.strokeStyle = "#aacfd1";
+  ctx.strokeStyle = "#7d9bff";
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   counts.forEach((n, i) => {

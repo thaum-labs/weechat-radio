@@ -49,7 +49,7 @@ TICKS = {
     "all": "✓✓✓",
 }
 
-TRON = "152"
+TRON = "111"
 
 
 def _theme():

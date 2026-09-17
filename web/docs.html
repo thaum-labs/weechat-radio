@@ -6,18 +6,13 @@
   <title>Docs — WeeChat Radio</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/vendor/augmented-ui.min.css" />
-  <link rel="stylesheet" href="/styles.css?v=3" />
+  <link rel="stylesheet" href="/styles.css?v=5" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
   <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
   <header class="topbar">
-    <div class="clock-mod">
-      <div id="clock-utc">UTC --:--:--</div>
-      <div class="sub" id="clock-local">LCL --:--</div>
-    </div>
-    <div class="brand">WEECHAT RADIO</div>
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
     <nav>
       <a href="/">map</a>
       <a href="/downloads.html">downloads</a>
@@ -26,11 +21,14 @@
       <a href="/status.html">hub</a>
       <a href="/changelog.html">changelog</a>
     </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
   </header>
   <div class="page-wrap">
-    <main class="page-panel" data-augmented-ui="tl-clip br-clip both">
-      <h3 class="title"><p>DOCS</p><p>REF</p></h3>
-      <h1>Docs</h1>
+    <main class="page-panel">
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> docs</h1>
       <ul>
         <li><a href="https://github.com/thaum-labs/weechat-radio/blob/main/docs/MODES.md">Modes</a></li>
         <li><a href="https://github.com/thaum-labs/weechat-radio/blob/main/docs/PROTOCOL.md">Wire protocol</a></li>
@@ -41,6 +39,6 @@
       <p>Offline: <code>wcr help</code></p>
     </main>
   </div>
-  <script src="/shell.js?v=3"></script>
+  <script src="/shell.js?v=5"></script>
 </body>
 </html>
