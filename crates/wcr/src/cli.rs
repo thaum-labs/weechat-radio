@@ -51,6 +51,35 @@ pub enum Command {
         #[arg(long)]
         configure: bool,
     },
+    /// Radios with a built-in KISS TNC (VR-N76, UV-PRO, GA-5WB) over Bluetooth
+    Tnc {
+        #[command(subcommand)]
+        action: TncAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TncAction {
+    /// List paired Bluetooth devices; add --inquiry to scan for new ones
+    Scan {
+        #[arg(long)]
+        inquiry: bool,
+    },
+    /// Find a VR-N76 / UV-PRO / GA-5WB, pair it if needed, and save it to wcr.toml
+    Find {
+        /// Bluetooth name to match (default: any known radio)
+        #[arg(long, default_value = "")]
+        name: String,
+    },
+    /// Connect to the configured radio and print decoded KISS frames for a while
+    Test {
+        /// Seconds to listen
+        #[arg(long, default_value_t = 20)]
+        seconds: u64,
+        /// Also transmit one short test frame (identifies with your callsign)
+        #[arg(long)]
+        tx: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
