@@ -1,3 +1,5 @@
+On the web: https://weechatradio.com/guides/macos.html
+
 # macOS setup
 
 ## What you need

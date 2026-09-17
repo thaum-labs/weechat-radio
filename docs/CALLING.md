@@ -1,3 +1,5 @@
+On the web: https://weechatradio.com/docs/calling.html
+
 WeeChat Radio — suggested calling presets
 Verify your band plan before you transmit. You are the control operator.
 

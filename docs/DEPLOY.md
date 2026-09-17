@@ -1,3 +1,5 @@
+On the web: https://weechatradio.com/docs/deploy.html
+
 # Deploy on DigitalOcean
 
 ## What you need

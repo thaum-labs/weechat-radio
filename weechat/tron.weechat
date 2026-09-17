@@ -1,18 +1,33 @@
-# Optional WeeChat colour snippet to match WeeChat Radio's tron shell.
-# Paste these lines into WeeChat after `/script load radio.py`.
-# Switch the script itself with:  /set plugins.var.python.radio.theme tron
-# (or `plain` to drop 256-colour tints)
+# WeeChat colours for the WeeChat Radio shell (indigo / orange on #07070a).
+# Applied automatically by radio.py when theme is `tron`.
+# /set plugins.var.python.radio.theme plain   to leave WeeChat chrome alone.
 
-/set weechat.bar.status.color_bg 0
+/set weechat.bar.status.color_bg 232
 /set weechat.bar.status.color_fg 111
-/set weechat.bar.input.color_bg 0
+/set weechat.bar.input.color_bg 232
 /set weechat.bar.input.color_fg 111
-/set weechat.bar.title.color_bg 0
+/set weechat.bar.input.color_delim 209
+/set weechat.bar.title.color_bg 232
 /set weechat.bar.title.color_fg 111
-/set weechat.look.color_inactive_window 240
-/set weechat.look.color_nicklist_away 240
-/set weechat.color.chat_nick 111
-/set weechat.color.chat_prefix_network 209
-/set weechat.color.separator 240
+/set weechat.bar.buflist.color_fg 111
+/set weechat.bar.buflist.color_bg 232
 /set weechat.bar.nicklist.color_fg 111
+/set weechat.bar.nicklist.color_bg 232
 /set weechat.bar.nicklist.separator on
+/set weechat.bar.radio_bar.color_fg 111
+/set weechat.bar.radio_bar.color_bg 232
+/set weechat.look.color_inactive_window 243
+/set weechat.look.color_nicklist_away 243
+/set weechat.color.chat 189
+/set weechat.color.chat_time 243
+/set weechat.color.chat_time_delimiters 243
+/set weechat.color.chat_nick 111
+/set weechat.color.chat_nick_self 209
+/set weechat.color.chat_prefix_network 209
+/set weechat.color.chat_prefix_join 46
+/set weechat.color.chat_highlight 209,232
+/set weechat.color.separator 243
+/set weechat.color.status_name 111
+/set weechat.color.status_name_insecure 209
+/set weechat.color.status_time 243
+/set weechat.color.status_data_msg 111

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>VOX cable — WeeChat Radio</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=11" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/guides.html">guides</a> / <a href="/guides/radio.html">radio</a> / VOX</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> any radio with VOX</h1>
+      <p class="lead">VOX means the radio transmits when it hears sound. A plain audio cable is enough. About five minutes.</p>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="flow-col">
+            <div class="flow-row">
+              <div class="flow-box orange">radio speaker</div>
+              <span class="flow-arrow" aria-hidden="true">→</span>
+              <div class="flow-box accent">computer mic</div>
+            </div>
+            <div class="flow-row">
+              <div class="flow-box accent">computer headphones</div>
+              <span class="flow-arrow" aria-hidden="true">→</span>
+              <div class="flow-box orange">radio mic</div>
+            </div>
+          </div>
+        </div>
+        <figcaption>Sound out of the radio into the computer, and sound out of the computer into the radio. Two 3.5&nbsp;mm cables, or one combined cable.</figcaption>
+      </figure>
+
+      <div class="need">
+        <h2>What you need</h2>
+        <ul>
+          <li>Any radio that can key on VOX (voice-operated transmit)</li>
+          <li>A 3.5&nbsp;mm audio cable from the computer sound card to the radio mic/speaker</li>
+          <li>Volume set so the radio keys on data tones, not on room noise</li>
+        </ul>
+      </div>
+
+      <h2>Steps</h2>
+      <ol class="steps">
+        <li>
+          <p>Connect computer headphone-out to radio mic-in, and radio speaker-out to computer mic-in.</p>
+        </li>
+        <li>
+          <p>On the radio, turn <strong>VOX on</strong>. Start with a medium VOX delay.</p>
+        </li>
+        <li>
+          <p>Run <code>wcr setup</code> and choose <strong>Any radio with a plain audio cable (VOX)</strong>. This selects the <code>vox-safe</code> preset, which waits a moment so the radio is fully keyed before data starts.</p>
+        </li>
+        <li>
+          <p>Start <code>wcr tui</code>. Send a short test to <code>#bulletin</code>.</p>
+        </li>
+        <li>
+          <p>If the other station hears a clipped first character, raise <code>modem.vox_lead_ms</code> in <code>wcr.toml</code> (try <code>700</code>).</p>
+        </li>
+      </ol>
+
+      <div class="ok">
+        <h2>How you know it worked</h2>
+        <p>The radio’s TX LED lights for each message. Delivery ticks still work; they take a little longer because of VOX delay.</p>
+      </div>
+
+      <p class="next">Other paths: <a href="/guides/handheld.html">handheld + Digirig</a> · <a href="/guides/hf.html">HF + CAT</a>.</p>
+    </main>
+  </div>
+  <script src="/shell.js?v=7"></script>
+</body>
+</html>

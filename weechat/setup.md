@@ -1,3 +1,5 @@
+On the web: https://weechatradio.com/guides/weechat.html
+
 # Connect WeeChat to a local WeeChat Radio node
 
 ## What you need
@@ -27,7 +29,7 @@ Manual steps, if you installed WeeChat yourself:
 
 3. You land in `#bulletin`. Chat as usual. `/radio help` lists node commands.
 
-4. Optional: match the tron colours used by `wcr tui` and the website. The script defaults to theme `tron` (teal bar, mode token in its colour). Switch it off with:
+4. The script defaults to theme `tron` (indigo / orange, same as the site and `wcr tui`). It restyles WeeChat bars on load. Switch it off with:
 
    ```
    /set plugins.var.python.radio.theme plain

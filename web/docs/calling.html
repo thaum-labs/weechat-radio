@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Calling frequencies — WeeChat Radio</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=11" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/docs.html">docs</a> / calling</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> calling frequencies</h1>
+      <p class="lead">Places other WeeChat Radio stations may listen. These are suggestions, not assignments.</p>
+
+      <div class="warn-box">
+        <h2>Check your band plan</h2>
+        <p>You are the control operator. Verify the frequency is legal for your licence and country before you transmit. The setup wizard only sets the radio via rigctl if you confirm.</p>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Where</th><th>Band</th><th>Frequency</th><th>Mode</th><th>Preset</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>UK</td><td>VHF</td><td>144.950 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>EU</td><td>VHF</td><td>144.950 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>US</td><td>VHF</td><td>145.530 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>AU</td><td>VHF</td><td>146.550 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>UK</td><td>HF</td><td>7.045 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>EU</td><td>HF</td><td>7.045 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>US</td><td>HF</td><td>7.090 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>AU</td><td>HF</td><td>7.090 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Same list in the program: <code>wcr help calling</code>.</p>
+
+      <p class="next">Need a radio cable first? <a href="/guides/radio.html">Radio setup</a>.</p>
+    </main>
+  </div>
+  <script src="/shell.js?v=7"></script>
+</body>
+</html>

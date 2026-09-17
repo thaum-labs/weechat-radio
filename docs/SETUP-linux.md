@@ -1,3 +1,5 @@
+On the web: https://weechatradio.com/guides/linux.html
+
 # Linux setup
 
 ## What you need

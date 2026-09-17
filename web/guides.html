@@ -2,11 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <title>Guides — WeeChat Radio</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=5" />
+  <link rel="stylesheet" href="/styles.css?v=11" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -29,18 +33,65 @@
   <div class="page-wrap">
     <main class="page-panel">
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> guides</h1>
-      <p>Each path is 5 minutes. Pick the one that matches your station.</p>
-      <ul>
-        <li><a href="https://github.com/thaum-labs/weechat-radio/blob/main/docs/QUICKSTART.md">5-minute start</a></li>
-        <li><a href="https://github.com/thaum-labs/weechat-radio/blob/main/docs/RADIO-SETUP.md#path-a--handheld--digirig-5-minutes">Handheld + Digirig</a></li>
-        <li><a href="https://github.com/thaum-labs/weechat-radio/blob/main/docs/RADIO-SETUP.md#path-b--any-radio-with-vox-5-minutes">Any radio with VOX</a></li>
-        <li><a href="https://github.com/thaum-labs/weechat-radio/blob/main/docs/RADIO-SETUP.md#path-c--hf-rig-with-cat-5-minutes">HF rig with CAT</a></li>
-        <li><a href="https://github.com/thaum-labs/weechat-radio/blob/main/docs/SETUP-windows.md">Windows</a></li>
-        <li><a href="https://github.com/thaum-labs/weechat-radio/blob/main/docs/SETUP-macos.md">macOS</a></li>
-        <li><a href="https://github.com/thaum-labs/weechat-radio/blob/main/docs/SETUP-linux.md">Linux</a></li>
-      </ul>
+      <p class="lead">Short how-tos. Start at the top if this is your first time.</p>
+
+      <h2>start here</h2>
+      <div class="guide-grid">
+        <a class="guide-card" href="/guides/start.html">
+          <h2>5-minute start</h2>
+          <p>Install, pick a name, send a test chat. No radio needed.</p>
+          <span class="tag">begin here →</span>
+        </a>
+        <a class="guide-card" href="/downloads.html">
+          <h2>Downloads</h2>
+          <p>Copy one command. Windows, Mac, and Linux.</p>
+          <span class="tag">install →</span>
+        </a>
+      </div>
+
+      <h2>your computer</h2>
+      <div class="guide-grid">
+        <a class="guide-card" href="/guides/windows.html">
+          <h2>Windows</h2>
+          <p>PowerShell install, then the chat window.</p>
+        </a>
+        <a class="guide-card" href="/guides/macos.html">
+          <h2>macOS</h2>
+          <p>Homebrew or the one-line installer.</p>
+        </a>
+        <a class="guide-card" href="/guides/linux.html">
+          <h2>Linux</h2>
+          <p>Install, then USB radio permission if you need it.</p>
+        </a>
+        <a class="guide-card" href="/guides/weechat.html">
+          <h2>WeeChat</h2>
+          <p>Use the WeeChat program instead of the built-in window.</p>
+        </a>
+      </div>
+
+      <h2>radio (optional)</h2>
+      <p>Internet chat works with no radio. Add a radio if you want chat when the internet is down.</p>
+      <div class="guide-grid">
+        <a class="guide-card" href="/guides/radio.html">
+          <h2>Pick a radio path</h2>
+          <p>Three setups. Choose the picture that matches your station.</p>
+          <span class="tag">chooser →</span>
+        </a>
+        <a class="guide-card" href="/guides/handheld.html">
+          <h2>Handheld + Digirig</h2>
+          <p>A walkie-talkie and a USB sound cable.</p>
+        </a>
+        <a class="guide-card" href="/guides/vox.html">
+          <h2>Any radio with VOX</h2>
+          <p>A headphone cable. The radio keys when it hears tones.</p>
+        </a>
+        <a class="guide-card" href="/guides/hf.html">
+          <h2>HF rig with CAT</h2>
+          <p>A big HF radio the computer can control over USB.</p>
+        </a>
+      </div>
     </main>
   </div>
-  <script src="/shell.js?v=5"></script>
+  <script src="/shell.js?v=7"></script>
 </body>
 </html>

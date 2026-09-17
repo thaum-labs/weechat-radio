@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Public API — WeeChat Radio</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=11" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/docs.html">docs</a> / api</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> public API</h1>
+      <p class="lead">The live map reads this API. You can skip this page unless you are building something that talks to the hub.</p>
+
+      <p>Base: <code>https://hub.weechatradio.com</code></p>
+      <p>CORS is open. Reads need no key. Writes are signed.</p>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="flow-row">
+            <div class="flow-box accent">your station<span>signed POST</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box cyan">hub API</div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box">map + /ws/live</div>
+          </div>
+        </div>
+        <figcaption>Stations report metadata only. Message text never goes in a report.</figcaption>
+      </figure>
+
+      <h2>Write — POST /api/v1/report</h2>
+      <p>Headers:</p>
+      <ul>
+        <li><code>X-Radio-Callsign</code></li>
+        <li><code>X-Radio-Pubkey</code> — hex Ed25519 public key</li>
+        <li><code>X-Radio-Signature</code> — hex signature of the <strong>raw body</strong></li>
+      </ul>
+      <p>First time a public key is seen, it is bound to that callsign. Later posts must use the same key.</p>
+      <p>Body is JSON metadata only. Never send message text.</p>
+      <pre class="plain">{
+  "callsign": "G4ABC",
+  "ts": 1710000000,
+  "grid": "IO91wm",
+  "mode": "internet-radio",
+  "ptt": "digirig",
+  "preset": "vhf-fm",
+  "snr": 12.4,
+  "ber": 0.0,
+  "queue": 0,
+  "hub_ok": true,
+  "settings": { "frequency": "144.950" },
+  "events": [
+    { "ts": 1710000000, "kind": "tx", "origin": "G4ABC", "dest": "NET", "hops": 3 }
+  ]
+}</pre>
+      <p><code>ts</code> must be within 5 minutes of the hub clock.</p>
+
+      <h2>Read</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Path</th><th>What you get</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>GET /api/v1/nodes</code></td><td>live stations and settings</td></tr>
+            <tr><td><code>GET /api/v1/events?since=&amp;limit=</code></td><td>TX/RX/relay events</td></tr>
+            <tr><td><code>GET /api/v1/hubs</code></td><td>hub/relay status</td></tr>
+            <tr><td><code>GET /api/v1/stats</code></td><td>totals</td></tr>
+            <tr><td><code>GET /ws/live</code></td><td>WebSocket firehose of the same events</td></tr>
+            <tr><td><code>GET /healthz</code></td><td><code>ok</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="ok">
+        <h2>How you know it worked</h2>
+        <pre>curl https://hub.weechatradio.com/api/v1/stats</pre>
+        <p>returns JSON with <code>nodes_online</code>.</p>
+      </div>
+    </main>
+  </div>
+  <script src="/shell.js?v=7"></script>
+</body>
+</html>

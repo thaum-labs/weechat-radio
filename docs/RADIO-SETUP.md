@@ -1,3 +1,5 @@
+On the web (with pictures): https://weechatradio.com/guides/radio.html
+
 # Radio setup
 
 Three paths. Pick the one that matches your station. All of them work **without the internet**.
@@ -8,6 +10,8 @@ Legal note: you are the control operator. Stay in your licence privileges. Sugge
 
 ## Path A — Handheld + Digirig (5 minutes)
 
+On the web: https://weechatradio.com/guides/handheld.html
+
 ### What you need
 
 - A VHF/UHF handheld (Baofeng, UV-K6, or similar)
@@ -17,8 +21,11 @@ Legal note: you are the control operator. Stay in your licence privileges. Sugge
 ### Steps
 
 1. Plug the Digirig into the computer. Plug the audio/PTT cable into the radio's speaker-mic jack.
-2. Turn the radio on. Set **FM**, simplex, low power. Disable voice scramble and VOX on the radio itself.
-3. In Device Manager (Windows) or `ls /dev/ttyUSB* /dev/ttyACM*` (Linux) note the serial port, for example `COM5` or `/dev/ttyUSB0`.
+2. Turn the radio on. Set **FM**, simplex (one frequency, not a repeater), low power. Disable voice scramble and VOX on the radio itself.
+3. Note the serial port:
+   - Windows: Device Manager → Ports (COM & LPT), for example `COM5`
+   - Linux: `ls /dev/ttyUSB* /dev/ttyACM*`
+   - macOS: `ls /dev/cu.usb*`
 4. Run `wcr setup` and choose **Handheld + Digirig**. Enter that port.
 5. Start with `wcr tui`. Watch the status bar: audio should read `good`, not `low` or `hot`.
 6. Ask a second station on the same frequency to send a short test. You should see their callsign in the heard list.
@@ -30,6 +37,10 @@ The channel state flickers `rx` when they transmit, and SNR is a positive number
 ---
 
 ## Path B — Any radio with VOX (5 minutes)
+
+On the web: https://weechatradio.com/guides/vox.html
+
+VOX means the radio transmits when it hears sound.
 
 ### What you need
 
@@ -52,6 +63,10 @@ The radio's TX LED lights for each message. Delivery ticks still work; they just
 ---
 
 ## Path C — HF rig with CAT (5 minutes)
+
+On the web: https://weechatradio.com/guides/hf.html
+
+CAT means the computer can talk to the radio over USB (change frequency, press transmit).
 
 ### What you need
 
@@ -92,4 +107,4 @@ The status bar reads the receive level from modem73.
 
 ## Suggested calling frequencies
 
-See `wcr help calling`. Always verify the band plan for your country before you transmit.
+See `wcr help calling` or https://weechatradio.com/docs/calling.html. Always verify the band plan for your country before you transmit.

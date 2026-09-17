@@ -1,3 +1,5 @@
+On the web: https://weechatradio.com/docs/protocol.html
+
 # Wire protocol
 
 Version 1. Same envelope on radio (KISS) and internet (WebSocket).

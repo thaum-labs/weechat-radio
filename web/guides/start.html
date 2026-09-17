@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>5-minute start — WeeChat Radio</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=11" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/guides.html">guides</a> / 5-minute start</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> 5-minute start</h1>
+      <p class="lead">You will install a small program called <code>wcr</code>, give it a name, and send a chat line. You do not need a radio for this.</p>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="flow-row">
+            <div class="flow-box">you<span>keyboard</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box accent">wcr<span>this computer</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box cyan">hub + map<span>internet</span></div>
+          </div>
+          <div class="flow-col">
+            <span class="flow-arrow dim">optional later</span>
+            <div class="flow-box orange">radio<span>when the internet is gone</span></div>
+          </div>
+        </div>
+        <figcaption>Chat goes through this computer. The public map is extra. A radio is extra.</figcaption>
+      </figure>
+
+      <div class="need">
+        <h2>What you need</h2>
+        <ul>
+          <li>This computer (Windows, Mac, or Linux)</li>
+          <li>A ham radio callsign, <em>or</em> a guest name starting with <code>~</code> (example: <code>~alice</code>)</li>
+          <li>A grid square if you want to show up on the map (example: <code>IO91wm</code>). Search the web for “maidenhead grid square map” and click where you live.</li>
+        </ul>
+      </div>
+
+      <h2>Steps</h2>
+      <ol class="steps">
+        <li>
+          <p>Open a command window.</p>
+          <ul>
+            <li><strong>Windows:</strong> click Start, type <code>PowerShell</code>, press Enter.</li>
+            <li><strong>Mac:</strong> press Command + Space, type <code>Terminal</code>, press Enter.</li>
+            <li><strong>Linux:</strong> open Terminal from the applications menu.</li>
+          </ul>
+        </li>
+        <li>
+          <p>Paste the install line, then press Enter.</p>
+          <p><strong>Linux / Mac</strong></p>
+          <pre>curl -fsSL https://weechatradio.com/install.sh | sh</pre>
+          <p><strong>Windows (PowerShell)</strong></p>
+          <pre>irm https://weechatradio.com/install.ps1 | iex</pre>
+        </li>
+        <li>
+          <p>Run the setup wizard. It asks for your callsign, grid, and whether you have a radio.</p>
+          <pre>wcr setup</pre>
+          <p>If you have no radio, choose internet-only. You can add a radio later.</p>
+        </li>
+        <li>
+          <p>Start the chat window.</p>
+          <pre>wcr tui</pre>
+          <p>Want WeeChat instead? Run <code>wcr node</code> in one window and <code>wcr weechat</code> in another. See the <a href="/guides/weechat.html">WeeChat guide</a>.</p>
+        </li>
+        <li>
+          <p>You land in a room called <code>#bulletin</code>. Type a short hello and press Enter.</p>
+        </li>
+      </ol>
+
+      <div class="ok">
+        <h2>How you know it worked</h2>
+        <p>The bar at the bottom of the window shows your callsign.</p>
+        <p>After you send, a mark appears on the line:</p>
+        <ul>
+          <li><code>·</code> waiting to go out</li>
+          <li><code>✓</code> sent</li>
+        </ul>
+      </div>
+
+      <h2>Words you will see</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Word</th><th>Meaning</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>wcr</code></td><td>The WeeChat Radio program</td></tr>
+            <tr><td>callsign</td><td>Your ham ID, or a guest name like <code>~alice</code></td></tr>
+            <tr><td>grid</td><td>Short location code for the map</td></tr>
+            <tr><td>hub</td><td>The public internet meeting point</td></tr>
+            <tr><td>TUI</td><td>The built-in chat window (<code>wcr tui</code>)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The window uses the same indigo / orange look as this site. Change it later with <code>/radio theme hacker</code> or <code>/radio theme terminal</code>.</p>
+
+      <p class="next">Have a radio? <a href="/guides/radio.html">Pick a radio path</a>. More detail for <a href="/guides/windows.html">Windows</a>, <a href="/guides/macos.html">macOS</a>, or <a href="/guides/linux.html">Linux</a>.</p>
+    </main>
+  </div>
+  <script src="/shell.js?v=7"></script>
+</body>
+</html>

@@ -34,11 +34,12 @@ SCRIPT_DESC = "WeeChat Radio status bar, /radio command, delivery ticks"
 
 STATUS_URL = "http://127.0.0.1:8074/status"
 
+# 256-colour matches for the site / TUI shell.
 MODE_COLOR = {
-    "internet": "cyan",
-    "internet-radio": "green",
-    "radio": "yellow",
-    "radio-plus": "magenta",
+    "internet": "51",
+    "internet-radio": "46",
+    "radio": "220",
+    "radio-plus": "207",
 }
 
 TICKS = {
@@ -49,7 +50,41 @@ TICKS = {
     "all": "✓✓✓",
 }
 
-TRON = "111"
+ACCENT = "111"
+ORANGE = "209"
+DIM = "243"
+
+CHROME = (
+    "/set weechat.bar.status.color_bg 232",
+    "/set weechat.bar.status.color_fg 111",
+    "/set weechat.bar.input.color_bg 232",
+    "/set weechat.bar.input.color_fg 111",
+    "/set weechat.bar.input.color_delim 209",
+    "/set weechat.bar.title.color_bg 232",
+    "/set weechat.bar.title.color_fg 111",
+    "/set weechat.bar.buflist.color_fg 111",
+    "/set weechat.bar.buflist.color_bg 232",
+    "/set weechat.bar.nicklist.color_fg 111",
+    "/set weechat.bar.nicklist.color_bg 232",
+    "/set weechat.bar.nicklist.separator on",
+    "/set weechat.bar.radio_bar.color_fg 111",
+    "/set weechat.bar.radio_bar.color_bg 232",
+    "/set weechat.look.color_inactive_window 243",
+    "/set weechat.look.color_nicklist_away 243",
+    "/set weechat.color.chat 189",
+    "/set weechat.color.chat_time 243",
+    "/set weechat.color.chat_time_delimiters 243",
+    "/set weechat.color.chat_nick 111",
+    "/set weechat.color.chat_nick_self 209",
+    "/set weechat.color.chat_prefix_network 209",
+    "/set weechat.color.chat_prefix_join 46",
+    "/set weechat.color.chat_highlight 209,232",
+    "/set weechat.color.separator 243",
+    "/set weechat.color.status_name 111",
+    "/set weechat.color.status_name_insecure 209",
+    "/set weechat.color.status_time 243",
+    "/set weechat.color.status_data_msg 111",
+)
 
 
 def _theme():
@@ -81,15 +116,23 @@ def bar_item_cb(*_args):
         mode = s.get("mode", "?")
         mode_col = MODE_COLOR.get(mode, "default")
         banner = s.get("hub_banner") or ""
-        hub = "HUB UP" if s.get("hub_ok") else "HUB DOWN"
+        hub_ok = bool(s.get("hub_ok"))
+        hub = (
+            _col("46") + "HUB UP"
+            if hub_ok
+            else _col(ORANGE) + "HUB DOWN"
+        )
         audio = (s.get("audio_label") or "?").upper()
         q = s.get("queue_out", 0)
         snr = s.get("snr") or 0
         freq = s.get("frequency") or s.get("preset", "")
-        ptt = "TX" if s.get("ptt_on") else (s.get("channel") or "idle").upper()
+        if s.get("ptt_on"):
+            ptt = _col(ORANGE) + "TX"
+        else:
+            ptt = _col(DIM) + (s.get("channel") or "idle").upper()
         upd = " │ UPD" if s.get("update_available") else ""
         sep = " │ "
-        base = _col(TRON)
+        base = _col(ACCENT)
         token = _col(mode_col) + mode.upper() + base
         text = (
             " "
@@ -152,7 +195,7 @@ def tagmsg_cb(data, signal, signal_data):
     weechat.prnt(
         "",
         "%s%s delivery %s"
-        % (weechat.prefix("network"), _col(TRON), tick + " " + state),
+        % (weechat.prefix("network"), _col(ACCENT), tick + " " + state),
     )
     return weechat.WEECHAT_RC_OK
 
@@ -176,4 +219,7 @@ if weechat.register(SCRIPT_NAME, SCRIPT_AUTHOR, SCRIPT_VERSION, SCRIPT_LICENSE, 
     weechat.hook_timer(4000, 0, 0, "timer_cb", "")
     if not weechat.bar_search("radio_bar"):
         weechat.command("", "/bar add radio_bar window bottom 1 0 radio,radio_air")
+    if _theme() == "tron":
+        for cmd in CHROME:
+            weechat.command("", cmd)
     weechat.config_set_plugin("draft_len", "0")
