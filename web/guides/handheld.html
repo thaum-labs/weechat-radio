@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Handheld + Digirig — WeeChat Radio</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=11" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/guides.html">guides</a> / <a href="/guides/radio.html">radio</a> / handheld</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> handheld + Digirig</h1>
+      <p class="lead">A VHF/UHF walkie-talkie and a USB sound cable. About five minutes.</p>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="flow-row">
+            <div class="flow-box orange">handheld<span>speaker-mic jack</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box">Digirig<span>or AIOC</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box accent">USB<span>this computer</span></div>
+          </div>
+        </div>
+        <figcaption>One cable into the radio’s speaker-mic hole. One USB cable into the computer.</figcaption>
+      </figure>
+
+      <div class="need">
+        <h2>What you need</h2>
+        <ul>
+          <li>A VHF/UHF handheld (Baofeng, UV-K6, or similar)</li>
+          <li>A <a href="https://digirig.net/">Digirig</a> or AIOC USB cable</li>
+          <li><code>wcr setup</code> already run once</li>
+        </ul>
+      </div>
+
+      <h2>Steps</h2>
+      <ol class="steps">
+        <li>
+          <p>Plug the Digirig into the computer. Plug the audio/PTT cable into the radio’s speaker-mic jack.</p>
+        </li>
+        <li>
+          <p>Turn the radio on. Set <strong>FM</strong>, simplex (one frequency, not a repeater), low power. Turn off voice scramble and VOX on the radio itself — the Digirig presses the transmit button for you.</p>
+        </li>
+        <li>
+          <p>Find the serial port name (the USB “COM” address):</p>
+          <ul>
+            <li><strong>Windows:</strong> right-click Start → Device Manager → Ports (COM &amp; LPT). Look for something like <code>COM5</code>.</li>
+            <li><strong>Linux:</strong> in a terminal, run <code>ls /dev/ttyUSB* /dev/ttyACM*</code>. You want <code>/dev/ttyUSB0</code> or similar.</li>
+            <li><strong>Mac:</strong> in Terminal, run <code>ls /dev/cu.usb*</code>.</li>
+          </ul>
+        </li>
+        <li>
+          <p>Run <code>wcr setup</code> and choose <strong>Handheld + Digirig</strong>. Type that port name.</p>
+        </li>
+        <li>
+          <p>Start with <code>wcr tui</code>. Watch the status bar: audio should read <code>good</code>, not <code>low</code> or <code>hot</code>.</p>
+        </li>
+        <li>
+          <p>Ask a second station on the same frequency to send a short test. You should see their callsign in the heard list.</p>
+        </li>
+      </ol>
+
+      <div class="ok">
+        <h2>How you know it worked</h2>
+        <p>The channel state flickers <code>rx</code> when they transmit, and SNR is a positive number. Your <code>✓</code> appears after you send.</p>
+      </div>
+
+      <p class="next">Other paths: <a href="/guides/vox.html">VOX cable</a> · <a href="/guides/hf.html">HF + CAT</a>. Frequencies: <a href="/docs/calling.html">calling</a>.</p>
+    </main>
+  </div>
+  <script src="/shell.js?v=7"></script>
+</body>
+</html>

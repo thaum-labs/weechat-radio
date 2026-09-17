@@ -67,13 +67,25 @@ const mapStyleSelect = document.getElementById("map-style");
 const initialMapStyle = preferredMapStyle();
 if (mapStyleSelect) mapStyleSelect.value = initialMapStyle;
 
+const coarse = matchMedia("(pointer: coarse)").matches;
 const map = new maplibregl.Map({
   container: "map",
   style: rasterStyle(initialMapStyle),
   center: [0, 20],
   zoom: 1.4,
   attributionControl: true,
+  cooperativeGestures: coarse,
+  dragRotate: !coarse,
+  pitchWithRotate: !coarse,
+  touchPitch: !coarse,
 });
+
+function fitMap() {
+  try { map.resize(); } catch (_) {}
+}
+map.on("load", fitMap);
+window.addEventListener("resize", fitMap);
+window.addEventListener("orientationchange", fitMap);
 
 if (mapStyleSelect) {
   mapStyleSelect.addEventListener("change", () => {

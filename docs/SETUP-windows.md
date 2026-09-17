@@ -1,3 +1,5 @@
+On the web: https://weechatradio.com/guides/windows.html
+
 # Windows setup
 
 ## What you need

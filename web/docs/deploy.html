@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Deploy the hub — WeeChat Radio</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=11" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/docs.html">docs</a> / deploy</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> deploy the hub</h1>
+      <p class="lead">For people running the public server. Most users never need this page.</p>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="flow-row">
+            <div class="flow-box">internet</div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box accent">Caddy<span>HTTPS</span></div>
+          </div>
+          <div class="flow-row">
+            <div class="flow-box cyan">weechatradio.com<span>this site</span></div>
+            <div class="flow-box orange">hub.weechatradio.com<span>wcr hub</span></div>
+          </div>
+        </div>
+        <figcaption>One droplet. Caddy serves the website and proxies the hub.</figcaption>
+      </figure>
+
+      <div class="need">
+        <h2>What you need</h2>
+        <ul>
+          <li>A DigitalOcean account</li>
+          <li>Domain <code>weechatradio.com</code> (already owned for the public hub)</li>
+          <li>A 2 GB Ubuntu LTS droplet</li>
+          <li>A GitHub repo with Actions secrets: <code>DROPLET_HOST</code>, <code>DROPLET_USER</code>, <code>DROPLET_SSH_KEY</code></li>
+        </ul>
+      </div>
+
+      <h2>DNS</h2>
+      <p>Create A records, all pointing at the droplet IP:</p>
+      <ul>
+        <li><code>weechatradio.com</code></li>
+        <li><code>www.weechatradio.com</code></li>
+        <li><code>hub.weechatradio.com</code></li>
+        <li><code>api.weechatradio.com</code></li>
+      </ul>
+
+      <h2>Steps</h2>
+      <ol class="steps">
+        <li>
+          <p>Create a 2 GB Ubuntu droplet in a region close to you. Allow ports 22, 80, 443.</p>
+        </li>
+        <li>
+          <p>Copy <code>deploy/</code> to the droplet (or clone this repo).</p>
+        </li>
+        <li>
+          <p>Copy <code>deploy/.env.example</code> to <code>/opt/wcr/.env</code> and set <code>WCR_DOMAIN=weechatradio.com</code>.</p>
+        </li>
+        <li>
+          <p>Point cloud-init at <code>deploy/cloud-init.yaml</code> on first boot, or run:</p>
+          <pre>cd /opt/wcr
+docker compose -f deploy/docker-compose.yml up -d</pre>
+        </li>
+        <li>
+          <p>Caddy issues certificates for the three names. Wait a minute.</p>
+        </li>
+        <li>
+          <p>GitHub Actions workflow <code>.github/workflows/deploy.yml</code> rebuilds images and runs <code>docker compose pull && up -d</code> on each push to <code>main</code>.</p>
+        </li>
+      </ol>
+
+      <h2>Backups</h2>
+      <p>Optional nightly:</p>
+      <pre>docker compose exec postgres pg_dump -U wcr wcr | gzip &gt; /var/backups/wcr-$(date +%F).sql.gz</pre>
+      <p>v1 can also run SQLite only (no Postgres) by setting <code>DATABASE_PATH=/data/wcr.db</code> and dropping the postgres service.</p>
+
+      <div class="ok">
+        <h2>How you know it worked</h2>
+        <ul>
+          <li><code>https://weechatradio.com</code> shows the map</li>
+          <li><code>https://hub.weechatradio.com/healthz</code> prints <code>ok</code></li>
+          <li><code>wcr node</code> on a laptop connects to <code>wss://hub.weechatradio.com/ws</code></li>
+        </ul>
+      </div>
+    </main>
+  </div>
+  <script src="/shell.js?v=7"></script>
+</body>
+</html>

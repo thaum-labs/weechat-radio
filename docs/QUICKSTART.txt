@@ -1,5 +1,6 @@
 WeeChat Radio — printable quick start
 =====================================
+With pictures: https://weechatradio.com/guides/start.html
 
 1. Install
    Linux/mac:  curl -fsSL https://weechatradio.com/install.sh | sh

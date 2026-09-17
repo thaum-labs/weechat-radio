@@ -62,7 +62,7 @@ wcr tui
 
 How you know it worked: the status bar shows your callsign. Send a line in `#bulletin`. A `✓` means it went out.
 
-Radio guides: [handheld + Digirig](docs/RADIO-SETUP.md) · [VOX cable](docs/RADIO-SETUP.md) · [HF + CAT](docs/RADIO-SETUP.md)
+Radio guides: [handheld + Digirig](https://weechatradio.com/guides/handheld.html) · [VOX cable](https://weechatradio.com/guides/vox.html) · [HF + CAT](https://weechatradio.com/guides/hf.html)
 
 ---
 
@@ -79,7 +79,7 @@ Switch with `/radio mode <name>` or `F2` in the TUI.
 
 If the hub dies, radio keeps working. The bar says **Internet down, radio only**.
 
-Full table: [docs/MODES.md](docs/MODES.md)
+Full table: [modes](https://weechatradio.com/docs/modes.html)
 
 ---
 
@@ -93,7 +93,7 @@ You need a valid licence, a radio, and audio into the PC. [modem73](https://gith
 | VOX cable | Any radio that keys on VOX, plus a 3.5 mm audio cable |
 | HF + CAT | HF rig with `rigctl` (Hamlib) for PTT and frequency |
 
-Run `wcr setup` and pick the path that matches your station. Suggested calling frequencies: [docs/CALLING.md](docs/CALLING.md). You are the control operator — check your band plan before you transmit.
+Run `wcr setup` and pick the path that matches your station. Suggested calling frequencies: [calling](https://weechatradio.com/docs/calling.html). You are the control operator — check your band plan before you transmit.
 
 ---
 
@@ -109,7 +109,7 @@ wcr weechat
 
 `wcr weechat --configure` rewrites the `radio` server (`127.0.0.1:6667`) and loads [`weechat/radio.py`](weechat/radio.py). The built-in UI is still `wcr tui`.
 
-Step-by-step: [weechat/setup.md](weechat/setup.md)
+Step-by-step: [WeeChat guide](https://weechatradio.com/guides/weechat.html)
 
 ---
 
@@ -129,10 +129,10 @@ Step-by-step: [weechat/setup.md](weechat/setup.md)
 ## Helpful links
 
 - Live map + hub: [weechatradio.com](https://weechatradio.com)
-- 5-minute start: [docs/QUICKSTART.md](docs/QUICKSTART.md)
-- Radio setup: [docs/RADIO-SETUP.md](docs/RADIO-SETUP.md)
-- Protocol: [docs/PROTOCOL.md](docs/PROTOCOL.md)
-- Public API: [docs/API.md](docs/API.md)
+- 5-minute start: [guides/start](https://weechatradio.com/guides/start.html)
+- Radio setup: [guides/radio](https://weechatradio.com/guides/radio.html)
+- Protocol: [docs/protocol](https://weechatradio.com/docs/protocol.html)
+- Public API: [docs/api](https://weechatradio.com/docs/api.html)
 - Licence: [Apache-2.0](LICENSE) (WeeChat script is [GPL-3.0-or-later](weechat/LICENSE))
 
 ---
@@ -170,7 +170,7 @@ branding/       logo used on the site and in this README
 cargo test --workspace
 ```
 
-The same `wcr` binary is a station (`wcr node` / `wcr tui`) or the public hub (`wcr hub`). Hub deploy notes: [docs/DEPLOY.md](docs/DEPLOY.md).
+The same `wcr` binary is a station (`wcr node` / `wcr tui`) or the public hub (`wcr hub`). Hub deploy notes: [deploy](https://weechatradio.com/docs/deploy.html).
 
 </details>
 

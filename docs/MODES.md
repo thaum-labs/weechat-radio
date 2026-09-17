@@ -1,3 +1,5 @@
+On the web: https://weechatradio.com/docs/modes.html
+
 # Modes
 
 Four modes. Switch with `/radio mode <name>` or `F2` in the TUI.

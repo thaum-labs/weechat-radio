@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Linux setup — WeeChat Radio</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=11" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/guides.html">guides</a> / Linux</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> Linux</h1>
+      <p class="lead">Install on Debian, Ubuntu, Fedora, Arch, or Raspberry Pi OS.</p>
+
+      <div class="need">
+        <h2>What you need</h2>
+        <ul>
+          <li>A current Linux</li>
+          <li>A terminal</li>
+        </ul>
+      </div>
+
+      <h2>Steps</h2>
+      <ol class="steps">
+        <li>
+          <p>Install:</p>
+          <pre>curl -fsSL https://weechatradio.com/install.sh | sh</pre>
+        </li>
+        <li>
+          <p>If you will plug in a USB radio cable, add your user to the serial group, then log out and back in:</p>
+          <pre>sudo usermod -aG dialout $USER</pre>
+        </li>
+        <li>
+          <p>Answer the questions:</p>
+          <pre>wcr setup</pre>
+        </li>
+        <li>
+          <p>Start chatting:</p>
+          <pre>wcr tui</pre>
+        </li>
+        <li>
+          <p>Background service:</p>
+          <pre>wcr service install</pre>
+        </li>
+        <li>
+          <p>The installer also sets up WeeChat. After <code>wcr node</code>, run <code>wcr weechat</code>. To rewrite the server and script: <code>wcr weechat --configure</code>.</p>
+        </li>
+      </ol>
+
+      <div class="ok">
+        <h2>How you know it worked</h2>
+        <p><code>wcr tui</code> shows your callsign. A message in <code>#bulletin</code> gets a send tick. If you installed the service, <code>wcr service status</code> prints <code>active</code>.</p>
+      </div>
+
+      <p class="next">Back to the <a href="/guides/start.html">5-minute start</a>, or add a <a href="/guides/radio.html">radio</a>.</p>
+    </main>
+  </div>
+  <script src="/shell.js?v=7"></script>
+</body>
+</html>

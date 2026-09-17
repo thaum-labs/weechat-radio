@@ -8,7 +8,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 const RADIO_PY: &str = include_str!("../../../weechat/radio.py");
-const CONFIGURE_CMDS: &str = "/server add radio 127.0.0.1/6667 -autoconnect;/set irc.server.radio.tls off;/set irc.server.radio.tls_verify off;/set irc.server.radio.capabilities message-tags,echo-message,server-time,msgid;/save;/quit";
+const MINTTYRC: &str = include_str!("../../../weechat/minttyrc");
 
 pub fn run(configure_only: bool) -> Result<()> {
     if configure_only {
@@ -32,6 +32,7 @@ pub fn configure() -> Result<String> {
     )?;
 
     run_headless_configure(&script)?;
+    write_minttyrc()?;
     write_launcher()?;
     Ok(format!(
         "WeeChat is configured for 127.0.0.1:6667 (home {}). Start the node with `wcr node`, then `wcr weechat`.",
@@ -45,21 +46,23 @@ pub fn launch() -> Result<()> {
         if let Some(mintty) = cygwin_root().map(|r| r.join("bin").join("mintty.exe")) {
             if mintty.is_file() {
                 let home = weechat_home();
-                Command::new(mintty)
-                    .args([
-                        "-t",
-                        "WeeChat Radio",
-                        "/bin/bash",
-                        "--norc",
-                        "--noprofile",
-                        "-c",
-                        &format!(
-                            "export PATH=/usr/bin:/bin; export HOME={}; exec weechat -d {}",
-                            cygwin_home_unix(),
-                            cygwin_path(&home)
-                        ),
-                    ])
-                    .spawn()?;
+                let mut args = vec!["-t".into(), "WeeChat Radio".into()];
+                if let Some(cfg) = minttyrc_path() {
+                    args.push("-c".into());
+                    args.push(cfg.to_string_lossy().into_owned());
+                }
+                args.extend([
+                    "/bin/bash".into(),
+                    "--norc".into(),
+                    "--noprofile".into(),
+                    "-c".into(),
+                    format!(
+                        "export PATH=/usr/bin:/bin; export HOME={}; exec weechat -d {}",
+                        cygwin_home_unix(),
+                        cygwin_path(&home)
+                    ),
+                ]);
+                Command::new(mintty).args(args).spawn()?;
                 return Ok(());
             }
         }
@@ -92,6 +95,20 @@ fn ensure_weechat() -> Result<()> {
     ))
 }
 
+fn configure_cmds() -> String {
+    let mut cmds = String::from(
+        "/server add radio 127.0.0.1/6667 -autoconnect;/set irc.server.radio.tls off;/set irc.server.radio.tls_verify off;/set irc.server.radio.capabilities message-tags,echo-message,server-time,msgid",
+    );
+    if let Ok(cfg) = crate::config::Config::load(&crate::config::Config::default_path()) {
+        let nick = cfg.callsign.trim();
+        if !nick.is_empty() {
+            cmds.push_str(&format!(";/set irc.server.radio.nicks {nick}"));
+        }
+    }
+    cmds.push_str(";/save;/quit");
+    cmds
+}
+
 fn run_headless_configure(script: &Path) -> Result<()> {
     #[cfg(not(windows))]
     let _ = script;
@@ -105,7 +122,7 @@ fn run_headless_configure(script: &Path) -> Result<()> {
                      cp \"{script}\" \"$HOME/.weechat/python/radio.py\"; \
                      cp \"$HOME/.weechat/python/radio.py\" \"$HOME/.weechat/python/autoload/radio.py\"; \
                      weechat-headless -d \"$HOME/.weechat\" -r '{cmds}'",
-                    cmds = CONFIGURE_CMDS,
+                    cmds = configure_cmds(),
                     home = cygwin_home_unix(),
                     script = cygwin_path(script)
                 );
@@ -130,7 +147,7 @@ fn run_headless_configure(script: &Path) -> Result<()> {
     };
     let home = weechat_home();
     let status = Command::new(&headless)
-        .args(["-d", &home.to_string_lossy(), "-r", CONFIGURE_CMDS])
+        .args(["-d", &home.to_string_lossy(), "-r", &configure_cmds()])
         .status()?;
     if !status.success() {
         return Err(Error::Msg(format!(
@@ -326,13 +343,38 @@ fn cygwin_path(p: &Path) -> String {
     }
 }
 
+fn write_minttyrc() -> Result<()> {
+    if let Some(path) = minttyrc_path() {
+        std::fs::write(path, MINTTYRC)?;
+    }
+    Ok(())
+}
+
+fn minttyrc_path() -> Option<PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            return Some(dir.join("minttyrc"));
+        }
+    }
+    None
+}
+
 fn write_launcher() -> Result<()> {
     #[cfg(windows)]
     {
         if let Ok(exe) = std::env::current_exe() {
             if let Some(dir) = exe.parent() {
                 let cmd = dir.join("weechat-radio.cmd");
-                std::fs::write(cmd, "@echo off\r\n\"%~dp0wcr.exe\" weechat\r\n")?;
+                std::fs::write(
+                    cmd,
+                    "@echo off\r\n\
+                     set MINTTY=%USERPROFILE%\\cygwin64\\bin\\mintty.exe\r\n\
+                     if exist \"%MINTTY%\" (\r\n\
+                     \"%MINTTY%\" -c \"%~dp0minttyrc\" -t \"WeeChat Radio\" /bin/bash --norc --noprofile -c \"export PATH=/usr/bin:/bin; export HOME=/home/%USERNAME%; exec weechat -d /home/%USERNAME%/.weechat\"\r\n\
+                     ) else (\r\n\
+                     \"%~dp0wcr.exe\" weechat\r\n\
+                     )\r\n",
+                )?;
             }
         }
     }

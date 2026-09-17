@@ -2,11 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <title>Docs — WeeChat Radio</title>
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=5" />
+  <link rel="stylesheet" href="/styles.css?v=11" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -29,16 +33,34 @@
   <div class="page-wrap">
     <main class="page-panel">
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> docs</h1>
-      <ul>
-        <li><a href="https://github.com/thaum-labs/weechat-radio/blob/main/docs/MODES.md">Modes</a></li>
-        <li><a href="https://github.com/thaum-labs/weechat-radio/blob/main/docs/PROTOCOL.md">Wire protocol</a></li>
-        <li><a href="https://github.com/thaum-labs/weechat-radio/blob/main/docs/API.md">Public API</a></li>
-        <li><a href="https://github.com/thaum-labs/weechat-radio/blob/main/docs/DEPLOY.md">Deploy the hub</a></li>
-        <li><a href="https://github.com/thaum-labs/weechat-radio/blob/main/docs/CALLING.md">Calling frequencies</a></li>
-      </ul>
-      <p>Offline: <code>wcr help</code></p>
+      <p class="lead">Reference pages. New to this? Use <a href="/guides.html">guides</a> first.</p>
+
+      <div class="guide-grid">
+        <a class="guide-card" href="/docs/modes.html">
+          <h2>Modes</h2>
+          <p>Internet only, radio only, or both. Colour on the map.</p>
+        </a>
+        <a class="guide-card" href="/docs/calling.html">
+          <h2>Calling frequencies</h2>
+          <p>Suggested VHF and HF spots. Check your band plan first.</p>
+        </a>
+        <a class="guide-card" href="/docs/protocol.html">
+          <h2>Wire protocol</h2>
+          <p>What a message looks like on radio and on the internet.</p>
+        </a>
+        <a class="guide-card" href="/docs/api.html">
+          <h2>Public API</h2>
+          <p>Live map data. No key to read. Writes are signed.</p>
+        </a>
+        <a class="guide-card" href="/docs/deploy.html">
+          <h2>Deploy the hub</h2>
+          <p>For people running the public server. Most users skip this.</p>
+        </a>
+      </div>
+
+      <p>Offline, on your computer: <code>wcr help</code></p>
     </main>
   </div>
-  <script src="/shell.js?v=5"></script>
+  <script src="/shell.js?v=7"></script>
 </body>
 </html>

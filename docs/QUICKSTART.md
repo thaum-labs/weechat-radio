@@ -1,14 +1,23 @@
+On the web (with pictures): https://weechatradio.com/guides/start.html
+
 # 5-minute start
 
 ## What you need
 
 - This computer (Windows, macOS, or Linux)
-- A ham radio callsign, or a guest name starting with `~`
+- A ham radio callsign, or a guest name starting with `~` (example: `~alice`)
+- A grid square if you want to show up on the map (example: `IO91wm`). Search the web for “maidenhead grid square map” and click where you live.
 - Optional: a radio and a cable (Digirig, VOX audio cable, or an HF rig)
 
 ## Steps
 
-1. Install WeeChat Radio (pick your system):
+1. Open a command window.
+
+   - Windows: Start, type `PowerShell`, press Enter
+   - Mac: Command + Space, type `Terminal`, press Enter
+   - Linux: open Terminal from the applications menu
+
+2. Install WeeChat Radio (pick your system):
 
    **Linux / macOS**
    ```
@@ -20,28 +29,28 @@
    irm https://weechatradio.com/install.ps1 | iex
    ```
 
-2. Run the wizard:
+3. Run the wizard:
 
    ```
    wcr setup
    ```
 
-   Type your callsign, grid square (for example `IO91wm`), and how you connect a radio.
+   Type your callsign, grid square, and how you connect a radio.
+   If you have no radio, choose internet-only. You can add a radio later.
    Windows and Linux already have modem73 beside `wcr`. On macOS, install modem73 from https://modem73.app if you want radio.
 
-3. Start the node, then the chat UI:
+4. Start the chat window:
 
    ```
-   wcr node
-   wcr weechat
+   wcr tui
    ```
 
-   The installer already added the `radio` server (`127.0.0.1:6667`) and loaded `radio.py`. Or use the built-in UI: `wcr tui`.
+   Want WeeChat instead? Run `wcr node` in one window and `wcr weechat` in another.
 
-4. Say hello in `#bulletin`. Type a message and press Enter.
+5. You land in a room called `#bulletin`. Type a short hello and press Enter.
 
 ## How you know it worked
 
 The status bar at the bottom shows your callsign and mode. After you send, a tick appears: `·` means queued, `✓` means sent.
 
-The TUI uses the `tron` theme by default (teal panels, like the website). Switch with `/radio theme hacker` or `/radio theme terminal`, or set `theme` under `[ui]` in `wcr.toml`.
+The TUI uses the `tron` theme by default (indigo / orange, like the website). Switch with `/radio theme hacker` or `/radio theme terminal`, or set `theme` under `[ui]` in `wcr.toml`.

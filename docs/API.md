@@ -1,3 +1,5 @@
+On the web: https://weechatradio.com/docs/api.html
+
 # Public API
 
 Base: `https://hub.weechatradio.com`

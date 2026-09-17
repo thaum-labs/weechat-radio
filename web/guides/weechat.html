@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>WeeChat — WeeChat Radio</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=11" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/guides.html">guides</a> / WeeChat</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> WeeChat</h1>
+      <p class="lead">WeeChat is a separate chat program. The built-in window (<code>wcr tui</code>) is enough for most people. Use this page if you want WeeChat instead.</p>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="flow-row">
+            <div class="flow-box">WeeChat<span>what you type in</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box accent">wcr node<span>127.0.0.1:6667</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box cyan">hub / radio</div>
+          </div>
+        </div>
+        <figcaption>WeeChat talks to WeeChat Radio on this computer, on port 6667. It never talks to the internet by itself.</figcaption>
+      </figure>
+
+      <div class="need">
+        <h2>What you need</h2>
+        <ul>
+          <li><code>wcr node</code> or <code>wcr tui</code> already running on this computer</li>
+          <li>WeeChat with the Python plugin (the official installer adds this)</li>
+        </ul>
+      </div>
+
+      <h2>Easy way</h2>
+      <p>The official installer does this for you.</p>
+      <pre>wcr node
+wcr weechat</pre>
+      <p>To rewrite the server and script later:</p>
+      <pre>wcr weechat --configure</pre>
+
+      <h2>Manual way</h2>
+      <p>Only if you installed WeeChat yourself.</p>
+      <ol class="steps">
+        <li>
+          <p>Copy <code>radio.py</code> into WeeChat’s Python folder:</p>
+          <ul>
+            <li>Linux and macOS: <code>~/.weechat/python/</code></li>
+            <li>Windows (WSL): same path inside WSL</li>
+          </ul>
+        </li>
+        <li>
+          <p>In WeeChat, paste these lines one at a time:</p>
+          <pre class="plain">/server add radio 127.0.0.1/6667 -autoconnect
+/set irc.server.radio.tls off
+/set irc.server.radio.capabilities "message-tags,echo-message,server-time,msgid"
+/connect radio
+/script load radio.py</pre>
+        </li>
+        <li>
+          <p>You land in <code>#bulletin</code>. Chat as usual. <code>/radio help</code> lists node commands.</p>
+        </li>
+        <li>
+          <p>The script defaults to theme <code>tron</code> (indigo / orange, same as this site). Turn it off with:</p>
+          <pre class="plain">/set plugins.var.python.radio.theme plain</pre>
+        </li>
+      </ol>
+
+      <div class="ok">
+        <h2>How you know it worked</h2>
+        <p>The <code>radio</code> bar at the bottom of WeeChat shows your mode and SNR, like <code>INTERNET-RADIO │ IDLE │ VHF-FM │ SNR 12</code>. Sending a message adds ticks on the line (<code>✓</code> then <code>✓✓</code>).</p>
+      </div>
+
+      <p class="next">Prefer the built-in window? <a href="/guides/start.html">5-minute start</a> uses <code>wcr tui</code>.</p>
+    </main>
+  </div>
+  <script src="/shell.js?v=7"></script>
+</body>
+</html>

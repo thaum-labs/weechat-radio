@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Radio setup — WeeChat Radio</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=11" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/guides.html">guides</a> / radio</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> radio setup</h1>
+      <p class="lead">Pick the picture that matches your station. Each path is about five minutes. All three work with the internet off.</p>
+
+      <div class="warn-box">
+        <h2>You are the control operator</h2>
+        <p>Stay inside your licence. Suggested frequencies are only suggestions — check your band plan before you transmit. See <a href="/docs/calling.html">calling frequencies</a>.</p>
+      </div>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="flow-row">
+            <div class="flow-box orange">radio<span>your transmitter</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box">cable<span>sound in and out</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box accent">this computer<span>wcr + modem73</span></div>
+          </div>
+        </div>
+        <figcaption>The computer turns chat into audio. The radio sends that audio over the air.</figcaption>
+      </figure>
+
+      <h2>Three paths</h2>
+      <div class="guide-grid">
+        <a class="guide-card" href="/guides/handheld.html" id="handheld">
+          <h2>A · Handheld + Digirig</h2>
+          <p>Walkie-talkie (Baofeng and friends) plus a USB Digirig or AIOC cable.</p>
+          <span class="tag">path A →</span>
+        </a>
+        <a class="guide-card" href="/guides/vox.html" id="vox">
+          <h2>B · Any radio with VOX</h2>
+          <p>Headphone cable. The radio transmits when it hears data tones.</p>
+          <span class="tag">path B →</span>
+        </a>
+        <a class="guide-card" href="/guides/hf.html" id="hf">
+          <h2>C · HF rig with CAT</h2>
+          <p>HF radio with USB. The computer can press PTT and change frequency.</p>
+          <span class="tag">path C →</span>
+        </a>
+      </div>
+
+      <h2>Audio: low / hot / good</h2>
+      <p>The status bar reads the receive level from modem73 (the sound program sitting next to <code>wcr</code>).</p>
+      <ul>
+        <li><strong>low</strong> — turn radio volume up, or raise the computer input.</li>
+        <li><strong>hot</strong> — turn it down. Distortion kills data.</li>
+        <li><strong>good</strong> — leave it.</li>
+      </ul>
+
+      <p class="next">No radio yet? The <a href="/guides/start.html">5-minute start</a> works on internet only.</p>
+    </main>
+  </div>
+  <script src="/shell.js?v=7"></script>
+</body>
+</html>

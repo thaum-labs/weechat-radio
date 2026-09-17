@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>HF rig with CAT — WeeChat Radio</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=11" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/guides.html">guides</a> / <a href="/guides/radio.html">radio</a> / HF CAT</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> HF rig with CAT</h1>
+      <p class="lead">CAT means the computer can talk to the radio over USB: change frequency and press the transmit button. About five minutes after Hamlib is installed.</p>
+
+      <figure class="diagram">
+        <div class="flow">
+          <div class="flow-row">
+            <div class="flow-box orange">HF radio<span>USB CAT</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box">Hamlib<span>rigctld</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box accent">wcr<span>this computer</span></div>
+          </div>
+        </div>
+        <figcaption>The radio USB cable goes into the computer. Hamlib is the translator. WeeChat Radio never changes frequency unless you type <code>/radio qsy</code>.</figcaption>
+      </figure>
+
+      <div class="need">
+        <h2>What you need</h2>
+        <ul>
+          <li>An HF transceiver with USB CAT (IC-7300, FT-891, Xiegu, and most modern rigs)</li>
+          <li><a href="https://github.com/Hamlib/Hamlib/releases">Hamlib</a> so <code>rigctld</code> is on your PATH (a command the computer can find)</li>
+        </ul>
+      </div>
+
+      <h2>Steps</h2>
+      <ol class="steps">
+        <li>
+          <p>Plug the radio USB into the computer. Leave the radio in USB, 2400 Hz filter if you have one.</p>
+        </li>
+        <li>
+          <p>Find your Hamlib model number:</p>
+          <pre>rigctl -l</pre>
+          <p>On Windows: <code>rigctl.exe -l</code>.</p>
+        </li>
+        <li>
+          <p>Start CAT. Replace MODEL, COM port, and baud with yours:</p>
+          <pre>rigctld -m MODEL -r COM3 -s 19200</pre>
+        </li>
+        <li>
+          <p>Run <code>wcr setup</code> and choose <strong>HF rig with CAT</strong>. Keep the default <code>127.0.0.1:4532</code>.</p>
+        </li>
+        <li>
+          <p>Pick a preset: <code>hf-good</code> on a clear band, <code>hf-poor</code> for NVIS (nearby skywave), <code>hf-weak</code> when signals are faint.</p>
+        </li>
+        <li>
+          <p>To change frequency, you type it. It never happens automatically:</p>
+          <pre>/radio qsy 7.045</pre>
+        </li>
+      </ol>
+
+      <div class="ok">
+        <h2>How you know it worked</h2>
+        <p>The status bar shows the frequency the radio reports. A decoded frame shows SNR. If CAT fails, run <code>/radio ptt vox</code> and use the <a href="/guides/vox.html">VOX path</a> until CAT is sorted.</p>
+      </div>
+
+      <p class="next">Other paths: <a href="/guides/handheld.html">handheld + Digirig</a> · <a href="/guides/vox.html">VOX cable</a>. Frequencies: <a href="/docs/calling.html">calling</a>.</p>
+    </main>
+  </div>
+  <script src="/shell.js?v=7"></script>
+</body>
+</html>

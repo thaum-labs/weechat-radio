@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Wire protocol — WeeChat Radio</title>
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=11" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/docs.html">docs</a> / protocol</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> wire protocol</h1>
+      <p class="lead">For people writing software. If you only want to chat, you can skip this page.</p>
+
+      <p>Version 1 uses the same envelope on radio (KISS) and internet (WebSocket). A chat line becomes a small packet both paths understand.</p>
+
+      <figure class="diagram">
+        <div class="pkt" aria-label="Packet fields in order">
+          <i>ver<span>1 byte</span></i>
+          <i>type<span>1</span></i>
+          <i>flags<span>2</span></i>
+          <i>msg_id<span>8</span></i>
+          <i>origin<span>6</span></i>
+          <i>dest<span>6</span></i>
+          <i>hops<span>1</span></i>
+          <i>ts<span>4</span></i>
+          <i>seq<span>4</span></i>
+          <i>len<span>2</span></i>
+          <i>body<span>n, max 300</span></i>
+          <i>crc<span>2</span></i>
+          <i>sig<span>64 optional</span></i>
+        </div>
+        <figcaption>31+ bytes of header, then the message text, then a checksum. Signature is optional.</figcaption>
+      </figure>
+
+      <h2>Header</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Field</th><th>Size</th><th>Notes</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>ver</td><td>1</td><td><code>1</code></td></tr>
+            <tr><td>type</td><td>1</td><td>MSG ACK BEACON HAVE WANT PING CHECKIN STATUS FORM FILE</td></tr>
+            <tr><td>flags</td><td>2</td><td>little-endian</td></tr>
+            <tr><td>msg_id</td><td>8</td><td>BLAKE3(origin, dest, seq, body) truncated</td></tr>
+            <tr><td>origin</td><td>6</td><td>packed callsign</td></tr>
+            <tr><td>dest</td><td>6</td><td>packed callsign or group name</td></tr>
+            <tr><td>hops_left</td><td>1</td><td>TTL, default 3</td></tr>
+            <tr><td>ts</td><td>4</td><td>unix seconds, informational</td></tr>
+            <tr><td>seq</td><td>4</td><td>per-origin counter (clock-tolerant identity)</td></tr>
+            <tr><td>body_len</td><td>2</td><td>max 300</td></tr>
+            <tr><td>body</td><td>n</td><td>UTF-8</td></tr>
+            <tr><td>crc</td><td>2</td><td>CRC-16/IBM-3740 of everything before CRC</td></tr>
+            <tr><td>signature</td><td>64</td><td>optional Ed25519 if SIGNED</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>Flags</h2>
+      <ul>
+        <li>0 <code>INET_OK</code> — gateways may forward to the internet</li>
+        <li>1 <code>GROUP</code></li>
+        <li>2 <code>SIGNED</code></li>
+        <li>3 <code>REQ_ACK</code></li>
+        <li>4 <code>THIRD_PARTY</code> — guest nick origin</li>
+        <li>5–6 priority: 0 routine, 1 priority, 2 emergency</li>
+        <li>7 <code>NO_INET</code> — never forward to the internet (<code>radio</code> mode)</li>
+      </ul>
+      <p><code>!!</code> at the start of a message is emergency. <code>!</code> is priority.</p>
+
+      <h2>Callsign packing</h2>
+      <p>6 bits per character, 8 characters, alphabet:</p>
+      <pre class="plain"> space A–Z 0–9 / - ~</pre>
+      <p>Guests: <code>~ALICE</code>. Amateur callsigns must look like a callsign (letter and digit).</p>
+
+      <h2>ACK</h2>
+      <p>Type ACK. Body is the 8-byte <code>msg_id</code> of the original. Relayed with TTL.</p>
+
+      <h2>HAVE / WANT</h2>
+      <p>Body is a comma-separated list of hex msg ids in a closed group window.</p>
+
+      <h2>Federation (reserved)</h2>
+      <p>Hub-to-hub uses the same envelope and the same <code>msg_id</code> dedupe. Not enabled in v1.</p>
+    </main>
+  </div>
+  <script src="/shell.js?v=7"></script>
+</body>
+</html>
