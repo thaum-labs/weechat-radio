@@ -62,6 +62,8 @@ rf_egress = true          # put internet traffic on the air
 third_party = "deny"      # guest (~nick) traffic on RF: allow or deny
 ```
 
+Cross-frequency diagrams: [bridging](https://weechatradio.com/docs/bridging.html). Offline: `wcr help bridging`.
+
 ## How you know it worked
 
 The status bar colour matches the table. Other stations on the map show the same colours.

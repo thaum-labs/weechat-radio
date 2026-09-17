@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Cross-frequency chat — WeeChat Radio</title>
+  <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=17" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/docs.html">docs</a> / bridging</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> cross-frequency chat</h1>
+      <p class="lead">A station talks on one dial at a time. Same-frequency chat is radio. Different-frequency chat uses a gateway and the hub. The program never changes your radio frequency by itself.</p>
+
+      <h2>Same frequency</h2>
+      <p>Both stations set the same calling spot (for example UK 2m 144.950). No internet is required. Nearby stations hear you on the air. Others on that frequency can store-and-forward the message (TTL / hops left, default 3).</p>
+      <figure class="diagram">
+        <div class="flow">
+          <div class="flow-row">
+            <div class="flow-box amber">you<span>144.950 · 2m</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box orange">RF<span>same dial</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box amber">them<span>144.950 · 2m</span></div>
+          </div>
+        </div>
+        <figcaption>Direct radio. Tell the app your dial with <code>/radio freq 144.950</code> if you have no CAT.</figcaption>
+      </figure>
+
+      <h2>Different frequencies</h2>
+      <p>2m cannot hear 40m. A station in <code>internet-radio</code> mode is a <strong>gateway</strong> (it has a radio and a hub link). The hub copies a message from the gateway that heard it to the gateway that has recently heard the destination — or that <em>is</em> the destination.</p>
+      <figure class="diagram">
+        <div class="flow">
+          <div class="flow-bridge">
+            <div class="flow-lane">
+              <div class="flow-lane-tag">2m</div>
+              <div class="flow-box amber">you<span>144.950</span></div>
+              <span class="flow-arrow dim" aria-hidden="true">RF</span>
+              <div class="flow-box green">gateway A<span>internet-radio</span></div>
+            </div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box cyan flow-hub">hub<span>wss://hub…</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-lane">
+              <div class="flow-lane-tag">40m</div>
+              <div class="flow-box green">gateway B<span>internet-radio</span></div>
+              <span class="flow-arrow dim" aria-hidden="true">RF</span>
+              <div class="flow-box orange">them<span>7.045</span></div>
+            </div>
+          </div>
+        </div>
+        <figcaption>The map ticker shows this as <code>2m → 40m</code>. Each gateway stays on its own band. Nobody QSYs for you.</figcaption>
+      </figure>
+
+      <h2>Radio-plus (you stay offline)</h2>
+      <p><code>radio-plus</code> never uploads. A nearby gateway that hears you on RF may forward your traffic to the hub, then to internet stations or another band.</p>
+      <figure class="diagram">
+        <div class="flow">
+          <div class="flow-row">
+            <div class="flow-box magenta">you<span>radio-plus · 2m</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box orange">RF</div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box green">gateway<span>hears you</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box cyan">hub</div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box">internet station<span>or another band</span></div>
+          </div>
+        </div>
+        <figcaption>Your node has no internet. The gateway is the only station that talks to the hub.</figcaption>
+      </figure>
+
+      <h2>What a gateway will and will not put on the air</h2>
+      <figure class="diagram">
+        <div class="flow">
+          <div class="flow-row">
+            <div class="flow-box">hub delivers a frame</div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box accent">dest heard here?<span>last 10 minutes</span></div>
+            <span class="flow-arrow" aria-hidden="true">→</span>
+            <div class="flow-box green">TX on this dial</div>
+          </div>
+          <div class="flow-row">
+            <div class="flow-box">hub delivers a frame</div>
+            <span class="flow-arrow dim" aria-hidden="true">→</span>
+            <div class="flow-box">dest not heard here</div>
+            <span class="flow-arrow dim" aria-hidden="true">→</span>
+            <div class="flow-box">stay quiet</div>
+          </div>
+        </div>
+        <figcaption>Internet-to-RF only if this node is a gateway, <code>rf_egress</code> is on, and the destination was recently heard on this frequency (or it is a group with members heard here).</figcaption>
+      </figure>
+      <ul>
+        <li>RF → internet: the message must allow internet (<code>INET_OK</code>). <code>radio</code> mode never forwards to the hub.</li>
+        <li>Internet → RF: <code>[gateway] rf_egress = true</code> in <code>wcr.toml</code>. Guest names starting with <code>~</code> stay off RF unless <code>third_party = "allow"</code>.</li>
+        <li>Same LAN: nodes on your local network can pass frames without the public hub. The same gateway rules still apply.</li>
+      </ul>
+      <pre class="plain">[gateway]
+rf_egress = true          # put internet traffic on the air
+third_party = "deny"      # guest (~nick) traffic on RF</pre>
+
+      <div class="warn-box">
+        <h2>You set the dial</h2>
+        <p>FREQ in the GUI and <code>/radio qsy</code> are operator actions. The hub never retunes a radio. Pick spots from <a href="/docs/calling.html">calling frequencies</a> and check your band plan before you transmit.</p>
+      </div>
+
+      <h2>How stations learn the band</h2>
+      <p>Beacons are <code>B|&lt;mode&gt;|&lt;khz&gt;</code>, for example <code>B|internet-radio|144950</code>. A frame heard on RF is tagged with the receiving station’s own dial. Hub sessions carry <code>freq_khz</code>. The live map has a BANDS panel; nicklists show <code>[2m]</code>, <code>[40m]</code>, <code>[inet]</code>.</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Path</th><th>Same frequency?</th><th>Who bridges</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Two radios, same calling spot</td><td>yes</td><td>nobody (RF hops if needed)</td></tr>
+            <tr><td>2m station ↔ 40m station</td><td>no</td><td>two <code>internet-radio</code> gateways + hub</td></tr>
+            <tr><td>RF station ↔ internet-only</td><td>—</td><td>one gateway on the RF station’s band</td></tr>
+            <tr><td><code>radio</code> mode</td><td>RF only</td><td>never the hub</td></tr>
+            <tr><td><code>radio-plus</code></td><td>RF here</td><td>a gateway that hears you</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="ok">
+        <h2>How you know it worked</h2>
+        <p>Nicklist tags match the bands: <code>[2m] G4ABC</code>, <code>[40m] M7TJF</code>, <code>[inet] ~ALICE</code>. The map ticker reads like <code>G4ABC 2m TX -&gt; #net -&gt; 40m, inet</code>. Your status bar shows your own frequency and band.</p>
+      </div>
+
+      <p>Modes: <a href="/docs/modes.html">modes</a>. Suggested dials: <a href="/docs/calling.html">calling frequencies</a>. Same text offline: <code>wcr help bridging</code>.</p>
+    </main>
+  </div>
+  <script src="/shell.js?v=8"></script>
+</body>
+</html>

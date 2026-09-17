@@ -1156,6 +1156,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                         }
                         cfg.lock().mode = mode;
                         snap.lock().mode = mode;
+                        persist_cfg(&cfg.lock());
                         format!("mode is now {}", mode.display_name())
                     }
                     Err(e) => e,
@@ -1173,6 +1174,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                 if let Some(pr) = Preset::parse(p) {
                     cfg.lock().modem.preset = pr.as_str().into();
                     snap.lock().preset = pr.as_str().into();
+                    persist_cfg(&cfg.lock());
                     format!("preset {}", pr.as_str())
                 } else {
                     "unknown preset. Use vhf-fm, hf-good, hf-poor, hf-weak, hf-deep, vox-safe, afsk-1200.".into()

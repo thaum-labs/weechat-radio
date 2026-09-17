@@ -35,11 +35,12 @@
     <main class="page-panel">
       <p class="crumb"><a href="/docs.html">docs</a> / calling</p>
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> calling frequencies</h1>
-      <p class="lead">Places other WeeChat Radio stations may listen. These are suggestions, not assignments.</p>
+      <p class="lead">Places other WeeChat Radio stations may listen. Mode is the radio setting: USB or LSB on HF, FM or AM elsewhere. Suggestions, not assignments. WW = worldwide.</p>
 
       <div class="warn-box">
         <h2>Check your band plan</h2>
-        <p>You are the control operator. Verify the frequency is legal for your licence and country before you transmit. The setup wizard only sets the radio via rigctl if you confirm.</p>
+        <p>You are the control operator. Verify the frequency is legal for your licence and country before you transmit. The setup wizard only sets the radio via rigctl if you confirm. Do not use APRS channels (144.800 UK/EU, 144.390 US) for chat.</p>
+        <p>HF data is USB, including 160/80/40 (voice on those bands is LSB). 60m is USB. CB is listed per region: AM/FM for typical sets, USB/LSB for SSB-capable radios. Channel numbers are not the same in every country.</p>
       </div>
 
       <div class="table-wrap">
@@ -48,20 +49,57 @@
             <tr><th>Where</th><th>Band</th><th>Frequency</th><th>Mode</th><th>Preset</th></tr>
           </thead>
           <tbody>
-            <tr><td>UK</td><td>2m</td><td>144.950 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
-            <tr><td>EU</td><td>2m</td><td>144.950 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>WW</td><td>160m</td><td>1.838 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>WW</td><td>80m</td><td>3.580 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>WW</td><td>60m</td><td>5.357 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>UK/EU</td><td>40m</td><td>7.045 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>US/AU</td><td>40m</td><td>7.090 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>WW</td><td>30m</td><td>10.140 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>WW</td><td>20m</td><td>14.070 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>WW</td><td>17m</td><td>18.100 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>WW</td><td>15m</td><td>21.070 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>WW</td><td>12m</td><td>24.920 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>DE</td><td>CB</td><td>26.565 MHz (ch 41)</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>NZ</td><td>CB</td><td>26.720 MHz (26ch 35)</td><td>LSB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>DE</td><td>CB</td><td>26.965 MHz (ch 1)</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>AU</td><td>CB</td><td>27.085 MHz (ch 11)</td><td>AM</td><td><code>vox-safe</code></td></tr>
+            <tr><td>NZ</td><td>CB</td><td>27.085 MHz (ch 11)</td><td>AM</td><td><code>vox-safe</code></td></tr>
+            <tr><td>EU</td><td>CB</td><td>27.135 MHz (ch 15)</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>UK</td><td>CB</td><td>27.135 MHz (CEPT ch 15)</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>AU</td><td>CB</td><td>27.155 MHz (ch 16)</td><td>LSB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>US/CA</td><td>CB</td><td>27.185 MHz (ch 19)</td><td>AM</td><td><code>vox-safe</code></td></tr>
+            <tr><td>EU</td><td>CB</td><td>27.185 MHz (ch 19)</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>UK</td><td>CB</td><td>27.185 MHz (CEPT ch 19)</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>AU</td><td>CB</td><td>27.355 MHz (ch 35)</td><td>LSB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>AU</td><td>CB</td><td>27.355 MHz (ch 35)</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>NZ</td><td>CB</td><td>27.355 MHz (ch 35)</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>US/CA</td><td>CB</td><td>27.365 MHz (ch 36)</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>US/CA</td><td>CB</td><td>27.385 MHz (ch 38)</td><td>LSB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>UK</td><td>CB</td><td>27.781 MHz (UK ch 19)</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>WW</td><td>10m</td><td>28.120 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>WW</td><td>10m</td><td>29.250 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>WW</td><td>6m</td><td>50.230 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>UK/EU</td><td>6m</td><td>50.620 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>UK/EU</td><td>4m</td><td>70.488 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>UK/EU</td><td>2m</td><td>144.950 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>US</td><td>2m</td><td>145.010 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
             <tr><td>US</td><td>2m</td><td>145.530 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
             <tr><td>AU</td><td>2m</td><td>146.550 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
-            <tr><td>UK</td><td>40m</td><td>7.045 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
-            <tr><td>EU</td><td>40m</td><td>7.045 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
-            <tr><td>US</td><td>40m</td><td>7.090 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
-            <tr><td>AU</td><td>40m</td><td>7.090 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>US</td><td>MURS</td><td>151.820 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>US</td><td>1.25m</td><td>223.400 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>UK/EU</td><td>70cm</td><td>433.625 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>AU</td><td>70cm</td><td>439.950 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>US</td><td>70cm</td><td>441.000 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>UK/EU</td><td>PMR446</td><td>446.006 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>US</td><td>FRS</td><td>462.562 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+            <tr><td>WW</td><td>23cm</td><td>1296.800 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
           </tbody>
         </table>
       </div>
 
       <p>Same list in the program: <code>wcr help calling</code>.</p>
       <p>On a rough HF path use <code>hf-weak</code> or <code>hf-deep</code> instead of <code>hf-poor</code>. See <a href="/docs/weak.html">weak signals</a>.</p>
+      <p>Stations on different bands talk through a gateway and the hub. See <a href="/docs/bridging.html">cross-frequency chat</a>.</p>
 
       <p class="next">Need a radio cable first? <a href="/guides/radio.html">Radio setup</a>.</p>
     </main>
