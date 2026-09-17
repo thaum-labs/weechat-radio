@@ -304,22 +304,29 @@ function kv(rows) {
   return `<div class="kv">${rows.map(([k, v]) => `<span>${k}</span><b>${v}</b>`).join("")}</div>`;
 }
 
+function modeMark(mode, cls) {
+  return WCR.markSvg(MODE_COLOR[mode] || "#7d9bff", cls || "mode-mark");
+}
+
 function upsertNode(n) {
   if (n.lat == null || n.lon == null) return;
-  const color = MODE_COLOR[n.mode] || "#aacfd1";
+  const mode = n.mode || "";
   let m = markers.get(n.callsign);
   if (!m) {
     const el = document.createElement("div");
-    el.className = "dot";
-    el.style.background = color;
-    el.style.boxShadow = `0 0 12px ${color}`;
-    el.style.width = "10px";
-    el.style.height = "10px";
+    el.className = "map-mark-wrap";
+    el.dataset.mode = mode;
+    el.innerHTML = modeMark(mode, "map-mark");
     m = new maplibregl.Marker({ element: el }).setLngLat([n.lon, n.lat]).addTo(map);
     el.addEventListener("click", () => showCard(n));
     markers.set(n.callsign, m);
   } else {
     m.setLngLat([n.lon, n.lat]);
+    const el = m.getElement();
+    if (el.dataset.mode !== mode) {
+      el.dataset.mode = mode;
+      el.innerHTML = modeMark(mode, "map-mark");
+    }
   }
 }
 
@@ -348,7 +355,7 @@ function renderModes(nodes) {
   grid.innerHTML = Object.keys(MODE_COLOR).map((mode) => {
     const n = counts[mode] || 0;
     const pct = Math.round((n / total) * 100);
-    return `<div class="mode-row"><span class="dot" style="background:${MODE_COLOR[mode]}"></span>${mode}<div class="mode-bar"><i style="width:${pct}%;background:${MODE_COLOR[mode]}"></i></div>${n}</div>`;
+    return `<div class="mode-row">${modeMark(mode)}<span class="mode-name">${mode}</span><div class="mode-bar"><i style="width:${pct}%;background:${MODE_COLOR[mode]}"></i></div>${n}</div>`;
   }).join("");
 }
 
@@ -357,7 +364,7 @@ function renderStations(nodes) {
   nodes.forEach((n) => {
     const d = document.createElement("div");
     d.className = "station";
-    d.innerHTML = `<span class="dot" style="background:${MODE_COLOR[n.mode] || "#aacfd1"}"></span><b>${n.callsign}</b>${n.mode || ""} ${n.preset || ""}`;
+    d.innerHTML = `${modeMark(n.mode)}<span><b>${n.callsign}</b>${n.mode || ""} ${n.preset || ""}</span>`;
     d.onclick = () => {
       showCard(n);
       if (n.lat != null) map.flyTo({ center: [n.lon, n.lat], zoom: 6 });
@@ -598,6 +605,7 @@ function connectLive() {
 }
 
 setInterval(renderConn, 1000);
+renderModes([]);
 refresh();
 setInterval(refresh, 15000);
 connectLive();

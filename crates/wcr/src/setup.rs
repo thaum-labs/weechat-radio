@@ -20,14 +20,42 @@ pub fn run_wizard() -> Result<Config> {
     );
     println!();
 
+    let (grid_tx, grid_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = grid_tx.send(crate::grid::detect_from_ip());
+    });
+
     let call: String = Input::with_theme(&theme)
         .with_prompt(ui_style::step(1, 5, "Callsign (guests: ~NICK)"))
         .validate_with(|s: &String| Callsign::parse(s).map(|_| ()).map_err(|e| e.to_string()))
         .interact_text()?;
-    let grid: String = Input::with_theme(&theme)
-        .with_prompt(ui_style::step(2, 5, "Maidenhead grid square (e.g. IO91wm)"))
-        .allow_empty(true)
-        .interact_text()?;
+
+    let guessed = grid_rx.recv().ok().flatten();
+    let mut grid_prompt = Input::with_theme(&theme)
+        .with_prompt(ui_style::step(
+            2,
+            5,
+            "Maidenhead grid square (Enter to accept, or type your own)",
+        ))
+        .allow_empty(true);
+    if let Some(hit) = &guessed {
+        let label = if hit.label.is_empty() {
+            hit.grid.clone()
+        } else {
+            format!("{} · {}", hit.grid, hit.label)
+        };
+        println!(
+            "  {}",
+            ui_style::dim().apply_to(format!("Detected {label}"))
+        );
+        grid_prompt = grid_prompt.default(hit.grid.clone());
+    } else {
+        println!(
+            "  {}",
+            ui_style::dim().apply_to("Could not detect — leave empty or type e.g. IO91WM")
+        );
+    }
+    let grid: String = grid_prompt.interact_text()?;
     if !grid.is_empty() {
         crate::grid::normalize(&grid)?;
     }

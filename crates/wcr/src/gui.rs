@@ -101,17 +101,78 @@ fn module_title(ui: &mut egui::Ui, left: &str, right: &str) {
     });
 }
 
-fn prompt_mark(ui: &mut egui::Ui) {
+fn prompt_mark(ui: &mut egui::Ui, wave: Color32) {
+    paint_brand_mark(ui, wave, 26.0);
+    ui.add_space(8.0);
     ui.label(
-        RichText::new("weechat-radio")
+        RichText::new("weechat")
+            .color(FG)
+            .strong()
+            .font(FontId::monospace(18.0)),
+    );
+    ui.label(
+        RichText::new("radio")
             .color(ACCENT)
             .font(FontId::monospace(18.0)),
     );
-    ui.label(
-        RichText::new(":$")
-            .color(ORANGE)
-            .font(FontId::monospace(18.0)),
+}
+
+fn paint_brand_mark(ui: &mut egui::Ui, wave: Color32, height: f32) {
+    let size = egui::vec2(height * 64.0 / 60.0, height);
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let s = rect.width() / 64.0;
+    let to = |x: f32, y: f32| rect.min + egui::vec2(x * s, y * s);
+    let painter = ui.painter();
+    let w5 = 5.0 * s;
+    let w4 = 4.0 * s;
+    let p1 = to(8.0, 20.0);
+    let p2 = to(20.0, 30.0);
+    let p3 = to(8.0, 40.0);
+    painter.line_segment([p1, p2], Stroke::new(w5, FG));
+    painter.line_segment([p2, p3], Stroke::new(w5, FG));
+    let cap = w5 * 0.5;
+    painter.circle_filled(p1, cap, FG);
+    painter.circle_filled(p2, cap, FG);
+    painter.circle_filled(p3, cap, FG);
+    painter.rect_filled(
+        egui::Rect::from_min_size(to(25.0, 36.0), egui::vec2(15.0 * s, 5.0 * s)),
+        1.0 * s,
+        wave,
     );
+    let c = to(40.0, 36.0);
+    paint_quarter_arc(painter, c, 7.0 * s, Stroke::new(w4, wave));
+    paint_quarter_arc(
+        painter,
+        c,
+        13.0 * s,
+        Stroke::new(w4, with_opacity(wave, 0.7)),
+    );
+    paint_quarter_arc(
+        painter,
+        c,
+        19.0 * s,
+        Stroke::new(w4, with_opacity(wave, 0.4)),
+    );
+}
+
+fn with_opacity(c: Color32, a: f32) -> Color32 {
+    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (a * 255.0) as u8)
+}
+
+fn paint_quarter_arc(painter: &egui::Painter, c: egui::Pos2, r: f32, stroke: Stroke) {
+    let n = 18;
+    let mut pts = Vec::with_capacity(n + 1);
+    for i in 0..=n {
+        let t = i as f32 / n as f32;
+        let ang = -std::f32::consts::FRAC_PI_2 + t * std::f32::consts::FRAC_PI_2;
+        pts.push(egui::pos2(c.x + r * ang.cos(), c.y + r * ang.sin()));
+    }
+    if let (Some(&a), Some(&b)) = (pts.first(), pts.last()) {
+        painter.add(egui::Shape::line(pts, stroke));
+        let cap = stroke.width * 0.5;
+        painter.circle_filled(a, cap, stroke.color);
+        painter.circle_filled(b, cap, stroke.color);
+    }
 }
 fn apply_visuals(ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
@@ -191,6 +252,9 @@ enum IrcEvent {
 struct GuiApp {
     callsign: String,
     grid: String,
+    grid_note: String,
+    grid_overwrite: bool,
+    grid_rx: Option<Receiver<Option<crate::grid::DetectedGrid>>>,
     path: usize,
     com_port: String,
     error: String,
@@ -208,6 +272,7 @@ struct GuiApp {
     tray_show: MenuId,
     tray_stop: MenuId,
     tray_quit: MenuId,
+    tray_icon_key: i8,
     allow_close: bool,
     user_stopped: bool,
 }
@@ -215,9 +280,21 @@ struct GuiApp {
 impl GuiApp {
     fn new() -> Self {
         let (callsign, grid, path, com_port) = load_form();
+        let need_grid = grid.is_empty();
         let mut app = Self {
             callsign,
             grid,
+            grid_note: if need_grid {
+                "detecting from IP…".into()
+            } else {
+                String::new()
+            },
+            grid_overwrite: false,
+            grid_rx: if need_grid {
+                Some(spawn_grid_detect())
+            } else {
+                None
+            },
             path,
             com_port,
             error: String::new(),
@@ -235,6 +312,7 @@ impl GuiApp {
             tray_show: MenuId::new(""),
             tray_stop: MenuId::new(""),
             tray_quit: MenuId::new(""),
+            tray_icon_key: 0,
             allow_close: false,
             user_stopped: false,
         };
@@ -398,7 +476,7 @@ impl GuiApp {
         {
             return;
         }
-        let (rgba, w, h) = icon_rgba();
+        let (rgba, w, h) = raster_mark(32, [125, 155, 255], true);
         let Ok(icon) = tray_icon::Icon::from_rgba(rgba, w, h) else {
             return;
         };
@@ -529,6 +607,7 @@ impl GuiApp {
 impl eframe::App for GuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint_after(Duration::from_millis(250));
+        self.poll_grid_detect();
         self.poll_tray(ctx);
         if self.last_poll.elapsed() > Duration::from_millis(800) {
             self.last_poll = Instant::now();
@@ -612,7 +691,12 @@ impl eframe::App for GuiApp {
             .frame(chrome(TOPBAR))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    prompt_mark(ui);
+                    let wave = self
+                        .status
+                        .as_ref()
+                        .map(|s| mode_color(s.mode))
+                        .unwrap_or(ACCENT);
+                    prompt_mark(ui, wave);
                     ui.add_space(14.0);
                     let running = self.status.is_some();
                     if running {
@@ -696,7 +780,31 @@ impl eframe::App for GuiApp {
                                 .desired_width(160.0)
                                 .hint_text("IO81UF"),
                         );
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("Detect").color(PURPLE).monospace(),
+                                )
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(hairline(LINE)),
+                            )
+                            .clicked()
+                        {
+                            self.grid_note = "detecting from IP…".into();
+                            self.grid_overwrite = true;
+                            self.grid_rx = Some(spawn_grid_detect());
+                        }
                     });
+                    if !self.grid_note.is_empty() {
+                        ui.horizontal(|ui| {
+                            ui.add_space(20.0);
+                            ui.label(
+                                RichText::new(&self.grid_note)
+                                    .color(DIM)
+                                    .font(FontId::monospace(11.0)),
+                            );
+                        });
+                    }
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
@@ -978,7 +1086,34 @@ impl eframe::App for GuiApp {
                         }
                     });
             });
+        self.sync_tray();
         paint_scan(ctx);
+    }
+}
+
+impl GuiApp {
+    fn sync_tray(&mut self) {
+        if self.tray.is_none() {
+            return;
+        }
+        let mode = self.status.as_ref().map(|s| s.mode);
+        let key = tray_key(mode);
+        if self.tray_icon_key == key {
+            return;
+        }
+        self.tray_icon_key = key;
+        let (rgba, w, h) = raster_mark(32, wave_rgb(mode), true);
+        let Ok(icon) = tray_icon::Icon::from_rgba(rgba, w, h) else {
+            return;
+        };
+        let tip = match mode {
+            Some(m) => format!("WeeChat Radio — {}", m.as_str()),
+            None => "WeeChat Radio".into(),
+        };
+        if let Some(tray) = &self.tray {
+            let _ = tray.set_icon(Some(icon));
+            let _ = tray.set_tooltip(Some(tip.as_str()));
+        }
     }
 }
 
@@ -1061,8 +1196,23 @@ fn mode_color(m: Mode) -> Color32 {
     }
 }
 
+fn tray_key(mode: Option<Mode>) -> i8 {
+    match mode {
+        None => 0,
+        Some(Mode::Internet) => 1,
+        Some(Mode::InternetRadio) => 2,
+        Some(Mode::Radio) => 3,
+        Some(Mode::RadioPlus) => 4,
+    }
+}
+
+fn wave_rgb(mode: Option<Mode>) -> [u8; 3] {
+    let c = mode.map(mode_color).unwrap_or(ACCENT);
+    [c.r(), c.g(), c.b()]
+}
+
 fn app_icon() -> IconData {
-    let (rgba, width, height) = icon_rgba();
+    let (rgba, width, height) = raster_mark(256, [125, 155, 255], true);
     IconData {
         rgba,
         width,
@@ -1070,31 +1220,122 @@ fn app_icon() -> IconData {
     }
 }
 
-fn icon_rgba() -> (Vec<u8>, u32, u32) {
-    const N: u32 = 32;
-    let mut rgba = vec![0u8; (N * N * 4) as usize];
-    let c = (N as f32 - 1.0) / 2.0;
-    for y in 0..N {
-        for x in 0..N {
-            let dx = x as f32 - c;
-            let dy = y as f32 - c;
-            let r2 = dx * dx + dy * dy;
-            let i = ((y * N + x) * 4) as usize;
-            if r2 <= 14.8 * 14.8 {
-                if r2 <= 6.2 * 6.2 {
-                    rgba[i] = 255;
-                    rgba[i + 1] = 122;
-                    rgba[i + 2] = 61;
-                } else {
-                    rgba[i] = 125;
-                    rgba[i + 1] = 155;
-                    rgba[i + 2] = 255;
-                }
-                rgba[i + 3] = 255;
+fn dist_seg(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
+    let vx = bx - ax;
+    let vy = by - ay;
+    let l2 = vx * vx + vy * vy;
+    if l2 < 1e-12 {
+        return (px - ax).hypot(py - ay);
+    }
+    let t = ((px - ax) * vx + (py - ay) * vy) / l2;
+    let t = t.clamp(0.0, 1.0);
+    (px - (ax + t * vx)).hypot(py - (ay + t * vy))
+}
+
+fn dist_arc(px: f32, py: f32, cx: f32, cy: f32, radius: f32) -> f32 {
+    let dx = px - cx;
+    let dy = py - cy;
+    let ang = dy.atan2(dx);
+    if (-std::f32::consts::FRAC_PI_2..=0.0).contains(&ang) {
+        return (dx.hypot(dy) - radius).abs();
+    }
+    let e0 = (px - cx).hypot(py - (cy - radius));
+    let e1 = (px - (cx + radius)).hypot(py - cy);
+    e0.min(e1)
+}
+
+fn rbox(px: f32, py: f32, cx: f32, cy: f32, hw: f32, hh: f32, rad: f32) -> f32 {
+    let dx = (px - cx).abs() - (hw - rad);
+    let dy = (py - cy).abs() - (hh - rad);
+    let ox = dx.max(0.0);
+    let dy0 = dy.max(0.0);
+    ox.hypot(dy0) + dx.max(dy).min(0.0) - rad
+}
+
+fn cover(signed: f32, aa: f32) -> f32 {
+    (0.5 - signed / aa).clamp(0.0, 1.0)
+}
+
+fn over(dst: &mut [u8; 4], r: u8, g: u8, b: u8, a: f32) {
+    let a = a.clamp(0.0, 1.0);
+    if a <= 0.0 {
+        return;
+    }
+    let inv = 1.0 - a;
+    dst[0] = (r as f32 * a + dst[0] as f32 * inv).round() as u8;
+    dst[1] = (g as f32 * a + dst[1] as f32 * inv).round() as u8;
+    dst[2] = (b as f32 * a + dst[2] as f32 * inv).round() as u8;
+    dst[3] = (255.0 * (a + (dst[3] as f32 / 255.0) * inv)).round() as u8;
+}
+
+fn raster_mark(size: u32, wave: [u8; 3], framed: bool) -> (Vec<u8>, u32, u32) {
+    const CHEVRON: [u8; 3] = [216, 208, 232];
+    const TILE: [u8; 3] = [7, 7, 10];
+    const BORDER: [u8; 3] = [125, 155, 255];
+    let n = size as usize;
+    let mut rgba = vec![0u8; n * n * 4];
+    let dim = size as f32;
+    let pad = if framed { dim * 0.18 } else { dim * 0.08 };
+    let inner = dim - 2.0 * pad;
+    let scale = (inner / 64.0).min(inner / 60.0);
+    let ox = (dim - 64.0 * scale) * 0.5;
+    let oy = (dim - 60.0 * scale) * 0.5;
+    let aa = 0.65_f32;
+    let radius = dim * (26.0 / 120.0);
+    let border_w = (dim / 120.0).max(1.0);
+    for y in 0..n {
+        for x in 0..n {
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+            let mut pix = [0u8; 4];
+            if framed {
+                let sdf = rbox(
+                    px,
+                    py,
+                    dim * 0.5,
+                    dim * 0.5,
+                    dim * 0.5 - 0.5,
+                    dim * 0.5 - 0.5,
+                    radius,
+                );
+                over(&mut pix, TILE[0], TILE[1], TILE[2], cover(sdf, aa));
+                over(
+                    &mut pix,
+                    BORDER[0],
+                    BORDER[1],
+                    BORDER[2],
+                    cover(sdf.abs() - border_w * 0.5, aa) * 0.22,
+                );
             }
+            let mx = (px - ox) / scale;
+            let my = (py - oy) / scale;
+            let aa_v = aa / scale;
+            let d_chev = dist_seg(mx, my, 8.0, 20.0, 20.0, 30.0)
+                .min(dist_seg(mx, my, 20.0, 30.0, 8.0, 40.0));
+            over(
+                &mut pix,
+                CHEVRON[0],
+                CHEVRON[1],
+                CHEVRON[2],
+                cover(d_chev - 2.5, aa_v),
+            );
+            let d_bar = rbox(mx, my, 32.5, 38.5, 7.5, 2.5, 1.0);
+            over(&mut pix, wave[0], wave[1], wave[2], cover(d_bar, aa_v));
+            for (arc_r, op) in [(7.0, 1.0), (13.0, 0.7), (19.0, 0.4)] {
+                let d = dist_arc(mx, my, 40.0, 36.0, arc_r);
+                over(
+                    &mut pix,
+                    wave[0],
+                    wave[1],
+                    wave[2],
+                    cover(d - 2.0, aa_v) * op,
+                );
+            }
+            let i = (y * n + x) * 4;
+            rgba[i..i + 4].copy_from_slice(&pix);
         }
     }
-    (rgba, N, N)
+    (rgba, size, size)
 }
 
 #[cfg(windows)]
@@ -1159,6 +1400,52 @@ fn kill_sidecars() {
         for name in ["wcr", "modem73"] {
             let _ = Command::new("pkill").args(["-x", name]).status();
         }
+    }
+}
+
+fn spawn_grid_detect() -> Receiver<Option<crate::grid::DetectedGrid>> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(crate::grid::detect_from_ip());
+    });
+    rx
+}
+
+impl GuiApp {
+    fn poll_grid_detect(&mut self) {
+        let result = match &self.grid_rx {
+            Some(rx) => match rx.try_recv() {
+                Ok(v) => Some(Ok(v)),
+                Err(mpsc::TryRecvError::Empty) => None,
+                Err(mpsc::TryRecvError::Disconnected) => Some(Err(())),
+            },
+            None => return,
+        };
+        let Some(result) = result else {
+            return;
+        };
+        self.grid_rx = None;
+        match result {
+            Ok(Some(hit)) => {
+                let note = if hit.label.is_empty() {
+                    format!("from IP · {}", hit.grid)
+                } else {
+                    format!("from IP · {}", hit.label)
+                };
+                if self.grid.is_empty() || self.grid_overwrite {
+                    self.grid = hit.grid;
+                    self.grid_note = note;
+                } else {
+                    self.grid_note = format!("detected {note} (kept your value)");
+                }
+            }
+            Ok(None) | Err(()) => {
+                if self.grid.is_empty() {
+                    self.grid_note = "could not detect — enter your Maidenhead square".into();
+                }
+            }
+        }
+        self.grid_overwrite = false;
     }
 }
 
