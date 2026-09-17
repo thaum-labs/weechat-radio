@@ -232,6 +232,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             None
         },
     };
+    refresh_group_prios(&rt);
 
     if uses_radio {
         if let Some(c) = &rt.control {
@@ -418,6 +419,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     }
                 }
                 refresh_heard(&rt_f);
+                refresh_group_prios(&rt_f);
                 if let Some(h) = &rt_f.hub {
                     let (khz, heard, hub_ok) = {
                         let s = rt_f.snap.lock();
@@ -516,7 +518,12 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
             rt.irc.send_radio_reply(ev.client_id, &reply).await;
         }
         IrcEventKind::Join { channel } => {
-            let hist = rt.store.history(Some(&channel), 100)?;
+            let hist = rt.store.history(Some(&channel), 500)?;
+            let irc_target = if channel.starts_with('#') || channel.starts_with('&') {
+                channel.clone()
+            } else {
+                format!("#{channel}")
+            };
             let lines: Vec<(String, String, String, String)> = hist
                 .into_iter()
                 .filter(|m| m.env.kind == MsgType::Msg)
@@ -524,12 +531,15 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
                     let t = chrono::DateTime::<chrono::Utc>::from_timestamp(m.env.ts as i64, 0)
                         .unwrap_or(chrono::Utc::now())
                         .to_rfc3339();
-                    (
-                        t,
-                        m.env.origin.to_string(),
-                        m.env.dest.to_string(),
-                        m.env.body_text(),
-                    )
+                    let target = if m.env.flags.group()
+                        || irc_target.starts_with('#')
+                        || irc_target.starts_with('&')
+                    {
+                        irc_target.clone()
+                    } else {
+                        m.env.dest.to_string()
+                    };
+                    (t, m.env.origin.to_string(), target, m.env.body_text())
                 })
                 .collect();
             rt.irc.replay_history(ev.client_id, lines).await;
@@ -541,7 +551,8 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
 
 async fn send_chat(rt: &Runtime, target: &str, text: &str) -> Result<()> {
     let cfg_g = rt.cfg.lock().clone();
-    let (prio, text) = Priority::parse_prefix(text);
+    let had_prefix = Priority::has_prefix(text);
+    let (explicit, text) = Priority::parse_prefix(text);
     let origin = Callsign::parse(&cfg_g.callsign)?;
     let is_group = target.starts_with('#') || target.starts_with('&');
     let dest = if is_group {
@@ -553,6 +564,22 @@ async fn send_chat(rt: &Runtime, target: &str, text: &str) -> Result<()> {
         )
     } else {
         Callsign::parse(target)?
+    };
+    let prio = if had_prefix {
+        explicit
+    } else if is_group {
+        let name = dest.to_string().to_ascii_lowercase();
+        if name == "bulletin" {
+            Priority::Routine
+        } else {
+            match rt.store.group_prio(&name).unwrap_or(0) {
+                2 => Priority::Emergency,
+                1 => Priority::Priority,
+                _ => Priority::Routine,
+            }
+        }
+    } else {
+        Priority::Routine
     };
     let seq = rt.store.next_seq(origin.as_str())?;
     let mut flags = Flags::new().with(FLAG_REQ_ACK);
@@ -779,18 +806,39 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
             } else {
                 env.body_text()
             };
-            rt.irc
-                .broadcast_privmsg(env.origin.as_str(), &target, &text, Some(&env.msg_id.hex()))
-                .await;
+            // Synced channel defaults travel as Status frames with a WCRMETA body.
+            if env.kind == MsgType::Status {
+                if let Some(prio) = parse_chan_meta_prio(&text) {
+                    if env.flags.group() {
+                        let name = env.dest.to_string().to_ascii_lowercase();
+                        let _ = rt.store.group_set_prio(&name, prio as u8);
+                        refresh_group_prios(rt);
+                        let note = format!(
+                            "channel #{} default priority → {}",
+                            name,
+                            prio.as_str()
+                        );
+                        rt.irc.notice_all(&note).await;
+                    }
+                } else if let Some(w) = Welfare::parse(&text) {
+                    let _ = rt.store.welfare(env.origin.as_str(), w.as_str());
+                    rt.irc
+                        .broadcast_privmsg(env.origin.as_str(), &target, &text, Some(&env.msg_id.hex()))
+                        .await;
+                } else {
+                    rt.irc
+                        .broadcast_privmsg(env.origin.as_str(), &target, &text, Some(&env.msg_id.hex()))
+                        .await;
+                }
+            } else {
+                rt.irc
+                    .broadcast_privmsg(env.origin.as_str(), &target, &text, Some(&env.msg_id.hex()))
+                    .await;
+            }
             if env.kind == MsgType::Checkin {
                 let _ = rt
                     .store
                     .checkin(env.origin.as_str(), &env.body_text(), None, None);
-            }
-            if env.kind == MsgType::Status {
-                if let Some(w) = Welfare::parse(&env.body_text()) {
-                    let _ = rt.store.welfare(env.origin.as_str(), w.as_str());
-                }
             }
             if env.flags.req_ack() && (env.dest.as_str() == rt.engine.our_call || env.flags.group())
             {
@@ -1027,6 +1075,40 @@ fn refresh_heard(rt: &Runtime) {
     rt.snap.lock().heard = briefs;
 }
 
+fn refresh_group_prios(rt: &Runtime) {
+    let rows = rt.store.group_prios().unwrap_or_default();
+    let briefs: Vec<crate::status::GroupPrioBrief> = rows
+        .into_iter()
+        .map(|(name, bits)| {
+            let p = match bits {
+                2 => Priority::Emergency,
+                1 => Priority::Priority,
+                _ => Priority::Routine,
+            };
+            crate::status::GroupPrioBrief {
+                channel: format!("#{name}"),
+                priority: p.as_str().to_string(),
+            }
+        })
+        .collect();
+    rt.snap.lock().group_prios = briefs;
+}
+
+/// Channel-default priority control frame body (`WCRMETA prio=priority`).
+fn chan_meta_prio_body(prio: Priority) -> String {
+    format!("WCRMETA prio={}", prio.as_str())
+}
+
+fn parse_chan_meta_prio(body: &str) -> Option<Priority> {
+    let rest = body.strip_prefix("WCRMETA ")?;
+    for part in rest.split_whitespace() {
+        if let Some(v) = part.strip_prefix("prio=") {
+            return Priority::parse_name(v);
+        }
+    }
+    None
+}
+
 fn persist_cfg(cfg: &Config) {
     let _ = cfg.save(&Config::default_path());
 }
@@ -1187,6 +1269,70 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                 crate::band::describe(s.freq_khz)
             }
         }
+        "prio" | "priority" => {
+            let channel = sp.next().unwrap_or("");
+            if channel.is_empty() {
+                return "usage: /prio [routine|priority|emergency]  (on a channel)".into();
+            }
+            let name = channel
+                .trim_start_matches('#')
+                .trim_start_matches('&')
+                .to_ascii_lowercase();
+            if name.is_empty() {
+                return "usage: /prio [routine|priority|emergency]".into();
+            }
+            if name == "bulletin" {
+                return "#bulletin is always routine — priority is fixed on the public channel"
+                    .into();
+            }
+            let level = sp.next();
+            match level {
+                None => {
+                    let bits = store.group_prio(&name).unwrap_or(0);
+                    let p = match bits {
+                        2 => Priority::Emergency,
+                        1 => Priority::Priority,
+                        _ => Priority::Routine,
+                    };
+                    format!("#{name} default priority is {}", p.as_str())
+                }
+                Some(raw) => {
+                    let Some(prio) = Priority::parse_name(raw) else {
+                        return "usage: /prio routine|priority|emergency".into();
+                    };
+                    let _ = store.group_set_prio(&name, prio as u8);
+                    refresh_group_prios(rt);
+                    // Sync over RF / hub so other stations pick up the default.
+                    let cfg_g = cfg.lock().clone();
+                    if let Ok(origin) = Callsign::parse(&cfg_g.callsign) {
+                        let dest = Callsign::from_raw(name.to_ascii_uppercase());
+                        if let Ok(seq) = store.next_seq(origin.as_str()) {
+                            let mut flags = Flags::new().with(FLAG_GROUP);
+                            apply_mode_flags(&mut flags, cfg_g.mode, origin.is_guest());
+                            flags.set_priority(Priority::Priority);
+                            let body = chan_meta_prio_body(prio).into_bytes();
+                            if let Ok(mut env) = Envelope::new_msg(
+                                origin,
+                                dest,
+                                seq,
+                                body,
+                                Priority::Priority.default_ttl(),
+                                flags,
+                            ) {
+                                env.kind = MsgType::Status;
+                                if cfg_g.mode.uses_internet() {
+                                    let _ = rt.keys.sign_envelope(&mut env);
+                                }
+                                let _ = store.insert(&env, Delivery::Queued);
+                                let _ = dispatch(rt, &env).await;
+                                let _ = store.set_delivery(&env.msg_id, Delivery::Sent);
+                            }
+                        }
+                    }
+                    format!("#{name} default priority → {} (synced)", prio.as_str())
+                }
+            }
+        }
         "qsy" => {
             if let Some(mhz) = sp.next() {
                 let Some(khz) = crate::band::parse_mhz(mhz) else {
@@ -1277,7 +1423,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
             }
         }
         "" | "help" => {
-            "RADIO commands: mode preset status group queue trace history freq qsy ptt checkin net mute theme update. Channels: /join #name  /invite CALL"
+            "RADIO commands: mode preset status group queue trace history freq qsy prio ptt checkin net mute theme update. Channels: /join #name  /invite CALL /prio"
                 .into()
         }
         other => format!("unknown RADIO subcommand '{other}'. Try /radio help"),

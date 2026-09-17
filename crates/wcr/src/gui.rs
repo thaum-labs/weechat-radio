@@ -42,12 +42,15 @@ static GUI_CTX: OnceLock<egui::Context> = OnceLock::new();
 
 pub fn run() -> Result<()> {
     let icon = app_icon();
+    let size = default_window_size();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1040.0, 680.0])
+            .with_inner_size(size)
             .with_min_inner_size([820.0, 520.0])
             .with_title("WeeChat Radio")
             .with_icon(icon),
+        // Ignore previously saved huge sizes so the default above always applies.
+        persist_window: false,
         ..Default::default()
     };
     eframe::run_native(
@@ -60,6 +63,32 @@ pub fn run() -> Result<()> {
         }),
     )
     .map_err(|e| Error::Msg(e.to_string()))
+}
+
+/// Preferred first-open size: ~65% × ~80% of the primary display (matches the
+/// operator's chosen window on a typical desktop), with a sane fallback.
+fn default_window_size() -> egui::Vec2 {
+    let (sw, sh) = primary_screen_px().unwrap_or((1920, 1080));
+    let w = (sw as f32 * 0.65).clamp(960.0, 1400.0);
+    let h = (sh as f32 * 0.80).clamp(640.0, 1000.0);
+    egui::vec2(w, h)
+}
+
+fn primary_screen_px() -> Option<(u32, u32)> {
+    #[cfg(windows)]
+    {
+        #[link(name = "user32")]
+        extern "system" {
+            fn GetSystemMetrics(index: i32) -> i32;
+        }
+        // SM_CXSCREEN = 0, SM_CYSCREEN = 1
+        let w = unsafe { GetSystemMetrics(0) };
+        let h = unsafe { GetSystemMetrics(1) };
+        if w > 0 && h > 0 {
+            return Some((w as u32, h as u32));
+        }
+    }
+    None
 }
 
 fn hairline(color: Color32) -> Stroke {
@@ -262,6 +291,88 @@ enum IrcEvent {
     Invited { from: String, channel: String },
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct GuiSession {
+    #[serde(default = "default_active_channel")]
+    active_channel: String,
+    #[serde(default = "default_joined")]
+    joined: Vec<String>,
+    #[serde(default)]
+    members: HashMap<String, Vec<String>>,
+}
+
+fn default_active_channel() -> String {
+    "#bulletin".into()
+}
+
+fn default_joined() -> Vec<String> {
+    vec!["#bulletin".into()]
+}
+
+impl Default for GuiSession {
+    fn default() -> Self {
+        Self {
+            active_channel: default_active_channel(),
+            joined: default_joined(),
+            members: HashMap::new(),
+        }
+    }
+}
+
+fn session_path() -> PathBuf {
+    config::default_config_dir().join("gui-session.json")
+}
+
+fn load_session() -> GuiSession {
+    let path = session_path();
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return GuiSession::default();
+    };
+    let mut s: GuiSession = serde_json::from_str(&raw).unwrap_or_default();
+    if s.joined.is_empty() {
+        s.joined = default_joined();
+    }
+    if !s
+        .joined
+        .iter()
+        .any(|c| c.eq_ignore_ascii_case("#bulletin"))
+    {
+        s.joined.insert(0, "#bulletin".into());
+    }
+    s.active_channel = crate::slash::normalize_channel(&s.active_channel);
+    if s.active_channel.len() < 2 {
+        s.active_channel = "#bulletin".into();
+    }
+    s.joined = s
+        .joined
+        .into_iter()
+        .map(|c| crate::slash::normalize_channel(&c))
+        .filter(|c| c.len() >= 2)
+        .collect();
+    s.joined.sort();
+    s.joined.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    if !s
+        .joined
+        .iter()
+        .any(|c| c.eq_ignore_ascii_case(&s.active_channel))
+    {
+        s.joined.push(s.active_channel.clone());
+    }
+    s
+}
+
+fn save_session(active: &str, joined: &[String], members: &HashMap<String, Vec<String>>) {
+    let _ = config::ensure_dirs();
+    let s = GuiSession {
+        active_channel: active.to_string(),
+        joined: joined.to_vec(),
+        members: members.clone(),
+    };
+    if let Ok(raw) = serde_json::to_string_pretty(&s) {
+        let _ = std::fs::write(session_path(), raw);
+    }
+}
+
 struct GuiApp {
     callsign: String,
     grid: String,
@@ -303,11 +414,16 @@ struct GuiApp {
     chan_new: String,
     invite_draft: String,
     members: HashMap<String, Vec<String>>,
+    /// Optimistic dial frequency until /status catches up after /qsy.
+    freq_pending: Option<u32>,
+    /// Channels already JOINed on the current IRC connection (avoid duplicate history).
+    irc_joined: Vec<String>,
 }
 
 impl GuiApp {
     fn new() -> Self {
         let form = load_form();
+        let session = load_session();
         let need_grid = form.grid.is_empty();
         let bt_found =
             crate::tnc::bluetooth::parse_addr(&form.bt_addr).map(|addr| crate::tnc::BtDevice {
@@ -361,14 +477,20 @@ impl GuiApp {
             tray_icon_key: 0,
             allow_close: false,
             user_stopped: false,
-            active_channel: "#bulletin".into(),
-            joined: vec!["#bulletin".into()],
+            active_channel: session.active_channel,
+            joined: session.joined,
             chan_new: String::new(),
             invite_draft: String::new(),
-            members: HashMap::new(),
+            members: session.members,
+            freq_pending: None,
+            irc_joined: Vec::new(),
         };
         app.install_tray();
         app
+    }
+
+    fn persist_session(&self) {
+        save_session(&self.active_channel, &self.joined, &self.members);
     }
 
     fn configured(&self) -> bool {
@@ -515,6 +637,7 @@ impl GuiApp {
         kill_sidecars();
         self.irc_tx = None;
         self.irc_rx = None;
+        self.irc_joined.clear();
         self.status = None;
         self.chat.push(ChatLine {
             nick: String::new(),
@@ -616,11 +739,14 @@ impl GuiApp {
         if nick.is_empty() {
             return;
         }
+        self.irc_joined.clear();
+        let channels = self.joined.clone();
         let (out_tx, out_rx) = mpsc::channel::<String>();
         let (ev_tx, ev_rx) = mpsc::channel::<IrcEvent>();
-        std::thread::spawn(move || irc_session(nick, out_rx, ev_tx));
+        std::thread::spawn(move || irc_session(nick, channels, out_rx, ev_tx));
         self.irc_tx = Some(out_tx);
         self.irc_rx = Some(ev_rx);
+        self.irc_joined = self.joined.clone();
     }
 
     fn send_chat(&mut self) {
@@ -682,6 +808,7 @@ impl GuiApp {
         let ch = crate::slash::normalize_channel(ch);
         if !self.joined.iter().any(|c| c.eq_ignore_ascii_case(&ch)) {
             self.joined.push(ch);
+            self.persist_session();
         }
     }
 
@@ -695,11 +822,13 @@ impl GuiApp {
         self.chan_new.clear();
         self.ensure_joined(&ch);
         self.active_channel = ch.clone();
+        self.persist_session();
         let me = self.callsign.to_ascii_uppercase();
         if !crate::slash::is_bulletin(&ch) {
             self.members
                 .entry(ch.clone())
                 .or_insert_with(|| vec![me.clone()]);
+            self.persist_session();
             self.send_line(&format!("/join {ch}"));
             self.send_line(&format!(
                 "/group create {} {me}",
@@ -707,6 +836,9 @@ impl GuiApp {
             ));
         } else {
             self.send_line(&format!("/join {ch}"));
+        }
+        if !self.irc_joined.iter().any(|c| c.eq_ignore_ascii_case(&ch)) {
+            self.irc_joined.push(ch);
         }
     }
 
@@ -726,14 +858,18 @@ impl GuiApp {
             .entry(self.active_channel.clone())
             .or_default()
             .push(nick.clone());
+        self.persist_session();
         self.send_line(&format!("/invite {nick}"));
     }
 
     fn switch_channel(&mut self, ch: String) {
         let ch = crate::slash::normalize_channel(&ch);
         self.ensure_joined(&ch);
-        if !ch.eq_ignore_ascii_case(&self.active_channel) {
-            self.active_channel = ch.clone();
+        let need_join = !self.irc_joined.iter().any(|c| c.eq_ignore_ascii_case(&ch));
+        self.active_channel = ch.clone();
+        self.persist_session();
+        if need_join {
+            self.irc_joined.push(ch.clone());
             self.send_line(&format!("/join {ch}"));
         }
     }
@@ -763,7 +899,14 @@ impl GuiApp {
                     channel: self.active_channel.clone(),
                 }),
                 IrcEvent::Joined(ch) => {
+                    let ch = crate::slash::normalize_channel(&ch);
+                    // Fresh history replay follows JOIN — drop stale lines for this room.
+                    self.chat
+                        .retain(|l| !l.channel.eq_ignore_ascii_case(&ch));
                     self.ensure_joined(&ch);
+                    if !self.irc_joined.iter().any(|c| c.eq_ignore_ascii_case(&ch)) {
+                        self.irc_joined.push(ch);
+                    }
                 }
                 IrcEvent::Invited { from, channel } => {
                     self.ensure_joined(&channel);
@@ -774,7 +917,12 @@ impl GuiApp {
                         channel: channel.clone(),
                     });
                     self.active_channel = crate::slash::normalize_channel(&channel);
-                    self.send_line(&format!("/join {channel}"));
+                    self.persist_session();
+                    let ch = self.active_channel.clone();
+                    if !self.irc_joined.iter().any(|c| c.eq_ignore_ascii_case(&ch)) {
+                        self.irc_joined.push(ch.clone());
+                        self.send_line(&format!("/join {ch}"));
+                    }
                 }
             }
         }
@@ -796,6 +944,11 @@ impl eframe::App for GuiApp {
                 self.status = None;
             } else {
                 self.status = fetch_status();
+                if let (Some(pending), Some(s)) = (self.freq_pending, self.status.as_ref()) {
+                    if s.freq_khz == pending {
+                        self.freq_pending = None;
+                    }
+                }
                 if self.status.is_some() {
                     self.connect_chat();
                 }
@@ -1107,129 +1260,129 @@ impl eframe::App for GuiApp {
             .exact_width(260.0)
             .frame(chrome(TOPBAR))
             .show(ctx, |ui| {
-                module_title(
-                    ui,
-                    "STATION",
-                    if self.status.is_some() {
-                        "LIVE"
-                    } else {
-                        "OFFLINE"
-                    },
-                );
-                ui.add_space(8.0);
-                let mut mode_cmd = None;
-                let mut preset_cmd = None;
-                let mut want_radio_confirm = false;
-                if let Some(s) = &self.status {
-                    kv(ui, "CALL", &s.callsign, ACCENT);
-                    kv(ui, "GRID", &s.grid, PURPLE);
-                    if let Some(next) = mode_pick(ui, s.mode) {
-                        if next == Mode::Radio && s.mode != Mode::Radio {
-                            want_radio_confirm = true;
-                        } else if next != s.mode {
-                            mode_cmd = Some(format!("/mode {}", next.as_str()));
-                        }
-                    }
-                    let ptt_label = if s.ptt_on {
-                        "TX".to_string()
-                    } else if s.deferred {
-                        "WAIT".to_string()
-                    } else {
-                        s.channel.to_uppercase()
-                    };
-                    kv(ui, "PTT", &ptt_label, if s.ptt_on { ORANGE } else { DIM });
-                    let freq_row = if s.freq_khz == 0 {
-                        s.preset.clone()
-                    } else {
-                        let src = if s.freq_source.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" ({})", s.freq_source)
-                        };
-                        format!(
-                            "{} {}{}",
-                            crate::band::fmt_mhz(s.freq_khz),
-                            if s.band.is_empty() { "?" } else { &s.band },
-                            src
-                        )
-                    };
-                    kv(ui, "FREQ", &freq_row, PURPLE);
-                    if !s.tnc.is_empty() {
-                        kv(
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                    cheat_sheet(ui);
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(4.0);
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                        module_title(
                             ui,
-                            "RADIO",
-                            &s.tnc,
-                            if s.tnc_ok { GREEN } else { ORANGE },
+                            "STATION",
+                            if self.status.is_some() {
+                                "LIVE"
+                            } else {
+                                "OFFLINE"
+                            },
                         );
-                        kv(ui, "PRESET", &s.preset, PURPLE);
-                    } else if let Some(next) = preset_pick(ui, &s.preset) {
-                        if next != s.preset {
-                            preset_cmd = Some(format!("/preset {next}"));
-                        }
-                    }
-                    kv(ui, "AUDIO", &s.audio_label, GREEN);
-                    kv(ui, "SNR", &format!("{:.0}", s.snr), PURPLE);
-                    kv(
-                        ui,
-                        "TX",
-                        if s.tx_rung.is_empty() {
-                            "—"
+                        ui.add_space(8.0);
+                        let mut mode_cmd = None;
+                        let mut preset_cmd = None;
+                        let mut freq_cmd = None;
+                        let mut freq_pending_set = None;
+                        let mut want_radio_confirm = false;
+                        if let Some(s) = &self.status {
+                            let display_khz = self.freq_pending.unwrap_or(s.freq_khz);
+                            kv(ui, "CALL", &s.callsign, ACCENT);
+                            kv(ui, "GRID", &s.grid, PURPLE);
+                            if let Some(next) = mode_pick(ui, s.mode) {
+                                if next == Mode::Radio && s.mode != Mode::Radio {
+                                    want_radio_confirm = true;
+                                } else if next != s.mode {
+                                    mode_cmd = Some(format!("/mode {}", next.as_str()));
+                                }
+                            }
+                            let ptt_label = if s.ptt_on {
+                                "TX".to_string()
+                            } else if s.deferred {
+                                "WAIT".to_string()
+                            } else {
+                                s.channel.to_uppercase()
+                            };
+                            kv(ui, "PTT", &ptt_label, if s.ptt_on { ORANGE } else { DIM });
+                            if let Some(khz) = freq_pick(ui, display_khz, &s.freq_source) {
+                                if khz != display_khz {
+                                    freq_pending_set = Some(khz);
+                                    freq_cmd = Some(format!("/qsy {}", crate::band::fmt_mhz(khz)));
+                                }
+                            }
+                            if !s.tnc.is_empty() {
+                                kv(ui, "RADIO", &s.tnc, if s.tnc_ok { GREEN } else { ORANGE });
+                                kv(ui, "PRESET", &s.preset, PURPLE);
+                            } else if let Some(next) = preset_pick(ui, &s.preset) {
+                                if next != s.preset {
+                                    preset_cmd = Some(format!("/preset {next}"));
+                                }
+                            }
+                            kv(ui, "AUDIO", &s.audio_label, GREEN);
+                            kv(ui, "SNR", &format!("{:.0}", s.snr), PURPLE);
+                            kv(
+                                ui,
+                                "TX",
+                                if s.tx_rung.is_empty() {
+                                    "—"
+                                } else {
+                                    &s.tx_rung
+                                },
+                                PURPLE,
+                            );
+                            kv(ui, "RETRY", &format!("{}", s.retries), PURPLE);
+                            kv_tip(
+                                ui,
+                                "OCC",
+                                &format!("{}%", s.occupancy_pct),
+                                PURPLE,
+                                Some(
+                                    "Channel occupancy 0–100 from the modem CSMA sense. High values mean the frequency is busy — beacons slow down and relays wait.",
+                                ),
+                            );
+                            kv_tip(
+                                ui,
+                                "QUEUE",
+                                &format!("{} air {}", s.queue_out, s.queue_air),
+                                PURPLE,
+                                Some(
+                                    "Outbound messages waiting, then frames in the RF air queue. Air grows when the channel is busy (PTT shows WAIT) or the radio TNC is pacing.",
+                                ),
+                            );
+                            kv(
+                                ui,
+                                "HUB",
+                                if s.hub_ok { "UP" } else { "DOWN" },
+                                if s.hub_ok { GREEN } else { ORANGE },
+                            );
+                            if !s.hub_ok && !s.hub_banner.is_empty() {
+                                ui.label(
+                                    RichText::new(&s.hub_banner)
+                                        .color(ORANGE)
+                                        .small()
+                                        .monospace(),
+                                );
+                            }
                         } else {
-                            &s.tx_rung
-                        },
-                        PURPLE,
-                    );
-                    kv(ui, "RETRY", &format!("{}", s.retries), PURPLE);
-                    kv(ui, "OCC", &format!("{}%", s.occupancy_pct), PURPLE);
-                    kv(
-                        ui,
-                        "QUEUE",
-                        &format!("{} air {}", s.queue_out, s.queue_air),
-                        PURPLE,
-                    );
-                    kv(
-                        ui,
-                        "HUB",
-                        if s.hub_ok { "UP" } else { "DOWN" },
-                        if s.hub_ok { GREEN } else { ORANGE },
-                    );
-                    if !s.hub_ok && !s.hub_banner.is_empty() {
-                        ui.label(
-                            RichText::new(&s.hub_banner)
-                                .color(ORANGE)
-                                .small()
-                                .monospace(),
-                        );
-                    }
-                } else {
-                    ui.label(RichText::new("node offline").color(ORANGE).monospace());
-                }
-                if want_radio_confirm {
-                    self.confirm_radio = true;
-                }
-                if let Some(cmd) = mode_cmd {
-                    self.send_cmd(&cmd);
-                }
-                if let Some(cmd) = preset_cmd {
-                    self.send_cmd(&cmd);
-                }
-                if !self.error.is_empty() {
-                    ui.add_space(12.0);
-                    ui.label(RichText::new(&self.error).color(ORANGE).small());
-                }
-                ui.add_space(16.0);
-                ui.label(
-                    RichText::new("Chat is #bulletin on this computer.")
-                        .color(DIM)
-                        .small(),
-                );
-                ui.label(
-                    RichText::new(
-                        "Close hides to the tray. Quit from the tray to stop the station and the beacon.",
-                    )
-                    .color(DIM)
-                    .small(),
-                );
+                            ui.label(RichText::new("node offline").color(ORANGE).monospace());
+                        }
+                        if want_radio_confirm {
+                            self.confirm_radio = true;
+                        }
+                        if let Some(khz) = freq_pending_set {
+                            self.freq_pending = Some(khz);
+                        }
+                        if let Some(cmd) = mode_cmd {
+                            self.send_cmd(&cmd);
+                        }
+                        if let Some(cmd) = preset_cmd {
+                            self.send_cmd(&cmd);
+                        }
+                        if let Some(cmd) = freq_cmd {
+                            self.send_cmd(&cmd);
+                        }
+                        if !self.error.is_empty() {
+                            ui.add_space(12.0);
+                            ui.label(RichText::new(&self.error).color(ORANGE).small());
+                        }
+                    });
+                });
             });
 
         if self.confirm_radio {
@@ -1407,6 +1560,23 @@ impl eframe::App for GuiApp {
                             .font(FontId::monospace(12.0)),
                     );
                 });
+                let mut prio_cmd = None;
+                if (self.active_channel.starts_with('#') || self.active_channel.starts_with('&'))
+                    && !crate::slash::is_bulletin(&self.active_channel)
+                {
+                    let current_prio = self
+                        .status
+                        .as_ref()
+                        .map(|s| s.prio_for_channel(&self.active_channel).to_string())
+                        .unwrap_or_else(|| "routine".into());
+                    ui.add_space(4.0);
+                    if let Some(next) = prio_pick(ui, &current_prio) {
+                        prio_cmd = Some(format!("/prio {next}"));
+                    }
+                }
+                if let Some(cmd) = prio_cmd {
+                    self.send_cmd(&cmd);
+                }
                 ui.label(
                     RichText::new(
                         "Amateur radio cannot hide message text on RF. Closed channels are invite lists; hub traffic is TLS.",
@@ -1551,10 +1721,52 @@ impl GuiApp {
 }
 
 fn kv(ui: &mut egui::Ui, k: &str, v: &str, color: Color32) {
+    kv_tip(ui, k, v, color, None);
+}
+
+fn kv_tip(ui: &mut egui::Ui, k: &str, v: &str, color: Color32, tip: Option<&str>) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new(format!("{k:7}")).color(DIM).monospace());
-        ui.label(RichText::new(v).color(color).monospace());
+        let key = ui.label(RichText::new(format!("{k:7}")).color(DIM).monospace());
+        let val = ui.label(RichText::new(v).color(color).monospace());
+        if let Some(tip) = tip {
+            key.on_hover_text(tip);
+            val.on_hover_text(tip);
+        }
     });
+}
+
+fn cheat_line(ui: &mut egui::Ui, key: &str, tip: &str) {
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(format!("{key:11}"))
+                .color(PURPLE)
+                .font(FontId::monospace(10.0)),
+        );
+        ui.label(RichText::new(tip).color(DIM).font(FontId::monospace(10.0)));
+    });
+}
+
+fn cheat_sheet(ui: &mut egui::Ui) {
+    cheat_line(ui, "type", "send on this channel");
+    cheat_line(ui, "/join #x", "open or create a room");
+    cheat_line(ui, "/invite C", "add a callsign to room");
+    cheat_line(ui, "/prio", "channel default priority");
+    cheat_line(ui, "! / !!", "priority / emergency line");
+    cheat_line(ui, "CALL", "1:1 — type their callsign");
+    cheat_line(ui, "FREQ", "dial radio to match");
+    cheat_line(ui, "MODE", "inet / RF / both");
+    cheat_line(ui, "✓ · ✓✓", "sent · delivered");
+    cheat_line(ui, "RF", "always plaintext");
+    cheat_line(ui, "hub", "TLS to the map");
+    cheat_line(ui, "close", "hides to the tray");
+    cheat_line(ui, "quit", "stops station + beacon");
+    cheat_line(ui, "setup", "toolbar → change radio");
+    ui.add_space(2.0);
+    ui.label(
+        RichText::new("#bulletin is public · closed = invite list")
+            .color(DIM)
+            .font(FontId::monospace(9.0)),
+    );
 }
 
 fn mode_pick(ui: &mut egui::Ui, current: Mode) -> Option<Mode> {
@@ -1618,6 +1830,114 @@ fn preset_pick(ui: &mut egui::Ui, current: &str) -> Option<String> {
             });
     });
     chosen
+}
+
+/// Calling-frequency picker. Returns the selected kHz when the operator picks a row.
+fn freq_pick(ui: &mut egui::Ui, current_khz: u32, source: &str) -> Option<u32> {
+    let options = crate::band::calling_freqs();
+    let mut selected = current_khz;
+    let current_label = if current_khz == 0 {
+        "set frequency…".to_string()
+    } else if let Some(c) = options.iter().find(|c| c.khz == current_khz) {
+        format!("{} {}", c.region, c.short_label())
+    } else {
+        match crate::band::band_for_khz(current_khz) {
+            Some(b) => format!("{} · {b}", crate::band::fmt_mhz(current_khz)),
+            None => format!("{} · ?", crate::band::fmt_mhz(current_khz)),
+        }
+    };
+    let hover = if current_khz == 0 {
+        "Pick a suggested calling frequency. Dial the radio to match (CAT follows if configured)."
+            .to_string()
+    } else if source.is_empty() || source == "none" {
+        crate::band::describe(current_khz)
+    } else {
+        format!("{} · {source}", crate::band::describe(current_khz))
+    };
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(format!("{:7}", "FREQ"))
+                .color(DIM)
+                .monospace(),
+        );
+        egui::ComboBox::from_id_salt("freq_pick")
+            .selected_text(
+                RichText::new(&current_label)
+                    .color(if current_khz == 0 { DIM } else { PURPLE })
+                    .monospace(),
+            )
+            .width(168.0)
+            .height(280.0)
+            .show_ui(ui, |ui| {
+                ui.set_min_width(200.0);
+                if current_khz > 0 && !options.iter().any(|c| c.khz == current_khz) {
+                    let label = match crate::band::band_for_khz(current_khz) {
+                        Some(b) => format!("{} · {b} (current)", crate::band::fmt_mhz(current_khz)),
+                        None => format!("{} · ? (current)", crate::band::fmt_mhz(current_khz)),
+                    };
+                    ui.selectable_value(
+                        &mut selected,
+                        current_khz,
+                        RichText::new(label).color(PURPLE).monospace(),
+                    );
+                }
+                for c in options {
+                    let line = format!("{}  {}", c.region, c.short_label());
+                    ui.selectable_value(
+                        &mut selected,
+                        c.khz,
+                        RichText::new(line).color(PURPLE).monospace(),
+                    )
+                    .on_hover_text(c.detail());
+                }
+            })
+            .response
+            .on_hover_text(hover);
+    });
+    if selected != current_khz && selected > 0 {
+        Some(selected)
+    } else {
+        None
+    }
+}
+
+fn prio_pick(ui: &mut egui::Ui, current: &str) -> Option<&'static str> {
+    let levels = ["routine", "priority", "emergency"];
+    let mut selected = current.to_ascii_lowercase();
+    if !levels.contains(&selected.as_str()) {
+        selected = "routine".into();
+    }
+    let mut chosen = None;
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("priority").color(DIM).monospace());
+        egui::ComboBox::from_id_salt("chan_prio_pick")
+            .selected_text(RichText::new(&selected).color(ORANGE).monospace())
+            .width(120.0)
+            .show_ui(ui, |ui| {
+                for level in levels {
+                    if ui
+                        .selectable_label(
+                            selected == level,
+                            RichText::new(level).color(ORANGE).monospace(),
+                        )
+                        .on_hover_text(match level {
+                            "routine" => "Default TTL 3 hops",
+                            "priority" => "Faster relays, TTL 4 — or prefix a line with !",
+                            "emergency" => "Double TX on RF, TTL 5 — or prefix !!",
+                            _ => "",
+                        })
+                        .clicked()
+                    {
+                        chosen = Some(level);
+                    }
+                }
+            })
+            .response
+            .on_hover_text(
+                "Default priority for messages on this channel (synced to other stations). Override a line with ! or !!.",
+            );
+    });
+    chosen.filter(|c| *c != current)
 }
 
 fn mode_color(m: Mode) -> Color32 {
@@ -1946,7 +2266,11 @@ impl GuiApp {
             }
             Ok(None) | Err(()) => {
                 if self.grid.is_empty() {
-                    self.grid_note = "could not detect — enter your Maidenhead square".into();
+                    self.grid_note =
+                        "IP location disagreed — type your Maidenhead square (e.g. IO81UF)".into();
+                } else {
+                    self.grid_note =
+                        "IP location disagreed — kept your grid (verify it)".into();
                 }
             }
         }
@@ -2200,7 +2524,12 @@ fn fetch_status() -> Option<StatusSnapshot> {
     serde_json::from_str(body.trim()).ok()
 }
 
-fn irc_session(nick: String, outgoing: Receiver<String>, events: Sender<IrcEvent>) {
+fn irc_session(
+    nick: String,
+    channels: Vec<String>,
+    outgoing: Receiver<String>,
+    events: Sender<IrcEvent>,
+) {
     let addr = "127.0.0.1:6667";
     let mut last_try = Instant::now() - Duration::from_secs(5);
     loop {
@@ -2219,7 +2548,20 @@ fn irc_session(nick: String, outgoing: Receiver<String>, events: Sender<IrcEvent
         };
         let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
         let _ = stream.set_nodelay(true);
-        let hello = format!("NICK {nick}\r\nUSER {nick} 0 * :WeeChat Radio\r\nJOIN #bulletin\r\n");
+        let mut joins = String::new();
+        let mut seen = Vec::new();
+        for ch in &channels {
+            let ch = crate::slash::normalize_channel(ch);
+            if ch.len() < 2 || seen.iter().any(|c: &String| c.eq_ignore_ascii_case(&ch)) {
+                continue;
+            }
+            seen.push(ch.clone());
+            joins.push_str(&format!("JOIN {ch}\r\n"));
+        }
+        if joins.is_empty() {
+            joins.push_str("JOIN #bulletin\r\n");
+        }
+        let hello = format!("NICK {nick}\r\nUSER {nick} 0 * :WeeChat Radio\r\n{joins}");
         if stream.write_all(hello.as_bytes()).is_err() {
             continue;
         }
@@ -2251,9 +2593,9 @@ fn irc_session(nick: String, outgoing: Receiver<String>, events: Sender<IrcEvent
                     } else if let Some(ch) = parse_join(&line) {
                         let _ = events.send(IrcEvent::Joined(ch));
                     } else if let Some(chat) = parse_privmsg(&line) {
-                        if !chat.nick.eq_ignore_ascii_case(&nick) {
-                            let _ = events.send(IrcEvent::Line(chat));
-                        }
+                        // Include our own lines so channel history replay is complete
+                        // (live sends are added locally; the node does not echo without CAP).
+                        let _ = events.send(IrcEvent::Line(chat));
                     } else if let Some(notice) = parse_notice(&line) {
                         let _ = events.send(IrcEvent::Status(notice));
                     }
@@ -2306,11 +2648,19 @@ fn parse_privmsg(line: &str) -> Option<ChatLine> {
     }
     let nick = prefix.split('!').next().unwrap_or(prefix).to_string();
     let (target, text) = cmd.strip_prefix("PRIVMSG ")?.split_once(" :")?;
+    let channel = if target.starts_with('#') || target.starts_with('&') {
+        crate::slash::normalize_channel(target)
+    } else if target.len() <= 8 && target.chars().all(|c| c.is_ascii_alphanumeric()) {
+        // Group destinations sometimes arrive without '#'.
+        crate::slash::normalize_channel(target)
+    } else {
+        target.to_ascii_uppercase()
+    };
     Some(ChatLine {
         nick,
         text: text.to_string(),
         sys: false,
-        channel: target.to_string(),
+        channel,
     })
 }
 

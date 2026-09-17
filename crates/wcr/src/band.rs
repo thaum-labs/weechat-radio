@@ -132,6 +132,102 @@ pub fn to_bands(freq_khzs: impl IntoIterator<Item = u32>) -> Vec<String> {
     out
 }
 
+/// A suggested calling frequency from the published list (`wcr help calling`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CallingFreq {
+    pub region: &'static str,
+    pub khz: u32,
+    pub mode: &'static str,
+    pub preset: &'static str,
+}
+
+impl CallingFreq {
+    pub fn band(self) -> &'static str {
+        band_for_khz(self.khz).unwrap_or("?")
+    }
+
+    /// Compact label for the station panel: `144.950 · 2m`.
+    pub fn short_label(self) -> String {
+        format!("{} · {}", fmt_mhz(self.khz), self.band())
+    }
+
+    /// Hover / list detail: `UK 2m FM · preset vhf-fm`.
+    pub fn detail(self) -> String {
+        format!(
+            "{} {} {} · preset {}",
+            self.region,
+            self.band(),
+            self.mode,
+            self.preset
+        )
+    }
+}
+
+/// Suggested calling frequencies (UK / EU / US / AU, 2m and 40m).
+pub fn calling_freqs() -> &'static [CallingFreq] {
+    &[
+        CallingFreq {
+            region: "UK",
+            khz: 144_950,
+            mode: "FM",
+            preset: "vhf-fm",
+        },
+        CallingFreq {
+            region: "EU",
+            khz: 144_950,
+            mode: "FM",
+            preset: "vhf-fm",
+        },
+        CallingFreq {
+            region: "US",
+            khz: 145_530,
+            mode: "FM",
+            preset: "vhf-fm",
+        },
+        CallingFreq {
+            region: "AU",
+            khz: 146_550,
+            mode: "FM",
+            preset: "vhf-fm",
+        },
+        CallingFreq {
+            region: "UK",
+            khz: 7_045,
+            mode: "USB",
+            preset: "hf-poor",
+        },
+        CallingFreq {
+            region: "EU",
+            khz: 7_045,
+            mode: "USB",
+            preset: "hf-poor",
+        },
+        CallingFreq {
+            region: "US",
+            khz: 7_090,
+            mode: "USB",
+            preset: "hf-poor",
+        },
+        CallingFreq {
+            region: "AU",
+            khz: 7_090,
+            mode: "USB",
+            preset: "hf-poor",
+        },
+    ]
+}
+
+/// Unique dial frequencies from the calling list (deduped by kHz, first region wins).
+pub fn calling_freqs_unique() -> Vec<CallingFreq> {
+    let mut out = Vec::new();
+    for c in calling_freqs() {
+        if !out.iter().any(|x: &CallingFreq| x.khz == c.khz) {
+            out.push(*c);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,5 +296,16 @@ mod tests {
             to_bands([144950, 145530, 0, 7045]),
             vec!["2m", "inet", "40m"]
         );
+    }
+
+    #[test]
+    fn calling_list_has_uk_2m_and_unique_dials() {
+        assert!(calling_freqs()
+            .iter()
+            .any(|c| c.region == "UK" && c.khz == 144_950));
+        let uniq = calling_freqs_unique();
+        assert_eq!(uniq.len(), 5); // 144.950, 145.530, 146.550, 7.045, 7.090
+        assert_eq!(uniq[0].short_label(), "144.950 · 2m");
+        assert!(uniq[0].detail().contains("preset vhf-fm"));
     }
 }

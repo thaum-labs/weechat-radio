@@ -47,7 +47,13 @@ pub fn launch() -> Result<()> {
         if let Some(mintty) = cygwin_root().map(|r| r.join("bin").join("mintty.exe")) {
             if mintty.is_file() {
                 let home = weechat_home();
-                let mut args = vec!["-t".into(), "WeeChat Radio".into()];
+                let mut args = vec![
+                    "-t".into(),
+                    "WeeChat Radio".into(),
+                    // Sized to sit near the GUI default (~65%×80% of a typical desktop).
+                    "-s".into(),
+                    "110,36".into(),
+                ];
                 if let Some(cfg) = minttyrc_path() {
                     args.push("-c".into());
                     args.push(cfg.to_string_lossy().into_owned());
@@ -397,7 +403,7 @@ fn write_launcher() -> Result<()> {
                     "@echo off\r\n\
                      set MINTTY=%USERPROFILE%\\cygwin64\\bin\\mintty.exe\r\n\
                      if exist \"%MINTTY%\" (\r\n\
-                     \"%MINTTY%\" -c \"%~dp0minttyrc\" -t \"WeeChat Radio\" /bin/bash --norc --noprofile -c \"export PATH=/usr/bin:/bin; export HOME=/home/%USERNAME%; exec weechat -d /home/%USERNAME%/.weechat\"\r\n\
+                     \"%MINTTY%\" -c \"%~dp0minttyrc\" -s 110,36 -t \"WeeChat Radio\" /bin/bash --norc --noprofile -c \"export PATH=/usr/bin:/bin; export HOME=/home/%USERNAME%; exec weechat -d /home/%USERNAME%/.weechat\"\r\n\
                      ) else (\r\n\
                      \"%~dp0wcr.exe\" weechat\r\n\
                      )\r\n",

@@ -60,6 +60,15 @@ pub struct StatusSnapshot {
     /// Stations heard recently, with band tags for nicklists.
     #[serde(default)]
     pub heard: Vec<HeardBrief>,
+    /// Synced channel default priorities (`#net` → `priority`).
+    #[serde(default)]
+    pub group_prios: Vec<GroupPrioBrief>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GroupPrioBrief {
+    pub channel: String,
+    pub priority: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -108,6 +117,15 @@ impl StatusSnapshot {
             format!("{} MHz", crate::band::fmt_mhz(khz))
         };
     }
+
+    pub fn prio_for_channel(&self, channel: &str) -> &str {
+        let key = channel.trim_start_matches('#').to_ascii_lowercase();
+        self.group_prios
+            .iter()
+            .find(|g| g.channel.trim_start_matches('#').eq_ignore_ascii_case(&key))
+            .map(|g| g.priority.as_str())
+            .unwrap_or("routine")
+    }
 }
 
 impl Default for StatusSnapshot {
@@ -143,6 +161,7 @@ impl Default for StatusSnapshot {
             band: String::new(),
             freq_source: "none".into(),
             heard: Vec::new(),
+            group_prios: Vec::new(),
         }
     }
 }
