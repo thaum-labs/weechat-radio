@@ -28,6 +28,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: linux windowing libs
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -50,6 +53,7 @@ jobs:
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/wcr dist/
+          cp target/${{ matrix.target }}/release/wcr-gui dist/ || true
           cp README.md LICENSE NOTICE docs/QUICKSTART.md dist/
           cp weechat/radio.py dist/radio.py
           cp weechat/LICENSE dist/WEECHAT-SCRIPT-LICENSE
@@ -72,9 +76,11 @@ jobs:
         run: |
           if (-not (Test-Path dist\modem73.exe)) { throw "refusing to ship a Windows zip without modem73.exe" }
           copy target\${{ matrix.target }}\release\wcr.exe dist\
+          copy target\${{ matrix.target }}\release\wcr-gui.exe dist\
           copy README.md,LICENSE,NOTICE dist\
           copy weechat\radio.py dist\radio.py
           copy weechat\LICENSE dist\WEECHAT-SCRIPT-LICENSE
+          if (Test-Path weechat\minttyrc) { copy weechat\minttyrc dist\minttyrc }
           Compress-Archive -Path dist\* -DestinationPath ${{ matrix.asset }} -Force
       - name: refuse unix archive without modem73
         if: runner.os == 'Linux'

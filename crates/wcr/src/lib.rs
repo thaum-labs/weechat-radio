@@ -6,6 +6,8 @@ pub mod config;
 pub mod emcomm;
 pub mod error;
 pub mod grid;
+#[cfg(feature = "desktop")]
+pub mod gui;
 pub mod help;
 pub mod ircd;
 pub mod modem;

@@ -26,6 +26,10 @@ chmod +x "$BIN"
 PREFIX="${PREFIX:-$HOME/.local/bin}"
 mkdir -p "$PREFIX"
 mv "$BIN" "$PREFIX/wcr"
+if [ -f "$TMP/wcr-gui" ]; then
+  chmod +x "$TMP/wcr-gui"
+  mv "$TMP/wcr-gui" "$PREFIX/wcr-gui"
+fi
 MODEM=""
 if [ -f "$TMP/modem73" ]; then MODEM="$TMP/modem73"; fi
 if [ -z "$MODEM" ]; then MODEM=$(find "$TMP" -maxdepth 2 -type f -name modem73 2>/dev/null | head -n 1); fi
@@ -50,7 +54,20 @@ if [ -n "$RADIO" ]; then
 else
   curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/weechat/radio.py" -o "$PREFIX/radio.py"
 fi
-echo "Installed $PREFIX/wcr"
+GUI_EXEC="$PREFIX/wcr-gui"
+if [ ! -x "$GUI_EXEC" ]; then GUI_EXEC="$PREFIX/wcr gui"; fi
+APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+mkdir -p "$APPS"
+cat > "$APPS/weechat-radio.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=WeeChat Radio
+Comment=Chat over internet and HF/VHF radio
+Exec=$GUI_EXEC
+Terminal=false
+Categories=Network;HamRadio;
+EOF
+echo "Menu launcher: $APPS/weechat-radio.desktop"
 
 if [ "${WCR_SKIP_WEECHAT:-}" != "1" ]; then
   if ! command -v weechat >/dev/null 2>&1; then
@@ -73,7 +90,5 @@ if [ "${WCR_SKIP_WEECHAT:-}" != "1" ]; then
 fi
 
 echo "Next:"
-echo "  wcr setup"
-echo "  wcr node"
-echo "  wcr weechat"
-echo "Or use the built-in UI:  wcr tui"
+echo "  wcr-gui     (or  wcr gui)"
+echo "Or from a terminal:  wcr setup && wcr tui"
