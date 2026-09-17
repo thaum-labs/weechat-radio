@@ -33,6 +33,15 @@ pub struct StatusSnapshot {
     /// Last ARQ retry count shown in the bar.
     #[serde(default)]
     pub retries: u32,
+    /// Channel occupancy 0–100 from modem73 CSMA, when available.
+    #[serde(default)]
+    pub occupancy_pct: u8,
+    /// Frames waiting in the RF air queue.
+    #[serde(default)]
+    pub queue_air: usize,
+    /// True while the air-queue pacer is waiting for a clear channel.
+    #[serde(default)]
+    pub deferred: bool,
 }
 
 impl Default for StatusSnapshot {
@@ -59,6 +68,9 @@ impl Default for StatusSnapshot {
             clock_warn: false,
             tx_rung: String::new(),
             retries: 0,
+            occupancy_pct: 0,
+            queue_air: 0,
+            deferred: false,
         }
     }
 }

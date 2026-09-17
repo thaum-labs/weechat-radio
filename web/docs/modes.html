@@ -101,6 +101,25 @@
       <p>On a faint or fading path the program retries your message and asks modem73 for a slower waveform. The status bar shows <strong>TX</strong> (current waveform) and <strong>RETRY</strong>. Presets: <code>hf-good</code>, <code>hf-poor</code>, <code>hf-weak</code>, <code>hf-deep</code>.</p>
       <p>Operator steps: <a href="/docs/weak.html">weak signals</a>. Packet layout: <a href="/docs/protocol.html">wire protocol</a>.</p>
 
+      <h2>Busy channel</h2>
+      <p>When several stations talk at once, frames would otherwise pile onto the modem and key over each other. Two layers stop that:</p>
+      <ol>
+        <li><strong>modem73 CSMA</strong> is on for every preset. The modem waits for a quiet carrier before PTT.</li>
+        <li>The <strong>air queue</strong> in <code>wcr</code> serialises our own traffic. It waits while the channel is busy, spreads retries and group ACKs, skips beacons when occupancy is high, and leaves a gap after each TX so an ACK can be heard.</li>
+      </ol>
+      <p>The status bar <strong>PTT</strong> field shows <code>wait</code> while a frame is held. <strong>OCC</strong> is occupancy 0–100. <strong>QUEUE</strong> includes how many frames sit in the air queue.</p>
+      <pre class="plain">[rf]
+csma = true
+slot_ms = 100
+quiet_ms = 300
+max_defer_ms = 15000
+emergency_max_defer_ms = 3000
+turnaround_ms = 250
+congested_pct = 60
+ack_dither_ms = 800
+beacon_jitter_s = 15
+retry_jitter = true</pre>
+
       <h2>Gateway knobs</h2>
       <p>In <code>wcr.toml</code>:</p>
       <pre class="plain">[gateway]

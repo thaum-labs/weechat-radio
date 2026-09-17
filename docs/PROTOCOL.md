@@ -72,7 +72,9 @@ Guests: `~ALICE`. Amateur callsigns must look like a callsign (letter and digit)
 
 Type ACK. Body is the 8-byte `msg_id` of the original, plus an optional 9th byte: receiver SNR in dB as a signed integer (`-32`…`31`). Relayed with TTL.
 
-Unacked messages originated by this station are retransmitted up to `rf.max_retries` times (default 3), stepping the modem73 mode down the robustness ladder each try.
+Unacked messages originated by this station are retransmitted up to `rf.max_retries` times (default 3), stepping the modem73 mode down the robustness ladder each try. Retry hold times are jittered ±25% (`[rf] retry_jitter`) so stations that collided do not retry in lockstep.
+
+Group ACKs wait a random 0–`ack_dither_ms` (default 800 ms) before keying so every member of a net does not ACK at once. Direct (point-to-point) ACKs are not dithered.
 
 ## HAVE / WANT
 

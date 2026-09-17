@@ -98,7 +98,7 @@
       <p>Guests: <code>~ALICE</code>. Amateur callsigns must look like a callsign (letter and digit).</p>
 
       <h2>ACK</h2>
-      <p>Type ACK. Body is the 8-byte <code>msg_id</code> of the original, plus an optional 9th byte: receiver SNR in dB as a signed integer. Relayed with TTL. Unacked messages are retransmitted up to <code>rf.max_retries</code> times (default 3).</p>
+      <p>Type ACK. Body is the 8-byte <code>msg_id</code> of the original, plus an optional 9th byte: receiver SNR in dB as a signed integer. Relayed with TTL. Unacked messages are retransmitted up to <code>rf.max_retries</code> times (default 3). Retry hold times are jittered ±25% so stations that collided do not retry in lockstep. Group ACKs wait a random 0–<code>ack_dither_ms</code> (default 800 ms) before keying; direct ACKs are not dithered.</p>
 
       <h2>HAVE / WANT</h2>
       <p>Body is a comma-separated list of hex msg ids in a closed group window.</p>

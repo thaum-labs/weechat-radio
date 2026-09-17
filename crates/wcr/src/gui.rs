@@ -986,6 +986,8 @@ impl eframe::App for GuiApp {
                     }
                     let ptt_label = if s.ptt_on {
                         "TX".to_string()
+                    } else if s.deferred {
+                        "WAIT".to_string()
                     } else {
                         s.channel.to_uppercase()
                     };
@@ -1008,7 +1010,13 @@ impl eframe::App for GuiApp {
                         PURPLE,
                     );
                     kv(ui, "RETRY", &format!("{}", s.retries), PURPLE);
-                    kv(ui, "QUEUE", &format!("{}", s.queue_out), PURPLE);
+                    kv(ui, "OCC", &format!("{}%", s.occupancy_pct), PURPLE);
+                    kv(
+                        ui,
+                        "QUEUE",
+                        &format!("{} air {}", s.queue_out, s.queue_air),
+                        PURPLE,
+                    );
                     kv(
                         ui,
                         "HUB",

@@ -101,6 +101,23 @@ impl Preset {
         )
     }
 
+    /// modem73 `csma_band`: 0 = HF timings, 1 = VHF/UHF.
+    pub fn csma_band(self) -> u8 {
+        if self.is_hf() {
+            0
+        } else {
+            1
+        }
+    }
+
+    pub fn csma_band_name(self) -> &'static str {
+        if self.is_hf() {
+            "hf"
+        } else {
+            "vhf"
+        }
+    }
+
     /// Strip Ed25519 on RF for the slower HF presets so a chat line fits one frame.
     pub fn unsigned_on_rf(self) -> bool {
         matches!(self, Self::HfPoor | Self::HfWeak | Self::HfDeep)
@@ -117,6 +134,7 @@ impl Preset {
     }
 
     pub fn modem73_args(self) -> Vec<String> {
+        let band = self.csma_band_name();
         match self {
             Self::VhfFm => vec![
                 "-m".into(),
@@ -124,7 +142,7 @@ impl Preset {
                 "-r".into(),
                 "1/2".into(),
                 "--csma-band".into(),
-                "vhf".into(),
+                band.into(),
             ],
             Self::HfGood => vec![
                 "-m".into(),
@@ -132,19 +150,36 @@ impl Preset {
                 "-r".into(),
                 "1/2".into(),
                 "--csma-band".into(),
-                "hf".into(),
+                band.into(),
                 "--postamble".into(),
             ],
-            Self::HfPoor => vec!["--robust-mode".into(), "RDM-600S".into()],
-            Self::HfWeak => vec!["--robust-mode".into(), "RDM-300S".into()],
+            Self::HfPoor => vec![
+                "--robust-mode".into(),
+                "RDM-600S".into(),
+                "--csma-band".into(),
+                band.into(),
+            ],
+            Self::HfWeak => vec![
+                "--robust-mode".into(),
+                "RDM-300S".into(),
+                "--csma-band".into(),
+                band.into(),
+            ],
             Self::VoxSafe => vec![
                 "-m".into(),
                 "QPSK".into(),
                 "-r".into(),
                 "1/2".into(),
                 "--short".into(),
+                "--csma-band".into(),
+                band.into(),
             ],
-            Self::HfDeep => vec!["-m".into(), "MFSK-32R".into()],
+            Self::HfDeep => vec![
+                "-m".into(),
+                "MFSK-32R".into(),
+                "--csma-band".into(),
+                band.into(),
+            ],
         }
     }
 
@@ -155,7 +190,7 @@ impl Preset {
                 "modem_type": 0,
                 "modulation": "QPSK",
                 "code_rate": "1/2",
-                "csma_band": 1,
+                "csma_band": self.csma_band(),
                 "csma_enabled": true
             }),
             Self::HfGood => serde_json::json!({
@@ -163,31 +198,39 @@ impl Preset {
                 "modem_type": 0,
                 "modulation": "8PSK",
                 "code_rate": "1/2",
-                "csma_band": 0,
+                "csma_band": self.csma_band(),
                 "csma_enabled": true,
                 "postamble": true
             }),
             Self::HfPoor => serde_json::json!({
                 "cmd": "set_config",
                 "modem_type": 2,
-                "robust_mode": 6
+                "robust_mode": 6,
+                "csma_band": self.csma_band(),
+                "csma_enabled": true
             }),
             Self::HfWeak => serde_json::json!({
                 "cmd": "set_config",
                 "modem_type": 2,
-                "robust_mode": 7
+                "robust_mode": 7,
+                "csma_band": self.csma_band(),
+                "csma_enabled": true
             }),
             Self::VoxSafe => serde_json::json!({
                 "cmd": "set_config",
                 "modem_type": 0,
                 "modulation": "QPSK",
                 "code_rate": "1/2",
-                "short_frame": true
+                "short_frame": true,
+                "csma_band": self.csma_band(),
+                "csma_enabled": true
             }),
             Self::HfDeep => serde_json::json!({
                 "cmd": "set_config",
                 "modem_type": 1,
-                "mfsk_mode": 3
+                "mfsk_mode": 3,
+                "csma_band": self.csma_band(),
+                "csma_enabled": true
             }),
         }
     }
@@ -261,27 +304,32 @@ impl Rung {
                 "cmd": "set_config",
                 "modem_type": 0,
                 "modulation": "QPSK",
-                "code_rate": "1/2"
+                "code_rate": "1/2",
+                "csma_enabled": true
             }),
             Self::Rdm1200S => serde_json::json!({
                 "cmd": "set_config",
                 "modem_type": 2,
-                "robust_mode": 5
+                "robust_mode": 5,
+                "csma_enabled": true
             }),
             Self::Rdm600S => serde_json::json!({
                 "cmd": "set_config",
                 "modem_type": 2,
-                "robust_mode": 6
+                "robust_mode": 6,
+                "csma_enabled": true
             }),
             Self::Rdm300S => serde_json::json!({
                 "cmd": "set_config",
                 "modem_type": 2,
-                "robust_mode": 7
+                "robust_mode": 7,
+                "csma_enabled": true
             }),
             Self::Mfsk32R => serde_json::json!({
                 "cmd": "set_config",
                 "modem_type": 1,
-                "mfsk_mode": 3
+                "mfsk_mode": 3,
+                "csma_enabled": true
             }),
         }
     }
@@ -359,5 +407,40 @@ mod tests {
         assert_eq!(Preset::parse("hf-deep"), Some(Preset::HfDeep));
         assert!(Preset::HfDeep.unsigned_on_rf());
         assert_eq!(Preset::HfPoor.payload_bytes(), 170);
+    }
+
+    #[test]
+    fn all_presets_enable_csma() {
+        for p in Preset::all() {
+            let v = p.control_config();
+            assert_eq!(
+                v.get("csma_enabled").and_then(|x| x.as_bool()),
+                Some(true),
+                "{}",
+                p.as_str()
+            );
+            assert_eq!(
+                v.get("csma_band").and_then(|x| x.as_u64()),
+                Some(p.csma_band() as u64),
+                "{}",
+                p.as_str()
+            );
+            let args = p.modem73_args();
+            assert!(
+                args.windows(2)
+                    .any(|w| w[0] == "--csma-band" && w[1] == p.csma_band_name()),
+                "{}",
+                p.as_str()
+            );
+        }
+        for i in 0..Rung::COUNT {
+            let v = Rung::from_index(i).control_config();
+            assert_eq!(
+                v.get("csma_enabled").and_then(|x| x.as_bool()),
+                Some(true),
+                "{}",
+                Rung::from_index(i).as_str()
+            );
+        }
     }
 }

@@ -35,6 +35,13 @@ The receiver hears all of these at once. You can send `hf-weak` while they are s
 4. When an ACK comes back, it includes how strong they heard you. A good report steps the waveform back up.
 5. Lines that start with `!!` (emergency) go out twice, a moment apart, so a fade is less likely to take both.
 6. Group chat on HF is split into pieces. Any two of three pieces rebuild the message. If several internet gateways each hear a different piece, the hub stitches them.
+7. If the frequency is already busy, the program waits for a gap (status bar **PTT** reads `wait`). Beacons stay off while occupancy is high. Group ACKs and retries are staggered so they do not all key at once.
+
+## Busy channel
+
+modem73 carrier-sense is on for every preset. On top of that, `wcr` keeps a single air queue: one frame (or fragment burst) at a time, emergency first, then ACKs, then your chat, then relays, then beacons.
+
+**OCC** in the station panel is channel occupancy 0–100. **wait** means a frame is queued until the channel is idle. After `max_defer_ms` (3 s for emergency) it sends anyway — the modem still will not key over a carrier it can hear.
 
 ## Steps (HF fading)
 
@@ -57,6 +64,16 @@ max_retries = 3       # extra sends of your own unacked messages
 frag_k = 2            # pieces of data
 frag_m = 1            # spare pieces; any 2 of 3 rebuild the message
 emergency_dup_ms = 400
+csma = true
+slot_ms = 100
+quiet_ms = 300
+max_defer_ms = 15000
+emergency_max_defer_ms = 3000
+turnaround_ms = 250
+congested_pct = 60
+ack_dither_ms = 800
+beacon_jitter_s = 15
+retry_jitter = true
 ```
 
 ## How you know it worked
@@ -64,6 +81,7 @@ emergency_dup_ms = 400
 - A faint station's callsign appears in **HEARD** with a low or negative SNR.
 - Your line gets `✓` then `✓✓` (delivered), even if **RETRY** was 1 or 2 first.
 - **TX** may show a slower mode than your preset. That is expected on a rough path.
+- On a busy frequency, **OCC** climbs and **PTT** may show `wait` instead of `idle`. That is the air queue holding your frame.
 
 ## Upgrade note
 
