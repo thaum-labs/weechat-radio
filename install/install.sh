@@ -58,6 +58,13 @@ GUI_EXEC="$PREFIX/wcr-gui"
 if [ ! -x "$GUI_EXEC" ]; then GUI_EXEC="$PREFIX/wcr gui"; fi
 APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 mkdir -p "$APPS"
+ICON_LINE=""
+if [ -f "$TMP/weechat-radio.png" ]; then
+  ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/256x256/apps"
+  mkdir -p "$ICON_DIR"
+  cp "$TMP/weechat-radio.png" "$ICON_DIR/weechat-radio.png"
+  ICON_LINE="Icon=$ICON_DIR/weechat-radio.png"
+fi
 cat > "$APPS/weechat-radio.desktop" <<EOF
 [Desktop Entry]
 Type=Application
@@ -66,6 +73,7 @@ Comment=Chat over internet and HF/VHF radio
 Exec=$GUI_EXEC
 Terminal=false
 Categories=Network;HamRadio;
+$ICON_LINE
 EOF
 echo "Menu launcher: $APPS/weechat-radio.desktop"
 

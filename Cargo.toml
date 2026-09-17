@@ -34,7 +34,7 @@ futures-util = "0.3"
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 axum = { version = "0.8", features = ["ws", "macros"] }
 tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "stream"] }
 rusqlite = { version = "0.34", features = ["bundled"] }
 directories = "6.0"
 dialoguer = "0.11"

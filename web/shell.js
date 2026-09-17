@@ -9,6 +9,25 @@
   global.WCR = global.WCR || {};
   global.WCR.API = API;
   global.WCR.wrapPres = wrapPres;
+  global.WCR.markSvg = markSvg;
+
+  function markSvg(color, className) {
+    const c = color || "#7d9bff";
+    const cls = className || "mode-mark";
+    return `<svg class="${cls}" viewBox="0 0 64 60" fill="none" aria-hidden="true" focusable="false">
+      <path d="M8 20 L20 30 L8 40" stroke="#d8d0e8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="25" y="36" width="15" height="5" rx="1" fill="${c}"/>
+      <path d="M40 29 A7 7 0 0 1 47 36" stroke="${c}" stroke-width="4" stroke-linecap="round"/>
+      <path d="M40 23 A13 13 0 0 1 53 36" stroke="${c}" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
+      <path d="M40 17 A19 19 0 0 1 59 36" stroke="${c}" stroke-width="4" stroke-linecap="round" opacity="0.4"/>
+    </svg>`;
+  }
+
+  function applyBrand() {
+    document.querySelectorAll("header .prompt").forEach((el) => {
+      el.innerHTML = `${markSvg("#7d9bff", "brand-mark")}<span class="brand-word"><span class="brand-weechat">weechat</span><span class="brand-radio">radio</span></span>`;
+    });
+  }
 
   const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -197,6 +216,7 @@
   }
 
   document.addEventListener("DOMContentLoaded", () => {
+    applyBrand();
     markNav();
     tickClock();
     setInterval(tickClock, 1000);

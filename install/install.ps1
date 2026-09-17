@@ -83,6 +83,7 @@ function New-WcrShortcut([string]$path, [string]$target, [string]$arguments) {
     $s.WorkingDirectory = $dir
     $s.WindowStyle = 1
     $s.Description = "WeeChat Radio"
+    $s.IconLocation = "$target,0"
     $s.Save()
 }
 $guiExe = Join-Path $dir "wcr-gui.exe"

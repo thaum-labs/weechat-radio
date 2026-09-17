@@ -89,11 +89,24 @@ body.page-doc { overflow: auto; }
 }
 
 .prompt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   font-size: 18px;
+  line-height: 1;
+  letter-spacing: -0.06em;
   white-space: nowrap;
 }
 .prompt .who { color: var(--accent); }
 .prompt .sym { color: var(--orange); }
+.prompt .brand-mark {
+  width: 28px;
+  height: 26px;
+  flex: none;
+  display: block;
+}
+.prompt .brand-weechat { color: var(--fg); font-weight: 700; }
+.prompt .brand-radio { color: var(--accent); font-weight: 400; }
 
 .clock-mod {
   display: flex;
@@ -209,6 +222,10 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
 .kv b { font-weight: 400; color: var(--purple); }
 
 .station {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 8px;
+  align-items: start;
   padding: 6px 0;
   border-bottom: 1px solid rgba(125, 155, 255, 0.1);
   cursor: pointer;
@@ -216,6 +233,11 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
 }
 .station b { display: block; font-weight: 400; color: var(--accent); }
 .station:hover { color: var(--orange); }
+.station .mode-mark {
+  width: 22px;
+  height: 21px;
+  margin-top: 2px;
+}
 
 .dot {
   display: inline-block;
@@ -223,6 +245,28 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   height: 7px;
   border-radius: 50%;
   margin-right: 6px;
+}
+
+.mode-mark {
+  width: 22px;
+  height: 21px;
+  flex: none;
+  display: block;
+  overflow: visible;
+}
+
+.map-mark-wrap {
+  width: 28px;
+  height: 26px;
+  cursor: pointer;
+}
+.map-mark-wrap svg,
+.map-mark {
+  width: 28px;
+  height: 26px;
+  display: block;
+  overflow: visible;
+  filter: drop-shadow(0 0 6px rgba(7, 7, 10, 0.85));
 }
 
 .mode-row {
@@ -233,6 +277,11 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   font-size: 11px;
   color: var(--dim);
 }
+.mode-row .mode-mark {
+  width: 20px;
+  height: 19px;
+}
+.mode-row .mode-name { min-width: 10em; }
 .mode-bar {
   flex: 1;
   height: 4px;
@@ -552,7 +601,25 @@ figure.diagram figcaption {
   padding: 12px;
   background: #000;
 }
-.mode-card h3 { margin: 0 0 6px; }
+.mode-card h3 {
+  margin: 0 0 6px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.mode-card .mode-mark {
+  width: 32px;
+  height: 30px;
+}
+.mode-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.mode-swatch .mode-mark {
+  width: 20px;
+  height: 19px;
+}
 .mode-card p { margin: 0; font-size: 13px; color: var(--dim); }
 .mode-card.cyan { border-color: var(--mode-internet); }
 .mode-card.cyan h3 { color: var(--mode-internet); }
