@@ -2,7 +2,8 @@
 //! Hub WebSocket server + telemetry HTTP API.
 
 use crate::error::Result;
-use crate::proto::{verify_envelope, Callsign, Envelope, IdentityKeys};
+use crate::proto::frag::FragAssembler;
+use crate::proto::{verify_envelope, Callsign, Envelope, IdentityKeys, MsgType};
 use crate::store::Store;
 use crate::telemetry::{self, TelemetryDb};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -29,6 +30,7 @@ pub struct HubState {
     pub started: std::time::Instant,
     pub forwarded: Arc<Mutex<u64>>,
     pub identity: IdentityKeys,
+    pub assembler: Arc<Mutex<FragAssembler>>,
 }
 
 pub struct Session {
@@ -65,6 +67,7 @@ pub async fn run_hub(
         started: std::time::Instant::now(),
         forwarded: Arc::new(Mutex::new(0)),
         identity: keys,
+        assembler: Arc::new(Mutex::new(FragAssembler::new())),
     };
     let app = Router::new()
         .route("/", get(ws_upgrade))
@@ -204,6 +207,14 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
                             let _ = verify_envelope(&env, &vk2);
                         }
                     }
+                    let mut extras: Vec<Envelope> = Vec::new();
+                    if env.kind == MsgType::Frag {
+                        if let Ok(Some(full)) = st.assembler.lock().push(&env) {
+                            if st.store.seen_before(&full.msg_id).ok() != Some(true) {
+                                extras.push(full);
+                            }
+                        }
+                    }
                     let _ = st.store.insert(&env, crate::store::Delivery::Queued);
                     *st.forwarded.lock() += 1;
                     route(&st, &env, &bin, &call);
@@ -214,6 +225,20 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
                         "kind": env.kind.as_str(),
                         "id": env.msg_id.hex(),
                     }));
+                    for full in extras {
+                        if let Ok(raw) = full.encode() {
+                            let _ = st.store.insert(&full, crate::store::Delivery::Queued);
+                            *st.forwarded.lock() += 1;
+                            route(&st, &full, &raw, &call);
+                            let _ = st.live.send(serde_json::json!({
+                                "type": "hub_forward",
+                                "origin": full.origin.to_string(),
+                                "dest": full.dest.to_string(),
+                                "kind": full.kind.as_str(),
+                                "id": full.msg_id.hex(),
+                            }));
+                        }
+                    }
                 }
             }
             Message::Text(t) => {

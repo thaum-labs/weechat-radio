@@ -94,6 +94,7 @@ pub fn may_inet_forward(mode_uses_internet: bool, inet_ok: bool, no_inet: bool) 
     mode_uses_internet && inet_ok && !no_inet
 }
 
+#[derive(Clone)]
 pub struct Engine {
     pub store: Arc<Store>,
     pub our_call: String,

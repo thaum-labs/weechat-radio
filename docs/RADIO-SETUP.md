@@ -86,7 +86,7 @@ CAT means the computer can talk to the radio over USB (change frequency, press t
    Replace MODEL, COM port, and baud with yours.
 
 4. Run `wcr setup` and choose **HF rig with CAT**. Keep the default `127.0.0.1:4532`.
-5. Pick a preset: `hf-good` on a clear band, `hf-poor` for NVIS, `hf-weak` when signals are faint.
+5. Pick a preset: `hf-good` on a clear band, `hf-poor` for NVIS, `hf-weak` when signals are faint, `hf-deep` as a last-resort MFSK backup. The node will step down automatically on retries if ACKs do not come back.
 6. To change frequency: `/radio qsy 7.045` — this never happens automatically.
 
 ### How you know it worked

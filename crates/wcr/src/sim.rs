@@ -222,4 +222,48 @@ mod tests {
         let back = Envelope::decode(&got).unwrap();
         assert_eq!(back.body, b"sim");
     }
+
+    fn delivery_rate(loss: f32, retries: u32, trials: u32) -> f32 {
+        let mut delivered = 0u32;
+        for i in 0..trials {
+            let air = SharedAir::new(loss);
+            let mut rx = air.subscribe();
+            let env = Envelope::new_msg(
+                Callsign::parse("G4AAA").unwrap(),
+                Callsign::parse("M0ZZZ").unwrap(),
+                i,
+                format!("m{i}").into_bytes(),
+                3,
+                Flags::new(),
+            )
+            .unwrap();
+            let bytes = encode_over_air(&env);
+            let mut got = false;
+            for _ in 0..=retries {
+                air.send(bytes.clone());
+                if rx.try_recv().is_ok() {
+                    got = true;
+                    break;
+                }
+            }
+            if got {
+                delivered += 1;
+            }
+        }
+        delivered as f32 / trials as f32
+    }
+
+    #[test]
+    fn arq_retries_raise_delivery_under_loss() {
+        let none = delivery_rate(0.5, 0, 80);
+        let with = delivery_rate(0.5, 3, 80);
+        assert!(
+            with > none,
+            "retries should improve delivery ({with} vs {none})"
+        );
+        assert!(
+            with > 0.7,
+            "3 retries at 50% loss should usually get through"
+        );
+    }
 }

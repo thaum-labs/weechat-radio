@@ -7,33 +7,44 @@ use crate::modes::Mode;
 use crate::presets::Preset;
 use crate::proto::Callsign;
 use crate::status::StatusSnapshot;
-use eframe::egui::{self, Color32, FontId, RichText, Stroke};
+use eframe::egui::{self, Color32, FontId, IconData, RichText, Stroke, ViewportCommand};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
+use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
+use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
+// Match weechatradio.com :root in web/styles.css
 const BG: Color32 = Color32::from_rgb(7, 7, 10);
+const TOPBAR: Color32 = Color32::from_rgb(5, 5, 8);
+const SHELL: Color32 = Color32::from_rgb(21, 21, 30);
 const FG: Color32 = Color32::from_rgb(216, 208, 232);
 const ACCENT: Color32 = Color32::from_rgb(125, 155, 255);
 const ORANGE: Color32 = Color32::from_rgb(255, 122, 61);
+const PURPLE: Color32 = Color32::from_rgb(196, 181, 253);
 const DIM: Color32 = Color32::from_rgb(122, 115, 136);
+const LINE: Color32 = Color32::from_rgb(33, 40, 64);
 const GREEN: Color32 = Color32::from_rgb(57, 255, 20);
+const CODE: Color32 = Color32::from_rgb(18, 18, 24);
 
 pub fn run() -> Result<()> {
+    let icon = app_icon();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1040.0, 680.0])
             .with_min_inner_size([820.0, 520.0])
-            .with_title("WeeChat Radio"),
+            .with_title("WeeChat Radio")
+            .with_icon(icon),
         ..Default::default()
     };
     eframe::run_native(
         "WeeChat Radio",
         options,
         Box::new(|cc| {
+            apply_fonts(&cc.egui_ctx);
             apply_visuals(&cc.egui_ctx);
             Ok(Box::new(GuiApp::new()))
         }),
@@ -41,22 +52,129 @@ pub fn run() -> Result<()> {
     .map_err(|e| Error::Msg(e.to_string()))
 }
 
+fn hairline(color: Color32) -> Stroke {
+    Stroke::new(1.0_f32, color)
+}
+
+fn apply_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    if let Some(mono) = fonts.families.get(&egui::FontFamily::Monospace).cloned() {
+        fonts.families.insert(egui::FontFamily::Proportional, mono);
+    }
+    ctx.set_fonts(fonts);
+}
+
+fn paint_scan(ctx: &egui::Context) {
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("scan"),
+    ));
+    let rect = ctx.screen_rect();
+    let mut y = rect.top();
+    while y < rect.bottom() {
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.left(), y + 3.0),
+                egui::pos2(rect.right(), y + 4.0),
+            ),
+            0.0,
+            Color32::from_black_alpha(46),
+        );
+        y += 4.0;
+    }
+}
+
+fn module_title(ui: &mut egui::Ui, left: &str, right: &str) {
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(left)
+                .color(ACCENT)
+                .font(FontId::monospace(12.0)),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                RichText::new(right)
+                    .color(ORANGE)
+                    .font(FontId::monospace(12.0)),
+            );
+        });
+    });
+}
+
+fn prompt_mark(ui: &mut egui::Ui) {
+    ui.label(
+        RichText::new("weechat-radio")
+            .color(ACCENT)
+            .font(FontId::monospace(18.0)),
+    );
+    ui.label(
+        RichText::new(":$")
+            .color(ORANGE)
+            .font(FontId::monospace(18.0)),
+    );
+}
 fn apply_visuals(ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
     let mut v = egui::Visuals::dark();
     v.panel_fill = BG;
     v.window_fill = BG;
-    v.extreme_bg_color = Color32::from_rgb(5, 5, 8);
-    v.faint_bg_color = Color32::from_rgb(16, 16, 22);
+    v.extreme_bg_color = TOPBAR;
+    v.faint_bg_color = SHELL;
+    v.window_stroke = hairline(LINE);
+    v.widgets.noninteractive.bg_stroke = hairline(LINE);
     v.override_text_color = Some(FG);
-    v.widgets.inactive.bg_fill = Color32::from_rgb(16, 16, 22);
-    v.widgets.hovered.bg_fill = Color32::from_rgb(28, 32, 48);
-    v.widgets.active.bg_fill = Color32::from_rgb(36, 42, 64);
-    v.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, ACCENT);
+    v.hyperlink_color = ORANGE;
     v.selection.bg_fill = Color32::from_rgb(40, 52, 96);
-    v.widgets.inactive.rounding = egui::Rounding::same(2.0);
+    v.selection.stroke = hairline(ACCENT);
+    v.widgets.inactive.bg_fill = Color32::BLACK;
+    v.widgets.inactive.weak_bg_fill = CODE;
+    v.widgets.inactive.bg_stroke = hairline(LINE);
+    v.widgets.inactive.fg_stroke = hairline(ACCENT);
+    v.widgets.inactive.rounding = egui::Rounding::ZERO;
+    v.widgets.hovered.bg_fill = Color32::from_rgb(12, 12, 18);
+    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(12, 12, 18);
+    v.widgets.hovered.bg_stroke = hairline(ORANGE);
+    v.widgets.hovered.fg_stroke = hairline(ORANGE);
+    v.widgets.hovered.rounding = egui::Rounding::ZERO;
+    v.widgets.active.bg_fill = Color32::from_rgb(18, 22, 36);
+    v.widgets.active.bg_stroke = hairline(ORANGE);
+    v.widgets.active.fg_stroke = hairline(ORANGE);
+    v.widgets.active.rounding = egui::Rounding::ZERO;
+    v.widgets.open.rounding = egui::Rounding::ZERO;
+    v.widgets.open.bg_stroke = hairline(ACCENT);
     style.visuals = v;
     ctx.set_style(style);
+}
+
+fn chrome(fill: Color32) -> egui::Frame {
+    egui::Frame::none()
+        .fill(fill)
+        .stroke(hairline(LINE))
+        .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+        .rounding(0.0)
+}
+
+fn nav_link(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let font = FontId::monospace(13.0);
+    let galley = ui.fonts(|f| f.layout_no_wrap(label.to_string(), font.clone(), FG));
+    let size = galley.size() + egui::vec2(10.0, 6.0);
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    let color = if resp.hovered() || resp.is_pointer_button_down_on() {
+        ORANGE
+    } else {
+        PURPLE
+    };
+    ui.painter().text(
+        rect.left_center() + egui::vec2(5.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        label,
+        font,
+        color,
+    );
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp
 }
 
 struct ChatLine {
@@ -84,12 +202,20 @@ struct GuiApp {
     irc_tx: Option<Sender<String>>,
     irc_rx: Option<Receiver<IrcEvent>>,
     auto_started: bool,
+    palette_i: usize,
+    confirm_radio: bool,
+    tray: Option<TrayIcon>,
+    tray_show: MenuId,
+    tray_stop: MenuId,
+    tray_quit: MenuId,
+    allow_close: bool,
+    user_stopped: bool,
 }
 
 impl GuiApp {
     fn new() -> Self {
         let (callsign, grid, path, com_port) = load_form();
-        Self {
+        let mut app = Self {
             callsign,
             grid,
             path,
@@ -103,7 +229,17 @@ impl GuiApp {
             irc_tx: None,
             irc_rx: None,
             auto_started: false,
-        }
+            palette_i: 0,
+            confirm_radio: false,
+            tray: None,
+            tray_show: MenuId::new(""),
+            tray_stop: MenuId::new(""),
+            tray_quit: MenuId::new(""),
+            allow_close: false,
+            user_stopped: false,
+        };
+        app.install_tray();
+        app
     }
 
     fn configured(&self) -> bool {
@@ -154,6 +290,7 @@ impl GuiApp {
             }
             _ => {}
         }
+        cfg.ui.theme = "tron".into();
         if let Err(e) = config::ensure_dirs() {
             self.error = e.to_string();
             return;
@@ -172,6 +309,7 @@ impl GuiApp {
 
     fn start_station(&mut self) {
         self.error.clear();
+        self.user_stopped = false;
         if fetch_status().is_some() {
             self.connect_chat();
             return;
@@ -190,18 +328,121 @@ impl GuiApp {
     }
 
     fn stop_station(&mut self) {
+        self.user_stopped = true;
         if let Some(mut c) = self.node.take() {
+            kill_pid_tree(c.id());
             let _ = c.kill();
             let _ = c.wait();
+        }
+        kill_sidecars();
+        for _ in 0..15 {
+            if fetch_status().is_none() {
+                break;
+            }
+            kill_sidecars();
+            std::thread::sleep(Duration::from_millis(80));
         }
         self.irc_tx = None;
         self.irc_rx = None;
         self.status = None;
-        self.chat.push(ChatLine {
-            nick: String::new(),
-            text: "station stopped".into(),
-            sys: true,
-        });
+        if fetch_status().is_some() {
+            self.error = "station did not stop — try Quit from the tray".into();
+        } else {
+            self.chat.push(ChatLine {
+                nick: String::new(),
+                text: "station stopped".into(),
+                sys: true,
+            });
+        }
+        if let Some(tray) = &self.tray {
+            let _ = tray.set_tooltip(Some("WeeChat Radio — station stopped"));
+        }
+    }
+
+    fn show_window(&self, ctx: &egui::Context) {
+        ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(ViewportCommand::Focus);
+    }
+
+    fn hide_to_tray(&mut self, ctx: &egui::Context) {
+        ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+        ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+        if let Some(tray) = &self.tray {
+            let tip = if self.status.is_some() {
+                "WeeChat Radio — station running"
+            } else {
+                "WeeChat Radio"
+            };
+            let _ = tray.set_tooltip(Some(tip));
+        }
+    }
+
+    fn quit_app(&mut self, _ctx: &egui::Context) {
+        self.stop_station();
+        self.allow_close = true;
+        std::process::exit(0);
+    }
+
+    fn install_tray(&mut self) {
+        let show = MenuItem::new("Show window", true, None);
+        let stop = MenuItem::new("Stop station", true, None);
+        let quit = MenuItem::new("Quit", true, None);
+        self.tray_show = show.id().clone();
+        self.tray_stop = stop.id().clone();
+        self.tray_quit = quit.id().clone();
+        let menu = Menu::new();
+        if menu
+            .append_items(&[&show, &stop, &PredefinedMenuItem::separator(), &quit])
+            .is_err()
+        {
+            return;
+        }
+        let (rgba, w, h) = icon_rgba();
+        let Ok(icon) = tray_icon::Icon::from_rgba(rgba, w, h) else {
+            return;
+        };
+        match TrayIconBuilder::new()
+            .with_menu(Box::new(menu))
+            .with_tooltip("WeeChat Radio")
+            .with_icon(icon)
+            .with_title("WeeChat Radio")
+            .build()
+        {
+            Ok(tray) => self.tray = Some(tray),
+            Err(_) => {}
+        }
+    }
+
+    fn poll_tray(&mut self, ctx: &egui::Context) {
+        while let Ok(event) = TrayIconEvent::receiver().try_recv() {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                self.show_window(ctx);
+            }
+        }
+        while let Ok(event) = MenuEvent::receiver().try_recv() {
+            if event.id == self.tray_show {
+                self.show_window(ctx);
+            } else if event.id == self.tray_stop {
+                self.stop_station();
+            } else if event.id == self.tray_quit {
+                self.quit_app(ctx);
+            }
+        }
+        if ctx.input(|i| i.viewport().close_requested()) {
+            if self.allow_close || self.tray.is_none() {
+                if !self.allow_close {
+                    self.stop_station();
+                }
+            } else {
+                self.hide_to_tray(ctx);
+            }
+        }
     }
 
     fn connect_chat(&mut self) {
@@ -225,16 +466,44 @@ impl GuiApp {
             return;
         }
         self.draft.clear();
+        self.send_line(&text);
+    }
+
+    fn send_cmd(&mut self, cmd: &str) {
+        self.send_line(cmd);
+    }
+
+    fn send_line(&mut self, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
         if let Some(tx) = &self.irc_tx {
-            let _ = tx.send(text.clone());
-            self.chat.push(ChatLine {
-                nick: self.callsign.to_ascii_uppercase(),
-                text,
-                sys: false,
-            });
+            if crate::slash::to_radio_args(text).is_some() {
+                self.chat.push(ChatLine {
+                    nick: String::new(),
+                    text: format!("▸ {text}"),
+                    sys: true,
+                });
+            } else {
+                self.chat.push(ChatLine {
+                    nick: self.callsign.to_ascii_uppercase(),
+                    text: text.to_string(),
+                    sys: false,
+                });
+            }
+            let _ = tx.send(text.to_string());
         } else {
             self.error = "station is not connected — press Start".into();
         }
+    }
+
+    fn apply_suggestion(&mut self, s: &crate::slash::Suggestion, send: bool) {
+        self.draft = s.insert.clone();
+        if send && s.send_now {
+            self.send_chat();
+        }
+        self.palette_i = 0;
     }
 
     fn drain_irc(&mut self) {
@@ -260,165 +529,302 @@ impl GuiApp {
 impl eframe::App for GuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint_after(Duration::from_millis(250));
+        self.poll_tray(ctx);
         if self.last_poll.elapsed() > Duration::from_millis(800) {
-            self.status = fetch_status();
             self.last_poll = Instant::now();
-            if self.status.is_some() {
-                self.connect_chat();
+            if self.user_stopped {
+                if fetch_status().is_some() {
+                    kill_sidecars();
+                }
+                self.status = None;
+            } else {
+                self.status = fetch_status();
+                if self.status.is_some() {
+                    self.connect_chat();
+                }
             }
         }
-        if self.configured() && !self.auto_started {
+        if self.configured() && !self.auto_started && !self.user_stopped {
             self.auto_started = true;
             self.start_station();
         }
         self.drain_irc();
 
-        egui::TopBottomPanel::top("top").show(ctx, |ui| {
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ui.add_space(12.0);
-                ui.label(
-                    RichText::new("WEECHAT")
-                        .color(ACCENT)
-                        .font(FontId::monospace(18.0)),
-                );
-                ui.label(
-                    RichText::new("RADIO")
-                        .color(ORANGE)
-                        .font(FontId::monospace(18.0)),
-                );
-                ui.add_space(16.0);
-                let running = self.status.is_some();
-                if running {
-                    if ui
-                        .add(egui::Button::new(RichText::new("Stop").color(ORANGE)))
-                        .clicked()
-                    {
-                        self.stop_station();
-                    }
-                } else if ui
-                    .add(egui::Button::new(
-                        RichText::new("Start station").color(ACCENT),
-                    ))
-                    .clicked()
-                {
-                    self.start_station();
-                }
-                if ui.button("Open WeeChat").clicked() {
-                    if let Err(e) = crate::weechat_app::run(false) {
-                        self.error = e.to_string();
-                    }
-                }
-                if ui.button("Live map").clicked() {
-                    let _ = open::that("https://weechatradio.com/");
+        let mut suggestions = crate::slash::suggestions(&self.draft);
+        if self.palette_i >= suggestions.len() {
+            self.palette_i = 0;
+        }
+        let mut tab = false;
+        let mut up = false;
+        let mut down = false;
+        let mut enter = false;
+        let mut esc = false;
+        let palette_open = !suggestions.is_empty();
+        if self.configured() {
+            ctx.input_mut(|i| {
+                enter = i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
+                if palette_open {
+                    down = i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
+                    up = i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
+                    tab = i.consume_key(egui::Modifiers::NONE, egui::Key::Tab);
+                    esc = i.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
                 }
             });
-            ui.add_space(6.0);
-            ui.separator();
-        });
-
-        if !self.configured() {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                ui.add_space(20.0);
-                ui.label(
-                    RichText::new("  SETUP")
-                        .color(ACCENT)
-                        .font(FontId::monospace(16.0)),
-                );
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(20.0);
-                    ui.label(RichText::new("Callsign").color(DIM));
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.callsign)
-                            .desired_width(160.0)
-                            .hint_text("M7TJF or ~NICK"),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.add_space(20.0);
-                    ui.label(RichText::new("Grid    ").color(DIM));
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.grid)
-                            .desired_width(160.0)
-                            .hint_text("IO81UF"),
-                    );
-                });
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(20.0);
-                    ui.label(RichText::new("How you get on the air").color(DIM));
-                });
-                ui.horizontal(|ui| {
-                    ui.add_space(20.0);
-                    ui.radio_value(&mut self.path, 0, "Internet only");
-                    ui.radio_value(&mut self.path, 1, "Handheld + Digirig");
-                    ui.radio_value(&mut self.path, 2, "Audio cable (VOX)");
-                    ui.radio_value(&mut self.path, 3, "HF rig (CAT)");
-                });
-                if self.path == 1 {
-                    ui.horizontal(|ui| {
-                        ui.add_space(20.0);
-                        ui.label(RichText::new("Serial").color(DIM));
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.com_port)
-                                .desired_width(160.0)
-                                .hint_text("COM5"),
-                        );
-                    });
+        }
+        if palette_open {
+            if down {
+                self.palette_i = (self.palette_i + 1) % suggestions.len();
+            }
+            if up {
+                self.palette_i = (self.palette_i + suggestions.len() - 1) % suggestions.len();
+            }
+            if tab {
+                if let Some(s) = suggestions.get(self.palette_i) {
+                    self.draft = s.insert.clone();
                 }
-                ui.add_space(16.0);
+            }
+            if esc {
+                self.draft.clear();
+            }
+            if enter {
+                if let Some(s) = suggestions.get(self.palette_i).cloned() {
+                    let typed = self.draft.trim();
+                    let target = s.insert.trim();
+                    let completing = typed != target
+                        && (target.starts_with(typed)
+                            || (!typed.contains(' ') && s.label.starts_with(typed)));
+                    if completing {
+                        self.apply_suggestion(&s, true);
+                    } else {
+                        self.send_chat();
+                    }
+                }
+            }
+        } else if enter {
+            self.send_chat();
+        }
+        suggestions = crate::slash::suggestions(&self.draft);
+        if self.palette_i >= suggestions.len() {
+            self.palette_i = 0;
+        }
+
+        egui::TopBottomPanel::top("top")
+            .frame(chrome(TOPBAR))
+            .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.add_space(20.0);
-                    if ui
-                        .add(egui::Button::new(
-                            RichText::new("Save and start").color(ACCENT),
-                        ))
-                        .clicked()
-                    {
-                        self.save_setup();
-                        if self.error.is_empty() {
-                            self.auto_started = true;
-                            self.start_station();
+                    prompt_mark(ui);
+                    ui.add_space(14.0);
+                    let running = self.status.is_some();
+                    if running {
+                        if nav_link(ui, "stop").clicked() {
+                            self.stop_station();
+                        }
+                    } else if nav_link(ui, "start").clicked() {
+                        self.start_station();
+                    }
+                    if nav_link(ui, "weechat").clicked() {
+                        if let Err(e) = crate::weechat_app::run(false) {
+                            self.error = e.to_string();
                         }
                     }
+                    if nav_link(ui, "map").clicked() {
+                        let _ = open::that("https://weechatradio.com/");
+                    }
+                    if nav_link(ui, "quit").clicked() {
+                        self.quit_app(ctx);
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if let Some(s) = &self.status {
+                            ui.label(
+                                RichText::new(if s.hub_ok { "UP" } else { "DOWN" })
+                                    .color(if s.hub_ok { GREEN } else { ORANGE })
+                                    .font(FontId::monospace(12.0)),
+                            );
+                            ui.label(
+                                RichText::new("hub")
+                                    .color(DIM)
+                                    .font(FontId::monospace(12.0)),
+                            );
+                            ui.add_space(10.0);
+                            ui.label(
+                                RichText::new(format!("{}", s.queue_out))
+                                    .color(ACCENT)
+                                    .font(FontId::monospace(12.0)),
+                            );
+                            ui.label(
+                                RichText::new("queue")
+                                    .color(DIM)
+                                    .font(FontId::monospace(12.0)),
+                            );
+                        }
+                        ui.add_space(12.0);
+                        ui.label(
+                            RichText::new(chrono::Local::now().format("LCL %H:%M").to_string())
+                                .color(DIM)
+                                .font(FontId::monospace(11.0)),
+                        );
+                        ui.label(
+                            RichText::new(chrono::Utc::now().format("UTC %H:%M:%S").to_string())
+                                .color(DIM)
+                                .font(FontId::monospace(11.0)),
+                        );
+                    });
                 });
-                if !self.error.is_empty() {
-                    ui.add_space(8.0);
-                    ui.label(RichText::new(&self.error).color(ORANGE));
-                }
             });
+
+        if !self.configured() {
+            egui::CentralPanel::default()
+                .frame(chrome(SHELL))
+                .show(ctx, |ui| {
+                    ui.add_space(8.0);
+                    module_title(ui, "SETUP", "FIRST RUN");
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(20.0);
+                        ui.label(RichText::new("Callsign").color(DIM));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.callsign)
+                                .desired_width(160.0)
+                                .hint_text("M7TJF or ~NICK"),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.add_space(20.0);
+                        ui.label(RichText::new("Grid    ").color(DIM));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.grid)
+                                .desired_width(160.0)
+                                .hint_text("IO81UF"),
+                        );
+                    });
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(20.0);
+                        ui.label(RichText::new("How you get on the air").color(DIM));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.add_space(20.0);
+                        ui.radio_value(&mut self.path, 0, "Internet only");
+                        ui.radio_value(&mut self.path, 1, "Handheld + Digirig");
+                        ui.radio_value(&mut self.path, 2, "Audio cable (VOX)");
+                        ui.radio_value(&mut self.path, 3, "HF rig (CAT)");
+                    });
+                    if self.path == 1 {
+                        ui.horizontal(|ui| {
+                            ui.add_space(20.0);
+                            ui.label(RichText::new("Serial").color(DIM));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.com_port)
+                                    .desired_width(160.0)
+                                    .hint_text("COM5"),
+                            );
+                        });
+                    }
+                    ui.add_space(16.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(20.0);
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("Save and start").color(ACCENT).monospace(),
+                                )
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(hairline(ACCENT)),
+                            )
+                            .clicked()
+                        {
+                            self.save_setup();
+                            if self.error.is_empty() {
+                                self.auto_started = true;
+                                self.start_station();
+                            }
+                        }
+                    });
+                    if !self.error.is_empty() {
+                        ui.add_space(8.0);
+                        ui.label(RichText::new(&self.error).color(ORANGE));
+                    }
+                });
             return;
         }
 
         egui::SidePanel::left("status")
             .exact_width(260.0)
+            .frame(chrome(TOPBAR))
             .show(ctx, |ui| {
-                ui.add_space(10.0);
-                ui.label(RichText::new("STATION").color(ACCENT).monospace());
+                module_title(
+                    ui,
+                    "STATION",
+                    if self.status.is_some() {
+                        "LIVE"
+                    } else {
+                        "OFFLINE"
+                    },
+                );
                 ui.add_space(8.0);
+                let mut mode_cmd = None;
+                let mut preset_cmd = None;
+                let mut want_radio_confirm = false;
                 if let Some(s) = &self.status {
                     kv(ui, "CALL", &s.callsign, ACCENT);
-                    kv(ui, "GRID", &s.grid, FG);
-                    kv(ui, "MODE", s.mode.as_str(), mode_color(s.mode));
+                    kv(ui, "GRID", &s.grid, PURPLE);
+                    if let Some(next) = mode_pick(ui, s.mode) {
+                        if next == Mode::Radio && s.mode != Mode::Radio {
+                            want_radio_confirm = true;
+                        } else if next != s.mode {
+                            mode_cmd = Some(format!("/mode {}", next.as_str()));
+                        }
+                    }
                     let ptt_label = if s.ptt_on {
                         "TX".to_string()
                     } else {
                         s.channel.to_uppercase()
                     };
                     kv(ui, "PTT", &ptt_label, if s.ptt_on { ORANGE } else { DIM });
-                    kv(ui, "PRESET", &s.preset, FG);
+                    if let Some(next) = preset_pick(ui, &s.preset) {
+                        if next != s.preset {
+                            preset_cmd = Some(format!("/preset {next}"));
+                        }
+                    }
                     kv(ui, "AUDIO", &s.audio_label, GREEN);
-                    kv(ui, "SNR", &format!("{:.0}", s.snr), FG);
-                    kv(ui, "QUEUE", &format!("{}", s.queue_out), FG);
+                    kv(ui, "SNR", &format!("{:.0}", s.snr), PURPLE);
+                    kv(
+                        ui,
+                        "TX",
+                        if s.tx_rung.is_empty() {
+                            "—"
+                        } else {
+                            &s.tx_rung
+                        },
+                        PURPLE,
+                    );
+                    kv(ui, "RETRY", &format!("{}", s.retries), PURPLE);
+                    kv(ui, "QUEUE", &format!("{}", s.queue_out), PURPLE);
                     kv(
                         ui,
                         "HUB",
                         if s.hub_ok { "UP" } else { "DOWN" },
                         if s.hub_ok { GREEN } else { ORANGE },
                     );
+                    if !s.hub_ok && !s.hub_banner.is_empty() {
+                        ui.label(
+                            RichText::new(&s.hub_banner)
+                                .color(ORANGE)
+                                .small()
+                                .monospace(),
+                        );
+                    }
                 } else {
                     ui.label(RichText::new("node offline").color(ORANGE).monospace());
+                }
+                if want_radio_confirm {
+                    self.confirm_radio = true;
+                }
+                if let Some(cmd) = mode_cmd {
+                    self.send_cmd(&cmd);
+                }
+                if let Some(cmd) = preset_cmd {
+                    self.send_cmd(&cmd);
                 }
                 if !self.error.is_empty() {
                     ui.add_space(12.0);
@@ -432,28 +838,113 @@ impl eframe::App for GuiApp {
                 );
                 ui.label(
                     RichText::new(
-                        "Closing this window does not stop the station unless you press Stop.",
+                        "Close hides to the tray. Quit from the tray to stop the station and the beacon.",
                     )
                     .color(DIM)
                     .small(),
                 );
             });
 
-        egui::TopBottomPanel::bottom("input")
-            .exact_height(52.0)
-            .show(ctx, |ui| {
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
+        if self.confirm_radio {
+            egui::Window::new("Switch to radio?")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .frame(chrome(TOPBAR))
+                .show(ctx, |ui| {
+                    ui.label(
+                        RichText::new("Radio mode drops the internet. Messages stay on RF only.")
+                            .color(FG)
+                            .monospace(),
+                    );
                     ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("Confirm").color(ORANGE).monospace(),
+                                )
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(hairline(ORANGE)),
+                            )
+                            .clicked()
+                        {
+                            self.send_cmd("/mode radio confirm");
+                            self.confirm_radio = false;
+                        }
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("Cancel").color(PURPLE).monospace(),
+                                )
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(hairline(LINE)),
+                            )
+                            .clicked()
+                        {
+                            self.confirm_radio = false;
+                        }
+                    });
+                });
+        }
+
+        let palette_h = if suggestions.is_empty() {
+            0.0
+        } else {
+            (suggestions.len().min(8) as f32) * 28.0 + 28.0
+        };
+        egui::TopBottomPanel::bottom("input")
+            .exact_height(78.0 + palette_h)
+            .frame(chrome(TOPBAR))
+            .show(ctx, |ui| {
+                module_title(ui, "TRAFFIC LOG", "INPUT");
+                if !suggestions.is_empty() {
+                    ui.label(
+                        RichText::new("tab complete  ·  ↑↓ pick  ·  enter run")
+                            .color(DIM)
+                            .small()
+                            .monospace(),
+                    );
+                    egui::ScrollArea::vertical()
+                        .max_height(palette_h - 8.0)
+                        .show(ui, |ui| {
+                            for (i, s) in suggestions.iter().enumerate() {
+                                let selected = i == self.palette_i;
+                                let row = format!("{:<22}  {}", s.label, s.hint);
+                                let color = if selected { ORANGE } else { PURPLE };
+                                let resp = ui.selectable_label(
+                                    selected,
+                                    RichText::new(row).color(color).monospace(),
+                                );
+                                if resp.clicked() {
+                                    self.apply_suggestion(s, true);
+                                }
+                            }
+                        });
+                }
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("$")
+                            .color(ACCENT)
+                            .font(FontId::monospace(14.0)),
+                    );
                     let resp = ui.add(
                         egui::TextEdit::singleline(&mut self.draft)
                             .desired_width(ui.available_width() - 90.0)
-                            .hint_text("message to #bulletin"),
+                            .hint_text("message, or / for commands")
+                            .font(FontId::monospace(14.0)),
                     );
+                    if enter {
+                        resp.request_focus();
+                    }
                     if ui
-                        .add(egui::Button::new(RichText::new("Send").color(ORANGE)))
+                        .add(
+                            egui::Button::new(RichText::new("send").color(ACCENT).monospace())
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(hairline(ACCENT))
+                                .min_size(egui::vec2(72.0, 28.0)),
+                        )
                         .clicked()
-                        || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                     {
                         self.send_chat();
                         resp.request_focus();
@@ -461,30 +952,33 @@ impl eframe::App for GuiApp {
                 });
             });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add_space(6.0);
-            ui.label(RichText::new("#bulletin").color(ACCENT).monospace());
-            ui.separator();
-            egui::ScrollArea::vertical()
-                .stick_to_bottom(true)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    for line in &self.chat {
-                        if line.sys {
-                            ui.label(RichText::new(&line.text).color(DIM).monospace());
-                        } else {
-                            ui.horizontal_wrapped(|ui| {
-                                ui.label(
-                                    RichText::new(format!("<{}>", line.nick))
-                                        .color(ACCENT)
-                                        .monospace(),
-                                );
-                                ui.label(RichText::new(&line.text).color(FG).monospace());
-                            });
+        egui::CentralPanel::default()
+            .frame(chrome(SHELL))
+            .show(ctx, |ui| {
+                module_title(ui, "LIVE CHAT", "#bulletin");
+                ui.add_space(4.0);
+                egui::ScrollArea::vertical()
+                    .stick_to_bottom(true)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for line in &self.chat {
+                            if line.sys {
+                                ui.label(RichText::new(&line.text).color(PURPLE).monospace());
+                            } else {
+                                let mine = line.nick.eq_ignore_ascii_case(&self.callsign);
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(
+                                        RichText::new(format!("[{}]", line.nick))
+                                            .color(if mine { ORANGE } else { ACCENT })
+                                            .monospace(),
+                                    );
+                                    ui.label(RichText::new(&line.text).color(FG).monospace());
+                                });
+                            }
                         }
-                    }
-                });
-        });
+                    });
+            });
+        paint_scan(ctx);
     }
 }
 
@@ -495,12 +989,176 @@ fn kv(ui: &mut egui::Ui, k: &str, v: &str, color: Color32) {
     });
 }
 
+fn mode_pick(ui: &mut egui::Ui, current: Mode) -> Option<Mode> {
+    let mut chosen = None;
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(format!("{:7}", "MODE"))
+                .color(DIM)
+                .monospace(),
+        );
+        egui::ComboBox::from_id_salt("mode_pick")
+            .selected_text(
+                RichText::new(current.as_str())
+                    .color(mode_color(current))
+                    .monospace(),
+            )
+            .width(168.0)
+            .show_ui(ui, |ui| {
+                for m in Mode::all() {
+                    if ui
+                        .selectable_label(
+                            m == current,
+                            RichText::new(m.as_str()).color(mode_color(m)).monospace(),
+                        )
+                        .on_hover_text(m.display_name())
+                        .clicked()
+                    {
+                        chosen = Some(m);
+                    }
+                }
+            });
+    });
+    chosen
+}
+
+fn preset_pick(ui: &mut egui::Ui, current: &str) -> Option<String> {
+    let mut chosen = None;
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(format!("{:7}", "PRESET"))
+                .color(DIM)
+                .monospace(),
+        );
+        egui::ComboBox::from_id_salt("preset_pick")
+            .selected_text(RichText::new(current).color(PURPLE).monospace())
+            .width(168.0)
+            .show_ui(ui, |ui| {
+                for p in Preset::all() {
+                    let value = p.as_str();
+                    if ui
+                        .selectable_label(
+                            value == current,
+                            RichText::new(value).color(PURPLE).monospace(),
+                        )
+                        .on_hover_text(p.description())
+                        .clicked()
+                    {
+                        chosen = Some(value.to_string());
+                    }
+                }
+            });
+    });
+    chosen
+}
+
 fn mode_color(m: Mode) -> Color32 {
     match m {
         Mode::Internet => Color32::from_rgb(0, 229, 255),
         Mode::InternetRadio => GREEN,
         Mode::Radio => Color32::from_rgb(255, 191, 0),
         Mode::RadioPlus => Color32::from_rgb(255, 77, 255),
+    }
+}
+
+fn app_icon() -> IconData {
+    let (rgba, width, height) = icon_rgba();
+    IconData {
+        rgba,
+        width,
+        height,
+    }
+}
+
+fn icon_rgba() -> (Vec<u8>, u32, u32) {
+    const N: u32 = 32;
+    let mut rgba = vec![0u8; (N * N * 4) as usize];
+    let c = (N as f32 - 1.0) / 2.0;
+    for y in 0..N {
+        for x in 0..N {
+            let dx = x as f32 - c;
+            let dy = y as f32 - c;
+            let r2 = dx * dx + dy * dy;
+            let i = ((y * N + x) * 4) as usize;
+            if r2 <= 14.8 * 14.8 {
+                if r2 <= 6.2 * 6.2 {
+                    rgba[i] = 255;
+                    rgba[i + 1] = 122;
+                    rgba[i + 2] = 61;
+                } else {
+                    rgba[i] = 125;
+                    rgba[i + 1] = 155;
+                    rgba[i + 2] = 255;
+                }
+                rgba[i + 3] = 255;
+            }
+        }
+    }
+    (rgba, N, N)
+}
+
+#[cfg(windows)]
+fn system32(name: &str) -> PathBuf {
+    let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+    PathBuf::from(root).join("System32").join(name)
+}
+
+#[cfg(windows)]
+fn run_hidden(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let _ = cmd.status();
+}
+
+fn kill_pid_tree(pid: u32) {
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new(system32("taskkill.exe"));
+        cmd.args(["/F", "/T", "/PID", &pid.to_string()]);
+        run_hidden(&mut cmd);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status();
+        let _ = Command::new("pkill")
+            .args(["-P", &pid.to_string()])
+            .status();
+    }
+}
+
+fn kill_sidecars() {
+    #[cfg(windows)]
+    {
+        for name in ["wcr.exe", "modem73.exe"] {
+            let mut cmd = Command::new(system32("taskkill.exe"));
+            cmd.args(["/F", "/T", "/IM", name]);
+            run_hidden(&mut cmd);
+        }
+        let our = std::process::id();
+        let mut ps = Command::new(system32("WindowsPowerShell\\v1.0\\powershell.exe"));
+        ps.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            &format!(
+                "Get-Process -Name wcr,modem73 -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -ne {our} }} | Stop-Process -Force"
+            ),
+        ]);
+        run_hidden(&mut ps);
+    }
+    #[cfg(not(windows))]
+    {
+        for name in ["wcr", "modem73"] {
+            let _ = Command::new("pkill").args(["-x", name]).status();
+        }
     }
 }
 
@@ -593,7 +1251,11 @@ fn irc_session(nick: String, outgoing: Receiver<String>, events: Sender<IrcEvent
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         loop {
             while let Ok(msg) = outgoing.try_recv() {
-                let line = format!("PRIVMSG #bulletin :{msg}\r\n");
+                let line = if let Some(args) = crate::slash::to_radio_args(&msg) {
+                    format!("RADIO {args}\r\n")
+                } else {
+                    format!("PRIVMSG #bulletin :{msg}\r\n")
+                };
                 if stream.write_all(line.as_bytes()).is_err() {
                     break;
                 }
@@ -612,6 +1274,8 @@ fn irc_session(nick: String, outgoing: Receiver<String>, events: Sender<IrcEvent
                         if !chat.nick.eq_ignore_ascii_case(&nick) {
                             let _ = events.send(IrcEvent::Line(chat));
                         }
+                    } else if let Some(notice) = parse_notice(&line) {
+                        let _ = events.send(IrcEvent::Status(notice));
                     }
                 }
                 Err(e)
@@ -622,6 +1286,15 @@ fn irc_session(nick: String, outgoing: Receiver<String>, events: Sender<IrcEvent
         }
         let _ = events.send(IrcEvent::Status("disconnected — retrying".into()));
     }
+}
+
+fn parse_notice(line: &str) -> Option<String> {
+    let rest = line.strip_prefix(':')?;
+    let (_, cmd) = rest.split_once(' ')?;
+    if !cmd.starts_with("NOTICE ") {
+        return None;
+    }
+    Some(cmd.split_once(" :")?.1.to_string())
 }
 
 fn parse_privmsg(line: &str) -> Option<ChatLine> {

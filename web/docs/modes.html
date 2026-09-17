@@ -96,6 +96,9 @@
       </figure>
       <p>If you are in <code>internet-radio</code> and the hub goes away, radio keeps working. The status bar says <strong>Internet down, radio only</strong>. Traffic that needed the internet waits in the hold queue and goes out when the hub returns.</p>
 
+      <h2>Weak-signal behaviour</h2>
+      <p>On radio, modem73 demodulates. <code>wcr</code> retries unacked frames, steps the modem down (QPSK 1/2 → RDM-1200S → RDM-600S → RDM-300S → MFSK-32R), and splits group/oversized frames into Reed–Solomon fragments the hub can reassemble from several gateways. Presets: <code>hf-good</code>, <code>hf-poor</code>, <code>hf-weak</code>, <code>hf-deep</code>. The status bar shows the current TX rung and retry count.</p>
+
       <h2>Gateway knobs</h2>
       <p>In <code>wcr.toml</code>:</p>
       <pre class="plain">[gateway]

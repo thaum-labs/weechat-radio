@@ -36,45 +36,41 @@
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> wire protocol</h1>
       <p class="lead">For people writing software. If you only want to chat, you can skip this page.</p>
 
-      <p>Version 1 uses the same envelope on radio (KISS) and internet (WebSocket). A chat line becomes a small packet both paths understand.</p>
+      <p>Version 2 is the default on radio (KISS) and internet (WebSocket). Version 1 frames are still decoded. <code>msg_id</code> is not sent on v2: the receiver recomputes it from origin, dest, seq, and the uncompressed body.</p>
 
       <figure class="diagram">
         <div class="pkt" aria-label="Packet fields in order">
           <i>ver<span>1 byte</span></i>
-          <i>type<span>1</span></i>
-          <i>flags<span>2</span></i>
-          <i>msg_id<span>8</span></i>
+          <i>type+flags<span>2</span></i>
           <i>origin<span>6</span></i>
-          <i>dest<span>6</span></i>
+          <i>dest<span>1 or 6</span></i>
           <i>hops<span>1</span></i>
-          <i>ts<span>4</span></i>
-          <i>seq<span>4</span></i>
-          <i>len<span>2</span></i>
+          <i>ts<span>2</span></i>
+          <i>seq<span>varint</span></i>
+          <i>len<span>varint</span></i>
           <i>body<span>n, max 300</span></i>
           <i>crc<span>2</span></i>
           <i>sig<span>64 optional</span></i>
         </div>
-        <figcaption>31+ bytes of header, then the message text, then a checksum. Signature is optional.</figcaption>
+        <figcaption>About 16–22 bytes of header, then the message text (optionally compressed), then a checksum. Signature is optional and omitted on slow HF.</figcaption>
       </figure>
 
-      <h2>Header</h2>
+      <h2>Version 2 header</h2>
       <div class="table-wrap">
         <table>
           <thead>
             <tr><th>Field</th><th>Size</th><th>Notes</th></tr>
           </thead>
           <tbody>
-            <tr><td>ver</td><td>1</td><td><code>1</code></td></tr>
-            <tr><td>type</td><td>1</td><td>MSG ACK BEACON HAVE WANT PING CHECKIN STATUS FORM FILE</td></tr>
-            <tr><td>flags</td><td>2</td><td>little-endian</td></tr>
-            <tr><td>msg_id</td><td>8</td><td>BLAKE3(origin, dest, seq, body) truncated</td></tr>
+            <tr><td>ver</td><td>1</td><td><code>2</code></td></tr>
+            <tr><td>packed</td><td>2</td><td>type (high 4 bits) + flags (low 12 bits)</td></tr>
             <tr><td>origin</td><td>6</td><td>packed callsign</td></tr>
-            <tr><td>dest</td><td>6</td><td>packed callsign or group name</td></tr>
+            <tr><td>dest</td><td>1 or 6</td><td>1-byte group index if <code>GROUP_IDX</code> (<code>0</code> = BULLETIN, <code>1</code> = BEACON)</td></tr>
             <tr><td>hops_left</td><td>1</td><td>TTL, default 3</td></tr>
-            <tr><td>ts</td><td>4</td><td>unix seconds, informational</td></tr>
-            <tr><td>seq</td><td>4</td><td>per-origin counter (clock-tolerant identity)</td></tr>
-            <tr><td>body_len</td><td>2</td><td>max 300</td></tr>
-            <tr><td>body</td><td>n</td><td>UTF-8</td></tr>
+            <tr><td>ts</td><td>2</td><td>minutes since epoch mod 2<sup>16</sup></td></tr>
+            <tr><td>seq</td><td>varint</td><td>per-origin counter (clock-tolerant identity)</td></tr>
+            <tr><td>body_len</td><td>varint</td><td>max 300 uncompressed</td></tr>
+            <tr><td>body</td><td>n</td><td>UTF-8, optionally smaz-compressed</td></tr>
             <tr><td>crc</td><td>2</td><td>CRC-16/IBM-3740 of everything before CRC</td></tr>
             <tr><td>signature</td><td>64</td><td>optional Ed25519 if SIGNED</td></tr>
           </tbody>
@@ -90,8 +86,10 @@
         <li>4 <code>THIRD_PARTY</code> — guest nick origin</li>
         <li>5–6 priority: 0 routine, 1 priority, 2 emergency</li>
         <li>7 <code>NO_INET</code> — never forward to the internet (<code>radio</code> mode)</li>
+        <li>8 <code>GROUP_IDX</code> — v2 wire only: dest is a 1-byte group index</li>
+        <li>9 <code>COMPRESSED</code> — v2 wire only: body is smaz-compressed</li>
       </ul>
-      <p><code>!!</code> at the start of a message is emergency. <code>!</code> is priority.</p>
+      <p><code>!!</code> at the start of a message is emergency (sent twice). <code>!</code> is priority. Unacked frames are retried and the modem steps down: QPSK 1/2 → RDM-1200S → RDM-600S → RDM-300S → MFSK-32R.</p>
 
       <h2>Callsign packing</h2>
       <p>6 bits per character, 8 characters, alphabet:</p>
@@ -99,10 +97,13 @@
       <p>Guests: <code>~ALICE</code>. Amateur callsigns must look like a callsign (letter and digit).</p>
 
       <h2>ACK</h2>
-      <p>Type ACK. Body is the 8-byte <code>msg_id</code> of the original. Relayed with TTL.</p>
+      <p>Type ACK. Body is the 8-byte <code>msg_id</code> of the original, plus an optional 9th byte: receiver SNR in dB as a signed integer. Relayed with TTL. Unacked messages are retransmitted up to <code>rf.max_retries</code> times (default 3).</p>
 
       <h2>HAVE / WANT</h2>
       <p>Body is a comma-separated list of hex msg ids in a closed group window.</p>
+
+      <h2>FRAG</h2>
+      <p>Type <code>FRAG</code> (10). Group messages on HF, or any payload larger than the PHY frame, are split into Reed–Solomon shards. Any <code>k</code> of <code>k+m</code> reconstruct the original (default 2 of 3). Gateways forward fragments as they hear them; the hub reassembles from shards received via different gateways.</p>
 
       <h2>Federation (reserved)</h2>
       <p>Hub-to-hub uses the same envelope and the same <code>msg_id</code> dedupe. Not enabled in v1.</p>

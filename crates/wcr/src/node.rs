@@ -9,7 +9,8 @@ use crate::modem::{ControlClient, KissClient, ModemProcess};
 use crate::modes::Mode;
 use crate::net::hub_client::{ArcFlag, HubClient};
 use crate::net::lan::LanMesh;
-use crate::presets::{self, Preset};
+use crate::presets::{self, Preset, Rung};
+use crate::proto::frag::{self, FragAssembler};
 use crate::proto::{
     load_or_create, Callsign, Envelope, Flags, IdentityKeys, MsgId, MsgType, Priority, FLAG_GROUP,
     FLAG_INET_OK, FLAG_NO_INET, FLAG_REQ_ACK, FLAG_THIRD_PARTY,
@@ -19,8 +20,27 @@ use crate::status::{self, SharedStatus};
 use crate::store::{Delivery, Store};
 use crate::telemetry::{self, TelemetryEvent};
 use parking_lot::Mutex;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
+
+#[derive(Clone)]
+struct Runtime {
+    cfg: Arc<Mutex<Config>>,
+    store: Arc<Store>,
+    keys: IdentityKeys,
+    engine: Engine,
+    irc: IrcServer,
+    kiss: Option<KissClient>,
+    hub: Option<HubClient>,
+    lan: Option<mpsc::Sender<Envelope>>,
+    snap: Arc<SharedStatus>,
+    tel: broadcast::Sender<TelemetryEvent>,
+    control: Option<ControlClient>,
+    dest_rungs: Arc<Mutex<HashMap<String, usize>>>,
+    assembler: Arc<Mutex<FragAssembler>>,
+    last_rx_snr: Arc<Mutex<Option<f32>>>,
+}
 
 pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     cfg.normalize();
@@ -72,7 +92,8 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     let mut _modem_child: Option<ModemProcess> = None;
     let mut kiss: Option<KissClient> = None;
     let mut kiss_rx: Option<mpsc::Receiver<Vec<u8>>> = None;
-    let mut _control: Option<ControlClient> = None;
+    let mut control: Option<ControlClient> = None;
+    let last_rx_snr = Arc::new(Mutex::new(None::<f32>));
     if cfg.mode.uses_radio() {
         if cfg.modem.manage {
             match ModemProcess::spawn(&cfg).await {
@@ -96,8 +117,10 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             }
             let _ = c.apply_ptt(&cfg.modem.ptt, &cfg.modem).await;
             let snap_c = snap.clone();
+            let snr_slot = last_rx_snr.clone();
             tokio::spawn(async move {
                 while let Some(frame) = ev.recv().await {
+                    *snr_slot.lock() = Some(frame.snr);
                     let mut s = snap_c.lock();
                     s.snr = frame.snr;
                     s.ber = frame.ber_pct;
@@ -106,7 +129,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     s.channel = "rx".into();
                 }
             });
-            _control = Some(c);
+            control = Some(c);
         }
     }
 
@@ -143,52 +166,84 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     }
 
     let engine = Engine::new(store.clone(), cfg.callsign.clone());
-    let cfg = Arc::new(Mutex::new(cfg));
-    let our = engine.our_call.clone();
+    let rt = Runtime {
+        cfg: Arc::new(Mutex::new(cfg)),
+        store: store.clone(),
+        keys,
+        engine,
+        irc: irc.clone(),
+        kiss,
+        hub,
+        lan: lan_out,
+        snap: snap.clone(),
+        tel: tel_tx,
+        control,
+        dest_rungs: Arc::new(Mutex::new(HashMap::new())),
+        assembler: Arc::new(Mutex::new(FragAssembler::new())),
+        last_rx_snr,
+    };
 
-    // Hold-queue pump
-    let store_h = store.clone();
-    let kiss_h = kiss.clone();
-    let hub_h = hub.as_ref().map(|h| h.tx.clone());
-    let lan_h = lan_out.clone();
-    let snap_h = snap.clone();
-    let our_h = our.clone();
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
-        loop {
-            tick.tick().await;
-            let now = crate::proto::now_ts();
-            if let Ok(due) = store_h.hold_due(now) {
-                for m in due {
-                    if m.env.origin.as_str() == our_h {
-                        continue;
+    // Hold-queue pump: relay other stations' frames, not our own (those use ARQ).
+    {
+        let rt_h = rt.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
+            loop {
+                tick.tick().await;
+                let now = crate::proto::now_ts();
+                let our = rt_h.engine.our_call.clone();
+                if let Ok(due) = rt_h.store.hold_due(now) {
+                    for m in due {
+                        if m.env.origin.as_str() == our {
+                            continue;
+                        }
+                        let _ = dispatch(&rt_h, &m.env).await;
+                        let _ = rt_h.store.set_hold(&m.env.msg_id, 0, m.env.hops_left);
                     }
-                    if let Ok(bytes) = m.env.encode() {
-                        if let Some(k) = &kiss_h {
-                            let _ = k.send(&bytes).await;
-                        }
-                        if let Some(h) = &hub_h {
-                            let _ = h.send(bytes.clone()).await;
-                        }
-                        if let Some(l) = &lan_h {
-                            let _ = l.send(m.env.clone()).await;
-                        }
-                    }
-                    let _ = store_h.set_hold(&m.env.msg_id, 0, m.env.hops_left);
+                }
+                if let Ok((o, h)) = rt_h.store.queue_depth() {
+                    let mut s = rt_h.snap.lock();
+                    s.queue_out = o;
+                    s.queue_hold = h;
                 }
             }
-            if let Ok((o, h)) = store_h.queue_depth() {
-                let mut s = snap_h.lock();
-                s.queue_out = o;
-                s.queue_hold = h;
-                s.hub_ok = false; // updated below via flag
+        });
+    }
+
+    // ARQ: retransmit our unacked messages, stepping the modem down each try.
+    {
+        let rt_r = rt.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
+            loop {
+                tick.tick().await;
+                let now = crate::proto::now_ts();
+                let (max, our) = {
+                    let cfg = rt_r.cfg.lock();
+                    (cfg.rf.max_retries, rt_r.engine.our_call.clone())
+                };
+                if let Ok(due) = rt_r.store.retry_due(now, &our, max) {
+                    for (m, retries) in due {
+                        let n = retries + 1;
+                        {
+                            let mut s = rt_r.snap.lock();
+                            s.retries = n;
+                        }
+                        let _ = dispatch_rf_rung(&rt_r, &m.env, n).await;
+                        let next = relay::next_retry_hold(n, now, m.env.priority());
+                        let _ = rt_r.store.bump_retry(&m.env.msg_id, next);
+                        rt_r.irc
+                            .tagmsg_delivery(&m.env.msg_id.hex(), &format!("retry {n}/{max}"))
+                            .await;
+                    }
+                }
             }
-        }
-    });
+        });
+    }
 
     let hub_flag_s = hub_flag.clone();
     let snap_b = snap.clone();
-    let cfg_b = cfg.clone();
+    let cfg_b = rt.cfg.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
         loop {
@@ -196,54 +251,55 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             let mut s = snap_b.lock();
             let was = s.hub_ok;
             s.hub_ok = hub_flag_s.get();
-            if cfg_b.lock().mode.uses_internet() && was && !s.hub_ok {
-                s.hub_banner = "Internet down, radio only".into();
-            }
             if s.hub_ok {
                 s.hub_banner.clear();
+            } else if cfg_b.lock().mode.uses_internet() {
+                let err = hub_flag_s.error();
+                s.hub_banner = if !err.is_empty() {
+                    err
+                } else if was {
+                    "Internet down, radio only".into()
+                } else {
+                    s.hub_banner.clone()
+                };
             }
         }
     });
 
     // Beacon
-    let store_b = store.clone();
-    let kiss_b = kiss.clone();
-    let our_b = our.clone();
-    let cfg_be = cfg.clone();
-    tokio::spawn(async move {
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
-        loop {
-            tick.tick().await;
-            let cfg = cfg_be.lock().clone();
-            if !cfg.mode.uses_radio() {
-                continue;
-            }
-            let Ok(seq) = store_b.next_seq(&our_b) else {
-                continue;
-            };
-            let Ok(origin) = Callsign::parse(&our_b) else {
-                continue;
-            };
-            let dest = Callsign::from_raw("BEACON");
-            let mut flags = Flags::new();
-            apply_mode_flags(&mut flags, cfg.mode, false);
-            if let Ok(mut env) = Envelope::new_msg(
-                origin,
-                dest,
-                seq,
-                format!("B|{}", cfg.mode.as_str()).into_bytes(),
-                1,
-                flags,
-            ) {
-                env.kind = MsgType::Beacon;
-                if let Ok(bytes) = env.encode() {
-                    if let Some(k) = &kiss_b {
-                        let _ = k.send(&bytes).await;
-                    }
+    {
+        let rt_b = rt.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                tick.tick().await;
+                let cfg = rt_b.cfg.lock().clone();
+                if !cfg.mode.uses_radio() {
+                    continue;
+                }
+                let Ok(seq) = rt_b.store.next_seq(&rt_b.engine.our_call) else {
+                    continue;
+                };
+                let Ok(origin) = Callsign::parse(&rt_b.engine.our_call) else {
+                    continue;
+                };
+                let dest = Callsign::from_raw("BEACON");
+                let mut flags = Flags::new();
+                apply_mode_flags(&mut flags, cfg.mode, false);
+                if let Ok(mut env) = Envelope::new_msg(
+                    origin,
+                    dest,
+                    seq,
+                    format!("B|{}", cfg.mode.as_str()).into_bytes(),
+                    1,
+                    flags,
+                ) {
+                    env.kind = MsgType::Beacon;
+                    let _ = dispatch(&rt_b, &env).await;
                 }
             }
-        }
-    });
+        });
+    }
 
     let mut kiss_rx = kiss_rx;
     let mut lan_in = lan_in;
@@ -252,25 +308,26 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         tokio::select! {
             ev = irc_rx.recv() => {
                 let Some(ev) = ev else { break };
-                if let Err(e) = handle_irc(&cfg, &store, &keys, &engine, &irc, &kiss, &hub, &lan_out, &snap, &tel_tx, ev).await {
+                if let Err(e) = handle_irc(&rt, ev).await {
                     tracing::warn!("irc event: {e}");
                 }
             }
             frame = recv_opt(&mut kiss_rx) => {
                 if let Some(payload) = frame {
                     if let Ok(env) = Envelope::decode(&payload) {
-                        let _ = on_envelope(&cfg, &store, &keys, &engine, &irc, &kiss, &hub, &lan_out, &snap, &tel_tx, env, "rf").await;
+                        let snr = rt.last_rx_snr.lock().take();
+                        let _ = on_envelope(&rt, env, "rf", snr).await;
                     }
                 }
             }
             env = hub_in_rx.recv() => {
                 if let Some(env) = env {
-                    let _ = on_envelope(&cfg, &store, &keys, &engine, &irc, &kiss, &hub, &lan_out, &snap, &tel_tx, env, "inet").await;
+                    let _ = on_envelope(&rt, env, "inet", None).await;
                 }
             }
             env = recv_lan(&mut lan_in) => {
                 if let Some(env) = env {
-                    let _ = on_envelope(&cfg, &store, &keys, &engine, &irc, &kiss, &hub, &lan_out, &snap, &tel_tx, env, "lan").await;
+                    let _ = on_envelope(&rt, env, "lan", None).await;
                 }
             }
         }
@@ -307,32 +364,17 @@ fn apply_mode_flags(flags: &mut Flags, mode: Mode, third: bool) {
     }
 }
 
-async fn handle_irc(
-    cfg: &Arc<Mutex<Config>>,
-    store: &Arc<Store>,
-    keys: &IdentityKeys,
-    _engine: &Engine,
-    irc: &IrcServer,
-    kiss: &Option<KissClient>,
-    hub: &Option<HubClient>,
-    lan: &Option<mpsc::Sender<Envelope>>,
-    snap: &Arc<SharedStatus>,
-    tel: &broadcast::Sender<TelemetryEvent>,
-    ev: IrcEvent,
-) -> Result<()> {
+async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
     match ev.kind {
         IrcEventKind::Privmsg { target, text, .. } => {
-            send_chat(
-                cfg, store, keys, irc, kiss, hub, lan, snap, tel, &target, &text,
-            )
-            .await?;
+            send_chat(rt, &target, &text).await?;
         }
         IrcEventKind::Radio { args } => {
-            let reply = radio_cmd(cfg, store, snap, &args, ev.client_id).await;
-            irc.send_radio_reply(ev.client_id, &reply).await;
+            let reply = radio_cmd(&rt.cfg, &rt.store, &rt.snap, &args, ev.client_id).await;
+            rt.irc.send_radio_reply(ev.client_id, &reply).await;
         }
         IrcEventKind::Join { channel } => {
-            let hist = store.history(Some(&channel), 100)?;
+            let hist = rt.store.history(Some(&channel), 100)?;
             let lines: Vec<(String, String, String, String)> = hist
                 .into_iter()
                 .filter(|m| m.env.kind == MsgType::Msg)
@@ -348,27 +390,15 @@ async fn handle_irc(
                     )
                 })
                 .collect();
-            irc.replay_history(ev.client_id, lines).await;
+            rt.irc.replay_history(ev.client_id, lines).await;
         }
         _ => {}
     }
     Ok(())
 }
 
-async fn send_chat(
-    cfg: &Arc<Mutex<Config>>,
-    store: &Arc<Store>,
-    keys: &IdentityKeys,
-    irc: &IrcServer,
-    kiss: &Option<KissClient>,
-    hub: &Option<HubClient>,
-    lan: &Option<mpsc::Sender<Envelope>>,
-    snap: &Arc<SharedStatus>,
-    tel: &broadcast::Sender<TelemetryEvent>,
-    target: &str,
-    text: &str,
-) -> Result<()> {
-    let cfg_g = cfg.lock().clone();
+async fn send_chat(rt: &Runtime, target: &str, text: &str) -> Result<()> {
+    let cfg_g = rt.cfg.lock().clone();
     let (prio, text) = Priority::parse_prefix(text);
     let origin = Callsign::parse(&cfg_g.callsign)?;
     let is_group = target.starts_with('#') || target.starts_with('&');
@@ -382,7 +412,7 @@ async fn send_chat(
     } else {
         Callsign::parse(target)?
     };
-    let seq = store.next_seq(origin.as_str())?;
+    let seq = rt.store.next_seq(origin.as_str())?;
     let mut flags = Flags::new().with(FLAG_REQ_ACK);
     apply_mode_flags(&mut flags, cfg_g.mode, origin.is_guest());
     flags.set_priority(prio);
@@ -396,13 +426,18 @@ async fn send_chat(
     };
     let mut env = Envelope::new_msg(origin, dest, seq, text.as_bytes().to_vec(), hops, flags)?;
     if cfg_g.mode.uses_internet() {
-        keys.sign_envelope(&mut env)?;
+        rt.keys.sign_envelope(&mut env)?;
     }
-    store.insert(&env, Delivery::Queued)?;
-    dispatch(cfg, store, kiss, hub, lan, &env).await?;
-    store.set_delivery(&env.msg_id, Delivery::Sent)?;
-    irc.tagmsg_delivery(&env.msg_id.hex(), "sent").await;
-    let _ = tel.send(TelemetryEvent {
+    rt.store.insert(&env, Delivery::Queued)?;
+    dispatch(rt, &env).await?;
+    rt.store.set_delivery(&env.msg_id, Delivery::Sent)?;
+    if env.flags.req_ack() && cfg_g.mode.uses_radio() {
+        let now = crate::proto::now_ts();
+        let hold = relay::next_retry_hold(0, now, prio);
+        let _ = rt.store.set_hold(&env.msg_id, hold, env.hops_left);
+    }
+    rt.irc.tagmsg_delivery(&env.msg_id.hex(), "sent").await;
+    let _ = rt.tel.send(TelemetryEvent {
         ts: env.ts as u64,
         kind: "tx".into(),
         origin: Some(env.origin.to_string()),
@@ -411,62 +446,107 @@ async fn send_chat(
         snr: None,
         msgid: Some(env.msg_id.hex()),
     });
-    let _ = snap;
+    if prio == Priority::Emergency {
+        let rt2 = rt.clone();
+        let env2 = env.clone();
+        let delay = cfg_g.rf.emergency_dup_ms;
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(delay as u64)).await;
+            let _ = dispatch(&rt2, &env2).await;
+        });
+    }
     Ok(())
 }
 
-async fn dispatch(
-    cfg: &Arc<Mutex<Config>>,
-    store: &Arc<Store>,
-    kiss: &Option<KissClient>,
-    hub: &Option<HubClient>,
-    lan: &Option<mpsc::Sender<Envelope>>,
-    env: &Envelope,
+fn rf_copy(env: &Envelope, preset: Preset) -> Envelope {
+    if preset.unsigned_on_rf() {
+        env.without_signature()
+    } else {
+        env.clone()
+    }
+}
+
+async fn apply_rung(rt: &Runtime, rung: Rung) {
+    if let Some(c) = &rt.control {
+        let _ = c.set_config(rung.control_config()).await;
+    }
+    rt.snap.lock().tx_rung = rung.as_str().into();
+}
+
+async fn dispatch_rf_rung(rt: &Runtime, env: &Envelope, retries: u32) -> Result<()> {
+    let cfg = rt.cfg.lock().clone();
+    let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::VhfFm);
+    let rf_env = rf_copy(env, preset);
+    let bytes = rf_env.encode()?;
+    let stored = rt
+        .dest_rungs
+        .lock()
+        .get(env.dest.as_str())
+        .copied()
+        .unwrap_or(preset.ladder_start());
+    let rung = presets::rung_for(preset, stored, retries, bytes.len());
+    if env.origin.as_str() == rt.engine.our_call {
+        apply_rung(rt, rung).await;
+    }
+    send_rf(rt, &rf_env, &bytes, preset, &cfg).await
+}
+
+async fn send_rf(
+    rt: &Runtime,
+    rf_env: &Envelope,
+    bytes: &[u8],
+    preset: Preset,
+    cfg: &Config,
 ) -> Result<()> {
-    let cfg = cfg.lock().clone();
-    let bytes = env.encode()?;
-    if cfg.mode.uses_radio() {
-        if let Some(k) = kiss {
-            k.send(&bytes).await?;
+    let Some(k) = &rt.kiss else {
+        return Ok(());
+    };
+    let mtu = preset.payload_bytes();
+    if frag::should_fragment(rf_env, preset.is_hf(), bytes.len(), mtu) {
+        let frags = frag::split(rf_env, cfg.rf.frag_k, cfg.rf.frag_m)?;
+        for f in frags {
+            k.send(&f.encode()?).await?;
         }
+    } else {
+        k.send(bytes).await?;
+    }
+    Ok(())
+}
+
+async fn dispatch(rt: &Runtime, env: &Envelope) -> Result<()> {
+    let cfg = rt.cfg.lock().clone();
+    if cfg.mode.uses_radio() {
+        let _ = dispatch_rf_rung(rt, env, 0).await;
     }
     if cfg.mode.uses_internet() && env.flags.inet_ok() {
-        if let Some(h) = hub {
+        if let Some(h) = &rt.hub {
             let _ = h.send(env).await;
         }
-    } else if cfg.mode.uses_internet() && !hub.is_none() {
-        // hold for flush when hub returns: already in store
     }
-    if let Some(l) = lan {
+    if let Some(l) = &rt.lan {
         let _ = l.send(env.clone()).await;
     }
-    let _ = store;
     Ok(())
 }
 
-async fn on_envelope(
-    cfg: &Arc<Mutex<Config>>,
-    store: &Arc<Store>,
-    keys: &IdentityKeys,
-    engine: &Engine,
-    irc: &IrcServer,
-    kiss: &Option<KissClient>,
-    hub: &Option<HubClient>,
-    lan: &Option<mpsc::Sender<Envelope>>,
-    snap: &Arc<SharedStatus>,
-    tel: &broadcast::Sender<TelemetryEvent>,
-    env: Envelope,
-    medium: &str,
-) -> Result<()> {
-    if env.origin.as_str() == engine.our_call {
-        // our own echo
-        store.set_delivery(&env.msg_id, Delivery::Relayed)?;
-        irc.tagmsg_delivery(&env.msg_id.hex(), "relayed").await;
+async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>) -> Result<()> {
+    if env.origin.as_str() == rt.engine.our_call {
+        rt.store.set_delivery(&env.msg_id, Delivery::Relayed)?;
+        rt.irc.tagmsg_delivery(&env.msg_id.hex(), "relayed").await;
         return Ok(());
     }
-    let decision = engine.on_rx(&env, medium, None)?;
+    if env.kind == MsgType::Frag {
+        let reconstructed = rt.assembler.lock().push(&env)?;
+        let _ = rt.engine.on_rx(&env, medium, snr)?;
+        forward_gateway(rt, &env, medium).await?;
+        if let Some(full) = reconstructed {
+            return Box::pin(on_envelope(rt, full, medium, snr)).await;
+        }
+        return Ok(());
+    }
+    let _decision = rt.engine.on_rx(&env, medium, snr)?;
     if env.ts.abs_diff(crate::proto::now_ts()) > 300 {
-        snap.lock().clock_warn = true;
+        rt.snap.lock().clock_warn = true;
     }
     match env.kind {
         MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status => {
@@ -482,66 +562,90 @@ async fn on_envelope(
             } else {
                 env.body_text()
             };
-            irc.broadcast_privmsg(env.origin.as_str(), &target, &text, Some(&env.msg_id.hex()))
+            rt.irc
+                .broadcast_privmsg(env.origin.as_str(), &target, &text, Some(&env.msg_id.hex()))
                 .await;
             if env.kind == MsgType::Checkin {
-                let _ = store.checkin(env.origin.as_str(), &env.body_text(), None, None);
+                let _ = rt
+                    .store
+                    .checkin(env.origin.as_str(), &env.body_text(), None, None);
             }
             if env.kind == MsgType::Status {
                 if let Some(w) = Welfare::parse(&env.body_text()) {
-                    let _ = store.welfare(env.origin.as_str(), w.as_str());
+                    let _ = rt.store.welfare(env.origin.as_str(), w.as_str());
                 }
             }
-            if env.flags.req_ack() && (env.dest.as_str() == engine.our_call || env.flags.group()) {
-                let seq = store.next_seq(&engine.our_call)?;
-                let mut ack =
-                    Envelope::ack_for(&env, Callsign::from_raw(engine.our_call.clone()), seq);
-                if cfg.lock().mode.uses_internet() {
-                    let _ = keys.sign_envelope(&mut ack);
+            if env.flags.req_ack() && (env.dest.as_str() == rt.engine.our_call || env.flags.group())
+            {
+                let seq = rt.store.next_seq(&rt.engine.our_call)?;
+                let mut ack = Envelope::ack_for(
+                    &env,
+                    Callsign::from_raw(rt.engine.our_call.clone()),
+                    seq,
+                    snr,
+                );
+                if rt.cfg.lock().mode.uses_internet() {
+                    let _ = rt.keys.sign_envelope(&mut ack);
                 }
-                let _ = dispatch(cfg, store, kiss, hub, lan, &ack).await;
+                let _ = dispatch(rt, &ack).await;
             }
             if env.flags.group() {
-                let _ = store.receipt(
+                let _ = rt.store.receipt(
                     &env.dest.to_string().to_ascii_lowercase(),
                     &env.msg_id,
                     env.origin.as_str(),
                 );
-                if store
+                if rt
+                    .store
                     .group_all_received(&env.dest.to_string().to_ascii_lowercase(), &env.msg_id)?
                 {
-                    store.set_delivery(&env.msg_id, Delivery::All)?;
-                    irc.tagmsg_delivery(&env.msg_id.hex(), "all").await;
+                    rt.store.set_delivery(&env.msg_id, Delivery::All)?;
+                    rt.irc.tagmsg_delivery(&env.msg_id.hex(), "all").await;
                 }
             }
         }
         MsgType::Ack => {
             if let Some(id) = env.acked_id() {
-                store.set_delivery(&id, Delivery::Delivered)?;
-                irc.tagmsg_delivery(&id.hex(), "delivered").await;
+                rt.store.set_delivery(&id, Delivery::Delivered)?;
+                let _ = rt.store.set_hold(&id, 0, 0);
+                rt.irc.tagmsg_delivery(&id.hex(), "delivered").await;
+                rt.snap.lock().retries = 0;
+            }
+            if let Some(snr_db) = env.acked_snr() {
+                let preset = Preset::parse(&rt.cfg.lock().modem.preset).unwrap_or(Preset::VhfFm);
+                let mut map = rt.dest_rungs.lock();
+                let cur = map
+                    .get(env.origin.as_str())
+                    .copied()
+                    .unwrap_or(preset.ladder_start());
+                let next = presets::adjust_rung(cur, snr_db);
+                map.insert(env.origin.to_string(), next);
+                rt.snap.lock().tx_rung = Rung::from_index(next).as_str().into();
             }
         }
         MsgType::Have => {
-            handle_have(cfg, store, keys, kiss, hub, lan, &env).await?;
+            handle_have(rt, &env).await?;
         }
         MsgType::Want => {
-            handle_want(cfg, store, kiss, hub, lan, &env).await?;
+            handle_want(rt, &env).await?;
         }
         MsgType::Beacon | MsgType::Ping | MsgType::File => {}
+        MsgType::Frag => {}
     }
-    let _ = decision;
-    let _ = tel.send(TelemetryEvent {
+    let _ = rt.tel.send(TelemetryEvent {
         ts: crate::proto::now_ts() as u64,
         kind: "rx".into(),
         origin: Some(env.origin.to_string()),
         dest: Some(env.dest.to_string()),
         hops: Some(env.hops_left),
-        snr: None,
+        snr,
         msgid: Some(env.msg_id.hex()),
     });
+    forward_gateway(rt, &env, medium).await
+}
 
-    // Gateway forward RF -> internet
-    let cfg_g = cfg.lock().clone();
+async fn forward_gateway(rt: &Runtime, env: &Envelope, medium: &str) -> Result<()> {
+    let cfg_g = rt.cfg.lock().clone();
     if medium == "rf"
         && relay::may_inet_forward(
             cfg_g.mode.uses_internet(),
@@ -549,13 +653,12 @@ async fn on_envelope(
             env.flags.no_inet(),
         )
     {
-        if let Some(h) = hub {
-            let _ = h.send(&env).await;
+        if let Some(h) = &rt.hub {
+            let _ = h.send(env).await;
         }
     }
-    // Gateway internet -> RF
     if medium == "inet" || medium == "lan" {
-        let heard = store.recently_heard(env.dest.as_str(), 600)?;
+        let heard = rt.store.recently_heard(env.dest.as_str(), 600)?;
         let group_heard = env.flags.group();
         if relay::may_rf_egress(
             cfg_g.mode.is_gateway(),
@@ -566,33 +669,25 @@ async fn on_envelope(
             env.flags.inet_ok(),
             env.flags.no_inet(),
         ) {
-            if let Some(k) = kiss {
-                if let Ok(bytes) = env.encode() {
-                    let _ = k.send(&bytes).await;
-                }
+            let preset = Preset::parse(&cfg_g.modem.preset).unwrap_or(Preset::VhfFm);
+            let rf_env = rf_copy(env, preset);
+            if let Ok(bytes) = rf_env.encode() {
+                let _ = send_rf(rt, &rf_env, &bytes, preset, &cfg_g).await;
             }
         }
     }
     Ok(())
 }
 
-async fn handle_have(
-    cfg: &Arc<Mutex<Config>>,
-    store: &Arc<Store>,
-    keys: &IdentityKeys,
-    kiss: &Option<KissClient>,
-    hub: &Option<HubClient>,
-    lan: &Option<mpsc::Sender<Envelope>>,
-    env: &Envelope,
-) -> Result<()> {
-    let cfg_g = cfg.lock().clone();
+async fn handle_have(rt: &Runtime, env: &Envelope) -> Result<()> {
+    let cfg_g = rt.cfg.lock().clone();
     let ids: Vec<&str> = std::str::from_utf8(&env.body)
         .unwrap_or("")
         .split(',')
         .filter(|s| !s.is_empty())
         .collect();
     let dest = env.dest.to_string();
-    let ours = store.have_digest(
+    let ours = rt.store.have_digest(
         &dest,
         cfg_g.group.history_max_msgs,
         cfg_g.group.history_max_age_hours,
@@ -604,7 +699,7 @@ async fn handle_have(
     if missing.is_empty() {
         return Ok(());
     }
-    let seq = store.next_seq(&cfg_g.callsign)?;
+    let seq = rt.store.next_seq(&cfg_g.callsign)?;
     let mut flags = Flags::new();
     apply_mode_flags(&mut flags, cfg_g.mode, false);
     flags.set(FLAG_GROUP, true);
@@ -618,24 +713,17 @@ async fn handle_have(
     )?;
     want.kind = MsgType::Want;
     if cfg_g.mode.uses_internet() {
-        let _ = keys.sign_envelope(&mut want);
+        let _ = rt.keys.sign_envelope(&mut want);
     }
-    dispatch(cfg, store, kiss, hub, lan, &want).await
+    dispatch(rt, &want).await
 }
 
-async fn handle_want(
-    cfg: &Arc<Mutex<Config>>,
-    store: &Arc<Store>,
-    kiss: &Option<KissClient>,
-    hub: &Option<HubClient>,
-    lan: &Option<mpsc::Sender<Envelope>>,
-    env: &Envelope,
-) -> Result<()> {
+async fn handle_want(rt: &Runtime, env: &Envelope) -> Result<()> {
     let ids = std::str::from_utf8(&env.body).unwrap_or("").split(',');
     for id in ids {
         if let Some(mid) = MsgId::parse_hex(id) {
-            if let Some(stored) = store.get(&mid)? {
-                let _ = dispatch(cfg, store, kiss, hub, lan, &stored.env).await;
+            if let Some(stored) = rt.store.get(&mid)? {
+                let _ = dispatch(rt, &stored.env).await;
             }
         }
     }
@@ -679,7 +767,7 @@ async fn radio_cmd(
                     snap.lock().preset = pr.as_str().into();
                     format!("preset {}", pr.as_str())
                 } else {
-                    "unknown preset. Use vhf-fm, hf-good, hf-poor, hf-weak, vox-safe.".into()
+                    "unknown preset. Use vhf-fm, hf-good, hf-poor, hf-weak, hf-deep, vox-safe.".into()
                 }
             } else {
                 format!("preset {}", cfg.lock().modem.preset)
@@ -694,12 +782,14 @@ async fn radio_cmd(
             }
             let s = snap.lock().clone();
             format!(
-                "{} | {} | {} | {} | SNR {:.1} | audio {} | q {}/{} | hub {}",
+                "{} | {} | {} | {} | SNR {:.1} | tx {} | retry {} | audio {} | q {}/{} | hub {}",
                 s.mode.display_name(),
                 s.channel,
                 s.frequency,
                 s.preset,
                 s.snr,
+                if s.tx_rung.is_empty() { "—" } else { &s.tx_rung },
+                s.retries,
                 s.audio_label,
                 s.queue_out,
                 s.queue_hold,

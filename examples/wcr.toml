@@ -15,7 +15,7 @@ control_port = 8073
 manage = true
 binary = "modem73"
 ptt = "none"          # vox | digirig | cm108 | rigctl | none
-preset = "vhf-fm"     # vhf-fm | hf-good | hf-poor | hf-weak | vox-safe
+preset = "vhf-fm"     # vhf-fm | hf-good | hf-poor | hf-weak | hf-deep | vox-safe
 com_port = ""
 com_line = "rts"
 vox_lead_ms = 500
@@ -60,6 +60,12 @@ bind = "127.0.0.1:8074"
 [relay]
 default_ttl = 3
 max_message_bytes = 300
+
+[rf]
+max_retries = 3       # ARQ attempts for our own unacked RF messages
+frag_k = 2            # erasure-coding data shards (group / oversized frames)
+frag_m = 1            # parity shards; any k of k+m reconstruct
+emergency_dup_ms = 400
 
 [rig]
 enabled = false

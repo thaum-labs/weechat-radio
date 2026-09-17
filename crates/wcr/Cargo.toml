@@ -58,14 +58,16 @@ hostname.workspace = true
 notify-rust = "4.11"
 eframe = { version = "0.29", optional = true }
 open = { version = "5", optional = true }
+tray-icon = { version = "0.19", optional = true }
 tokio-util = { version = "0.7", features = ["codec", "rt"] }
 http = "1.3"
 url = "2.5"
 whoami = "1.6"
+reed-solomon-erasure.workspace = true
 
 [features]
 default = ["desktop"]
-desktop = ["dep:eframe", "dep:open"]
+desktop = ["dep:eframe", "dep:open", "dep:tray-icon"]
 
 [dev-dependencies]
 tempfile = "3.19"
