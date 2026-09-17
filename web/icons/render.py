@@ -155,6 +155,10 @@ def main() -> None:
     assets.mkdir(parents=True, exist_ok=True)
     write_png(assets / "icon.png", 256, 256, raster(256, accent, True, True))
     write_ico(assets / "icon.ico", [16, 24, 32, 48, 64, 256], accent)
+    branding = repo / "branding"
+    branding.mkdir(parents=True, exist_ok=True)
+    write_png(branding / "weechat-radio-logo.png", 512, 512, raster(512, accent, True, True))
+    (branding / "mark.svg").write_text((icons / "mark-accent.svg").read_text(encoding="utf-8"), encoding="utf-8")
 
 
 if __name__ == "__main__":
