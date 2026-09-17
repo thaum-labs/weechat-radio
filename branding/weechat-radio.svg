@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 148" preserveAspectRatio="xMidYMid meet" role="img" aria-label="WeeChat Radio">
   <rect x="0.5" y="0.5" width="559" height="147" rx="18" fill="#07070a" stroke="#7d9bff" stroke-opacity="0.28"/>
-  <g transform="translate(99,44)">
+  <g transform="translate(89,44)">
     <g transform="scale(1.05)">
       <path d="M8 20 L20 30 L8 40" fill="none" stroke="#d8d0e8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
       <rect x="25" y="36" width="15" height="5" rx="1" fill="#7d9bff"/>
