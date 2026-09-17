@@ -52,9 +52,8 @@ pub fn run_wizard() -> Result<Config> {
     } else {
         println!(
             "  {}",
-            ui_style::dim().apply_to(
-                "Could not detect reliably — leave empty or type e.g. IO81UF",
-            )
+            ui_style::dim()
+                .apply_to("Could not detect reliably — leave empty or type e.g. IO81UF",)
         );
     }
     let grid: String = grid_prompt.interact_text()?;

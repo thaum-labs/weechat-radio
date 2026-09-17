@@ -61,6 +61,7 @@ pub fn split(env: &Envelope, k: u8, m: u8) -> Result<Vec<Envelope>> {
         body.extend_from_slice(&shard);
         let mut flags = env.flags;
         flags.set(crate::proto::flags::FLAG_REQ_ACK, false);
+        flags.set(crate::proto::flags::FLAG_SIGNED, false);
         let frag = Envelope {
             ver: VERSION,
             kind: MsgType::Frag,
@@ -95,6 +96,10 @@ struct Group {
 }
 
 /// Collects Frag envelopes until any `k` shards reconstruct the original message.
+///
+/// Wire `group_id` is 32 bits of BLAKE3; collisions are rare. Incoming shards
+/// whose header metadata does not match the first shard for that id are rejected
+/// rather than mixed into the same group.
 pub struct FragAssembler {
     groups: HashMap<u32, Group>,
 }
@@ -143,6 +148,17 @@ impl FragAssembler {
                 shards: HashMap::new(),
                 first_seen: Instant::now(),
             });
+            if g.k != k
+                || g.m != m
+                || g.orig_kind != orig_kind
+                || g.orig_len != orig_len
+                || g.origin != env.origin
+                || g.dest != env.dest
+                || g.seq != env.seq
+                || g.flags != env.flags
+            {
+                return Err(Error::protocol("frag group metadata mismatch"));
+            }
             g.shards.insert(idx, shard);
             if g.shards.len() < g.k as usize {
                 return Ok(None);
@@ -270,6 +286,20 @@ mod tests {
         let frags = split(&env, 2, 1).unwrap();
         let mut a = FragAssembler::new();
         assert!(a.push(&frags[0]).unwrap().is_none());
+        let got = a.push(&frags[1]).unwrap();
+        assert!(got.is_some());
+        assert_eq!(got.unwrap().body, env.body);
+    }
+
+    #[test]
+    fn mismatching_metadata_on_same_gid_is_rejected() {
+        let env = sample();
+        let frags = split(&env, 2, 1).unwrap();
+        let mut a = FragAssembler::new();
+        assert!(a.push(&frags[0]).unwrap().is_none());
+        let mut bad = frags[1].clone();
+        bad.body[5] = 3;
+        assert!(a.push(&bad).is_err());
         let got = a.push(&frags[1]).unwrap();
         assert!(got.is_some());
         assert_eq!(got.unwrap().body, env.body);

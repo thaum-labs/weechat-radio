@@ -776,7 +776,6 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
         let reconstructed = rt.assembler.lock().push(&env)?;
         let freq = heard_freq(rt, &env, medium);
         let _ = rt.engine.on_rx(&env, medium, snr, freq)?;
-        forward_gateway(rt, &env, medium).await?;
         if let Some(full) = reconstructed {
             return Box::pin(on_envelope(rt, full, medium, snr)).await;
         }
@@ -791,6 +790,10 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
     }
     if env.ts.abs_diff(crate::proto::now_ts()) > 300 {
         rt.snap.lock().clock_warn = true;
+    }
+    if !should_apply_local_effects(decision.action) {
+        refresh_heard(rt);
+        return Ok(());
     }
     match env.kind {
         MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status => {
@@ -813,21 +816,28 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                         let name = env.dest.to_string().to_ascii_lowercase();
                         let _ = rt.store.group_set_prio(&name, prio as u8);
                         refresh_group_prios(rt);
-                        let note = format!(
-                            "channel #{} default priority → {}",
-                            name,
-                            prio.as_str()
-                        );
+                        let note =
+                            format!("channel #{} default priority → {}", name, prio.as_str());
                         rt.irc.notice_all(&note).await;
                     }
                 } else if let Some(w) = Welfare::parse(&text) {
                     let _ = rt.store.welfare(env.origin.as_str(), w.as_str());
                     rt.irc
-                        .broadcast_privmsg(env.origin.as_str(), &target, &text, Some(&env.msg_id.hex()))
+                        .broadcast_privmsg(
+                            env.origin.as_str(),
+                            &target,
+                            &text,
+                            Some(&env.msg_id.hex()),
+                        )
                         .await;
                 } else {
                     rt.irc
-                        .broadcast_privmsg(env.origin.as_str(), &target, &text, Some(&env.msg_id.hex()))
+                        .broadcast_privmsg(
+                            env.origin.as_str(),
+                            &target,
+                            &text,
+                            Some(&env.msg_id.hex()),
+                        )
                         .await;
                 }
             } else {
@@ -940,6 +950,10 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
     });
     refresh_heard(rt);
     forward_gateway(rt, &env, medium).await
+}
+
+fn should_apply_local_effects(action: Action) -> bool {
+    action.applies_local_effects()
 }
 
 async fn forward_gateway(rt: &Runtime, env: &Envelope, medium: &str) -> Result<()> {

@@ -16,5 +16,5 @@ runcmd:
   - swapon /swapfile
   - grep -q swapfile /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
   - mkdir -p /opt/wcr
-  - git clone https://github.com/thaum-labs/weechat-radio.git /opt/wcr || true
+  - if [ -d /opt/wcr/.git ]; then git -C /opt/wcr pull --ff-only; else git clone https://github.com/thaum-labs/weechat-radio.git /opt/wcr; fi
   - cd /opt/wcr && docker compose -f deploy/docker-compose.yml up -d --build

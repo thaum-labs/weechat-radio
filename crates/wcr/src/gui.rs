@@ -332,11 +332,7 @@ fn load_session() -> GuiSession {
     if s.joined.is_empty() {
         s.joined = default_joined();
     }
-    if !s
-        .joined
-        .iter()
-        .any(|c| c.eq_ignore_ascii_case("#bulletin"))
-    {
+    if !s.joined.iter().any(|c| c.eq_ignore_ascii_case("#bulletin")) {
         s.joined.insert(0, "#bulletin".into());
     }
     s.active_channel = crate::slash::normalize_channel(&s.active_channel);
@@ -901,8 +897,7 @@ impl GuiApp {
                 IrcEvent::Joined(ch) => {
                     let ch = crate::slash::normalize_channel(&ch);
                     // Fresh history replay follows JOIN — drop stale lines for this room.
-                    self.chat
-                        .retain(|l| !l.channel.eq_ignore_ascii_case(&ch));
+                    self.chat.retain(|l| !l.channel.eq_ignore_ascii_case(&ch));
                     self.ensure_joined(&ch);
                     if !self.irc_joined.iter().any(|c| c.eq_ignore_ascii_case(&ch)) {
                         self.irc_joined.push(ch);
@@ -2269,8 +2264,7 @@ impl GuiApp {
                     self.grid_note =
                         "IP location disagreed — type your Maidenhead square (e.g. IO81UF)".into();
                 } else {
-                    self.grid_note =
-                        "IP location disagreed — kept your grid (verify it)".into();
+                    self.grid_note = "IP location disagreed — kept your grid (verify it)".into();
                 }
             }
         }
@@ -2566,7 +2560,15 @@ fn irc_session(
             continue;
         }
         let _ = events.send(IrcEvent::Status(format!("connected as {nick}")));
-        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut reader = match stream.try_clone() {
+            Ok(clone) => BufReader::new(clone),
+            Err(_) => {
+                let _ = events.send(IrcEvent::Status(
+                    "local IRC stream clone failed — retrying".into(),
+                ));
+                continue;
+            }
+        };
         loop {
             while let Ok(msg) = outgoing.try_recv() {
                 let line = if irc_command(&msg) {

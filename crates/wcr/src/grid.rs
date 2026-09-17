@@ -149,11 +149,7 @@ fn detect_from_ip_inner() -> Result<Option<DetectedGrid>> {
     Ok(pick_consensus(hits))
 }
 
-fn try_ip_api(
-    client: &reqwest::blocking::Client,
-    url: &str,
-    rank: u8,
-) -> Result<Option<GeoHit>> {
+fn try_ip_api(client: &reqwest::blocking::Client, url: &str, rank: u8) -> Result<Option<GeoHit>> {
     let v: serde_json::Value = match client.get(url).send() {
         Ok(r) => r.json().unwrap_or(serde_json::Value::Null),
         Err(_) => return Ok(None),
@@ -202,10 +198,7 @@ fn try_ipwho_is(client: &reqwest::blocking::Client) -> Result<Option<GeoHit>> {
 }
 
 fn try_geojs(client: &reqwest::blocking::Client) -> Result<Option<GeoHit>> {
-    let v: serde_json::Value = match client
-        .get("https://get.geojs.io/v1/ip/geo.json")
-        .send()
-    {
+    let v: serde_json::Value = match client.get("https://get.geojs.io/v1/ip/geo.json").send() {
         Ok(r) => r.json().unwrap_or(serde_json::Value::Null),
         Err(_) => return Ok(None),
     };
