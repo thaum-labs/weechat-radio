@@ -11,7 +11,7 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=16" />
+  <link rel="stylesheet" href="/styles.css?v=19" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -43,14 +43,35 @@
       </div>
 
       <figure class="diagram">
-        <div class="flow">
-          <div class="flow-row">
-            <div class="flow-box orange">faint radio<span>noise, fade, clip</span></div>
-            <span class="flow-arrow" aria-hidden="true">→</span>
-            <div class="flow-box">modem73<span>turns audio into a frame</span></div>
-            <span class="flow-arrow" aria-hidden="true">→</span>
-            <div class="flow-box accent">wcr<span>retry, slower mode, smaller packet</span></div>
-          </div>
+        <div class="dgm-wrap">
+          <svg class="dgm" viewBox="0 0 720 204" role="img" aria-labelledby="w1t w1d">
+            <title id="w1t">What happens on a faint path</title>
+            <desc id="w1d">A weak signal reaches modem73, which turns audio into a frame. WeeChat Radio retries, shrinks the packet, and asks modem73 for a tougher waveform, which changes what the radio sends next.</desc>
+            <defs>
+              <marker id="mrfW" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
+              </marker>
+              <marker id="maccW" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
+              </marker>
+            </defs>
+            <text class="tag" x="16" y="20">FAINT PATH · WHAT ADAPTS</text>
+            <line class="rf" marker-end="url(#mrfW)" x1="208" y1="90" x2="246" y2="90" />
+            <text class="sub" x="227" y="82" text-anchor="middle">audio</text>
+            <line class="rf" marker-end="url(#mrfW)" x1="442" y1="90" x2="480" y2="90" />
+            <text class="sub" x="461" y="82" text-anchor="middle">frame</text>
+            <path class="wire" marker-end="url(#maccW)" d="M584 118 V 158 H 111 V 118" />
+            <text class="sub" x="352" y="176" text-anchor="middle">retry · slower preset · smaller packet</text>
+            <rect class="box orange" x="16" y="64" width="190" height="54" />
+            <text class="on-orange" x="111" y="86" text-anchor="middle">faint radio</text>
+            <text class="sub" x="111" y="104" text-anchor="middle">noise · fade · clip</text>
+            <rect class="box" x="248" y="64" width="192" height="54" />
+            <text x="344" y="86" text-anchor="middle">modem73</text>
+            <text class="sub" x="344" y="104" text-anchor="middle">audio in, frame out</text>
+            <rect class="box accent" x="482" y="64" width="204" height="54" />
+            <text class="on-accent" x="584" y="86" text-anchor="middle">wcr</text>
+            <text class="sub" x="584" y="104" text-anchor="middle">decides what to send next</text>
+          </svg>
         </div>
         <figcaption>The sound program decodes the signal. WeeChat Radio retries, shrinks the packet, and asks modem73 for a tougher waveform.</figcaption>
       </figure>

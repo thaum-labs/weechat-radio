@@ -11,7 +11,7 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=16" />
+  <link rel="stylesheet" href="/styles.css?v=19" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -38,14 +38,30 @@
       <p class="lead">No cable. The radio has its own packet TNC; the app talks to it over Bluetooth. About three minutes.</p>
 
       <figure class="diagram">
-        <div class="flow">
-          <div class="flow-row">
-            <div class="flow-box orange">VR-N76<span>built-in KISS TNC</span></div>
-            <span class="flow-arrow" aria-hidden="true">⇢</span>
-            <div class="flow-box">Bluetooth<span>SPP / RFCOMM</span></div>
-            <span class="flow-arrow" aria-hidden="true">⇢</span>
-            <div class="flow-box accent">this computer<span>wcr only</span></div>
-          </div>
+        <div class="dgm-wrap">
+          <svg class="dgm" viewBox="0 0 720 186" role="img" aria-labelledby="n1t n1d">
+            <title id="n1t">Radio with a built-in TNC over Bluetooth</title>
+            <desc id="n1d">The radio's own KISS TNC talks to the computer over a Bluetooth serial link. No sound card and no modem73 are involved.</desc>
+            <defs>
+              <marker id="maccN" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
+              </marker>
+            </defs>
+            <text class="tag" x="16" y="20">NO CABLE, NO SOUND CARD</text>
+            <line class="bt" marker-start="url(#maccN)" marker-end="url(#maccN)" x1="232" y1="88" x2="270" y2="88" />
+            <line class="bt" marker-start="url(#maccN)" marker-end="url(#maccN)" x1="456" y1="88" x2="494" y2="88" />
+            <rect class="box orange" x="16" y="62" width="214" height="54" />
+            <text class="on-orange" x="123" y="84" text-anchor="middle">VR-N76</text>
+            <text class="sub" x="123" y="102" text-anchor="middle">built-in KISS TNC</text>
+            <rect class="box" x="272" y="62" width="182" height="54" />
+            <text x="363" y="84" text-anchor="middle">Bluetooth</text>
+            <text class="sub" x="363" y="102" text-anchor="middle">SPP / RFCOMM</text>
+            <rect class="box accent" x="496" y="62" width="208" height="54" />
+            <text class="on-accent" x="600" y="84" text-anchor="middle">this computer</text>
+            <text class="sub" x="600" y="102" text-anchor="middle">wcr only</text>
+            <text class="sub" x="360" y="146" text-anchor="middle">the radio makes the 1200 bd packet itself · afsk-1200 preset</text>
+            <text class="sub" x="360" y="166" text-anchor="middle">also: BTECH UV-PRO, Radioddity GA-5WB, VR-N7500</text>
+          </svg>
         </div>
         <figcaption>The radio turns chat into 1200 bd packet itself. No sound card, no modem73.</figcaption>
       </figure>

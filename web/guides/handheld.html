@@ -11,7 +11,7 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=16" />
+  <link rel="stylesheet" href="/styles.css?v=19" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -38,14 +38,34 @@
       <p class="lead">A VHF/UHF walkie-talkie and a USB sound cable. About five minutes.</p>
 
       <figure class="diagram">
-        <div class="flow">
-          <div class="flow-row">
-            <div class="flow-box orange">handheld<span>speaker-mic jack</span></div>
-            <span class="flow-arrow" aria-hidden="true">→</span>
-            <div class="flow-box">Digirig<span>or AIOC</span></div>
-            <span class="flow-arrow" aria-hidden="true">→</span>
-            <div class="flow-box accent">USB<span>this computer</span></div>
-          </div>
+        <div class="dgm-wrap">
+          <svg class="dgm" viewBox="0 0 720 176" role="img" aria-labelledby="h1t h1d">
+            <title id="h1t">Handheld to computer through a Digirig</title>
+            <desc id="h1d">A cable runs from the handheld's speaker-mic jack to the Digirig or AIOC, which connects to one USB port on the computer. The cable carries audio both ways and keys the radio.</desc>
+            <defs>
+              <marker id="mrfH" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
+              </marker>
+              <marker id="maccH" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
+              </marker>
+            </defs>
+            <text class="tag" x="16" y="20">TWO PLUGS, NOTHING ELSE</text>
+            <line class="rf" marker-start="url(#mrfH)" marker-end="url(#mrfH)" x1="224" y1="88" x2="262" y2="88" />
+            <text class="sub" x="243" y="80" text-anchor="middle">audio</text>
+            <line class="wire" marker-start="url(#maccH)" marker-end="url(#maccH)" x1="448" y1="88" x2="486" y2="88" />
+            <text class="sub" x="467" y="80" text-anchor="middle">USB</text>
+            <rect class="box orange" x="16" y="62" width="206" height="54" />
+            <text class="on-orange" x="119" y="84" text-anchor="middle">handheld</text>
+            <text class="sub" x="119" y="102" text-anchor="middle">speaker-mic jack</text>
+            <rect class="box" x="264" y="62" width="182" height="54" />
+            <text x="355" y="84" text-anchor="middle">Digirig</text>
+            <text class="sub" x="355" y="102" text-anchor="middle">or AIOC</text>
+            <rect class="box accent" x="488" y="62" width="216" height="54" />
+            <text class="on-accent" x="596" y="84" text-anchor="middle">this computer</text>
+            <text class="sub" x="596" y="102" text-anchor="middle">one USB port</text>
+            <text class="sub" x="360" y="146" text-anchor="middle">the same cable carries audio both ways and keys the radio</text>
+          </svg>
         </div>
         <figcaption>One cable into the radio’s speaker-mic hole. One USB cable into the computer.</figcaption>
       </figure>

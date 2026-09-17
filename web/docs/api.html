@@ -11,7 +11,7 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=16" />
+  <link rel="stylesheet" href="/styles.css?v=19" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -41,14 +41,38 @@
       <p>CORS is open. Reads need no key. Writes are signed.</p>
 
       <figure class="diagram">
-        <div class="flow">
-          <div class="flow-row">
-            <div class="flow-box accent">your station<span>signed POST</span></div>
-            <span class="flow-arrow" aria-hidden="true">→</span>
-            <div class="flow-box cyan">hub API</div>
-            <span class="flow-arrow" aria-hidden="true">→</span>
-            <div class="flow-box">map + /ws/live</div>
-          </div>
+        <div class="dgm-wrap">
+          <svg class="dgm" viewBox="0 0 720 206" role="img" aria-labelledby="a1t a1d">
+            <title id="a1t">How station reports reach the map</title>
+            <desc id="a1d">Your station signs a report and posts it to the hub API, which serves it to the public map and the live WebSocket feed. Message text is never part of a report.</desc>
+            <defs>
+              <marker id="mnetA" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
+              </marker>
+            </defs>
+            <text class="tag" x="16" y="20">WRITES ARE SIGNED · READS ARE OPEN</text>
+            <line class="net" marker-end="url(#mnetA)" x1="200" y1="86" x2="244" y2="86" />
+            <text class="sub" x="222" y="78" text-anchor="middle">HTTPS</text>
+            <line class="net" marker-end="url(#mnetA)" x1="432" y1="76" x2="514" y2="60" />
+            <line class="net" marker-end="url(#mnetA)" x1="432" y1="98" x2="514" y2="124" />
+            <path class="none" d="M106 116 V 138" />
+            <line class="cross" x1="97" y1="140" x2="115" y2="158" />
+            <line class="cross" x1="115" y1="140" x2="97" y2="158" />
+            <rect class="box accent" x="16" y="62" width="182" height="54" />
+            <text class="on-accent" x="107" y="84" text-anchor="middle">your station</text>
+            <text class="sub" x="107" y="102" text-anchor="middle">signs with its own key</text>
+            <rect class="box hub" x="246" y="62" width="184" height="54" />
+            <text class="on-hub" x="338" y="84" text-anchor="middle">hub API</text>
+            <text class="sub" x="338" y="102" text-anchor="middle">checks the signature</text>
+            <rect class="box" x="516" y="36" width="188" height="48" />
+            <text x="610" y="56" text-anchor="middle">live map</text>
+            <text class="sub" x="610" y="72" text-anchor="middle">public, no key</text>
+            <rect class="box" x="516" y="100" width="188" height="48" />
+            <text x="610" y="120" text-anchor="middle">/ws/live</text>
+            <text class="sub" x="610" y="136" text-anchor="middle">event firehose</text>
+            <text class="sub" x="132" y="154">message text never goes in a report</text>
+            <text class="sub" x="16" y="192">first sight of a public key binds it to that callsign; later posts must match</text>
+          </svg>
         </div>
         <figcaption>Stations report metadata only. Message text never goes in a report.</figcaption>
       </figure>

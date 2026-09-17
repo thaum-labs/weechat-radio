@@ -11,7 +11,7 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=16" />
+  <link rel="stylesheet" href="/styles.css?v=19" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -38,15 +38,61 @@
       <p class="lead">Four ways to chat. Switch with <code>/radio mode &lt;name&gt;</code> or press F2 in the TUI.</p>
 
       <figure class="diagram">
-        <div class="flow">
-          <div class="flow-row">
-            <div class="flow-box cyan">internet<span>hub only</span></div>
-            <div class="flow-box green">internet-radio<span>radio first</span></div>
-            <div class="flow-box amber">radio<span>never online</span></div>
-            <div class="flow-box magenta">radio-plus<span>gateway may help</span></div>
-          </div>
+        <div class="dgm-wrap">
+          <svg class="dgm" viewBox="0 0 720 302" role="img" aria-labelledby="m1t m1d">
+            <title id="m1t">What each mode connects to</title>
+            <desc id="m1d">Internet mode uses the hub only. Internet-radio uses both and acts as a gateway. Radio uses RF only and never touches the hub. Radio-plus transmits on RF and reaches the internet only through someone else's gateway.</desc>
+            <defs>
+              <marker id="mrfM" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
+              </marker>
+              <marker id="mnetM" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
+              </marker>
+            </defs>
+            <text class="tag" x="16" y="20">WHAT EACH MODE IS ALLOWED TO USE</text>
+            <rect class="box radio" x="16" y="44" width="118" height="232" />
+            <text class="on-radio" x="75" y="152" text-anchor="middle">on the air</text>
+            <text class="sub" x="75" y="169" text-anchor="middle">RF</text>
+            <rect class="box hub" x="586" y="44" width="118" height="232" />
+            <text class="on-hub" x="645" y="152" text-anchor="middle">hub</text>
+            <text class="sub" x="645" y="169" text-anchor="middle">internet</text>
+
+            <path class="none" d="M136 66 H 210" />
+            <text class="sub" x="173" y="58" text-anchor="middle">radio off</text>
+            <line class="cross" x1="164" y1="58" x2="182" y2="74" />
+            <line class="cross" x1="182" y1="58" x2="164" y2="74" />
+            <line class="net" marker-start="url(#mnetM)" marker-end="url(#mnetM)" x1="512" y1="66" x2="584" y2="66" />
+            <rect class="box hub" x="212" y="44" width="298" height="44" />
+            <text class="on-hub" x="361" y="63" text-anchor="middle">internet</text>
+            <text class="sub" x="361" y="79" text-anchor="middle">hub only · no hardware needed</text>
+
+            <line class="rf" marker-start="url(#mrfM)" marker-end="url(#mrfM)" x1="136" y1="130" x2="210" y2="130" />
+            <line class="net" marker-start="url(#mnetM)" marker-end="url(#mnetM)" x1="512" y1="130" x2="584" y2="130" />
+            <rect class="box gw" x="212" y="108" width="298" height="44" />
+            <text class="on-gw" x="361" y="127" text-anchor="middle">internet-radio</text>
+            <text class="sub" x="361" y="143" text-anchor="middle">radio first · this station is a gateway</text>
+
+            <line class="rf" marker-start="url(#mrfM)" marker-end="url(#mrfM)" x1="136" y1="194" x2="210" y2="194" />
+            <path class="none" d="M512 194 H 584" />
+            <text class="sub" x="548" y="186" text-anchor="middle">never</text>
+            <line class="cross" x1="539" y1="186" x2="557" y2="202" />
+            <line class="cross" x1="557" y1="186" x2="539" y2="202" />
+            <rect class="box radio" x="212" y="172" width="298" height="44" />
+            <text class="on-radio" x="361" y="191" text-anchor="middle">radio</text>
+            <text class="sub" x="361" y="207" text-anchor="middle">RF only · frames never reach the hub</text>
+
+            <line class="rf" marker-start="url(#mrfM)" marker-end="url(#mrfM)" x1="136" y1="258" x2="210" y2="258" />
+            <path class="none" marker-end="url(#mnetM)" d="M512 258 H 584" />
+            <text class="sub" x="548" y="250" text-anchor="middle">gateway</text>
+            <rect class="box rplus" x="212" y="236" width="298" height="44" />
+            <text class="on-rplus" x="361" y="255" text-anchor="middle">radio-plus</text>
+            <text class="sub" x="361" y="271" text-anchor="middle">you never upload · someone may relay</text>
+
+            <text class="sub" x="16" y="296">the mode you pick decides what may leave this computer</text>
+          </svg>
         </div>
-        <figcaption>The same mode marks appear on the live map and in the status bar.</figcaption>
+        <figcaption>The same mode colours appear on the live map, in the nicklist, and in the status bar. Cross-band details: <a href="/docs/bridging.html">cross-frequency chat</a>.</figcaption>
       </figure>
 
       <div class="mode-grid-docs">
@@ -84,14 +130,31 @@
 
       <h2>If the hub dies</h2>
       <figure class="diagram">
-        <div class="flow">
-          <div class="flow-row">
-            <div class="flow-box">you send</div>
-            <span class="flow-arrow" aria-hidden="true">→</span>
-            <div class="flow-box accent">saved on disk</div>
-            <span class="flow-arrow" aria-hidden="true">→</span>
-            <div class="flow-box">next station hears it</div>
-          </div>
+        <div class="dgm-wrap">
+          <svg class="dgm" viewBox="0 0 720 190" role="img" aria-labelledby="m2t m2d">
+            <title id="m2t">Store and forward</title>
+            <desc id="m2d">A message nobody hears is saved on disk with its hops left intact, and goes out again when another station appears, minutes or hours later.</desc>
+            <defs>
+              <marker id="mrfS" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
+              </marker>
+            </defs>
+            <text class="tag" x="16" y="20">STORE AND FORWARD</text>
+            <text class="sub" x="115" y="52" text-anchor="middle">nobody answers</text>
+            <text class="sub" x="473" y="52" text-anchor="middle">minutes or hours later</text>
+            <line class="rf" marker-end="url(#mrfS)" x1="198" y1="96" x2="230" y2="96" />
+            <line class="rf" marker-end="url(#mrfS)" x1="458" y1="96" x2="490" y2="96" />
+            <rect class="box radio" x="16" y="70" width="180" height="54" />
+            <text class="on-radio" x="106" y="92" text-anchor="middle">you send</text>
+            <text class="sub" x="106" y="110" text-anchor="middle">out on the air</text>
+            <rect class="box accent" x="232" y="70" width="224" height="54" />
+            <text class="on-accent" x="344" y="92" text-anchor="middle">saved on disk</text>
+            <text class="sub" x="344" y="110" text-anchor="middle">keeps its hops left</text>
+            <rect class="box gw" x="492" y="70" width="212" height="54" />
+            <text class="on-gw" x="598" y="92" text-anchor="middle">next station</text>
+            <text class="sub" x="598" y="110" text-anchor="middle">hears it and passes it on</text>
+            <text class="sub" x="16" y="164">the message survives a reboot; it stops when its hops run out</text>
+          </svg>
         </div>
         <figcaption>Messages wait. Nobody has to leave a radio on all night.</figcaption>
       </figure>

@@ -11,7 +11,7 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=16" />
+  <link rel="stylesheet" href="/styles.css?v=19" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -43,14 +43,29 @@
       </div>
 
       <figure class="diagram">
-        <div class="flow">
-          <div class="flow-row">
-            <div class="flow-box orange">radio<span>your transmitter</span></div>
-            <span class="flow-arrow" aria-hidden="true">→</span>
-            <div class="flow-box">cable<span>sound in and out</span></div>
-            <span class="flow-arrow" aria-hidden="true">→</span>
-            <div class="flow-box accent">this computer<span>wcr + modem73</span></div>
-          </div>
+        <div class="dgm-wrap">
+          <svg class="dgm" viewBox="0 0 720 180" role="img" aria-labelledby="r1t r1d">
+            <title id="r1t">How a radio joins the station</title>
+            <desc id="r1d">Audio passes both ways between the radio and the computer through a cable. The computer runs wcr and modem73, and something has to key the radio: VOX, a USB serial line, or CAT.</desc>
+            <defs>
+              <marker id="mrfR" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
+              </marker>
+            </defs>
+            <text class="tag" x="16" y="20">AUDIO GOES BOTH WAYS</text>
+            <line class="rf" marker-start="url(#mrfR)" marker-end="url(#mrfR)" x1="220" y1="90" x2="256" y2="90" />
+            <line class="rf" marker-start="url(#mrfR)" marker-end="url(#mrfR)" x1="444" y1="90" x2="480" y2="90" />
+            <rect class="box orange" x="16" y="64" width="202" height="54" />
+            <text class="on-orange" x="117" y="86" text-anchor="middle">radio</text>
+            <text class="sub" x="117" y="104" text-anchor="middle">your transmitter</text>
+            <rect class="box" x="258" y="64" width="184" height="54" />
+            <text x="350" y="86" text-anchor="middle">cable</text>
+            <text class="sub" x="350" y="104" text-anchor="middle">sound in and out</text>
+            <rect class="box accent" x="482" y="64" width="222" height="54" />
+            <text class="on-accent" x="593" y="86" text-anchor="middle">this computer</text>
+            <text class="sub" x="593" y="104" text-anchor="middle">wcr + modem73</text>
+            <text class="sub" x="350" y="144" text-anchor="middle">something also has to key the radio: VOX, USB serial, or CAT</text>
+          </svg>
         </div>
         <figcaption>The computer turns chat into audio. The radio sends that audio over the air.</figcaption>
       </figure>

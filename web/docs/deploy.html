@@ -11,7 +11,7 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=16" />
+  <link rel="stylesheet" href="/styles.css?v=19" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -38,16 +38,36 @@
       <p class="lead">For people running the public server. Most users never need this page.</p>
 
       <figure class="diagram">
-        <div class="flow">
-          <div class="flow-row">
-            <div class="flow-box">internet</div>
-            <span class="flow-arrow" aria-hidden="true">→</span>
-            <div class="flow-box accent">Caddy<span>HTTPS</span></div>
-          </div>
-          <div class="flow-row">
-            <div class="flow-box cyan">weechatradio.com<span>this site</span></div>
-            <div class="flow-box orange">hub.weechatradio.com<span>wcr hub</span></div>
-          </div>
+        <div class="dgm-wrap">
+          <svg class="dgm" viewBox="0 0 720 216" role="img" aria-labelledby="dp1t dp1d">
+            <title id="dp1t">One droplet serving the site and the hub</title>
+            <desc id="dp1d">Traffic arrives on port 443. Caddy terminates HTTPS and serves the static site for weechatradio.com, and proxies hub.weechatradio.com to the wcr hub container.</desc>
+            <defs>
+              <marker id="mnetD" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
+              </marker>
+            </defs>
+            <text class="tag" x="16" y="20">ONE DROPLET · DOCKER COMPOSE</text>
+            <rect class="zone" x="196" y="40" width="508" height="152" />
+            <text class="sub" x="208" y="58">ubuntu + docker compose</text>
+            <line class="net" marker-end="url(#mnetD)" x1="152" y1="112" x2="220" y2="112" />
+            <text class="sub" x="186" y="104" text-anchor="middle">443</text>
+            <line class="net" marker-end="url(#mnetD)" x1="376" y1="100" x2="412" y2="90" />
+            <line class="net" marker-end="url(#mnetD)" x1="376" y1="124" x2="412" y2="152" />
+            <rect class="box" x="16" y="86" width="134" height="52" />
+            <text x="83" y="108" text-anchor="middle">internet</text>
+            <text class="sub" x="83" y="125" text-anchor="middle">visitors + nodes</text>
+            <rect class="box accent" x="222" y="86" width="152" height="52" />
+            <text class="on-accent" x="298" y="108" text-anchor="middle">Caddy</text>
+            <text class="sub" x="298" y="125" text-anchor="middle">certs, one config</text>
+            <rect class="box hub" x="414" y="66" width="272" height="48" />
+            <text class="on-hub" x="550" y="86" text-anchor="middle">weechatradio.com</text>
+            <text class="sub" x="550" y="102" text-anchor="middle">static files from web/</text>
+            <rect class="box orange" x="414" y="128" width="272" height="48" />
+            <text class="on-orange" x="550" y="148" text-anchor="middle">hub.weechatradio.com</text>
+            <text class="sub" x="550" y="164" text-anchor="middle">wcr hub · /ws and /api</text>
+            <text class="sub" x="16" y="208">pushing to main rebuilds the image and restarts compose on the droplet</text>
+          </svg>
         </div>
         <figcaption>One droplet. Caddy serves the website and proxies the hub.</figcaption>
       </figure>
