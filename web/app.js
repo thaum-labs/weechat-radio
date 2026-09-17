@@ -73,12 +73,16 @@ const map = new maplibregl.Map({
   style: rasterStyle(initialMapStyle),
   center: [0, 20],
   zoom: 1.4,
-  attributionControl: true,
+  attributionControl: false,
   cooperativeGestures: coarse,
   dragRotate: !coarse,
   pitchWithRotate: !coarse,
   touchPitch: !coarse,
 });
+map.addControl(
+  new maplibregl.AttributionControl({ compact: false }),
+  "bottom-right"
+);
 
 function fitMap() {
   try { map.resize(); } catch (_) {}
@@ -331,6 +335,8 @@ function upsertNode(n) {
 }
 
 function showCard(n) {
+  if (!card) return;
+  card.hidden = false;
   card.innerHTML = kv([
     ["call", n.callsign || "—"],
     ["mode", n.mode || "—"],
@@ -339,6 +345,11 @@ function showCard(n) {
     ["grid", n.grid || "—"],
     ["snr", n.snr ?? "—"],
   ]);
+  if (stationList) {
+    stationList.querySelectorAll(".station").forEach((el) => {
+      el.classList.toggle("on", el.dataset.call === (n.callsign || ""));
+    });
+  }
 }
 
 function renderModes(nodes) {
@@ -364,6 +375,7 @@ function renderStations(nodes) {
   nodes.forEach((n) => {
     const d = document.createElement("div");
     d.className = "station";
+    d.dataset.call = n.callsign || "";
     d.innerHTML = `${modeMark(n.mode)}<span><b>${n.callsign}</b>${n.mode || ""} ${n.preset || ""}</span>`;
     d.onclick = () => {
       showCard(n);
@@ -379,14 +391,23 @@ function renderStations(nodes) {
 }
 
 function tick(line) {
+  if (!ticker) return;
   const p = document.createElement("div");
+  p.className = "reel-line";
   p.textContent = line;
   ticker.prepend(p);
-  while (ticker.children.length > 8) ticker.removeChild(ticker.lastChild);
+  const cap = ticker.classList.contains("reel") ? 120 : 8;
+  while (ticker.children.length > cap) ticker.removeChild(ticker.lastChild);
 }
 
 function isLive() {
   return Number(scrub.value) >= SPAN;
+}
+
+function syncTapeClock() {
+  if (clock) clock.textContent = clockLabel();
+  const meta = document.getElementById("tape-clock-meta");
+  if (meta) meta.textContent = isLive() ? "LIVE" : playing ? "PLAY" : "PAUSE";
 }
 
 function clockLabel() {
@@ -464,7 +485,7 @@ async function ensureReplay() {
 }
 
 function renderReplay() {
-  clock.textContent = clockLabel();
+  syncTapeClock();
   updateDayNight();
   if (isLive()) {
     liveMode = true;
@@ -473,7 +494,7 @@ function renderReplay() {
   liveMode = false;
   const minutesAgo = SPAN - Number(scrub.value);
   const cutoff = Math.floor(Date.now() / 1000) - minutesAgo * 60;
-  const rows = replayCache.filter((x) => (x.ts || 0) <= cutoff).slice(0, 12);
+  const rows = replayCache.filter((x) => (x.ts || 0) <= cutoff).slice(0, 80);
   ticker.innerHTML = "";
   if (!rows.length) {
     tick("No traffic in this part of the last 24 hours.");
@@ -489,7 +510,7 @@ function goLive() {
   scrub.value = SPAN;
   liveMode = true;
   setPlaying(false);
-  clock.textContent = clockLabel();
+  syncTapeClock();
   updateDayNight();
 }
 
@@ -507,7 +528,7 @@ function playStep() {
 }
 
 async function applyScrub() {
-  clock.textContent = clockLabel();
+  syncTapeClock();
   updateDayNight();
   if (isLive()) {
     liveMode = true;
@@ -537,7 +558,7 @@ function renderConn() {
 playBtn.addEventListener("click", () => {
   if (playing) {
     setPlaying(false);
-    clock.textContent = clockLabel();
+    syncTapeClock();
     return;
   }
   if (isLive()) scrub.value = "0";

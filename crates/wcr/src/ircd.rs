@@ -246,6 +246,18 @@ impl IrcServer {
                         .await;
                 }
             }
+            "INVITE" => {
+                if parts.len() >= 3 {
+                    let target = parts[1].clone();
+                    let ch = parts[2].clone();
+                    let from = self.nick(id);
+                    self.send_numeric(id, 341, &format!("{target} {ch}")).await;
+                    if let Some(tid) = self.id_by_nick(&target) {
+                        self.send_raw(tid, &format!(":{from} INVITE {target} {ch}"))
+                            .await;
+                    }
+                }
+            }
             "PRIVMSG" => {
                 if parts.len() >= 3 {
                     let target = parts[1].clone();
@@ -373,6 +385,15 @@ impl IrcServer {
             .get(&id)
             .map(|c| c.nick.clone())
             .unwrap_or_else(|| "*".into())
+    }
+
+    fn id_by_nick(&self, nick: &str) -> Option<u64> {
+        self.inner
+            .lock()
+            .clients
+            .iter()
+            .find(|(_, c)| c.nick.eq_ignore_ascii_case(nick))
+            .map(|(id, _)| *id)
     }
 
     fn has_cap(&self, id: u64, cap: &str) -> bool {

@@ -118,6 +118,10 @@ const GROUP_ARGS: &[Arg] = &[
         hint: "create <name> <CALLSIGN…>",
     },
     Arg {
+        value: "invite",
+        hint: "invite <name> <CALLSIGN>",
+    },
+    Arg {
         value: "members",
         hint: "members <name>",
     },
@@ -188,8 +192,29 @@ const COMMANDS: &[Cmd] = &[
         send_bare: true,
     },
     Cmd {
+        name: "join",
+        usage: "/join #channel",
+        summary: "Open or create a chat channel",
+        args: &[],
+        send_bare: false,
+    },
+    Cmd {
+        name: "invite",
+        usage: "/invite CALLSIGN",
+        summary: "Invite a station to this channel",
+        args: &[],
+        send_bare: false,
+    },
+    Cmd {
+        name: "part",
+        usage: "/part",
+        summary: "Leave this channel",
+        args: &[],
+        send_bare: true,
+    },
+    Cmd {
         name: "group",
-        usage: "/group list|create|members",
+        usage: "/group list|create|members|invite",
         summary: "Named callsign lists",
         args: GROUP_ARGS,
         send_bare: false,
@@ -255,7 +280,85 @@ pub fn to_radio_args(raw: &str) -> Option<String> {
     if rest.is_empty() || rest.eq_ignore_ascii_case("radio") {
         return Some("help".into());
     }
+    let head = rest
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if matches!(head.as_str(), "join" | "j" | "part" | "invite") {
+        return None;
+    }
     Some(rest.to_string())
+}
+
+pub fn normalize_channel(raw: &str) -> String {
+    let t = raw
+        .trim()
+        .trim_start_matches('#')
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect::<String>()
+        .to_ascii_lowercase();
+    format!("#{t}")
+}
+
+pub fn is_bulletin(channel: &str) -> bool {
+    channel.eq_ignore_ascii_case("#bulletin") || channel.eq_ignore_ascii_case("bulletin")
+}
+
+/// Turn a GUI line into one or more IRC commands (no trailing CRLF).
+pub fn to_wire(raw: &str, channel: &str) -> Vec<String> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return Vec::new();
+    }
+    if !t.starts_with('/') {
+        return vec![format!("PRIVMSG {channel} :{t}")];
+    }
+    let rest = t[1..].trim();
+    let rest = rest
+        .strip_prefix("radio ")
+        .or_else(|| rest.strip_prefix("RADIO "))
+        .unwrap_or(rest);
+    let (head, tail) = match rest.split_once(char::is_whitespace) {
+        Some((h, a)) => (h.to_ascii_lowercase(), a.trim().to_string()),
+        None => (rest.to_ascii_lowercase(), String::new()),
+    };
+    match head.as_str() {
+        "join" | "j" => {
+            let ch = normalize_channel(&tail);
+            if ch.len() < 2 {
+                return Vec::new();
+            }
+            vec![format!("JOIN {ch}")]
+        }
+        "part" => vec![format!("PART {channel}")],
+        "invite" => {
+            let nick = tail
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_ascii_uppercase();
+            if nick.is_empty() {
+                return Vec::new();
+            }
+            let g = channel.trim_start_matches('#');
+            vec![
+                format!("RADIO group invite {g} {nick}"),
+                format!("INVITE {nick} {channel}"),
+                format!(
+                    "PRIVMSG {nick} :You are invited to {channel} on WeeChat Radio. Join that channel to talk."
+                ),
+            ]
+        }
+        _ => {
+            if let Some(args) = to_radio_args(t) {
+                vec![format!("RADIO {args}")]
+            } else {
+                vec![format!("PRIVMSG {channel} :{t}")]
+            }
+        }
+    }
 }
 
 pub fn suggestions(draft: &str) -> Vec<Suggestion> {
@@ -304,6 +407,8 @@ pub fn suggestions(draft: &str) -> Vec<Suggestion> {
                 "/mode radio confirm".into()
             } else if cmd.name == "group" && a.value == "create" {
                 "/group create ".into()
+            } else if cmd.name == "group" && a.value == "invite" {
+                "/group invite ".into()
             } else if cmd.name == "group" && a.value == "members" {
                 "/group members ".into()
             } else if cmd.name == "history" {
@@ -360,5 +465,15 @@ mod tests {
     fn mode_args_after_space() {
         let s = suggestions("/mode ");
         assert!(s.iter().any(|x| x.label.contains("internet-radio")));
+    }
+
+    #[test]
+    fn join_is_irc_not_radio() {
+        assert_eq!(to_radio_args("/join #ops"), None);
+        assert_eq!(
+            to_wire("/join ops", "#bulletin"),
+            vec!["JOIN #ops".to_string()]
+        );
+        assert!(to_wire("hello", "#ops")[0].starts_with("PRIVMSG #ops"));
     }
 }
