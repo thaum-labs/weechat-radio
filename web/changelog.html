@@ -33,7 +33,27 @@
   <div class="page-wrap">
     <main class="page-panel">
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> changelog</h1>
-      <div id="log">loading GitHub releases…</div>
+      <article class="release">
+        <h3 class="title">
+          <p>hub ce4a108</p>
+          <p>Thu, 17 Sep 2026</p>
+        </h3>
+        <pre>Weak-signal delivery is on the public hub.
+
+- Protocol version 2 on radio and internet (version 1 still decoded)
+- Smaller packets: compressed chat, shorter headers, unsigned on slow HF
+- Unacked messages retry (default 3). Each retry uses a slower waveform
+- New preset hf-deep (MFSK-32R). hf-poor / hf-weak use short RDM frames
+- Emergency (!!) sent twice. Group HF chat split so any 2 of 3 pieces rebuild
+- Hub stitches pieces heard by different gateways
+- Status bar shows TX (waveform) and RETRY
+
+Operator guide: https://weechatradio.com/docs/weak.html
+Wire protocol: https://weechatradio.com/docs/protocol.html
+
+Every station talking on radio with this hub should run this build.</pre>
+      </article>
+      <div id="log"></div>
     </main>
   </div>
   <script src="/shell.js?v=7"></script>
@@ -42,7 +62,7 @@
       .then(r => r.json())
       .then(list => {
         if (!Array.isArray(list) || !list.length) {
-          document.getElementById("log").textContent = "No tagged releases yet. Watch this space.";
+          document.getElementById("log").textContent = "";
           return;
         }
         document.getElementById("log").innerHTML = list.map(r =>

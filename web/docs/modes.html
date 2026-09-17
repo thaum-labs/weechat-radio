@@ -45,24 +45,24 @@
             <div class="flow-box magenta">radio-plus<span>gateway may help</span></div>
           </div>
         </div>
-        <figcaption>The same colours appear on the live map and in the status bar.</figcaption>
+        <figcaption>The same mode marks appear on the live map and in the status bar.</figcaption>
       </figure>
 
       <div class="mode-grid-docs">
         <article class="mode-card cyan">
-          <h3>internet</h3>
+          <h3><img class="mode-mark" src="/icons/mark-internet.svg" alt="">internet</h3>
           <p>Radio off. You talk to the hub only. Fine for trying the program with no hardware.</p>
         </article>
         <article class="mode-card green">
-          <h3>internet-radio</h3>
+          <h3><img class="mode-mark" src="/icons/mark-internet-radio.svg" alt="">internet-radio</h3>
           <p>Radio is primary. Internet fills gaps. This station is a gateway for others.</p>
         </article>
         <article class="mode-card amber">
-          <h3>radio</h3>
+          <h3><img class="mode-mark" src="/icons/mark-radio.svg" alt="">radio</h3>
           <p>Radio only. Frames are never put on the internet. Switching here asks you to confirm.</p>
         </article>
         <article class="mode-card magenta">
-          <h3>radio-plus</h3>
+          <h3><img class="mode-mark" src="/icons/mark-radio-plus.svg" alt="">radio-plus</h3>
           <p>You stay off the internet. A nearby gateway that hears you may forward your traffic.</p>
         </article>
       </div>
@@ -73,10 +73,10 @@
             <tr><th>Mode</th><th>Radio</th><th>Internet</th><th>Map colour</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>internet</code></td><td>off</td><td>hub only</td><td>cyan</td></tr>
-            <tr><td><code>internet-radio</code></td><td>on, primary</td><td>fills gaps</td><td>green</td></tr>
-            <tr><td><code>radio</code></td><td>on</td><td>none</td><td>amber</td></tr>
-            <tr><td><code>radio-plus</code></td><td>on</td><td>none locally</td><td>magenta</td></tr>
+            <tr><td><code>internet</code></td><td>off</td><td>hub only</td><td class="mode-swatch"><img class="mode-mark" src="/icons/mark-internet.svg" alt="">cyan</td></tr>
+            <tr><td><code>internet-radio</code></td><td>on, primary</td><td>fills gaps</td><td class="mode-swatch"><img class="mode-mark" src="/icons/mark-internet-radio.svg" alt="">green</td></tr>
+            <tr><td><code>radio</code></td><td>on</td><td>none</td><td class="mode-swatch"><img class="mode-mark" src="/icons/mark-radio.svg" alt="">amber</td></tr>
+            <tr><td><code>radio-plus</code></td><td>on</td><td>none locally</td><td class="mode-swatch"><img class="mode-mark" src="/icons/mark-radio-plus.svg" alt="">magenta</td></tr>
           </tbody>
         </table>
       </div>
@@ -97,7 +97,8 @@
       <p>If you are in <code>internet-radio</code> and the hub goes away, radio keeps working. The status bar says <strong>Internet down, radio only</strong>. Traffic that needed the internet waits in the hold queue and goes out when the hub returns.</p>
 
       <h2>Weak-signal behaviour</h2>
-      <p>On radio, modem73 demodulates. <code>wcr</code> retries unacked frames, steps the modem down (QPSK 1/2 → RDM-1200S → RDM-600S → RDM-300S → MFSK-32R), and splits group/oversized frames into Reed–Solomon fragments the hub can reassemble from several gateways. Presets: <code>hf-good</code>, <code>hf-poor</code>, <code>hf-weak</code>, <code>hf-deep</code>. The status bar shows the current TX rung and retry count.</p>
+      <p>On a faint or fading path the program retries your message and asks modem73 for a slower waveform. The status bar shows <strong>TX</strong> (current waveform) and <strong>RETRY</strong>. Presets: <code>hf-good</code>, <code>hf-poor</code>, <code>hf-weak</code>, <code>hf-deep</code>.</p>
+      <p>Operator steps: <a href="/docs/weak.html">weak signals</a>. Packet layout: <a href="/docs/protocol.html">wire protocol</a>.</p>
 
       <h2>Gateway knobs</h2>
       <p>In <code>wcr.toml</code>:</p>
@@ -107,7 +108,7 @@ third_party = "deny"      # guest (~nick) traffic on RF: allow or deny</pre>
 
       <div class="ok">
         <h2>How you know it worked</h2>
-        <p>The status bar colour matches the cards above. Other stations on the map show the same colours.</p>
+        <p>The status bar colour matches the cards above. Other stations on the map show the same mode marks.</p>
       </div>
     </main>
   </div>

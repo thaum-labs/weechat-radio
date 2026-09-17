@@ -4,6 +4,8 @@ On the web: https://weechatradio.com/docs/protocol.html
 
 Version 2 is the default on radio (KISS) and internet (WebSocket). Version 1 frames are still decoded during the transition.
 
+This hub build (17 Sep 2026, commit `ce4a108`) speaks v2. Operator guide: https://weechatradio.com/docs/weak.html
+
 ## Version 2 header (variable, typically 16–22 bytes before body)
 
 `msg_id` is not on the wire. The receiver recomputes `BLAKE3(origin, dest, seq, body)` (uncompressed body).

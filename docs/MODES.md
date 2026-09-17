@@ -27,6 +27,8 @@ On radio, `wcr` does not demodulate audio — [modem73](https://github.com/RFnex
 
 The status bar shows the current TX rung and retry count.
 
+Operator guide: [weak signals](https://weechatradio.com/docs/weak.html). Same text offline: `wcr help weak`.
+
 ## Gateway knobs
 
 In `wcr.toml`:

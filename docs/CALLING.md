@@ -13,3 +13,6 @@ US  HF     7.090 MHz USB  preset hf-poor
 AU  HF     7.090 MHz USB  preset hf-poor
 
 The setup wizard can set the radio via rigctl only if you confirm.
+
+On a rough HF path use hf-weak or hf-deep instead of hf-poor.
+Guide: https://weechatradio.com/docs/weak.html  (offline: wcr help weak)
