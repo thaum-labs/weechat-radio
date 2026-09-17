@@ -30,13 +30,14 @@ jobs:
             fi
           } > release-notes.md
           cat release-notes.md
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2.2.2
         with:
           body_path: release-notes.md
           generate_release_notes: false
   build:
     needs: notes
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -117,12 +118,18 @@ jobs:
       - name: refuse unix archive without modem73
         if: runner.os == 'Linux'
         run: tar -tzf "${{ matrix.asset }}" | grep -E '(^|/)modem73$'
-      - uses: softprops/action-gh-release@v2
+      - name: Upload release assets
+        uses: nick-fields/retry@v3
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          files: ${{ matrix.asset }}
-          generate_release_notes: false
-      - uses: softprops/action-gh-release@v2
-        if: matrix.modem_asset != ''
-        with:
-          files: ${{ matrix.modem_asset }}
-          generate_release_notes: false
+          timeout_minutes: 20
+          max_attempts: 5
+          retry_wait_seconds: 30
+          shell: bash
+          command: |
+            set -euo pipefail
+            gh release upload "${GITHUB_REF_NAME}" "${{ matrix.asset }}" --clobber
+            if [ -n "${{ matrix.modem_asset }}" ] && [ -e "${{ matrix.modem_asset }}" ]; then
+              gh release upload "${GITHUB_REF_NAME}" "${{ matrix.modem_asset }}" --clobber
+            fi
