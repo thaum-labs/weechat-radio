@@ -201,7 +201,12 @@ fn extract_zip(zip_path: &Path, dest: &Path) -> Result<()> {
     #[cfg(not(windows))]
     {
         let status = Command::new("unzip")
-            .args(["-o", zip_path.to_str().unwrap_or(""), "-d", dest.to_str().unwrap_or("")])
+            .args([
+                "-o",
+                zip_path.to_str().unwrap_or(""),
+                "-d",
+                dest.to_str().unwrap_or(""),
+            ])
             .status()
             .map_err(|e| Error::Msg(format!("unzip failed: {e}")))?;
         if !status.success() {
@@ -224,7 +229,9 @@ fn find_wcr_binary(dir: &Path) -> Result<PathBuf> {
             return Ok(p);
         }
     }
-    Err(Error::Msg("release archive did not contain wcr binary".into()))
+    Err(Error::Msg(
+        "release archive did not contain wcr binary".into(),
+    ))
 }
 
 fn install_binary(dest: &Path, src: &Path) -> Result<()> {

@@ -628,12 +628,7 @@ async fn send_form(rt: &Runtime, target: &str, form: Form) -> Result<String> {
     rt.irc.tagmsg_delivery(&env.msg_id.hex(), "sent").await;
     let preview = form.render_text();
     rt.irc
-        .broadcast_privmsg(
-            &cfg_g.callsign,
-            target,
-            &preview,
-            Some(&env.msg_id.hex()),
-        )
+        .broadcast_privmsg(&cfg_g.callsign, target, &preview, Some(&env.msg_id.hex()))
         .await;
     Ok(env.msg_id.hex())
 }

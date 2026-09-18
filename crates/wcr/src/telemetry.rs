@@ -315,8 +315,7 @@ pub async fn ingest_report(
     if !crate::rate_limit::allow(&st.report_by_call, &call) {
         return Err((StatusCode::TOO_MANY_REQUESTS, "rate limit".into()));
     }
-    if let Some(ip) = header(&headers, "x-forwarded-for")
-        .or_else(|| header(&headers, "x-real-ip"))
+    if let Some(ip) = header(&headers, "x-forwarded-for").or_else(|| header(&headers, "x-real-ip"))
     {
         let ip_key = ip.split(',').next().unwrap_or(ip).trim();
         if !crate::rate_limit::allow(&st.report_by_ip, ip_key) {
