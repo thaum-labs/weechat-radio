@@ -96,7 +96,10 @@ body.page-doc { overflow: auto; }
   line-height: 1;
   letter-spacing: -0.06em;
   white-space: nowrap;
+  color: inherit;
+  text-decoration: none;
 }
+a.prompt:hover .brand-weechat { color: var(--orange); }
 .prompt .who { color: var(--accent); }
 .prompt .sym { color: var(--orange); }
 .prompt .brand-mark {

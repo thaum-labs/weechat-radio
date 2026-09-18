@@ -25,7 +25,19 @@
 
   function applyBrand() {
     document.querySelectorAll("header .prompt").forEach((el) => {
-      el.innerHTML = `${markSvg("#7d9bff", "brand-mark")}<span class="brand-word"><span class="brand-weechat">weechat</span><span class="brand-radio">radio</span></span>`;
+      const html = `${markSvg("#7d9bff", "brand-mark")}<span class="brand-word"><span class="brand-weechat">weechat</span><span class="brand-radio">radio</span></span>`;
+      if (el.tagName === "A") {
+        el.href = "/";
+        el.setAttribute("aria-label", "WeeChat Radio home");
+        el.innerHTML = html;
+        return;
+      }
+      const a = document.createElement("a");
+      a.href = "/";
+      a.className = el.className;
+      a.setAttribute("aria-label", "WeeChat Radio home");
+      a.innerHTML = html;
+      el.replaceWith(a);
     });
   }
 
