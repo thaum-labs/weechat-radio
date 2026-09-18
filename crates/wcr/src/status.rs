@@ -66,6 +66,13 @@ pub struct StatusSnapshot {
     /// TUI activity panel (mirrors `[ui] activity_panel`).
     #[serde(default = "default_activity_panel")]
     pub activity_panel: bool,
+    /// Running `wcr` build version (from Cargo package version).
+    #[serde(default = "default_version")]
+    pub version: String,
+}
+
+fn default_version() -> String {
+    crate::update::current_version().to_string()
 }
 
 fn default_activity_panel() -> bool {
@@ -172,6 +179,7 @@ impl Default for StatusSnapshot {
             heard: Vec::new(),
             group_prios: Vec::new(),
             activity_panel: true,
+            version: default_version(),
         }
     }
 }

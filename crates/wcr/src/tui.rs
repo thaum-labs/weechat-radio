@@ -568,6 +568,7 @@ fn draw(f: &mut Frame, app: &App) {
         })
         .unwrap_or_else(|| "idle".into());
     let station_rows = [
+        ("ver", crate::update::current_version().to_string()),
         ("preset", app.preset.as_str().into()),
         ("ptt", ptt),
         (
