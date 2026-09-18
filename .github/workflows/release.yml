@@ -43,6 +43,7 @@ jobs:
         with:
           body_path: release-notes.md
           generate_release_notes: false
+          draft: true
   build:
     needs: notes
     if: ${{ !failure() && !cancelled() && (needs.notes.result == 'success' || needs.notes.result == 'skipped') }}
@@ -82,7 +83,7 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
       - name: linux windowing libs
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxdo-dev
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxdo-dev libasound2-dev libudev-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -188,8 +189,25 @@ jobs:
             if [ -n "${{ matrix.modem_asset }}" ] && [ -e "${{ matrix.modem_asset }}" ]; then
               gh release upload "${RELEASE_TAG}" "${{ matrix.modem_asset }}" --clobber
             fi
+  publish:
+    needs: [notes, build]
+    if: ${{ !cancelled() && (needs.notes.result == 'success' || needs.notes.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: publish release after assets upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          count="$(gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --json assets -q '.assets | length')"
+          if [ "${count}" -eq 0 ]; then
+            echo "No assets on ${RELEASE_TAG}; leaving draft release unpublished."
+            exit 0
+          fi
+          gh release edit "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false
   sync_install_manifests:
-    needs: build
+    needs: [build, publish]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
