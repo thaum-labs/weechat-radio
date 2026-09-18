@@ -27,6 +27,8 @@ On radio, `wcr` does not demodulate audio — [modem73](https://github.com/RFnex
 
 The status bar shows the current TX rung and retry count.
 
+Versus JS8, FT8, Olivia, and APRS: [compare modes](https://weechatradio.com/docs/compare.html). Offline: `wcr help compare`.
+
 ## Busy channel
 
 When several stations talk at once, frames would otherwise pile onto the KISS port and key over each other. Two layers stop that:

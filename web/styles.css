@@ -1126,3 +1126,59 @@ details.maplibregl-ctrl-attrib:not([open]) {
   }
   .log-panel { min-height: 0; }
 }
+
+.page-panel th.cmp-sort {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.page-panel th.cmp-sort:hover,
+.page-panel th.cmp-sort:focus {
+  color: var(--orange);
+  outline: none;
+}
+.page-panel th.cmp-sort[aria-sort="descending"]::after,
+.page-panel th.cmp-sort[aria-sort="ascending"]::after {
+  color: var(--orange);
+  font-size: 11px;
+}
+.page-panel th.cmp-sort[aria-sort="descending"]::after { content: " v"; }
+.page-panel th.cmp-sort[aria-sort="ascending"]::after { content: " ^"; }
+.page-panel #cmp-table td { text-align: center; }
+.page-panel #cmp-table td:nth-child(1),
+.page-panel #cmp-table td:nth-child(2),
+.page-panel #cmp-table th:nth-child(1),
+.page-panel #cmp-table th:nth-child(2) { text-align: left; }
+tr.cmp-wcr {
+  background: rgba(255, 122, 61, 0.1);
+}
+tr.cmp-wcr td {
+  border-bottom-color: rgba(255, 122, 61, 0.35);
+}
+tr.cmp-wcr td:first-child { color: var(--orange); }
+.cmp-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--orange);
+  color: var(--orange);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  vertical-align: 1px;
+}
+tr.cmp-wcr-vhf td:first-child { color: var(--accent); }
+.cmp-tag.vhf {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
