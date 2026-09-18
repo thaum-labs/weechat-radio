@@ -437,9 +437,11 @@ pub async fn reporter_loop(
     callsign: String,
     snap: Arc<crate::status::SharedStatus>,
     mut events: tokio::sync::broadcast::Receiver<TelemetryEvent>,
+    interval_secs: u64,
 ) {
     let client = reqwest::Client::new();
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+    let secs = interval_secs.max(1);
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(secs));
     let mut pending = Vec::new();
     loop {
         tokio::select! {

@@ -56,6 +56,11 @@ pub enum Command {
         #[command(subcommand)]
         action: TncAction,
     },
+    /// Isolated paired tests (no public hub, no user config)
+    E2e {
+        #[command(subcommand)]
+        kind: E2eCmd,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -109,4 +114,20 @@ pub enum AdminCmd {
 pub enum CallsignAdmin {
     Release { call: String },
     Reassign { call: String, pubkey_hex: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum E2eCmd {
+    /// Two machines on the same LAN: #bulletin plus a private hub/map
+    Lan {
+        /// Seconds to wait for the other station
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+        /// LAN TCP/UDP port (keep off 7373 so a live station can stay up)
+        #[arg(long, default_value_t = 7375)]
+        port: u16,
+        /// Private hub listen port (keep off 7373)
+        #[arg(long, default_value_t = 7376)]
+        hub_port: u16,
+    },
 }

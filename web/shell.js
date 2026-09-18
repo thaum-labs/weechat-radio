@@ -2,7 +2,9 @@
 (function (global) {
   const host = location.hostname;
   const local = host === "localhost" || host === "127.0.0.1";
-  const API = (global.WCR_API || (local
+  const params = new URLSearchParams(location.search);
+  const qsApi = (params.get("api") || "").replace(/\/+$/, "");
+  const API = (global.WCR_API || qsApi || (local
     ? "http://127.0.0.1:7373"
     : `${location.protocol}//hub.${host.replace(/^www\./, "")}`));
 

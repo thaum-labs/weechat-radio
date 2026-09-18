@@ -187,6 +187,13 @@ impl Default for HubConfig {
     }
 }
 
+impl HubConfig {
+    /// Empty URL means do not dial a hub (LAN-only / e2e).
+    pub fn enabled(&self) -> bool {
+        url_configured(&self.url)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TelemetryConfig {
@@ -200,6 +207,12 @@ impl Default for TelemetryConfig {
             url: PUBLIC_TELEMETRY.into(),
             interval_secs: 30,
         }
+    }
+}
+
+impl TelemetryConfig {
+    pub fn enabled(&self) -> bool {
+        url_configured(&self.url)
     }
 }
 
@@ -260,11 +273,22 @@ impl Default for GroupConfig {
     }
 }
 
+pub const DEFAULT_LAN_SERVICE: &str = "_wcr._tcp.local.";
+pub const E2E_LAN_SERVICE: &str = "_wcr-e2e._tcp.local.";
+pub const E2E_LAN_PORT: u16 = 7375;
+pub const E2E_HUB_PORT: u16 = 7376;
+pub const E2E_IRC_BIND: &str = "127.0.0.1:16667";
+pub const E2E_STATUS_BIND: &str = "127.0.0.1:18074";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LanConfig {
     pub discovery: bool,
     pub port: u16,
+    /// mDNS service type. Override for isolated meshes (e.g. paired e2e).
+    pub service: String,
+    /// Optional `host:port` advertised in UDP hellos so peers can find a private hub.
+    pub hub_advertise: String,
 }
 
 impl Default for LanConfig {
@@ -272,6 +296,8 @@ impl Default for LanConfig {
         Self {
             discovery: true,
             port: 7373,
+            service: DEFAULT_LAN_SERVICE.into(),
+            hub_advertise: String::new(),
         }
     }
 }
@@ -427,7 +453,14 @@ impl Config {
         if self.store.path.as_os_str().is_empty() {
             self.store.path = default_data_dir().join("wcr.db");
         }
-        self.hub.url = crate::net::hub_client::websocket_url(&self.hub.url);
+        if url_configured(&self.hub.url) {
+            self.hub.url = crate::net::hub_client::websocket_url(&self.hub.url);
+        } else {
+            self.hub.url.clear();
+        }
+        if self.lan.service.trim().is_empty() {
+            self.lan.service = DEFAULT_LAN_SERVICE.into();
+        }
         if self.modem.uses_tnc() {
             // The radio's TNC is fixed 1200 bd AFSK; modem73 is not involved.
             self.modem.manage = false;
@@ -445,15 +478,47 @@ impl Config {
     pub fn key_path() -> PathBuf {
         default_data_dir().join("identity.key")
     }
+
+    /// True when this station will open a hub WebSocket.
+    pub fn dials_hub(&self) -> bool {
+        self.mode.uses_internet() && self.hub.enabled()
+    }
+
+    /// True when this station will POST telemetry.
+    pub fn reports_telemetry(&self) -> bool {
+        self.mode.uses_internet() && self.telemetry.enabled()
+    }
+}
+
+/// Non-empty after trim. Empty hub/telemetry URLs mean "do not dial".
+pub fn url_configured(url: &str) -> bool {
+    !url.trim().is_empty()
+}
+
+/// Config and data directories under a `WCR_HOME` root.
+pub fn dirs_under_home(home: &Path) -> (PathBuf, PathBuf) {
+    (home.join("config"), home.join("data"))
+}
+
+fn home_from_env() -> Option<PathBuf> {
+    std::env::var_os("WCR_HOME")
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
 }
 
 pub fn default_config_dir() -> PathBuf {
+    if let Some(home) = home_from_env() {
+        return dirs_under_home(&home).0;
+    }
     directories::ProjectDirs::from("com", "thaum-labs", "wcr")
         .map(|p| p.config_dir().to_path_buf())
         .unwrap_or_else(|| PathBuf::from(".").join(".wcr"))
 }
 
 pub fn default_data_dir() -> PathBuf {
+    if let Some(home) = home_from_env() {
+        return dirs_under_home(&home).1;
+    }
     directories::ProjectDirs::from("com", "thaum-labs", "wcr")
         .map(|p| p.data_dir().to_path_buf())
         .unwrap_or_else(|| PathBuf::from(".").join(".wcr"))
@@ -492,5 +557,55 @@ mod tests {
         assert!(!cfg.modem.manage);
         assert_eq!(cfg.modem.preset, "afsk-1200");
         assert_eq!(cfg.modem.ptt, "tnc");
+    }
+
+    #[test]
+    fn dirs_under_home_split_config_and_data() {
+        let home = PathBuf::from("/tmp/wcr-e2e-home");
+        let (cfg, data) = dirs_under_home(&home);
+        assert_eq!(cfg, home.join("config"));
+        assert_eq!(data, home.join("data"));
+    }
+
+    #[test]
+    fn empty_hub_url_does_not_dial() {
+        let mut cfg = Config {
+            mode: Mode::Internet,
+            hub: HubConfig {
+                url: String::new(),
+                ..Default::default()
+            },
+            telemetry: TelemetryConfig {
+                url: String::new(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        cfg.normalize();
+        assert!(!url_configured(&cfg.hub.url));
+        assert!(!cfg.hub.enabled());
+        assert!(!cfg.dials_hub());
+        assert!(!cfg.reports_telemetry());
+        cfg.hub.url = PUBLIC_HUB.into();
+        assert!(cfg.dials_hub());
+    }
+
+    #[test]
+    fn wcr_home_redirects_config_and_data() {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _g = LOCK.lock().unwrap();
+        let prev = std::env::var_os("WCR_HOME");
+        let root = std::env::temp_dir().join(format!("wcr-home-test-{}", std::process::id()));
+        std::env::set_var("WCR_HOME", &root);
+        let cfg = default_config_dir();
+        let data = default_data_dir();
+        let key = Config::key_path();
+        match prev {
+            Some(v) => std::env::set_var("WCR_HOME", v),
+            None => std::env::remove_var("WCR_HOME"),
+        }
+        assert_eq!(cfg, root.join("config"));
+        assert_eq!(data, root.join("data"));
+        assert_eq!(key, root.join("data").join("identity.key"));
     }
 }
