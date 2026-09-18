@@ -1,7 +1,6 @@
 //! SPDX-License-Identifier: Apache-2.0
 //! Serial, audio, and rigctld discovery for the setup wizard.
 
-use cpal::traits::{DeviceTrait, HostTrait};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
@@ -13,19 +12,27 @@ pub struct LabeledPort {
 }
 
 pub fn serial_ports() -> Vec<LabeledPort> {
-    serialport::available_ports()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|p| {
-            let label = port_label(&p);
-            LabeledPort {
-                name: p.port_name,
-                label,
-            }
-        })
-        .collect()
+    #[cfg(feature = "setup-probe")]
+    {
+        serialport::available_ports()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| {
+                let label = port_label(&p);
+                LabeledPort {
+                    name: p.port_name,
+                    label,
+                }
+            })
+            .collect()
+    }
+    #[cfg(not(feature = "setup-probe"))]
+    {
+        Vec::new()
+    }
 }
 
+#[cfg(feature = "setup-probe")]
 fn port_label(p: &serialport::SerialPortInfo) -> String {
     let mut extra = String::new();
     if let serialport::SerialPortType::UsbPort(u) = &p.port_type {
@@ -57,11 +64,19 @@ pub fn find_digirig(ports: &[LabeledPort]) -> Option<String> {
 }
 
 pub fn list_audio_inputs() -> Vec<String> {
-    let host = cpal::default_host();
-    let Ok(devs) = host.input_devices() else {
-        return Vec::new();
-    };
-    devs.filter_map(|d| d.name().ok()).collect()
+    #[cfg(feature = "setup-probe")]
+    {
+        use cpal::traits::{DeviceTrait, HostTrait};
+        let host = cpal::default_host();
+        let Ok(devs) = host.input_devices() else {
+            return Vec::new();
+        };
+        devs.filter_map(|d| d.name().ok()).collect()
+    }
+    #[cfg(not(feature = "setup-probe"))]
+    {
+        Vec::new()
+    }
 }
 
 const RIGCTLD_CANDIDATES: &[&str] = &["127.0.0.1:4532", "127.0.0.1:4533", "localhost:4532"];
