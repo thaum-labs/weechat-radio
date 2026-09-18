@@ -2,11 +2,11 @@
 //! mDNS LAN discovery (`_wcr._tcp`) and direct node-to-node links.
 
 use crate::error::Result;
+use crate::net::frame;
 use crate::proto::Envelope;
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
-use crate::net::frame;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 

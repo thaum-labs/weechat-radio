@@ -851,7 +851,9 @@ fn should_notify(app: &App, from: &str, text: &str, to: &str) -> bool {
     if !cur.starts_with('#') && !cur.starts_with('&') && from.eq_ignore_ascii_case(cur) {
         return true;
     }
-    if to.eq_ignore_ascii_case(&app.nick) || to.starts_with('@') && to[1..].eq_ignore_ascii_case(&app.nick) {
+    if to.eq_ignore_ascii_case(&app.nick)
+        || to.starts_with('@') && to[1..].eq_ignore_ascii_case(&app.nick)
+    {
         return true;
     }
     text.to_ascii_uppercase()

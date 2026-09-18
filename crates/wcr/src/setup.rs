@@ -71,7 +71,11 @@ pub fn run_wizard() -> Result<Config> {
         "KISS TNC on a serial port (Mobilinkd, rfcomm0, Bluetooth COM)",
     ];
     let path = Select::with_theme(&theme)
-        .with_prompt(ui_style::step(3, total_steps, "How will you get on the air?"))
+        .with_prompt(ui_style::step(
+            3,
+            total_steps,
+            "How will you get on the air?",
+        ))
         .items(&paths)
         .default(0)
         .interact()?;
@@ -192,9 +196,8 @@ pub fn run_wizard() -> Result<Config> {
         if !cfg.modem.audio_input.is_empty() {
             println!(
                 "  {}",
-                ui_style::dim().apply_to(
-                    "We pass this to modem73 as capture_device when the node starts."
-                )
+                ui_style::dim()
+                    .apply_to("We pass this to modem73 as capture_device when the node starts.")
             );
         }
         println!();
