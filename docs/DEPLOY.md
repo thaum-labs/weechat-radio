@@ -37,6 +37,12 @@ Create A records, all pointing at the droplet IP:
 
 6. GitHub Actions workflow `.github/workflows/deploy.yml` rebuilds images and `docker compose pull && up -d` on each push to `main`.
 
+## App version vs website
+
+The website and hub **image** update on every push to `main`. That does not bump the app version and does not make `wcr update` download anything.
+
+Bump `Cargo.toml`, the README badge, OpenAPI `info.version`, the numbered changelog, and a `v*` tag **only** when `wcr` / `wcr-gui` behaviour (or the bits inside the binary) change. `wcr update` follows those tags.
+
 ## Backups
 
 Production uses **SQLite** inside the `hub` container (`/data/hub.db` and telemetry DB). Optional nightly copy:

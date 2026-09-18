@@ -115,6 +115,10 @@ docker compose -f deploy/docker-compose.yml up -d</pre>
         </li>
       </ol>
 
+      <h2>App version vs website</h2>
+      <p>The website and hub image update on every push to <code>main</code>. That does not bump the app version and does not make <code>wcr update</code> download anything.</p>
+      <p>Bump <code>Cargo.toml</code>, the README badge, OpenAPI version, the numbered changelog, and a <code>v*</code> tag only when <code>wcr</code> / <code>wcr-gui</code> behaviour (or the bits inside the binary) change. <code>wcr update</code> follows those tags.</p>
+
       <h2>Backups</h2>
       <p>Production uses <strong>SQLite</strong> in the hub container (<code>/data/hub.db</code> and telemetry DB). Optional nightly copy:</p>
       <pre>docker compose -f deploy/docker-compose.yml exec -T hub \
