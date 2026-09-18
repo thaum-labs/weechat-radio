@@ -72,9 +72,26 @@ pub async fn latest() -> Result<Option<ReleaseInfo>> {
 fn pick_asset(assets: &[Asset]) -> Option<&Asset> {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
+    let preferred = match (os, arch) {
+        // WoA and x64 Windows share the x86_64 release zip today.
+        ("windows", "x86_64" | "aarch64") => Some("wcr-windows-x86_64.zip"),
+        ("linux", "x86_64") => Some("wcr-linux-x86_64.tar.gz"),
+        ("linux", "aarch64") => Some("wcr-linux-aarch64.tar.gz"),
+        ("macos", "x86_64") => Some("wcr-macos-x86_64.tar.gz"),
+        ("macos", "aarch64") => Some("wcr-macos-aarch64.tar.gz"),
+        _ => None,
+    };
+    if let Some(name) = preferred {
+        if let Some(a) = assets.iter().find(|a| a.name.eq_ignore_ascii_case(name)) {
+            return Some(a);
+        }
+    }
     assets.iter().find(|a| {
         let n = a.name.to_ascii_lowercase();
-        n.contains(os) && (n.contains(arch) || (arch == "x86_64" && n.contains("amd64")))
+        if !n.starts_with("wcr-") {
+            return false;
+        }
+        n.contains(os) && (n.contains(arch) || (arch == "x86_64" && n.contains("x86_64")))
     })
 }
 
