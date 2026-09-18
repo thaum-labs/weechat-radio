@@ -393,6 +393,10 @@ struct GuiApp {
     bt_name: String,
     /// Serial path for a KISS TNC on a port (`COM7`, `/dev/rfcomm0`).
     serial_path: String,
+    rigctl: String,
+    audio_input: String,
+    hw: Option<HardwareProbe>,
+    hw_rx: Option<Receiver<HardwareProbe>>,
     freq_mhz: String,
     /// Re-open the setup panel from the toolbar to change the radio path.
     show_setup: bool,
@@ -464,7 +468,11 @@ impl GuiApp {
                 form.bt_name
             },
             serial_path: form.serial,
-            freq_mhz: form.freq_mhz,
+            rigctl: form.rigctl,
+            audio_input: form.audio_input,
+            hw: None,
+            hw_rx: None,
+            freq_mhz: form.freq_mhz.clone(),
             show_setup: false,
             error: String::new(),
             draft: String::new(),
@@ -547,6 +555,8 @@ impl GuiApp {
                 cfg.modem.backend = "modem73".into();
                 cfg.modem.ptt = "rigctl".into();
                 cfg.modem.preset = Preset::HfGood.as_str().into();
+                cfg.modem.rigctl = self.rigctl.trim().to_string();
+                cfg.rig.enabled = true;
             }
             4 => {
                 cfg.mode = Mode::InternetRadio;
@@ -587,6 +597,9 @@ impl GuiApp {
         if matches!(self.path, 1 | 2) {
             cfg.modem.backend = "modem73".into();
             cfg.modem.manage = true;
+        }
+        if matches!(self.path, 1 | 2 | 3) {
+            cfg.modem.audio_input = self.audio_input.trim().to_string();
         }
         cfg.ui.theme = "tron".into();
         if self.path != 0 {
@@ -1085,6 +1098,10 @@ impl eframe::App for GuiApp {
                     }
                     if self.configured() && nav_link(ui, "setup").clicked() {
                         self.show_setup = !self.show_setup;
+                        if self.show_setup {
+                            self.hw = None;
+                            self.hw_rx = None;
+                        }
                         self.error.clear();
                     }
                     if nav_link(ui, "quit").clicked() {
@@ -1130,6 +1147,7 @@ impl eframe::App for GuiApp {
             });
 
         if !self.configured() || self.show_setup {
+            self.poll_hardware_probe();
             let reopened = self.configured();
             egui::CentralPanel::default()
                 .frame(chrome(SHELL))
@@ -1200,10 +1218,36 @@ impl eframe::App for GuiApp {
                         ui.horizontal(|ui| {
                             ui.add_space(20.0);
                             ui.label(RichText::new("Serial").color(DIM));
+                            if let Some(ports) = self.hw.as_ref().map(|h| h.ports.as_slice()) {
+                                port_combo_ui(ui, ports, &mut self.com_port, "digirig_port");
+                            }
                             ui.add(
                                 egui::TextEdit::singleline(&mut self.com_port)
-                                    .desired_width(160.0)
+                                    .desired_width(120.0)
                                     .hint_text("COM5"),
+                            );
+                        });
+                    }
+                    if self.path == 3 {
+                        ui.horizontal(|ui| {
+                            ui.add_space(20.0);
+                            ui.label(RichText::new("CAT    ").color(DIM));
+                            if let Some(hw) = &self.hw {
+                                if !hw.rigctld.is_empty() {
+                                    egui::ComboBox::from_id_salt("rigctl_pick")
+                                        .selected_text(self.rigctl.as_str())
+                                        .width(200.0)
+                                        .show_ui(ui, |ui| {
+                                            for h in &hw.rigctld {
+                                                ui.selectable_value(&mut self.rigctl, h.clone(), h);
+                                            }
+                                        });
+                                }
+                            }
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.rigctl)
+                                    .desired_width(160.0)
+                                    .hint_text("127.0.0.1:4532"),
                             );
                         });
                     }
@@ -1214,9 +1258,12 @@ impl eframe::App for GuiApp {
                         ui.horizontal(|ui| {
                             ui.add_space(20.0);
                             ui.label(RichText::new("Port  ").color(DIM));
+                            if let Some(ports) = self.hw.as_ref().map(|h| h.ports.as_slice()) {
+                                port_combo_ui(ui, ports, &mut self.serial_path, "tnc_port");
+                            }
                             ui.add(
                                 egui::TextEdit::singleline(&mut self.serial_path)
-                                    .desired_width(200.0)
+                                    .desired_width(160.0)
                                     .hint_text("COM7 or /dev/rfcomm0"),
                             );
                         });
@@ -1228,6 +1275,40 @@ impl eframe::App for GuiApp {
                                 )
                                 .color(DIM)
                                 .font(FontId::monospace(11.0)),
+                            );
+                        });
+                    }
+                    if matches!(self.path, 1 | 2 | 3) {
+                        ui.horizontal(|ui| {
+                            ui.add_space(20.0);
+                            ui.label(RichText::new("Audio  ").color(DIM));
+                            if let Some(hw) = &self.hw {
+                                if !hw.audio.is_empty() {
+                                    let label = if self.audio_input.is_empty() {
+                                        "(system default)".to_string()
+                                    } else {
+                                        self.audio_input.clone()
+                                    };
+                                    egui::ComboBox::from_id_salt("audio_in")
+                                        .selected_text(label)
+                                        .width(280.0)
+                                        .show_ui(ui, |ui| {
+                                            if ui
+                                                .selectable_label(self.audio_input.is_empty(), "(system default)")
+                                                .clicked()
+                                            {
+                                                self.audio_input.clear();
+                                            }
+                                            for d in &hw.audio {
+                                                ui.selectable_value(&mut self.audio_input, d.clone(), d);
+                                            }
+                                        });
+                                }
+                            }
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.audio_input)
+                                    .desired_width(200.0)
+                                    .hint_text("optional device name"),
                             );
                         });
                     }
@@ -2599,6 +2680,30 @@ impl GuiApp {
     }
 }
 
+struct HardwareProbe {
+    ports: Vec<crate::discover::LabeledPort>,
+    audio: Vec<String>,
+    rigctld: Vec<String>,
+    digirig: Option<String>,
+}
+
+fn spawn_hardware_probe() -> Receiver<HardwareProbe> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let ports = crate::discover::serial_ports();
+        let digirig = crate::discover::find_digirig(&ports);
+        let audio = crate::discover::list_audio_inputs();
+        let rigctld = crate::discover::probe_rigctld_hosts();
+        let _ = tx.send(HardwareProbe {
+            ports,
+            audio,
+            rigctld,
+            digirig,
+        });
+    });
+    rx
+}
+
 #[derive(Default)]
 struct Form {
     callsign: String,
@@ -2608,6 +2713,8 @@ struct Form {
     bt_name: String,
     bt_addr: String,
     serial: String,
+    rigctl: String,
+    audio_input: String,
     freq_mhz: String,
 }
 
@@ -2635,6 +2742,8 @@ fn load_form() -> Form {
             bt_name: cfg.tnc.bt_name,
             bt_addr: cfg.tnc.bt_addr,
             serial: cfg.tnc.serial,
+            rigctl: cfg.modem.rigctl,
+            audio_input: cfg.modem.audio_input,
             freq_mhz: if cfg.rf.frequency_khz > 0 {
                 crate::band::fmt_mhz(cfg.rf.frequency_khz)
             } else {
@@ -2642,7 +2751,64 @@ fn load_form() -> Form {
             },
         };
     }
-    Form::default()
+    Form {
+        rigctl: "127.0.0.1:4532".into(),
+        ..Form::default()
+    }
+}
+
+impl GuiApp {
+    fn poll_hardware_probe(&mut self) {
+        if self.hw.is_some() {
+            return;
+        }
+        if self.hw_rx.is_none() {
+            self.hw_rx = Some(spawn_hardware_probe());
+        }
+        let Some(rx) = self.hw_rx.as_ref() else {
+            return;
+        };
+        let Ok(probe) = rx.try_recv() else {
+            return;
+        };
+        if self.path == 1 && self.com_port.is_empty() {
+            if let Some(d) = &probe.digirig {
+                self.com_port = d.clone();
+            }
+        }
+        if self.path == 3 && self.rigctl == "127.0.0.1:4532" {
+            if let Some(h) = probe.rigctld.first() {
+                self.rigctl = h.clone();
+            }
+        }
+        self.hw = Some(probe);
+        self.hw_rx = None;
+    }
+
+}
+
+fn port_combo_ui(
+    ui: &mut egui::Ui,
+    ports: &[crate::discover::LabeledPort],
+    value: &mut String,
+    id: &str,
+) {
+    if ports.is_empty() {
+        return;
+    }
+    let current = if value.is_empty() {
+        "select port…".to_string()
+    } else {
+        value.clone()
+    };
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(current)
+        .width(220.0)
+        .show_ui(ui, |ui| {
+            for p in ports {
+                ui.selectable_value(value, p.name.clone(), &p.label);
+            }
+        });
 }
 
 fn spawn_find_radio(wanted: String) -> Receiver<crate::tnc::FindOutcome> {
