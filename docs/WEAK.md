@@ -79,7 +79,7 @@ retry_jitter = true
 ## How you know it worked
 
 - A faint station's callsign appears in **HEARD** with a low or negative SNR.
-- Your line gets `[v]` then `[vv]` (delivered), even if **RETRY** was 1 or 2 first. The TUI may show `✓` then `✓✓` instead.
+- Your line gets `[tx]` then `[ok]` (delivered), even if **RETRY** was 1 or 2 first. The TUI may show `✓` then `✓✓` instead.
 - **TX** may show a slower mode than your preset. That is expected on a rough path.
 - On a busy frequency, **OCC** climbs and **PTT** may show `wait` instead of `idle`. That is the air queue holding your frame.
 

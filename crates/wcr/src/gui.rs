@@ -2010,7 +2010,7 @@ fn cheat_sheet(ui: &mut egui::Ui) {
     cheat_line(ui, "CALL", "1:1 — type their callsign");
     cheat_line(ui, "FREQ", "dial radio to match");
     cheat_line(ui, "MODE", "inet / RF / both");
-    cheat_line(ui, "[v] [vv]", "sent delivered");
+    cheat_line(ui, "[tx] [ok]", "sent delivered");
     cheat_line(ui, "RF", "always plaintext");
     cheat_line(ui, "hub", "TLS to the map");
     cheat_line(ui, "close", "hides to the tray");
@@ -3218,7 +3218,7 @@ fn irc_tags(line: &str) -> HashMap<String, String> {
 }
 
 fn tick_color(ticks: &str) -> Color32 {
-    if ticks.starts_with("[vv") {
+    if ticks == "[ok]" || ticks == "[all]" {
         GREEN
     } else {
         DIM
@@ -3379,11 +3379,11 @@ mod tests {
             parse_delivery("@+radio/delivery=sent;+radio/msgid=deadbeef TAGMSG *").unwrap();
         assert_eq!(id, "deadbeef");
         assert_eq!(state, "sent");
-        assert_eq!(delivery_ticks("queued"), Some("[.]"));
-        assert_eq!(delivery_ticks("sent"), Some("[v]"));
-        assert_eq!(delivery_ticks("relayed"), Some("[vv]"));
-        assert_eq!(delivery_ticks("delivered"), Some("[vv]"));
-        assert_eq!(delivery_ticks("all"), Some("[vvv]"));
+        assert_eq!(delivery_ticks("queued"), Some("[..]"));
+        assert_eq!(delivery_ticks("sent"), Some("[tx]"));
+        assert_eq!(delivery_ticks("relayed"), Some("[rl]"));
+        assert_eq!(delivery_ticks("delivered"), Some("[ok]"));
+        assert_eq!(delivery_ticks("all"), Some("[all]"));
     }
 
     #[test]
@@ -3401,6 +3401,6 @@ mod tests {
         assert_eq!(chat.nick, "G4ABC");
         assert_eq!(chat.text, "hello");
         assert_eq!(chat.msgid, "cafe1234");
-        assert_eq!(chat.ticks, "[v]");
+        assert_eq!(chat.ticks, "[tx]");
     }
 }

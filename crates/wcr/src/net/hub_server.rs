@@ -264,31 +264,31 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
                     let _ = st.store.insert(&env, crate::store::Delivery::Queued);
                     *st.forwarded.lock() += 1;
                     let (from_khz, from_band, to_bands) = route(&st, &env, &bin, &call);
-                    let _ = st.live.send(serde_json::json!({
-                        "type": "hub_forward",
-                        "origin": env.origin.to_string(),
-                        "dest": env.dest.to_string(),
-                        "kind": env.kind.as_str(),
-                        "id": env.msg_id.hex(),
-                        "from_band": from_band,
-                        "from_freq_khz": from_khz,
-                        "to_bands": to_bands,
-                    }));
+                    publish_forward(
+                        &st,
+                        env.origin.to_string(),
+                        env.dest.to_string(),
+                        env.kind.as_str(),
+                        env.msg_id.hex(),
+                        from_khz,
+                        from_band,
+                        to_bands,
+                    );
                     for full in extras {
                         if let Ok(raw) = full.encode() {
                             let _ = st.store.insert(&full, crate::store::Delivery::Queued);
                             *st.forwarded.lock() += 1;
                             let (from_khz, from_band, to_bands) = route(&st, &full, &raw, &call);
-                            let _ = st.live.send(serde_json::json!({
-                                "type": "hub_forward",
-                                "origin": full.origin.to_string(),
-                                "dest": full.dest.to_string(),
-                                "kind": full.kind.as_str(),
-                                "id": full.msg_id.hex(),
-                                "from_band": from_band,
-                                "from_freq_khz": from_khz,
-                                "to_bands": to_bands,
-                            }));
+                            publish_forward(
+                                &st,
+                                full.origin.to_string(),
+                                full.dest.to_string(),
+                                full.kind.as_str(),
+                                full.msg_id.hex(),
+                                from_khz,
+                                from_band,
+                                to_bands,
+                            );
                         }
                     }
                 }
@@ -354,6 +354,52 @@ pub(crate) fn verify_inbound(
         return false;
     };
     verify_envelope(env, &vk).is_ok()
+}
+
+fn unix_ts() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn publish_forward(
+    st: &HubState,
+    origin: String,
+    dest: String,
+    kind: &str,
+    msgid: String,
+    from_khz: u32,
+    from_band: String,
+    to_bands: Vec<String>,
+) {
+    let ts = unix_ts();
+    let ev = telemetry::TelemetryEvent {
+        ts,
+        kind: kind.to_string(),
+        origin: Some(origin.clone()),
+        dest: Some(dest.clone()),
+        hops: None,
+        snr: None,
+        msgid: Some(msgid.clone()),
+        band: if from_band.is_empty() {
+            None
+        } else {
+            Some(from_band.clone())
+        },
+    };
+    let _ = st.telemetry.add_event(&ev);
+    let _ = st.live.send(serde_json::json!({
+        "type": "hub_forward",
+        "ts": ts,
+        "origin": origin,
+        "dest": dest,
+        "kind": kind,
+        "id": msgid,
+        "from_band": from_band,
+        "from_freq_khz": from_khz,
+        "to_bands": to_bands,
+    }));
 }
 
 fn route(st: &HubState, env: &Envelope, raw: &[u8], from: &str) -> (u32, String, Vec<String>) {

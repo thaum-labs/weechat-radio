@@ -43,10 +43,11 @@ impl Delivery {
 
     pub fn ticks_bracket(self) -> &'static str {
         match self {
-            Self::Queued => "[.]",
-            Self::Sent => "[v]",
-            Self::Relayed | Self::Delivered => "[vv]",
-            Self::All => "[vvv]",
+            Self::Queued => "[..]",
+            Self::Sent => "[tx]",
+            Self::Relayed => "[rl]",
+            Self::Delivered => "[ok]",
+            Self::All => "[all]",
         }
     }
 
@@ -855,11 +856,11 @@ mod tests {
 
     #[test]
     fn bracket_marks() {
-        assert_eq!(Delivery::Queued.ticks_bracket(), "[.]");
-        assert_eq!(Delivery::Sent.ticks_bracket(), "[v]");
-        assert_eq!(Delivery::Relayed.ticks_bracket(), "[vv]");
-        assert_eq!(Delivery::Delivered.ticks_bracket(), "[vv]");
-        assert_eq!(Delivery::All.ticks_bracket(), "[vvv]");
+        assert_eq!(Delivery::Queued.ticks_bracket(), "[..]");
+        assert_eq!(Delivery::Sent.ticks_bracket(), "[tx]");
+        assert_eq!(Delivery::Relayed.ticks_bracket(), "[rl]");
+        assert_eq!(Delivery::Delivered.ticks_bracket(), "[ok]");
+        assert_eq!(Delivery::All.ticks_bracket(), "[all]");
     }
 
     #[test]
