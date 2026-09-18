@@ -502,29 +502,29 @@ pub fn release_callsign(db: &TelemetryDb, call: &str) -> Result<()> {
     db.release_callsign(call)
 }
 
+/// In-memory hub state for integration tests.
+pub fn test_hub_state() -> HubState {
+    let (live, _) = broadcast::channel(8);
+    HubState {
+        store: Arc::new(Store::open_memory().unwrap()),
+        telemetry: Arc::new(TelemetryDb::open_memory().unwrap()),
+        sessions: Arc::new(Mutex::new(HashMap::new())),
+        live,
+        started: std::time::Instant::now(),
+        forwarded: Arc::new(Mutex::new(0)),
+        identity: IdentityKeys::generate(),
+        assembler: Arc::new(Mutex::new(FragAssembler::new())),
+        next_conn: Arc::new(AtomicU64::new(1)),
+        report_by_call: rate_limit::per_minute(120),
+        report_by_ip: rate_limit::per_minute(240),
+        hello_by_call: rate_limit::per_minute(30),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::proto::{Callsign, Envelope, Flags, IdentityKeys};
-    use crate::store::Store;
-
-    fn test_state() -> HubState {
-        let (live, _) = broadcast::channel(8);
-        HubState {
-            store: Arc::new(Store::open_memory().unwrap()),
-            telemetry: Arc::new(TelemetryDb::open_memory().unwrap()),
-            sessions: Arc::new(Mutex::new(HashMap::new())),
-            live,
-            started: std::time::Instant::now(),
-            forwarded: Arc::new(Mutex::new(0)),
-            identity: IdentityKeys::generate(),
-            assembler: Arc::new(Mutex::new(FragAssembler::new())),
-            next_conn: Arc::new(AtomicU64::new(1)),
-            report_by_call: rate_limit::per_minute(120),
-            report_by_ip: rate_limit::per_minute(240),
-            hello_by_call: rate_limit::per_minute(30),
-        }
-    }
 
     fn sample_msg(origin: &str) -> Envelope {
         Envelope::new_msg(
@@ -540,14 +540,14 @@ mod tests {
 
     #[test]
     fn unsigned_frames_forward() {
-        let st = test_state();
+        let st = test_hub_state();
         let env = sample_msg("G4ABC");
         assert!(verify_inbound(&st, &env, "G4ABC", &[0u8; 32]));
     }
 
     #[test]
     fn signed_wrong_key_rejected() {
-        let st = test_state();
+        let st = test_hub_state();
         let origin = IdentityKeys::generate();
         let other = IdentityKeys::generate();
         st.telemetry
@@ -563,7 +563,7 @@ mod tests {
 
     #[test]
     fn signed_uses_session_key_when_unbound() {
-        let st = test_state();
+        let st = test_hub_state();
         let origin = IdentityKeys::generate();
         let other = IdentityKeys::generate();
         let mut env = sample_msg("G4ABC");
@@ -574,7 +574,7 @@ mod tests {
 
     #[test]
     fn session_replace_invalidates_old_conn() {
-        let st = test_state();
+        let st = test_hub_state();
         let (tx1, _rx1) = mpsc::channel(1);
         let (tx2, _rx2) = mpsc::channel(1);
         {

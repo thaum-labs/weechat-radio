@@ -94,10 +94,7 @@ pub fn run_wizard() -> Result<Config> {
             cfg.mode = Mode::InternetRadio;
             cfg.modem.ptt = "digirig".into();
             cfg.modem.preset = Preset::VhfFm.as_str().into();
-            let com: String = Input::with_theme(&theme)
-                .with_prompt("Digirig serial port (COM5 or /dev/ttyUSB0)")
-                .interact_text()?;
-            cfg.modem.com_port = com;
+            cfg.modem.com_port = pick_serial_port(&theme, "Digirig serial port", true)?;
             cfg.modem.com_line = "rts".into();
             println!("  Digirig: PTT on RTS. Plug the audio jacks into the radio as in the guide.");
         }
@@ -112,11 +109,7 @@ pub fn run_wizard() -> Result<Config> {
             cfg.mode = Mode::InternetRadio;
             cfg.modem.ptt = "rigctl".into();
             cfg.modem.preset = Preset::HfGood.as_str().into();
-            let host: String = Input::with_theme(&theme)
-                .with_prompt("rigctld address")
-                .default("127.0.0.1:4532".into())
-                .interact_text()?;
-            cfg.modem.rigctl = host;
+            cfg.modem.rigctl = pick_rigctld(&theme)?;
             cfg.rig.enabled = true;
             println!("  Start rigctld for your radio before `wcr node`.");
             println!("  If that fails, you can switch PTT to VOX later with /radio ptt vox");
@@ -140,10 +133,7 @@ pub fn run_wizard() -> Result<Config> {
             cfg.modem.manage = false;
             cfg.modem.ptt = "tnc".into();
             cfg.modem.preset = Preset::Afsk1200.as_str().into();
-            let port: String = Input::with_theme(&theme)
-                .with_prompt("TNC serial port (COM7, /dev/rfcomm0, /dev/cu.VR-N76)")
-                .interact_text()?;
-            cfg.tnc.serial = port.trim().to_string();
+            cfg.tnc.serial = pick_serial_port(&theme, "TNC serial port", false)?;
         }
         _ => {}
     }
@@ -184,15 +174,7 @@ pub fn run_wizard() -> Result<Config> {
                 ))
             );
         }
-        let audio: String = Input::with_theme(&theme)
-            .with_prompt(ui_style::step(
-                5,
-                total_steps,
-                "Audio input device name (Enter = system default)",
-            ))
-            .allow_empty(true)
-            .interact_text()?;
-        cfg.modem.audio_input = audio.trim().to_string();
+        cfg.modem.audio_input = pick_audio_input(&theme, total_steps)?;
         if !cfg.modem.audio_input.is_empty() {
             println!(
                 "  {}",
@@ -251,6 +233,108 @@ pub fn run_wizard() -> Result<Config> {
     ui_style::rule();
     let _ = std::io::stdout().flush();
     Ok(cfg)
+}
+
+fn pick_serial_port(
+    theme: &dyn dialoguer::theme::Theme,
+    prompt: &str,
+    prefer_digirig: bool,
+) -> Result<String> {
+    let ports = crate::discover::serial_ports();
+    if ports.is_empty() {
+        return Input::with_theme(theme)
+            .with_prompt(format!("{prompt} (COM5 or /dev/ttyUSB0)"))
+            .interact_text()
+            .map_err(Into::into);
+    }
+    let mut items: Vec<String> = ports.iter().map(|p| p.label.clone()).collect();
+    items.push("(type a port manually)".into());
+    let default = if prefer_digirig {
+        crate::discover::find_digirig(&ports).and_then(|name| {
+            ports
+                .iter()
+                .position(|p| p.name.eq_ignore_ascii_case(&name))
+        })
+    } else {
+        None
+    }
+    .unwrap_or(0)
+    .min(items.len().saturating_sub(1));
+    let idx = Select::with_theme(theme)
+        .with_prompt(prompt)
+        .items(&items)
+        .default(default)
+        .interact()?;
+    if idx >= ports.len() {
+        Input::with_theme(theme)
+            .with_prompt("Serial port name")
+            .interact_text()
+            .map_err(Into::into)
+    } else {
+        Ok(ports[idx].name.clone())
+    }
+}
+
+fn pick_audio_input(theme: &dyn dialoguer::theme::Theme, total_steps: u8) -> Result<String> {
+    let devs = crate::discover::list_audio_inputs();
+    if devs.is_empty() {
+        let audio: String = Input::with_theme(theme)
+            .with_prompt(ui_style::step(
+                5,
+                total_steps,
+                "Audio input device name (Enter = system default)",
+            ))
+            .allow_empty(true)
+            .interact_text()?;
+        return Ok(audio.trim().to_string());
+    }
+    let mut items = vec!["(system default)".to_string()];
+    items.extend(devs);
+    let idx = Select::with_theme(theme)
+        .with_prompt(ui_style::step(5, total_steps, "Audio input device"))
+        .items(&items)
+        .default(0)
+        .interact()?;
+    if idx == 0 {
+        Ok(String::new())
+    } else {
+        Ok(items[idx].clone())
+    }
+}
+
+fn pick_rigctld(theme: &dyn dialoguer::theme::Theme) -> Result<String> {
+    let live = crate::discover::probe_rigctld_hosts();
+    if live.is_empty() {
+        println!(
+            "  {}",
+            ui_style::dim().apply_to("No rigctld seen on common ports — start Hamlib first.")
+        );
+        return Input::with_theme(theme)
+            .with_prompt("rigctld address")
+            .default("127.0.0.1:4532".into())
+            .interact_text()
+            .map_err(Into::into);
+    }
+    println!(
+        "  {}",
+        ui_style::dim().apply_to(format!("Found rigctld: {}", live.join(", ")))
+    );
+    let mut items = live;
+    items.push("(type address manually)".into());
+    let idx = Select::with_theme(theme)
+        .with_prompt("rigctld address")
+        .items(&items)
+        .default(0)
+        .interact()?;
+    if idx == items.len() - 1 {
+        Input::with_theme(theme)
+            .with_prompt("rigctld host:port")
+            .default("127.0.0.1:4532".into())
+            .interact_text()
+            .map_err(Into::into)
+    } else {
+        Ok(items[idx].clone())
+    }
 }
 
 /// Find a paired Benshi radio, or scan and pair one; fall back to a typed address.

@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: ThaumLabs.Wcr
+PackageVersion: 0.1.14
+PackageLocale: en-US
+Publisher: Thaum Labs
+PublisherUrl: https://weechatradio.com
+PublisherSupportUrl: https://github.com/thaum-labs/weechat-radio/issues
+PackageName: WeeChat Radio
+PackageUrl: https://weechatradio.com/downloads.html
+License: Apache-2.0
+LicenseUrl: https://github.com/thaum-labs/weechat-radio/blob/main/LICENSE
+ShortDescription: Chat over internet and HF/VHF with store-and-forward
+Description: |
+  WeeChat Radio connects IRC-style chat to radio paths (HF/VHF) and the public hub at weechatradio.com.
+  Run wcr setup once, then wcr node, wcr tui, or wcr gui.
+Moniker: wcr
+Tags:
+  - amateur-radio
+  - hf
+  - vhf
+  - chat
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
