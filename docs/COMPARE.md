@@ -4,7 +4,7 @@ On the web (sortable table): https://weechatradio.com/docs/compare.html
 
 Noise resistance is almost entirely the modem waveform, not whether the payload is “text.” WeeChat Radio sends a short binary frame with CRC-16. Weak-signal performance comes from [modem73](https://github.com/RFnexus/modem73) (OFDM / RDM / MFSK), then ACKs, retries that step to a slower mode, and Reed–Solomon pieces on HF group traffic.
 
-Scores are **1 (poor) to 5 (strong)** for that column only. They are operator ratings, not a lab bake-off. SNR figures for WSPR, FT8, JS8, Olivia, PSK31, RTTY, and APRS are typical published ham values. modem73 has no side-by-side SNR table in this project.
+Scores are **1 (poor) to 5 (strong)** for that column only. They are operator ratings, not a lab bake-off. On the website the numbers are coloured 1 red → 2 orange → 3 amber → 4 lime → 5 green. SNR figures for WSPR, FT8, JS8, Olivia, PSK31, RTTY, and APRS are typical published ham values. modem73 has no side-by-side SNR table in this project.
 
 The two WeeChat Radio HF chat presets are **`hf-weak` / `hf-poor`** (normal noisy HF) and **`hf-deep`** (last resort). `vhf-fm` / handheld KISS is a different path: 1200 baud packet, like APRS.
 
