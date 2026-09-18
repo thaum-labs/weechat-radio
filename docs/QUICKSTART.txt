@@ -12,7 +12,8 @@ With pictures: https://weechatradio.com/guides/start.html
 3. wcr tui
    Type in #bulletin. Enter sends.
 
-Ticks:  · queued   ✓ sent   ✓✓ delivered   ✓✓✓ all group members
+Marks (window):  [.] queued  [v] sent  [vv] delivered  [vvv] all in group
+TUI unicode:     · queued    ✓ sent    ✓✓ delivered    ✓✓✓ all in group
 
 If the internet dies, keep using the radio. Status bar: "Internet down, radio only".
 

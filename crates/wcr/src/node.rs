@@ -572,7 +572,7 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
             } else {
                 format!("#{channel}")
             };
-            let lines: Vec<(String, String, String, String)> = hist
+            let lines: Vec<(String, String, String, String, String, String)> = hist
                 .into_iter()
                 .filter(|m| m.env.kind == MsgType::Msg)
                 .map(|m| {
@@ -587,7 +587,14 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
                     } else {
                         m.env.dest.to_string()
                     };
-                    (t, m.env.origin.to_string(), target, m.env.body_text())
+                    (
+                        t,
+                        m.env.origin.to_string(),
+                        target,
+                        m.env.body_text(),
+                        m.env.msg_id.hex(),
+                        m.delivery.as_str().to_string(),
+                    )
                 })
                 .collect();
             rt.irc.replay_history(ev.client_id, lines).await;

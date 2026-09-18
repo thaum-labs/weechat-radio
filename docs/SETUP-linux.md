@@ -39,4 +39,4 @@ On the web: https://weechatradio.com/guides/linux.html
 
 ## How you know it worked
 
-`wcr tui` shows your callsign. A message in `#bulletin` gets a send tick. `wcr service status` prints `active` if the service is installed.
+`wcr gui` shows your callsign. A message in `#bulletin` gets a `[v]`. `wcr service status` prints `active` if the service is installed.

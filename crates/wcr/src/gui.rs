@@ -877,7 +877,7 @@ impl GuiApp {
                 text,
                 self.active_channel.clone(),
             );
-            line.ticks = crate::store::Delivery::Queued.ticks(true).into();
+            line.ticks = crate::store::Delivery::Queued.ticks_bracket().into();
             self.chat.push(line);
         }
         for line in &wires {
@@ -1917,11 +1917,7 @@ impl eframe::App for GuiApp {
                                             if mine && !line.ticks.is_empty() {
                                                 ui.label(
                                                     RichText::new(&line.ticks)
-                                                        .color(if line.ticks.len() > "✓".len() {
-                                                            GREEN
-                                                        } else {
-                                                            DIM
-                                                        })
+                                                        .color(tick_color(&line.ticks))
                                                         .monospace(),
                                                 );
                                             }
@@ -2014,7 +2010,7 @@ fn cheat_sheet(ui: &mut egui::Ui) {
     cheat_line(ui, "CALL", "1:1 — type their callsign");
     cheat_line(ui, "FREQ", "dial radio to match");
     cheat_line(ui, "MODE", "inet / RF / both");
-    cheat_line(ui, "✓ · ✓✓", "sent · delivered");
+    cheat_line(ui, "[v] [vv]", "sent delivered");
     cheat_line(ui, "RF", "always plaintext");
     cheat_line(ui, "hub", "TLS to the map");
     cheat_line(ui, "close", "hides to the tray");
@@ -3221,24 +3217,41 @@ fn irc_tags(line: &str) -> HashMap<String, String> {
     map
 }
 
+fn tick_color(ticks: &str) -> Color32 {
+    if ticks.starts_with("[vv") {
+        GREEN
+    } else {
+        DIM
+    }
+}
+
 fn delivery_ticks(state: &str) -> Option<&'static str> {
     let d = crate::store::Delivery::parse(state);
     match state {
-        "sent" | "relayed" | "delivered" | "all" => Some(d.ticks(true)),
-        s if s.starts_with("retry") => Some(crate::store::Delivery::Queued.ticks(true)),
+        "queued" | "sent" | "relayed" | "delivered" | "all" => Some(d.ticks_bracket()),
+        s if s.starts_with("retry") => Some(crate::store::Delivery::Queued.ticks_bracket()),
         _ => None,
     }
 }
 
 fn parse_delivery(line: &str) -> Option<(String, String)> {
-    let tags = irc_tags(line);
-    if let Some(state) = tags.get("radio/delivery") {
-        let msgid = tags
-            .get("radio/msgid")
-            .or_else(|| tags.get("msgid"))
-            .cloned()
-            .unwrap_or_default();
-        return Some((msgid, state.clone()));
+    let payload = irc_payload(line);
+    let cmd = if let Some(rest) = payload.strip_prefix(':') {
+        rest.split_once(' ').map(|(_, c)| c).unwrap_or(rest)
+    } else {
+        payload
+    };
+    if cmd.starts_with("TAGMSG ") {
+        let tags = irc_tags(line);
+        if let Some(state) = tags.get("radio/delivery") {
+            let msgid = tags
+                .get("radio/msgid")
+                .or_else(|| tags.get("msgid"))
+                .cloned()
+                .unwrap_or_default();
+            return Some((msgid, state.clone()));
+        }
+        return None;
     }
     let notice = parse_notice(line)?;
     let rest = notice.strip_prefix('[')?;
@@ -3302,7 +3315,11 @@ fn parse_privmsg(line: &str) -> Option<ChatLine> {
         sys: false,
         channel,
         msgid: tags.get("msgid").cloned().unwrap_or_default(),
-        ticks: String::new(),
+        ticks: tags
+            .get("radio/delivery")
+            .and_then(|s| delivery_ticks(s))
+            .unwrap_or("")
+            .to_string(),
     })
 }
 
@@ -3362,8 +3379,11 @@ mod tests {
             parse_delivery("@+radio/delivery=sent;+radio/msgid=deadbeef TAGMSG *").unwrap();
         assert_eq!(id, "deadbeef");
         assert_eq!(state, "sent");
-        assert_eq!(delivery_ticks("sent"), Some("✓"));
-        assert_eq!(delivery_ticks("delivered"), Some("✓✓"));
+        assert_eq!(delivery_ticks("queued"), Some("[.]"));
+        assert_eq!(delivery_ticks("sent"), Some("[v]"));
+        assert_eq!(delivery_ticks("relayed"), Some("[vv]"));
+        assert_eq!(delivery_ticks("delivered"), Some("[vv]"));
+        assert_eq!(delivery_ticks("all"), Some("[vvv]"));
     }
 
     #[test]
@@ -3371,5 +3391,16 @@ mod tests {
         let (id, state) = parse_delivery(":wcr.local NOTICE * :[delivered] cafe1234").unwrap();
         assert_eq!(id, "cafe1234");
         assert_eq!(state, "delivered");
+    }
+
+    #[test]
+    fn history_privmsg_keeps_delivery_marks() {
+        let hist = "@server-time=2026-09-18T12:00:00Z;batch=hist;msgid=cafe1234;+radio/delivery=sent :G4ABC PRIVMSG #bulletin :hello";
+        assert!(parse_delivery(hist).is_none());
+        let chat = parse_privmsg(hist).unwrap();
+        assert_eq!(chat.nick, "G4ABC");
+        assert_eq!(chat.text, "hello");
+        assert_eq!(chat.msgid, "cafe1234");
+        assert_eq!(chat.ticks, "[v]");
     }
 }

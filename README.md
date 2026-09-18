@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.80-DEA584?logo=rust&logoColor=white" alt="Rust 1.80" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="Apache-2.0" /></a>
-  <img src="https://img.shields.io/badge/version-0.1.21-7d9bff" alt="Version 0.1.21" />
+  <img src="https://img.shields.io/badge/version-0.1.22-7d9bff" alt="Version 0.1.22" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6" alt="Windows, macOS and Linux" />
   <br/>
   <a href="https://weechat.org/"><img src="https://img.shields.io/badge/WeeChat-IRC-00A7E0" alt="WeeChat" /></a>
@@ -68,7 +68,7 @@ Open **WeeChat Radio** from the Start menu. First launch is setup; then you chat
 wcr gui
 ```
 
-How you know it worked: the status bar shows your callsign. Send a line in `#bulletin`. A `✓` means it went out.
+How you know it worked: the status bar shows your callsign. Send a line in `#bulletin`. Marks on your own lines: `[.]` waiting, `[v]` sent, `[vv]` relayed or delivered, `[vvv]` every station in a group.
 
 Radio guides: [VR-N76 / UV-PRO over Bluetooth](https://weechatradio.com/guides/vr-n76.html) · [handheld + Digirig](https://weechatradio.com/guides/handheld.html) · [VOX cable](https://weechatradio.com/guides/vox.html) · [HF + CAT](https://weechatradio.com/guides/hf.html)
 

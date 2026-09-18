@@ -35,6 +35,13 @@ On the web (with pictures): https://weechatradio.com/guides/start.html
 
 ## How you know it worked
 
-The status bar at the bottom shows your callsign and mode. After you send, a tick appears: `·` means queued, `✓` means sent.
+The status bar at the bottom shows your callsign and mode. After you send, a mark appears on your line:
+
+- `[.]` waiting to go out
+- `[v]` sent
+- `[vv]` relayed or delivered
+- `[vvv]` every station in a group got it
+
+The terminal TUI may show `·` / `✓` / `✓✓` / `✓✓✓` instead when Unicode is on. WeeChat uses the same Unicode ticks.
 
 The TUI uses the `tron` theme by default (indigo / orange, like the website). Switch with `/radio theme hacker` or `/radio theme terminal`, or set `theme` under `[ui]` in `wcr.toml`.
