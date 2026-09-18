@@ -113,7 +113,7 @@ fn apply_fonts(ctx: &egui::Context) {
 
 fn paint_scan(ctx: &egui::Context) {
     let painter = ctx.layer_painter(egui::LayerId::new(
-        egui::Order::Foreground,
+        egui::Order::Background,
         egui::Id::new("scan"),
     ));
     let rect = ctx.screen_rect();
@@ -138,13 +138,15 @@ fn module_title(ui: &mut egui::Ui, left: &str, right: &str) {
                 .color(ACCENT)
                 .font(FontId::monospace(12.0)),
         );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(
-                RichText::new(right)
-                    .color(ORANGE)
-                    .font(FontId::monospace(12.0)),
-            );
-        });
+        if !right.is_empty() {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    RichText::new(right)
+                        .color(ORANGE)
+                        .font(FontId::monospace(12.0)),
+                );
+            });
+        }
     });
 }
 
@@ -271,23 +273,40 @@ fn apply_visuals(ctx: &egui::Context) {
         color: Color32::from_black_alpha(200),
     };
     style.visuals = v;
-    style.interaction.tooltip_delay = 0.25;
+    style.interaction.selectable_labels = false;
+    style.interaction.tooltip_delay = 0.0;
     style.interaction.show_tooltips_only_when_still = false;
     ctx.set_style(style);
 }
 
-/// Show a tooltip while the pointer is over `response`.
+/// Tooltip next to the pointer whenever it is inside `response.rect`.
 ///
-/// Uses [`egui::Response::show_tooltip_ui`] instead of [`egui::Response::on_hover_text`]
-/// so hints still appear when the chat pane is auto-scrolling (egui suppresses normal
-/// hover tooltips for a short time after any scroll).
+/// Ignores egui hover/scroll gates and child-widget covering, which otherwise
+/// swallow `on_hover_text` in this layout (side panel + auto-scrolling chat).
 fn hover_tip(response: &egui::Response, tip: impl Into<egui::WidgetText>) {
-    if response.contains_pointer() {
-        response.show_tooltip_ui(|ui| {
-            ui.set_max_width(ui.spacing().tooltip_width);
-            ui.add(egui::Label::new(tip));
-        });
+    let Some(pointer) = response.ctx.pointer_hover_pos() else {
+        return;
+    };
+    if !response.rect.contains(pointer) {
+        return;
     }
+    let tip = tip.into();
+    egui::Area::new(response.id.with("wcr_tip"))
+        .kind(egui::UiKind::Tooltip)
+        .order(egui::Order::Tooltip)
+        .interactable(false)
+        .constrain(true)
+        .fixed_pos(pointer + egui::vec2(16.0, 18.0))
+        .show(&response.ctx, |ui| {
+            egui::Frame::none()
+                .fill(Color32::from_rgb(22, 22, 34))
+                .stroke(hairline(ORANGE))
+                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                .show(ui, |ui| {
+                    ui.set_max_width(260.0);
+                    ui.add(egui::Label::new(tip).wrap());
+                });
+        });
 }
 
 fn chrome(fill: Color32) -> egui::Frame {
@@ -1143,35 +1162,6 @@ impl eframe::App for GuiApp {
                         self.quit_app(ctx);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if let Some(s) = &self.status {
-                            ui.label(
-                                RichText::new(if s.hub_ok { "UP" } else { "DOWN" })
-                                    .color(if s.hub_ok { GREEN } else { ORANGE })
-                                    .font(FontId::monospace(12.0)),
-                            );
-                            ui.label(
-                                RichText::new("hub")
-                                    .color(DIM)
-                                    .font(FontId::monospace(12.0)),
-                            );
-                            ui.add_space(10.0);
-                            ui.label(
-                                RichText::new(format!("{}", s.queue_out))
-                                    .color(ACCENT)
-                                    .font(FontId::monospace(12.0)),
-                            );
-                            ui.label(
-                                RichText::new("queue")
-                                    .color(DIM)
-                                    .font(FontId::monospace(12.0)),
-                            );
-                        }
-                        ui.add_space(12.0);
-                        ui.label(
-                            RichText::new(version_label())
-                                .color(DIM)
-                                .font(FontId::monospace(11.0)),
-                        );
                         ui.label(
                             RichText::new(chrono::Local::now().format("LCL %H:%M").to_string())
                                 .color(DIM)
@@ -1436,12 +1426,7 @@ impl eframe::App for GuiApp {
                     ui.separator();
                     ui.add_space(4.0);
                     ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                        let station_meta = if self.status.is_some() {
-                            format!("LIVE · {}", version_label())
-                        } else {
-                            format!("OFFLINE · {}", version_label())
-                        };
-                        module_title(ui, "STATION", &station_meta);
+                        module_title(ui, "STATION", "");
                         ui.add_space(8.0);
                         let mut mode_cmd = None;
                         let mut preset_cmd = None;
@@ -1932,7 +1917,7 @@ fn station_key(ui: &mut egui::Ui, k: &str) {
 }
 
 fn kv_tip(ui: &mut egui::Ui, k: &str, v: &str, color: Color32, tip: Option<&str>) {
-    let resp = ui.horizontal(|ui| {
+    let inner = ui.horizontal(|ui| {
         station_key(ui, k);
         let w = ui.available_width();
         ui.add_sized(
@@ -1941,7 +1926,12 @@ fn kv_tip(ui: &mut egui::Ui, k: &str, v: &str, color: Color32, tip: Option<&str>
         );
     });
     if let Some(tip) = tip {
-        hover_tip(&resp.response, tip);
+        let resp = ui.interact(
+            inner.response.rect,
+            ui.id().with(("kv_tip", k)),
+            egui::Sense::hover(),
+        );
+        hover_tip(&resp, tip);
     }
 }
 
