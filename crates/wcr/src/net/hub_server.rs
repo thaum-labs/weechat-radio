@@ -101,7 +101,11 @@ pub async fn run_hub(
         .map_err(|e| crate::error::Error::Net(format!("{e}")))?;
     tracing::info!("hub listening on {addr}");
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 

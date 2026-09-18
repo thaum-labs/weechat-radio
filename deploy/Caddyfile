@@ -11,10 +11,14 @@ weechatradio.com, www.weechatradio.com {
 
 hub.weechatradio.com, api.weechatradio.com {
   encode gzip
-  reverse_proxy hub:7373
+  reverse_proxy hub:7373 {
+    header_up X-Forwarded-For {remote_host}
+  }
   @ws {
     header Connection *Upgrade*
     header Upgrade websocket
   }
-  reverse_proxy @ws hub:7373
+  reverse_proxy @ws hub:7373 {
+    header_up X-Forwarded-For {remote_host}
+  }
 }

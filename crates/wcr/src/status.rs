@@ -63,6 +63,13 @@ pub struct StatusSnapshot {
     /// Synced channel default priorities (`#net` → `priority`).
     #[serde(default)]
     pub group_prios: Vec<GroupPrioBrief>,
+    /// TUI activity panel (mirrors `[ui] activity_panel`).
+    #[serde(default = "default_activity_panel")]
+    pub activity_panel: bool,
+}
+
+fn default_activity_panel() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -164,6 +171,7 @@ impl Default for StatusSnapshot {
             freq_source: "none".into(),
             heard: Vec::new(),
             group_prios: Vec::new(),
+            activity_panel: true,
         }
     }
 }

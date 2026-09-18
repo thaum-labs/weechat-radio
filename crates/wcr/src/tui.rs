@@ -254,6 +254,7 @@ pub async fn run(cfg: &Config) -> Result<()> {
             if !snap.hub_banner.is_empty() {
                 app.banner = snap.hub_banner.clone();
             }
+            app.show_activity = snap.activity_panel;
             app.snapshot = Some(snap);
         }
         terminal.draw(|f| draw(f, &app))?;
