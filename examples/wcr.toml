@@ -22,9 +22,12 @@ vox_lead_ms = 500
 vox_tail_ms = 150
 cm108_gpio = 3
 rigctl = "127.0.0.1:4532"
+# Optional modem73 capture device (wizard can set this). Empty = OS default.
+audio_input = ""
 
 [hub]
 url = "wss://hub.weechatradio.com/ws"
+# Direct TCP peers (host:port), same framing as LAN mesh — optional besides the public hub.
 peers = []
 
 [telemetry]

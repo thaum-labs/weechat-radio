@@ -261,6 +261,28 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   height: 26px;
   cursor: pointer;
 }
+.map-mark-wrap.pulse-tx {
+  animation: wcr-pulse-tx 1.2s ease-out 1;
+}
+.map-mark-wrap.pulse-rx {
+  animation: wcr-pulse-rx 1.2s ease-out 1;
+}
+@keyframes wcr-pulse-tx {
+  0% { filter: drop-shadow(0 0 0 rgba(57, 255, 20, 0)); transform: scale(1); }
+  40% { filter: drop-shadow(0 0 14px rgba(57, 255, 20, 0.95)); transform: scale(1.15); }
+  100% { filter: drop-shadow(0 0 6px rgba(7, 7, 10, 0.85)); transform: scale(1); }
+}
+@keyframes wcr-pulse-rx {
+  0% { filter: drop-shadow(0 0 0 rgba(0, 229, 255, 0)); transform: scale(1); }
+  40% { filter: drop-shadow(0 0 14px rgba(0, 229, 255, 0.95)); transform: scale(1.12); }
+  100% { filter: drop-shadow(0 0 6px rgba(7, 7, 10, 0.85)); transform: scale(1); }
+}
+#map-arcs {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
 .map-mark-wrap svg,
 .map-mark {
   width: 28px;

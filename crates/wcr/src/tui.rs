@@ -62,7 +62,6 @@ struct App {
     theme: Theme,
     theme_name: String,
     show_nicks: bool,
-    #[allow(dead_code)]
     show_activity: bool,
     mode_picker: bool,
     confirm_radio: bool,
@@ -394,13 +393,22 @@ fn handle_irc(app: &mut App, line: &str) {
                 app.heard.push(from.clone());
             }
             app.cur_mut().lines.push_back(ChatLine {
-                from,
+                from: from.clone(),
                 text: text.to_string(),
                 ticks: String::new(),
                 emergency,
             });
             if app.cur().lines.len() > 500 {
                 app.cur_mut().lines.pop_front();
+            }
+            let to = head.split_whitespace().nth(2).unwrap_or("");
+            if should_notify(&app, &from, text, to) {
+                let preview = if text.len() > 120 {
+                    format!("{}…", &text[..120])
+                } else {
+                    text.to_string()
+                };
+                notify(&format!("WeeChat Radio — {from}"), &preview);
             }
         }
     }
@@ -503,7 +511,12 @@ fn draw(f: &mut Frame, app: &App) {
             )
         })
         .unwrap_or_else(|| app.nick.clone());
-    let top = format!(" {clock} UTC  │  {ident}  │  {mode}  │  {hub} ");
+    let clk = snap
+        .map(|s| s.clock_warn)
+        .unwrap_or(false)
+        .then_some(" │  ⚠ CLOCK")
+        .unwrap_or_default();
+    let top = format!(" {clock} UTC  │  {ident}  │  {mode}  │  {hub}{clk} ");
     f.render_widget(
         Paragraph::new(top).style(Style::default().fg(t.accent).bg(t.bg)),
         chunks[1],
@@ -584,8 +597,14 @@ fn draw(f: &mut Frame, app: &App) {
         ),
         (
             "audio",
-            snap.map(|s| s.audio_label.clone())
-                .unwrap_or_else(|| "—".into()),
+            snap.map(|s| {
+                if app.show_activity {
+                    format!("{} {:.0}dB", s.audio_label, s.audio_db)
+                } else {
+                    s.audio_label.clone()
+                }
+            })
+            .unwrap_or_else(|| "—".into()),
         ),
         (
             "queue",
@@ -753,9 +772,14 @@ fn tagged_heard(app: &App, channel: Option<&str>) -> Vec<(String, String)> {
             }
         })
         .map(|h| {
+            let badge = if h.welfare.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", h.welfare)
+            };
             (
                 h.callsign.clone(),
-                format!("{} [{}]", h.callsign, h.band_tag()),
+                format!("{} [{}]{}", h.callsign, h.band_tag(), badge),
             )
         })
         .collect();
@@ -764,9 +788,14 @@ fn tagged_heard(app: &App, channel: Option<&str>) -> Vec<(String, String)> {
             .heard
             .iter()
             .map(|h| {
+                let badge = if h.welfare.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", h.welfare)
+                };
                 (
                     h.callsign.clone(),
-                    format!("{} [{}]", h.callsign, h.band_tag()),
+                    format!("{} [{}]{}", h.callsign, h.band_tag(), badge),
                 )
             })
             .collect();
@@ -809,4 +838,22 @@ pub fn notify(title: &str, body: &str) {
         .summary(title)
         .body(body)
         .show();
+}
+
+fn should_notify(app: &App, from: &str, text: &str, to: &str) -> bool {
+    if from.eq_ignore_ascii_case(&app.nick) || from == "?" {
+        return false;
+    }
+    if text.starts_with("!!") || text.starts_with('!') {
+        return true;
+    }
+    let cur = app.cur().name.as_str();
+    if !cur.starts_with('#') && !cur.starts_with('&') && from.eq_ignore_ascii_case(cur) {
+        return true;
+    }
+    if to.eq_ignore_ascii_case(&app.nick) || to.starts_with('@') && to[1..].eq_ignore_ascii_case(&app.nick) {
+        return true;
+    }
+    text.to_ascii_uppercase()
+        .contains(&app.nick.to_ascii_uppercase())
 }

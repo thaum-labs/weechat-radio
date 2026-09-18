@@ -18,6 +18,7 @@ pub mod net;
 pub mod node;
 pub mod presets;
 pub mod proto;
+pub mod rate_limit;
 pub mod relay;
 pub mod service;
 pub mod setup;

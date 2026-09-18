@@ -20,13 +20,14 @@ pub fn run_wizard() -> Result<Config> {
     );
     println!();
 
+    let total_steps = 6;
     let (grid_tx, grid_rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let _ = grid_tx.send(crate::grid::detect_from_ip());
     });
 
     let call: String = Input::with_theme(&theme)
-        .with_prompt(ui_style::step(1, 5, "Callsign (guests: ~NICK)"))
+        .with_prompt(ui_style::step(1, total_steps, "Callsign (guests: ~NICK)"))
         .validate_with(|s: &String| Callsign::parse(s).map(|_| ()).map_err(|e| e.to_string()))
         .interact_text()?;
 
@@ -34,7 +35,7 @@ pub fn run_wizard() -> Result<Config> {
     let mut grid_prompt = Input::with_theme(&theme)
         .with_prompt(ui_style::step(
             2,
-            5,
+            total_steps,
             "Maidenhead grid square (Enter to accept, or type your own)",
         ))
         .allow_empty(true);
@@ -70,7 +71,7 @@ pub fn run_wizard() -> Result<Config> {
         "KISS TNC on a serial port (Mobilinkd, rfcomm0, Bluetooth COM)",
     ];
     let path = Select::with_theme(&theme)
-        .with_prompt(ui_style::step(3, 5, "How will you get on the air?"))
+        .with_prompt(ui_style::step(3, total_steps, "How will you get on the air?"))
         .items(&paths)
         .default(0)
         .interact()?;
@@ -148,7 +149,7 @@ pub fn run_wizard() -> Result<Config> {
         let idx = Select::with_theme(&theme)
             .with_prompt(ui_style::step(
                 4,
-                5,
+                total_steps,
                 "Modem preset (you can change this later)",
             ))
             .items(&presets)
@@ -179,6 +180,29 @@ pub fn run_wizard() -> Result<Config> {
                 ))
             );
         }
+        let audio: String = Input::with_theme(&theme)
+            .with_prompt(ui_style::step(
+                5,
+                total_steps,
+                "Audio input device name (Enter = system default)",
+            ))
+            .allow_empty(true)
+            .interact_text()?;
+        cfg.modem.audio_input = audio.trim().to_string();
+        if !cfg.modem.audio_input.is_empty() {
+            println!(
+                "  {}",
+                ui_style::dim().apply_to(
+                    "We pass this to modem73 as capture_device when the node starts."
+                )
+            );
+        }
+        println!();
+        println!("{}", calling_card());
+        println!(
+            "  {}",
+            ui_style::dim().apply_to("Verify your band plan before you transmit.")
+        );
     }
 
     println!();
@@ -189,14 +213,20 @@ pub fn run_wizard() -> Result<Config> {
 
     if Confirm::with_theme(&theme)
         .with_prompt(ui_style::step(
-            5,
-            5,
+            total_steps,
+            total_steps,
             "Install as a background service so relays keep running?",
         ))
         .default(false)
         .interact()?
     {
-        println!("  After saving, run:  wcr service install");
+        match crate::service::install() {
+            Ok(msg) => println!("  {msg}"),
+            Err(e) => {
+                println!("  Could not install service: {e}");
+                println!("  Try again later:  wcr service install");
+            }
+        }
     }
 
     let path = Config::default_path();

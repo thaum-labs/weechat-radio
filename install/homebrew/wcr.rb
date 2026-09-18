@@ -1,25 +1,42 @@
 class Wcr < Formula
   desc "WeeChat Radio — chat over internet and HF/VHF"
   homepage "https://weechatradio.com"
-  url "https://github.com/thaum-labs/weechat-radio/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  version "0.1.13"
   license "Apache-2.0"
 
-  depends_on "rust" => :build
+  on_macos do
+    on_intel do
+      url "https://github.com/thaum-labs/weechat-radio/releases/download/v0.1.13/wcr-macos-x86_64.tar.gz"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+    end
+    on_arm do
+      url "https://github.com/thaum-labs/weechat-radio/releases/download/v0.1.13/wcr-macos-aarch64.tar.gz"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+    end
+  end
+
+  on_linux do
+    on_intel do
+      url "https://github.com/thaum-labs/weechat-radio/releases/download/v0.1.13/wcr-linux-x86_64.tar.gz"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+    end
+    on_arm do
+      url "https://github.com/thaum-labs/weechat-radio/releases/download/v0.1.13/wcr-linux-aarch64.tar.gz"
+      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+    end
+  end
 
   def install
-    system "cargo", "install", *std_cargo_args(path: "crates/wcr")
-    return unless OS.linux?
-
-    system "curl", "-fsSL", "-o", bin/"modem73",
-           "https://github.com/thaum-labs/weechat-radio/releases/latest/download/modem73-linux-x86_64"
-    chmod 0755, bin/"modem73"
+    bin.install "wcr"
+    bin.install "wcr-gui" if File.exist?("wcr-gui")
+    bin.install "modem73" if File.exist?("modem73")
+    bin.install "radio.py"
   end
 
   def caveats
     <<~EOS
-      Windows and Linux installs include modem73 next to wcr.
-      macOS has no official modem73 binary; get it from https://modem73.app for radio mode.
+      Run `wcr setup` once, then `wcr gui` or `wcr tui`.
+      Update sha256 lines in this formula after each tagged release (see release CI).
     EOS
   end
 

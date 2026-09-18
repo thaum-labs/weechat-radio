@@ -197,6 +197,13 @@ const COMMANDS: &[Cmd] = &[
         send_bare: true,
     },
     Cmd {
+        name: "form",
+        usage: "/form ics213|radiogram <target> key=value …",
+        summary: "Send ICS-213 or radiogram form",
+        args: &[],
+        send_bare: false,
+    },
+    Cmd {
         name: "checkin",
         usage: "/checkin [note]",
         summary: "Mark yourself present",

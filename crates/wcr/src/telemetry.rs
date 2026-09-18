@@ -310,7 +310,19 @@ pub async fn ingest_report(
     body: bytes::Bytes,
 ) -> std::result::Result<Json<serde_json::Value>, (StatusCode, String)> {
     let call = header(&headers, "x-radio-callsign")
-        .ok_or((StatusCode::BAD_REQUEST, "missing callsign".into()))?;
+        .ok_or((StatusCode::BAD_REQUEST, "missing callsign".into()))?
+        .to_ascii_uppercase();
+    if !crate::rate_limit::allow(&st.report_by_call, &call) {
+        return Err((StatusCode::TOO_MANY_REQUESTS, "rate limit".into()));
+    }
+    if let Some(ip) = header(&headers, "x-forwarded-for")
+        .or_else(|| header(&headers, "x-real-ip"))
+    {
+        let ip_key = ip.split(',').next().unwrap_or(ip).trim();
+        if !crate::rate_limit::allow(&st.report_by_ip, ip_key) {
+            return Err((StatusCode::TOO_MANY_REQUESTS, "rate limit".into()));
+        }
+    }
     let pkhex = header(&headers, "x-radio-pubkey")
         .ok_or((StatusCode::BAD_REQUEST, "missing pubkey".into()))?;
     let sighex = header(&headers, "x-radio-signature")
@@ -346,6 +358,9 @@ pub async fn ingest_report(
 
     let report: NodeReport =
         serde_json::from_slice(&body).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    if report.callsign.to_ascii_uppercase() != call {
+        return Err((StatusCode::BAD_REQUEST, "callsign mismatch".into()));
+    }
     if !st.telemetry.check_replay(&call, report.ts) {
         return Err((StatusCode::BAD_REQUEST, "replay or clock skew".into()));
     }

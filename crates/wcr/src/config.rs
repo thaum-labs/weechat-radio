@@ -88,6 +88,8 @@ pub struct ModemConfig {
     pub vox_tail_ms: u32,
     pub cm108_gpio: u8,
     pub rigctl: String,
+    /// Optional capture device name for modem73 (empty = system default).
+    pub audio_input: String,
 }
 
 impl Default for ModemConfig {
@@ -107,6 +109,7 @@ impl Default for ModemConfig {
             vox_tail_ms: 150,
             cm108_gpio: 3,
             rigctl: "127.0.0.1:4532".into(),
+            audio_input: String::new(),
         }
     }
 }

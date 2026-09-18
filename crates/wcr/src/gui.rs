@@ -890,16 +890,43 @@ impl GuiApp {
         self.palette_i = 0;
     }
 
-    fn drain_irc(&mut self) {
+    fn drain_irc(&mut self, viewport_focused: bool) {
         let mut incoming = Vec::new();
         if let Some(rx) = &self.irc_rx {
             while let Ok(ev) = rx.try_recv() {
                 incoming.push(ev);
             }
         }
+        let me = self.callsign.to_ascii_uppercase();
         for ev in incoming {
             match ev {
-                IrcEvent::Line(line) => self.chat.push(line),
+                IrcEvent::Line(line) => {
+                    if !line.sys
+                        && !line.nick.is_empty()
+                        && !line.nick.eq_ignore_ascii_case(&me)
+                        && !viewport_focused
+                        && (line.text.starts_with("!!")
+                            || line.text.starts_with('!')
+                            || (!self.active_channel.starts_with('#')
+                                && line.nick.eq_ignore_ascii_case(&self.active_channel))
+                            || line
+                                .text
+                                .to_ascii_uppercase()
+                                .contains(&me.to_ascii_uppercase()))
+                    {
+                        let body = if line.text.len() > 120 {
+                            format!("{}…", &line.text[..120])
+                        } else {
+                            line.text.clone()
+                        };
+                        let title = format!("WeeChat Radio — {}", line.nick);
+                        let _ = notify_rust::Notification::new()
+                            .summary(&title)
+                            .body(&body)
+                            .show();
+                    }
+                    self.chat.push(line);
+                }
                 IrcEvent::Status(s) => self.chat.push(ChatLine {
                     nick: String::new(),
                     text: s,
@@ -965,7 +992,8 @@ impl eframe::App for GuiApp {
             self.auto_started = true;
             self.start_station();
         }
-        self.drain_irc();
+        let focused = ctx.input(|i| i.focused);
+        self.drain_irc(focused);
 
         let mut suggestions = crate::slash::suggestions(&self.draft);
         if self.palette_i >= suggestions.len() {
@@ -1369,6 +1397,14 @@ impl eframe::App for GuiApp {
                             if !s.hub_ok && !s.hub_banner.is_empty() {
                                 ui.label(
                                     RichText::new(&s.hub_banner)
+                                        .color(ORANGE)
+                                        .small()
+                                        .monospace(),
+                                );
+                            }
+                            if s.clock_warn {
+                                ui.label(
+                                    RichText::new("Clock skew — check system time or GPS")
                                         .color(ORANGE)
                                         .small()
                                         .monospace(),

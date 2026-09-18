@@ -54,18 +54,27 @@ jobs:
             target: x86_64-unknown-linux-gnu
             asset: wcr-linux-x86_64.tar.gz
             modem_asset: modem73-linux-x86_64
+            modem_deb: modem73_*_ubuntu-24.04_amd64.deb
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            asset: wcr-linux-aarch64.tar.gz
+            modem_asset: modem73-linux-aarch64
+            modem_deb: modem73_*_ubuntu-24.04_arm64.deb
           - os: macos-latest
             target: x86_64-apple-darwin
             asset: wcr-macos-x86_64.tar.gz
-            modem_asset: ""
+            modem_asset: modem73-macos-x86_64
+            modem_deb: ""
           - os: macos-latest
             target: aarch64-apple-darwin
             asset: wcr-macos-aarch64.tar.gz
-            modem_asset: ""
+            modem_asset: modem73-macos-aarch64
+            modem_deb: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             asset: wcr-windows-x86_64.zip
             modem_asset: modem73-windows-x86_64.exe
+            modem_deb: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -79,18 +88,38 @@ jobs:
           targets: ${{ matrix.target }}
       - run: cargo build --release --target ${{ matrix.target }} -p wcr
       - name: bundle modem73 linux
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.modem_deb != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p dist
-          gh release download --repo RFnexus/modem73 --pattern "modem73_*_ubuntu-24.04_amd64.deb" --dir /tmp/m73
+          gh release download --repo RFnexus/modem73 --pattern "${{ matrix.modem_deb }}" --dir /tmp/m73
           dpkg-deb -x /tmp/m73/*.deb /tmp/m73/unpack
           find /tmp/m73/unpack -type f -name modem73 -exec cp {} dist/modem73 \;
           test -s dist/modem73
           chmod +x dist/modem73
           cp dist/modem73 "${{ matrix.modem_asset }}"
           cp third_party/modem73/NOTICE dist/MODEM73-NOTICE
+      - name: bundle modem73 macos
+        if: runner.os == 'macOS' && matrix.modem_asset != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dist
+          if gh release download --repo RFnexus/modem73 --pattern "modem73_*_macos*.zip" --dir /tmp/m73 2>/dev/null; then
+            unzip -q /tmp/m73/modem73_*_macos*.zip -d /tmp/m73/out
+            find /tmp/m73/out -type f -name modem73 -exec cp {} dist/modem73 \;
+            chmod +x dist/modem73
+            cp dist/modem73 "${{ matrix.modem_asset }}"
+            cp third_party/modem73/NOTICE dist/MODEM73-NOTICE
+          else
+            echo "No official macOS modem73 zip yet — wcr-only archive."
+          fi
+      - name: quickstart pdf
+        if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          pip install fpdf2
+          python docs/build_quickstart_pdf.py
       - name: pack unix
         if: runner.os != 'Windows'
         run: |
@@ -98,10 +127,14 @@ jobs:
           cp target/${{ matrix.target }}/release/wcr dist/
           cp target/${{ matrix.target }}/release/wcr-gui dist/ || true
           cp crates/wcr/assets/icon.png dist/weechat-radio.png
-          cp README.md LICENSE NOTICE docs/QUICKSTART.md dist/
+          cp README.md LICENSE NOTICE docs/QUICKSTART.md docs/QUICKSTART.txt dist/
+          if [ -f docs/QUICKSTART.pdf ]; then cp docs/QUICKSTART.pdf dist/; fi
           cp weechat/radio.py dist/radio.py
           cp weechat/LICENSE dist/WEECHAT-SCRIPT-LICENSE
           tar -czf ${{ matrix.asset }} -C dist .
+      - name: asset checksum
+        if: runner.os != 'Windows'
+        run: sha256sum "${{ matrix.asset }}" | awk '{print $1}' > "${{ matrix.asset }}.sha256"
       - name: bundle modem73 windows
         if: runner.os == 'Windows'
         env:
@@ -122,13 +155,19 @@ jobs:
           copy target\${{ matrix.target }}\release\wcr.exe dist\
           copy target\${{ matrix.target }}\release\wcr-gui.exe dist\
           copy crates\wcr\assets\icon.png dist\weechat-radio.png
-          copy README.md,LICENSE,NOTICE dist\
+          copy README.md,LICENSE,NOTICE,docs\QUICKSTART.md,docs\QUICKSTART.txt dist\
           copy weechat\radio.py dist\radio.py
           copy weechat\LICENSE dist\WEECHAT-SCRIPT-LICENSE
           if (Test-Path weechat\minttyrc) { copy weechat\minttyrc dist\minttyrc }
           Compress-Archive -Path dist\* -DestinationPath ${{ matrix.asset }} -Force
+      - name: asset checksum windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $h = (Get-FileHash -Algorithm SHA256 "${{ matrix.asset }}").Hash.ToLower()
+          Set-Content -Path "${{ matrix.asset }}.sha256" -Value $h -NoNewline
       - name: refuse unix archive without modem73
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.modem_asset != ''
         run: tar -tzf "${{ matrix.asset }}" | grep -E '(^|/)modem73$'
       - name: Upload release assets
         uses: nick-fields/retry@v3
@@ -143,6 +182,9 @@ jobs:
           command: |
             set -euo pipefail
             gh release upload "${RELEASE_TAG}" "${{ matrix.asset }}" --clobber
+            if [ -f "${{ matrix.asset }}.sha256" ]; then
+              gh release upload "${RELEASE_TAG}" "${{ matrix.asset }}.sha256" --clobber
+            fi
             if [ -n "${{ matrix.modem_asset }}" ] && [ -e "${{ matrix.modem_asset }}" ]; then
               gh release upload "${RELEASE_TAG}" "${{ matrix.modem_asset }}" --clobber
             fi

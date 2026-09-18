@@ -39,13 +39,14 @@ Create A records, all pointing at the droplet IP:
 
 ## Backups
 
-Optional nightly:
+Production uses **SQLite** inside the `hub` container (`/data/hub.db` and telemetry DB). Optional nightly copy:
 
 ```
-docker compose exec postgres pg_dump -U wcr wcr | gzip > /var/backups/wcr-$(date +%F).sql.gz
+docker compose -f deploy/docker-compose.yml exec -T hub \
+  sh -c 'tar -czf - /data/*.db' > /var/backups/wcr-sqlite-$(date +%F).tar.gz
 ```
 
-v1 can also run SQLite only (no Postgres) by setting `DATABASE_PATH=/data/wcr.db` and dropping the postgres service.
+Copy the archive off the droplet (DO Spaces, `scp`, etc.). To restore, stop the stack, replace `/data/*.db` in the `wcr-data` volume, and `docker compose up -d`.
 
 ## How you know it worked
 

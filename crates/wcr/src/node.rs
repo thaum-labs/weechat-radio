@@ -3,13 +3,14 @@
 
 use crate::air::{self, AirItem, AirQueue, ChannelSense, ChannelState, ModemSense};
 use crate::config::Config;
-use crate::emcomm::{Form, Welfare, BULLETIN_CHANNEL, BULLETIN_TTL};
+use crate::emcomm::{Form, FormKind, Welfare, BULLETIN_CHANNEL, BULLETIN_TTL};
 use crate::error::Result;
 use crate::ircd::{IrcEvent, IrcEventKind, IrcServer};
 use crate::modem::{ControlClient, KissClient, ModemProcess};
 use crate::modes::Mode;
 use crate::net::hub_client::{ArcFlag, HubClient};
 use crate::net::lan::LanMesh;
+use crate::net::peers::DirectPeers;
 use crate::presets::{self, Preset, Rung};
 use crate::proto::frag::{self, FragAssembler};
 use crate::proto::{
@@ -36,6 +37,9 @@ struct Runtime {
     irc: IrcServer,
     kiss: Option<KissClient>,
     hub: Option<HubClient>,
+    hub_flag: ArcFlag,
+    pending_inet: Arc<Mutex<Vec<Envelope>>>,
+    peers: Option<mpsc::Sender<Envelope>>,
     lan: Option<mpsc::Sender<Envelope>>,
     snap: Arc<SharedStatus>,
     tel: broadcast::Sender<TelemetryEvent>,
@@ -151,6 +155,11 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 let _ = c.set_config(p.control_config()).await;
             }
             let _ = c.apply_ptt(&cfg.modem.ptt, &cfg.modem).await;
+            if !cfg.modem.audio_input.is_empty() {
+                let _ = c
+                    .set_config(serde_json::json!({"capture_device": cfg.modem.audio_input}))
+                    .await;
+            }
             let snap_c = snap.clone();
             let snr_slot = last_rx_snr.clone();
             let sense_ev = sense.clone();
@@ -192,6 +201,17 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
 
     let mut lan_out: Option<mpsc::Sender<Envelope>> = None;
     let mut lan_in: Option<mpsc::Receiver<Envelope>> = None;
+    let mut peers_out: Option<mpsc::Sender<Envelope>> = None;
+    let mut peer_in: Option<mpsc::Receiver<Envelope>> = None;
+    if !cfg.hub.peers.is_empty() && cfg.mode.uses_internet() {
+        match DirectPeers::start(cfg.hub.peers.clone()).await {
+            Ok((_mesh, rx, tx)) => {
+                peer_in = Some(rx);
+                peers_out = Some(tx);
+            }
+            Err(e) => tracing::warn!("peers: {e}"),
+        }
+    }
     if cfg.lan.discovery {
         match LanMesh::start(&cfg.callsign, cfg.lan.port).await {
             Ok((mesh, tx)) => {
@@ -214,6 +234,9 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         irc: irc.clone(),
         kiss,
         hub,
+        hub_flag: hub_flag.clone(),
+        pending_inet: Arc::new(Mutex::new(Vec::new())),
+        peers: peers_out,
         lan: lan_out,
         snap: snap.clone(),
         tel: tel_tx,
@@ -320,27 +343,44 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         });
     }
 
+    let rt_hub = rt.clone();
     let hub_flag_s = hub_flag.clone();
-    let snap_b = snap.clone();
-    let cfg_b = rt.cfg.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
         loop {
             tick.tick().await;
-            let mut s = snap_b.lock();
-            let was = s.hub_ok;
-            s.hub_ok = hub_flag_s.get();
-            if s.hub_ok {
-                s.hub_banner.clear();
-            } else if cfg_b.lock().mode.uses_internet() {
-                let err = hub_flag_s.error();
-                s.hub_banner = if !err.is_empty() {
-                    err
-                } else if was {
-                    "Internet down, radio only".into()
+            let pending = {
+                let mut s = rt_hub.snap.lock();
+                let was = s.hub_ok;
+                s.hub_ok = hub_flag_s.get();
+                if s.hub_ok {
+                    if !was {
+                        drop(s);
+                        Some(rt_hub.pending_inet.lock().drain(..).collect::<Vec<_>>())
+                    } else {
+                        s.hub_banner.clear();
+                        None
+                    }
                 } else {
-                    s.hub_banner.clone()
-                };
+                    if rt_hub.cfg.lock().mode.uses_internet() {
+                        let err = hub_flag_s.error();
+                        s.hub_banner = if !err.is_empty() {
+                            err
+                        } else if was {
+                            "Internet down, radio only".into()
+                        } else {
+                            s.hub_banner.clone()
+                        };
+                    }
+                    None
+                }
+            };
+            if let Some(batch) = pending {
+                for env in batch {
+                    if let Some(h) = &rt_hub.hub {
+                        let _ = h.send(&env).await;
+                    }
+                }
             }
         }
     });
@@ -447,6 +487,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
 
     let mut kiss_rx = kiss_rx;
     let mut lan_in = lan_in;
+    let mut peer_in = peer_in;
 
     loop {
         tokio::select! {
@@ -472,6 +513,11 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             env = recv_lan(&mut lan_in) => {
                 if let Some(env) = env {
                     let _ = on_envelope(&rt, env, "lan", None).await;
+                }
+            }
+            env = recv_lan(&mut peer_in) => {
+                if let Some(env) = env {
+                    let _ = on_envelope(&rt, env, "inet", None).await;
                 }
             }
         }
@@ -547,6 +593,49 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
         _ => {}
     }
     Ok(())
+}
+
+async fn send_form(rt: &Runtime, target: &str, form: Form) -> Result<String> {
+    let cfg_g = rt.cfg.lock().clone();
+    let origin = Callsign::parse(&cfg_g.callsign)?;
+    let is_group = target.starts_with('#') || target.starts_with('&');
+    let dest = if is_group {
+        Callsign::from_raw(
+            target
+                .trim_start_matches('#')
+                .trim_start_matches('&')
+                .to_ascii_uppercase(),
+        )
+    } else {
+        Callsign::parse(target)?
+    };
+    let seq = rt.store.next_seq(origin.as_str())?;
+    let mut flags = Flags::new().with(FLAG_REQ_ACK);
+    apply_mode_flags(&mut flags, cfg_g.mode, origin.is_guest());
+    if is_group {
+        flags.set(FLAG_GROUP, true);
+    }
+    let hops = Priority::Routine.default_ttl();
+    let body = form.encode();
+    let mut env = Envelope::new_msg(origin, dest, seq, body.into_bytes(), hops, flags)?;
+    env.kind = MsgType::Form;
+    if cfg_g.mode.uses_internet() {
+        rt.keys.sign_envelope(&mut env)?;
+    }
+    rt.store.insert(&env, Delivery::Queued)?;
+    dispatch(rt, &env).await?;
+    rt.store.set_delivery(&env.msg_id, Delivery::Sent)?;
+    rt.irc.tagmsg_delivery(&env.msg_id.hex(), "sent").await;
+    let preview = form.render_text();
+    rt.irc
+        .broadcast_privmsg(
+            &cfg_g.callsign,
+            target,
+            &preview,
+            Some(&env.msg_id.hex()),
+        )
+        .await;
+    Ok(env.msg_id.hex())
 }
 
 async fn send_chat(rt: &Runtime, target: &str, text: &str) -> Result<()> {
@@ -756,8 +845,15 @@ async fn dispatch(rt: &Runtime, env: &Envelope) -> Result<()> {
         let _ = dispatch_rf_rung(rt, env, 0).await;
     }
     if cfg.mode.uses_internet() && env.flags.inet_ok() {
-        if let Some(h) = &rt.hub {
-            let _ = h.send(env).await;
+        if rt.hub_flag.get() {
+            if let Some(h) = &rt.hub {
+                let _ = h.send(env).await;
+            }
+        } else {
+            rt.pending_inet.lock().push(env.clone());
+        }
+        if let Some(p) = &rt.peers {
+            let _ = p.send(env.clone()).await;
         }
     }
     if let Some(l) = &rt.lan {
@@ -822,6 +918,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                     }
                 } else if let Some(w) = Welfare::parse(&text) {
                     let _ = rt.store.welfare(env.origin.as_str(), w.as_str());
+                    refresh_heard(rt);
                     rt.irc
                         .broadcast_privmsg(
                             env.origin.as_str(),
@@ -1075,6 +1172,13 @@ fn refresh_heard(rt: &Runtime) {
             .filter(|b| !b.is_empty())
             .or_else(|| crate::band::band_for_khz(h.freq_khz).map(|s| s.to_string()))
             .unwrap_or_default();
+        let welfare = rt
+            .store
+            .welfare_of(&h.callsign)
+            .ok()
+            .flatten()
+            .and_then(|c| Welfare::parse(&c).map(|w| w.badge().to_string()))
+            .unwrap_or_default();
         briefs.push(crate::status::HeardBrief {
             callsign: h.callsign,
             band,
@@ -1084,6 +1188,7 @@ fn refresh_heard(rt: &Runtime) {
             snr: h.snr,
             gateway: h.gateway,
             channels,
+            welfare,
         });
     }
     rt.snap.lock().heard = briefs;
@@ -1382,6 +1487,28 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                 cfg.lock().modem.ptt.clone()
             }
         }
+        "form" => {
+            let kind_s = sp.next().unwrap_or("");
+            let Some(kind) = FormKind::parse(kind_s) else {
+                return "usage: /radio form ics213|radiogram <target> key=value …".into();
+            };
+            let target = sp.next().unwrap_or("#bulletin").to_string();
+            let fields: Vec<(String, String)> = sp
+                .filter_map(|p| {
+                    p.split_once('=')
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                })
+                .collect();
+            if fields.is_empty() {
+                return "usage: /radio form ics213 #net from=G4ABC to=NET msg=need generator"
+                    .into();
+            }
+            let form = Form { kind, fields };
+            match send_form(rt, &target, form).await {
+                Ok(id) => format!("form sent {id}"),
+                Err(e) => format!("form failed: {e}"),
+            }
+        }
         "checkin" => {
             let note = sp.collect::<Vec<_>>().join(" ");
             let call = cfg.lock().callsign.clone();
@@ -1439,7 +1566,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
             }
         }
         "" | "help" => {
-            "RADIO commands: mode preset status group queue trace history freq qsy prio ptt checkin net mute theme update. Channels: /join #name  /invite CALL /prio"
+            "RADIO commands: mode preset status form group queue trace history freq qsy prio ptt checkin net mute theme update. Channels: /join #name  /invite CALL /prio"
                 .into()
         }
         other => format!("unknown RADIO subcommand '{other}'. Try /radio help"),
