@@ -15,8 +15,10 @@ pub fn run_wizard() -> Result<Config> {
     ui_style::panel("WEECHAT RADIO", "SETUP");
     println!(
         "  {}",
-        ui_style::dim()
-            .apply_to("You will need: your callsign, and (if you have a radio) a cable.")
+        ui_style::dim().apply_to(format!(
+            "wcr v{} — You will need: your callsign, and (if you have a radio) a cable.",
+            crate::update::current_version()
+        ))
     );
     println!();
 

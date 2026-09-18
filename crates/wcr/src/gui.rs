@@ -47,14 +47,14 @@ pub fn run() -> Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(size)
             .with_min_inner_size([820.0, 520.0])
-            .with_title("WeeChat Radio")
+            .with_title(&app_window_title())
             .with_icon(icon),
         // Ignore previously saved huge sizes so the default above always applies.
         persist_window: false,
         ..Default::default()
     };
     eframe::run_native(
-        "WeeChat Radio",
+        &app_window_title(),
         options,
         Box::new(|cc| {
             apply_fonts(&cc.egui_ctx);
@@ -93,6 +93,14 @@ fn primary_screen_px() -> Option<(u32, u32)> {
 
 fn hairline(color: Color32) -> Stroke {
     Stroke::new(1.0_f32, color)
+}
+
+fn app_window_title() -> String {
+    format!("WeeChat Radio v{}", crate::update::current_version())
+}
+
+fn version_label() -> String {
+    format!("v{}", crate::update::current_version())
 }
 
 fn apply_fonts(ctx: &egui::Context) {
@@ -1133,6 +1141,11 @@ impl eframe::App for GuiApp {
                         }
                         ui.add_space(12.0);
                         ui.label(
+                            RichText::new(version_label())
+                                .color(DIM)
+                                .font(FontId::monospace(11.0)),
+                        );
+                        ui.label(
                             RichText::new(chrono::Local::now().format("LCL %H:%M").to_string())
                                 .color(DIM)
                                 .font(FontId::monospace(11.0)),
@@ -1153,7 +1166,12 @@ impl eframe::App for GuiApp {
                 .frame(chrome(SHELL))
                 .show(ctx, |ui| {
                     ui.add_space(8.0);
-                    module_title(ui, "SETUP", if reopened { "STATION" } else { "FIRST RUN" });
+                    let setup_meta = if reopened {
+                        format!("STATION · {}", version_label())
+                    } else {
+                        format!("FIRST RUN · {}", version_label())
+                    };
+                    module_title(ui, "SETUP", &setup_meta);
                     ui.add_space(12.0);
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
@@ -1380,20 +1398,23 @@ impl eframe::App for GuiApp {
             .frame(chrome(TOPBAR))
             .show(ctx, |ui| {
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                    ui.label(
+                        RichText::new(version_label())
+                            .color(DIM)
+                            .font(FontId::monospace(11.0)),
+                    );
+                    ui.add_space(6.0);
                     cheat_sheet(ui);
                     ui.add_space(8.0);
                     ui.separator();
                     ui.add_space(4.0);
                     ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                        module_title(
-                            ui,
-                            "STATION",
-                            if self.status.is_some() {
-                                "LIVE"
-                            } else {
-                                "OFFLINE"
-                            },
-                        );
+                        let station_meta = if self.status.is_some() {
+                            format!("LIVE · {}", version_label())
+                        } else {
+                            format!("OFFLINE · {}", version_label())
+                        };
+                        module_title(ui, "STATION", &station_meta);
                         ui.add_space(8.0);
                         let mut mode_cmd = None;
                         let mut preset_cmd = None;
@@ -2784,7 +2805,6 @@ impl GuiApp {
         self.hw = Some(probe);
         self.hw_rx = None;
     }
-
 }
 
 fn port_combo_ui(

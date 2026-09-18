@@ -82,6 +82,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             },
         );
         s.activity_panel = cfg.ui.activity_panel;
+        s.version = crate::update::current_version().into();
     }
 
     let (irc_tx, mut irc_rx) = mpsc::channel(64);
