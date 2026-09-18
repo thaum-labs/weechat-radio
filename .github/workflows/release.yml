@@ -188,3 +188,35 @@ jobs:
             if [ -n "${{ matrix.modem_asset }}" ] && [ -e "${{ matrix.modem_asset }}" ]; then
               gh release upload "${RELEASE_TAG}" "${{ matrix.modem_asset }}" --clobber
             fi
+  sync_install_manifests:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: download checksum sidecars
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/wcr-sha
+          gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --pattern '*.sha256' --dir /tmp/wcr-sha
+          ls -la /tmp/wcr-sha
+      - name: patch install manifests
+        run: python scripts/sync_install_sha256.py /tmp/wcr-sha
+      - name: commit manifest hashes
+        run: |
+          set -euo pipefail
+          if git diff --quiet install/; then
+            echo "No manifest changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add install/
+          git commit -m "Sync install manifest SHA256 for ${GITHUB_REF_NAME}."
+          git push origin HEAD:main
