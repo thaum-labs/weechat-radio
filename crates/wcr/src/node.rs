@@ -1533,7 +1533,9 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
         }
         "theme" => {
             if let Some(t) = sp.next() {
-                cfg.lock().ui.theme = t.to_string();
+                let mut c = cfg.lock();
+                c.ui.theme = t.to_string();
+                persist_cfg(&c);
                 format!("theme {t}")
             } else {
                 cfg.lock().ui.theme.clone()
@@ -1542,7 +1544,11 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
         "activity" => {
             if let Some(v) = sp.next() {
                 let on = matches!(v.to_ascii_lowercase().as_str(), "on" | "1" | "true" | "yes");
-                cfg.lock().ui.activity_panel = on;
+                {
+                    let mut c = cfg.lock();
+                    c.ui.activity_panel = on;
+                    persist_cfg(&c);
+                }
                 snap.lock().activity_panel = on;
                 format!("activity panel {}", if on { "on" } else { "off" })
             } else {
