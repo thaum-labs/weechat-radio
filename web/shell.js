@@ -138,6 +138,7 @@
 
   function wrapPres() {
     document.querySelectorAll("main pre, .page-panel pre").forEach((pre) => {
+      if (pre.closest(".release")) return;
       if (pre.parentElement.classList.contains("pre-wrap")) return;
       const wrap = document.createElement("div");
       wrap.className = "pre-wrap" + (pre.classList.contains("plain") ? " plain" : "");

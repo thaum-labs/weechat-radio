@@ -844,6 +844,16 @@ svg.dgm .mk-dim { fill: var(--dim); }
   padding: 12px 0;
   border-top: 1px solid var(--line);
 }
+.release pre {
+  background: none;
+  border: none;
+  padding: 0;
+  overflow: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--fg);
+  font-size: 14px;
+}
 
 #boot_screen {
   position: fixed;
@@ -1012,6 +1022,10 @@ details.maplibregl-ctrl-attrib:not([open]) {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     -webkit-overflow-scrolling: touch;
+  }
+  .release pre {
+    padding: 0;
+    overflow: visible;
   }
   .pre-wrap {
     display: flex;
