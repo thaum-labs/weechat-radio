@@ -323,7 +323,8 @@ fn extract_zip(zip_path: &Path, dest: &Path) -> Result<()> {
 
 fn find_wcr_binary(dir: &Path) -> Result<PathBuf> {
     let name = if cfg!(windows) { "wcr.exe" } else { "wcr" };
-    find_named(dir, name).ok_or_else(|| Error::Msg("release archive did not contain wcr binary".into()))
+    find_named(dir, name)
+        .ok_or_else(|| Error::Msg("release archive did not contain wcr binary".into()))
 }
 
 fn find_named(dir: &Path, name: &str) -> Option<PathBuf> {
@@ -393,7 +394,10 @@ fn replace_windows_exe(dest: &Path, src: &Path) -> Result<()> {
     })?;
     if let Err(e) = fs::copy(src, dest) {
         let _ = fs::rename(&bak, dest);
-        return Err(Error::Msg(format!("could not write {}: {e}", dest.display())));
+        return Err(Error::Msg(format!(
+            "could not write {}: {e}",
+            dest.display()
+        )));
     }
     Ok(())
 }
@@ -443,13 +447,10 @@ mod tests {
                 ],
             ),
         ];
-        let info =
-            best_downloadable_for(&releases, "0.1.0", "windows", "x86_64").expect("should find 0.1.15");
+        let info = best_downloadable_for(&releases, "0.1.0", "windows", "x86_64")
+            .expect("should find 0.1.15");
         assert_eq!(info.version, "0.1.15");
-        assert_eq!(
-            info.name.as_deref(),
-            Some("wcr-windows-x86_64.zip")
-        );
+        assert_eq!(info.name.as_deref(), Some("wcr-windows-x86_64.zip"));
     }
 
     #[test]

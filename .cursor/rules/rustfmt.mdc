@@ -1,0 +1,11 @@
+---
+description: rustfmt before committing Rust so Ubuntu CI fmt check stays green
+globs: **/*.rs
+alwaysApply: false
+---
+
+# rustfmt
+
+Ubuntu CI runs `cargo fmt --all -- --check`. Windows/macOS CI do not.
+
+Before committing any `.rs` change, run `cargo fmt --all` and include the result. Do not push Rust that fails `cargo fmt --check`.

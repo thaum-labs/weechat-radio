@@ -180,8 +180,11 @@ branding/       README lockup and app icon (accent mark)
 
 ```bash
 cargo test --workspace
+cargo fmt --all
 python web/icons/render.py   # regenerate PNG/ICO marks
 ```
+
+Copy `.githooks/pre-commit` to `.git/hooks/pre-commit` so a commit of unformatted Rust is blocked before Ubuntu CI fails. Cursor/VS Code format Rust on save via `.vscode/settings.json`.
 
 The same `wcr` binary is a station (`wcr node` / `wcr gui` / `wcr tui`) or the public hub (`wcr hub`). Hub deploy notes: [deploy](https://weechatradio.com/docs/deploy.html).
 
