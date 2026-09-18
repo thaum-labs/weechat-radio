@@ -361,6 +361,7 @@ if (nightToggle) {
 }
 
 let liveMode = true;
+let liveLogSeeded = false;
 let playing = false;
 let playTimer = 0;
 let replayCache = [];
@@ -529,6 +530,28 @@ function tick(line) {
   while (ticker.children.length > cap) ticker.removeChild(ticker.lastChild);
 }
 
+function eventLine(x) {
+  const t = x.ts
+    ? new Date(x.ts * 1000).toISOString().slice(11, 19)
+    : new Date().toISOString().slice(11, 19);
+  const origin = x.origin || x.callsign || "?";
+  const kind = (x.kind || x.type || "").toLowerCase();
+  const from = x.from_band || x.band || "";
+  const dest = x.dest || "";
+  const to = Array.isArray(x.to_bands) && x.to_bands.length
+    ? ` -> ${x.to_bands.join(", ")}`
+    : "";
+  return `[${t}] ${origin}${from ? " " + from : ""} ${kind}${dest ? " -> " + dest : ""}${to}`.replace(/  +/g, " ");
+}
+
+function seedLiveLog() {
+  if (!ticker || !liveMode) return;
+  ticker.innerHTML = "";
+  const rows = replayCache.slice().sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  rows.slice(-120).forEach((x) => tick(eventLine(x)));
+  liveLogSeeded = true;
+}
+
 function isLive() {
   return Number(scrub.value) >= SPAN;
 }
@@ -608,9 +631,8 @@ async function ensureReplay() {
     replayCache = ev.events || [];
     replayLoadedAt = Date.now();
     drawSpark(replayCache);
-  } catch (_) {
-    replayCache = [];
-  }
+    if (liveMode && !liveLogSeeded) seedLiveLog();
+  } catch (_) {}
 }
 
 function renderReplay() {
@@ -621,6 +643,7 @@ function renderReplay() {
     return;
   }
   liveMode = false;
+  liveLogSeeded = false;
   const minutesAgo = SPAN - Number(scrub.value);
   const cutoff = Math.floor(Date.now() / 1000) - minutesAgo * 60;
   const rows = replayCache.filter((x) => (x.ts || 0) <= cutoff).slice(0, 80);
@@ -629,10 +652,7 @@ function renderReplay() {
     tick("No traffic in this part of the last 24 hours.");
     return;
   }
-  rows.forEach((x) => {
-    const t = x.ts ? new Date(x.ts * 1000).toISOString().slice(11, 19) : "--:--:--";
-    tick(`[${t}] ${x.origin || "?"} ${x.band || ""} ${x.kind || ""} -> ${x.dest || ""}`.replace(/  +/g, " "));
-  });
+  rows.forEach((x) => tick(eventLine(x)));
 }
 
 function goLive() {
@@ -641,6 +661,7 @@ function goLive() {
   setPlaying(false);
   syncTapeClock();
   updateDayNight();
+  seedLiveLog();
 }
 
 function playStep() {
@@ -661,6 +682,7 @@ async function applyScrub() {
   updateDayNight();
   if (isLive()) {
     liveMode = true;
+    seedLiveLog();
     return;
   }
   await ensureReplay();
@@ -756,13 +778,7 @@ function connectLive() {
         pushArc(origin, m.dest, kind !== "relay");
       }
       if (!liveMode) return;
-      const t = new Date().toISOString().slice(11, 19);
-      const from = m.from_band || m.band || "";
-      const dest = m.dest || "";
-      const to = Array.isArray(m.to_bands) && m.to_bands.length
-        ? ` -> ${m.to_bands.join(", ")}`
-        : "";
-      tick(`[${t}] ${origin}${from ? " " + from : ""} ${kind}${dest ? " -> " + dest : ""}${to}`);
+      tick(eventLine(m));
     } catch (_) {}
   };
   ws.onclose = () => {

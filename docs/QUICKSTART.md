@@ -37,10 +37,11 @@ On the web (with pictures): https://weechatradio.com/guides/start.html
 
 The status bar at the bottom shows your callsign and mode. After you send, a mark appears on your line:
 
-- `[.]` waiting to go out
-- `[v]` sent
-- `[vv]` relayed or delivered
-- `[vvv]` every station in a group got it
+- `[..]` waiting to go out
+- `[tx]` sent
+- `[rl]` relayed
+- `[ok]` delivered
+- `[all]` every station in a group got it
 
 The terminal TUI may show `·` / `✓` / `✓✓` / `✓✓✓` instead when Unicode is on. WeeChat uses the same Unicode ticks.
 

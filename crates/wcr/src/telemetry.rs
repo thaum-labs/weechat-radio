@@ -530,6 +530,26 @@ mod tests {
     }
 
     #[test]
+    fn events_roundtrip() {
+        let db = TelemetryDb::open_memory().unwrap();
+        let ev = TelemetryEvent {
+            ts: now(),
+            kind: "tx".into(),
+            origin: Some("G4ABC".into()),
+            dest: Some("BULLETIN".into()),
+            hops: Some(1),
+            snr: None,
+            msgid: Some("abc".into()),
+            band: Some("2m".into()),
+        };
+        db.add_event(&ev).unwrap();
+        let rows = db.events(0, 10);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["origin"], "G4ABC");
+        assert_eq!(rows[0]["kind"], "tx");
+    }
+
+    #[test]
     fn blocked_pubkey() {
         let db = TelemetryDb::open_memory().unwrap();
         let keys = IdentityKeys::generate();

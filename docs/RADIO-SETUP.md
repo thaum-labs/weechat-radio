@@ -32,7 +32,7 @@ On the web: https://weechatradio.com/guides/handheld.html
 
 ### How you know it worked
 
-The channel state flickers `rx` when they transmit, and SNR is a positive number. Your line gets `[v]` after you send, then `[vv]` when it is delivered.
+The channel state flickers `rx` when they transmit, and SNR is a positive number. Your line gets `[tx]` after you send, then `[ok]` when it is delivered.
 
 ---
 
