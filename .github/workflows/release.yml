@@ -2,10 +2,19 @@ name: release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and upload assets for
+        required: true
+        type: string
 permissions:
   contents: write
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 jobs:
   notes:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,6 +45,7 @@ jobs:
           generate_release_notes: false
   build:
     needs: notes
+    if: ${{ !failure() && !cancelled() && (needs.notes.result == 'success' || needs.notes.result == 'skipped') }}
     strategy:
       fail-fast: false
       matrix:
@@ -59,6 +69,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
       - name: linux windowing libs
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxdo-dev
@@ -122,6 +134,7 @@ jobs:
         uses: nick-fields/retry@v3
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
         with:
           timeout_minutes: 20
           max_attempts: 5
@@ -129,7 +142,7 @@ jobs:
           shell: bash
           command: |
             set -euo pipefail
-            gh release upload "${GITHUB_REF_NAME}" "${{ matrix.asset }}" --clobber
+            gh release upload "${RELEASE_TAG}" "${{ matrix.asset }}" --clobber
             if [ -n "${{ matrix.modem_asset }}" ] && [ -e "${{ matrix.modem_asset }}" ]; then
-              gh release upload "${GITHUB_REF_NAME}" "${{ matrix.modem_asset }}" --clobber
+              gh release upload "${RELEASE_TAG}" "${{ matrix.modem_asset }}" --clobber
             fi
