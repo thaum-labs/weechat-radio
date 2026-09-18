@@ -86,3 +86,5 @@ retry_jitter = true
 ## Upgrade note
 
 This hub build speaks protocol version 2 on radio and on the internet. Version 1 frames are still decoded. New frames are smaller. Every station that wants to talk to this hub over radio should run this build.
+
+How this sits next to JS8, FT8, Olivia, and APRS: https://weechatradio.com/docs/compare.html (offline: `wcr help compare`).

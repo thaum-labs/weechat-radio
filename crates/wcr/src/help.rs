@@ -15,6 +15,7 @@ pub fn topics() -> &'static [(&'static str, &'static str)] {
         ("style", include_str!("../../../docs/STYLE.md")),
         ("calling", include_str!("../../../docs/CALLING.md")),
         ("weak", include_str!("../../../docs/WEAK.md")),
+        ("compare", include_str!("../../../docs/COMPARE.md")),
         ("bridging", include_str!("../../../docs/BRIDGING.md")),
     ]
 }
