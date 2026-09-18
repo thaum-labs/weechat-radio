@@ -81,6 +81,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 "none"
             },
         );
+        s.activity_panel = cfg.ui.activity_panel;
     }
 
     let (irc_tx, mut irc_rx) = mpsc::channel(64);
@@ -1538,6 +1539,23 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                 cfg.lock().ui.theme.clone()
             }
         }
+        "activity" => {
+            if let Some(v) = sp.next() {
+                let on = matches!(v.to_ascii_lowercase().as_str(), "on" | "1" | "true" | "yes");
+                cfg.lock().ui.activity_panel = on;
+                snap.lock().activity_panel = on;
+                format!("activity panel {}", if on { "on" } else { "off" })
+            } else {
+                format!(
+                    "activity panel {}",
+                    if cfg.lock().ui.activity_panel {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                )
+            }
+        }
         "update" => "run `wcr update` in a terminal".into(),
         "modem" | "tnc" => {
             let c = cfg.lock();
@@ -1561,7 +1579,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
             }
         }
         "" | "help" => {
-            "RADIO commands: mode preset status form group queue trace history freq qsy prio ptt checkin net mute theme update. Channels: /join #name  /invite CALL /prio"
+            "RADIO commands: mode preset status form group queue trace history freq qsy prio ptt checkin net mute theme activity update. Channels: /join #name  /invite CALL /prio"
                 .into()
         }
         other => format!("unknown RADIO subcommand '{other}'. Try /radio help"),

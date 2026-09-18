@@ -3,7 +3,7 @@
 
 use crate::error::{Error, Result};
 use crate::grid;
-use axum::extract::State;
+use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
@@ -11,6 +11,7 @@ use parking_lot::Mutex;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -119,6 +120,25 @@ impl TelemetryDb {
                 None
             }
         })
+    }
+
+    pub fn is_blocked(&self, pk: &[u8; 32]) -> bool {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT 1 FROM blocks WHERE pubkey = ?1",
+            params![pk.as_slice()],
+            |_| Ok(()),
+        )
+        .is_ok()
+    }
+
+    pub fn block_pubkey(&self, pk: &[u8; 32]) -> Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT OR IGNORE INTO blocks(pubkey) VALUES(?1)",
+            params![pk.as_slice()],
+        )?;
+        Ok(())
     }
 
     pub fn release_callsign(&self, call: &str) -> Result<()> {
@@ -306,6 +326,7 @@ pub struct TelemetryEvent {
 
 pub async fn ingest_report(
     State(st): State<crate::net::hub_server::HubState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     body: bytes::Bytes,
 ) -> std::result::Result<Json<serde_json::Value>, (StatusCode, String)> {
@@ -315,12 +336,9 @@ pub async fn ingest_report(
     if !crate::rate_limit::allow(&st.report_by_call, &call) {
         return Err((StatusCode::TOO_MANY_REQUESTS, "rate limit".into()));
     }
-    if let Some(ip) = header(&headers, "x-forwarded-for").or_else(|| header(&headers, "x-real-ip"))
-    {
-        let ip_key = ip.split(',').next().unwrap_or(ip).trim();
-        if !crate::rate_limit::allow(&st.report_by_ip, ip_key) {
-            return Err((StatusCode::TOO_MANY_REQUESTS, "rate limit".into()));
-        }
+    let ip_key = client_ip(&headers, peer);
+    if !crate::rate_limit::allow(&st.report_by_ip, &ip_key) {
+        return Err((StatusCode::TOO_MANY_REQUESTS, "rate limit".into()));
     }
     let pkhex = header(&headers, "x-radio-pubkey")
         .ok_or((StatusCode::BAD_REQUEST, "missing pubkey".into()))?;
@@ -343,6 +361,10 @@ pub async fn ingest_report(
     vk.verify(&body, &Signature::from_bytes(&sig_arr))
         .map_err(|_| (StatusCode::UNAUTHORIZED, "bad signature".into()))?;
 
+    if st.telemetry.is_blocked(&pk_arr) {
+        return Err((StatusCode::FORBIDDEN, "blocked".into()));
+    }
+
     if let Some(existing) = st.telemetry.get_pubkey(&call) {
         if existing != pk_arr {
             return Err((StatusCode::CONFLICT, "callsign already claimed".into()));
@@ -355,8 +377,14 @@ pub async fn ingest_report(
         return Err((StatusCode::BAD_REQUEST, "callsign not plausible".into()));
     }
 
-    let report: NodeReport =
+    let mut report: NodeReport =
         serde_json::from_slice(&body).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    if report.grid.trim().is_empty() {
+        let ip = ip_key.clone();
+        if let Ok(Some(g)) = tokio::task::spawn_blocking(move || grid::grid_for_ip(&ip)).await {
+            report.grid = g;
+        }
+    }
     if report.callsign.to_ascii_uppercase() != call {
         return Err((StatusCode::BAD_REQUEST, "callsign mismatch".into()));
     }
@@ -387,6 +415,13 @@ pub async fn get_nodes(
 
 fn header<'a>(h: &'a HeaderMap, name: &str) -> Option<&'a str> {
     h.get(name).and_then(|v| v.to_str().ok())
+}
+
+fn client_ip(headers: &HeaderMap, peer: SocketAddr) -> String {
+    header(headers, "x-forwarded-for")
+        .or_else(|| header(headers, "x-real-ip"))
+        .map(|ip| ip.split(',').next().unwrap_or(ip).trim().to_string())
+        .unwrap_or_else(|| peer.ip().to_string())
 }
 
 fn now() -> u64 {
@@ -492,5 +527,15 @@ mod tests {
         assert!(db.check_replay("G4ABC", ts));
         assert!(!db.check_replay("G4ABC", ts));
         assert!(!db.check_replay("G4ABC", ts.saturating_sub(1000)));
+    }
+
+    #[test]
+    fn blocked_pubkey() {
+        let db = TelemetryDb::open_memory().unwrap();
+        let keys = IdentityKeys::generate();
+        let pk = keys.public_bytes();
+        assert!(!db.is_blocked(&pk));
+        db.block_pubkey(&pk).unwrap();
+        assert!(db.is_blocked(&pk));
     }
 }

@@ -36,6 +36,25 @@
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> changelog</h1>
       <article class="release">
         <h3 class="title">
+          <p>v0.1.14</p>
+          <p>Fri, 18 Sep 2026</p>
+        </h3>
+        <pre>Architecture gap release — hub mesh, updates, and operator polish.
+
+- Direct hub peer mesh from [hub] peers= (TCP relay between hubs)
+- wcr update: download, SHA256 verify, unpack, binary swap
+- Hub rate limits on telemetry (per callsign and per IP, including direct TCP)
+- TUI/GUI notifications, clock skew warning, ICS compose on /radio form
+- Setup wizard: audio input, calling card, optional service install
+- Map: gateway pulses and band arcs on the public dashboard
+- Linux ARM64 release tarballs, QUICKSTART.pdf in the bundle
+- Telemetry: blocked pubkeys rejected; empty grid filled from client IP geolocation
+- /radio activity on|off toggles the TUI activity panel live
+
+Upgrade nodes with wcr update or a fresh download from weechatradio.com/downloads.html</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>hub ce4a108</p>
           <p>Thu, 17 Sep 2026</p>
         </h3>

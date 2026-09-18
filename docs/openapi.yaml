@@ -1,0 +1,71 @@
+openapi: 3.0.3
+info:
+  title: WeeChat Radio Hub API
+  version: 0.1.14
+  description: Public read endpoints and signed telemetry write. Base URL https://hub.weechatradio.com
+servers:
+  - url: https://hub.weechatradio.com
+paths:
+  /healthz:
+    get:
+      summary: Liveness
+      responses:
+        "200":
+          description: Plain text ok
+  /api/v1/nodes:
+    get:
+      summary: Live station metadata
+      responses:
+        "200":
+          description: JSON nodes list
+  /api/v1/events:
+    get:
+      summary: Recent TX/RX/relay events
+      parameters:
+        - in: query
+          name: since
+          schema: { type: integer }
+        - in: query
+          name: limit
+          schema: { type: integer }
+      responses:
+        "200":
+          description: JSON events
+  /api/v1/stats:
+    get:
+      summary: Hub counters
+      responses:
+        "200":
+          description: JSON stats
+  /api/v1/report:
+    post:
+      summary: Signed node telemetry (no message text)
+      parameters:
+        - in: header
+          name: X-Radio-Callsign
+          required: true
+          schema: { type: string }
+        - in: header
+          name: X-Radio-Pubkey
+          required: true
+          schema: { type: string }
+        - in: header
+          name: X-Radio-Signature
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [callsign, ts, mode]
+      responses:
+        "200":
+          description: Accepted
+        "401":
+          description: Bad signature
+        "403":
+          description: Blocked pubkey
+        "429":
+          description: Rate limited

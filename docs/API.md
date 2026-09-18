@@ -1,5 +1,7 @@
 On the web: https://weechatradio.com/docs/api.html
 
+OpenAPI (minimal): [openapi.yaml](./openapi.yaml) in this repo.
+
 # Public API
 
 Base: `https://hub.weechatradio.com`

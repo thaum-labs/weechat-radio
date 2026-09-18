@@ -119,6 +119,33 @@ pub fn detect_from_ip() -> Option<DetectedGrid> {
     detect_from_ip_inner().ok().flatten()
 }
 
+/// Approximate 6-character Maidenhead square for a specific IP (hub telemetry fallback).
+pub fn grid_for_ip(ip: &str) -> Option<String> {
+    let ip = ip.trim();
+    if ip.is_empty() || ip == "127.0.0.1" || ip == "::1" {
+        return None;
+    }
+    if let Some(rest) = ip.strip_prefix("::ffff:") {
+        if rest == "127.0.0.1" {
+            return None;
+        }
+    }
+    grid_for_ip_inner(ip).ok().flatten()
+}
+
+fn grid_for_ip_inner(ip: &str) -> Result<Option<String>> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .user_agent("WeeChatRadio/0.1")
+        .build()
+        .map_err(|e| Error::Net(e.to_string()))?;
+    let url = format!("http://ip-api.com/json/{ip}?fields=status,lat,lon");
+    let Some(hit) = try_ip_api(&client, &url, 0)? else {
+        return Ok(None);
+    };
+    Ok(from_lat_lon(hit.lat, hit.lon, 6).ok())
+}
+
 fn detect_from_ip_inner() -> Result<Option<DetectedGrid>> {
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(4))

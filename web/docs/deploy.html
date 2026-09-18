@@ -116,9 +116,9 @@ docker compose -f deploy/docker-compose.yml up -d</pre>
       </ol>
 
       <h2>Backups</h2>
-      <p>Optional nightly:</p>
-      <pre>docker compose exec postgres pg_dump -U wcr wcr | gzip &gt; /var/backups/wcr-$(date +%F).sql.gz</pre>
-      <p>v1 can also run SQLite only (no Postgres) by setting <code>DATABASE_PATH=/data/wcr.db</code> and dropping the postgres service.</p>
+      <p>Production uses <strong>SQLite</strong> in the hub container (<code>/data/hub.db</code> and telemetry DB). Optional nightly copy:</p>
+      <pre>docker compose -f deploy/docker-compose.yml exec -T hub \
+  sh -c 'tar -czf - /data/*.db' &gt; /var/backups/wcr-sqlite-$(date +%F).tar.gz</pre>
 
       <div class="ok">
         <h2>How you know it worked</h2>
