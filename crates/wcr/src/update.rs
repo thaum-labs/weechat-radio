@@ -205,13 +205,31 @@ pub async fn apply() -> Result<String> {
         }
     }
 
-    let exe = std::env::current_exe()?;
+    let exe = running_exe()?;
     let extracted = extract_payload(&bytes, info.name.as_deref())?;
     install_binary(&exe, &extracted)?;
+    if let Some(dir) = extracted.parent() {
+        let gui_name = if cfg!(windows) {
+            "wcr-gui.exe"
+        } else {
+            "wcr-gui"
+        };
+        if let Some(gui_src) = find_named(dir, gui_name) {
+            if let Some(parent) = exe.parent() {
+                let _ = install_binary(&parent.join(gui_name), &gui_src);
+            }
+        }
+    }
     Ok(format!(
-        "updated to {} — restart wcr (service or terminal) to run the new binary",
-        info.version
+        "updated to {} at {} — close this window and run wcr --version in a new terminal",
+        info.version,
+        exe.display()
     ))
+}
+
+fn running_exe() -> Result<PathBuf> {
+    let exe = std::env::current_exe()?;
+    Ok(fs::canonicalize(&exe).unwrap_or(exe))
 }
 
 fn verify_sha256(manifest: &str, asset_name: &str, bytes: &[u8]) -> Result<()> {
@@ -305,23 +323,36 @@ fn extract_zip(zip_path: &Path, dest: &Path) -> Result<()> {
 
 fn find_wcr_binary(dir: &Path) -> Result<PathBuf> {
     let name = if cfg!(windows) { "wcr.exe" } else { "wcr" };
-    let direct = dir.join(name);
-    if direct.is_file() {
-        return Ok(direct);
-    }
-    for entry in fs::read_dir(dir).map_err(|e| Error::Msg(e.to_string()))? {
-        let entry = entry.map_err(|e| Error::Msg(e.to_string()))?;
-        let p = entry.path();
-        if p.is_file() && p.file_name().and_then(|s| s.to_str()) == Some(name) {
-            return Ok(p);
+    find_named(dir, name).ok_or_else(|| Error::Msg("release archive did not contain wcr binary".into()))
+}
+
+fn find_named(dir: &Path, name: &str) -> Option<PathBuf> {
+    fn walk(dir: &Path, name: &str, depth: u8) -> Option<PathBuf> {
+        let direct = dir.join(name);
+        if direct.is_file() {
+            return Some(direct);
         }
+        if depth == 0 {
+            return None;
+        }
+        let entries = fs::read_dir(dir).ok()?;
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                if let Some(found) = walk(&p, name, depth - 1) {
+                    return Some(found);
+                }
+            }
+        }
+        None
     }
-    Err(Error::Msg(
-        "release archive did not contain wcr binary".into(),
-    ))
+    walk(dir, name, 3)
 }
 
 fn install_binary(dest: &Path, src: &Path) -> Result<()> {
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)?;
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -338,19 +369,33 @@ fn install_binary(dest: &Path, src: &Path) -> Result<()> {
     }
     #[cfg(windows)]
     {
-        let new_path = dest.with_extension("new.exe");
-        fs::copy(src, &new_path)?;
-        let script = format!(
-            "timeout /t 2 /nobreak >nul & move /y \"{}\" \"{}\"",
-            new_path.display(),
-            dest.display()
-        );
-        Command::new("cmd")
-            .args(["/C", &script])
-            .spawn()
-            .map_err(|e| Error::Msg(format!("could not schedule swap: {e}")))?;
-        Ok(())
+        replace_windows_exe(dest, src)
     }
+}
+
+/// Windows will not overwrite a running .exe, but it will rename one.
+/// Move the current file aside, then copy the new one into place.
+#[cfg(windows)]
+fn replace_windows_exe(dest: &Path, src: &Path) -> Result<()> {
+    if fs::copy(src, dest).is_ok() {
+        return Ok(());
+    }
+    if !dest.exists() {
+        return Err(Error::Msg(format!("could not write {}", dest.display())));
+    }
+    let bak = dest.with_extension("exe.bak");
+    let _ = fs::remove_file(&bak);
+    fs::rename(dest, &bak).map_err(|e| {
+        Error::Msg(format!(
+            "could not replace {} ({e}). Close WeeChat Radio and retry, or run: irm https://weechatradio.com/install.ps1 | iex",
+            dest.display()
+        ))
+    })?;
+    if let Err(e) = fs::copy(src, dest) {
+        let _ = fs::rename(&bak, dest);
+        return Err(Error::Msg(format!("could not write {}: {e}", dest.display())));
+    }
+    Ok(())
 }
 
 pub async fn check_background() -> Option<String> {
@@ -429,5 +474,17 @@ mod tests {
             highest_newer_tag(&releases, "0.1.15").as_deref(),
             Some("0.1.16")
         );
+    }
+
+    #[test]
+    fn finds_nested_wcr_exe() {
+        let dir = std::env::temp_dir().join(format!("wcr-find-{}", std::process::id()));
+        let nested = dir.join("dist");
+        fs::create_dir_all(&nested).unwrap();
+        let bin = nested.join("wcr.exe");
+        fs::write(&bin, b"x").unwrap();
+        let found = find_named(&dir, "wcr.exe").unwrap();
+        assert_eq!(found, bin);
+        let _ = fs::remove_dir_all(&dir);
     }
 }
