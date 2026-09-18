@@ -1,0 +1,17 @@
+---
+description: App version and git tags only when the binary changes; website has no version
+alwaysApply: true
+---
+
+# Versioning
+
+`0.1.x` and `v*` tags are the desktop/CLI app (`wcr`, `wcr-gui`). `wcr update` installs any newer GitHub tag, even if the app did not change.
+
+When the user says **deploy**:
+
+- **Site / docs only** (`web/`, guides, compare page, CSS, copy, `docs/*.md` that is not required in the binary): commit and push `main`. Do **not** bump `Cargo.toml`, the README badge, openapi `info.version`, or create a `v*` tag. Optional changelog: a dated **site** note with no version number.
+- **App / hub binary** (`crates/`, protocol, GUI/TUI, updater): bump workspace version, README badge, both `openapi.yaml` files, add a `v0.1.x` changelog article, commit, rebase, push `main`, tag `v0.1.x`.
+
+Do not tag a release so that `wcr help` picks up markdown. Offline help waits for the next real app release.
+
+v0.1.24 already exists from a docs-only ship; do not delete the tag.
