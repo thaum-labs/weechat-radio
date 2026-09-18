@@ -49,6 +49,7 @@ history_max_age_hours = 24
 [lan]
 discovery = true
 port = 7373
+# service = "_wcr._tcp.local."   # e2e uses "_wcr-e2e._tcp.local."
 
 [ui]
 theme = "tron"        # tron | hacker | terminal

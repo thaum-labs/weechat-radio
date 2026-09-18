@@ -208,6 +208,8 @@ mod tests {
             websocket_url("wss://hub.weechatradio.com/ws"),
             "wss://hub.weechatradio.com/ws"
         );
+        assert_eq!(websocket_url(""), "");
+        assert_eq!(websocket_url("   "), "");
     }
 
     #[test]

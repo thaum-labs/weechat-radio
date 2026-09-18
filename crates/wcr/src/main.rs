@@ -108,6 +108,15 @@ async fn real_main() -> Result<()> {
             wcr::ui_style::panel("WEECHAT RADIO", "TNC");
             wcr::tnc::cli::run(action, &cfg_path)?;
         }
+        Command::E2e { kind } => match kind {
+            wcr::cli::E2eCmd::Lan {
+                timeout,
+                port,
+                hub_port,
+            } => {
+                wcr::e2e::run_lan(timeout, port, hub_port).await?;
+            }
+        },
     }
     Ok(())
 }

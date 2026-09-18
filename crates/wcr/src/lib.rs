@@ -6,6 +6,7 @@ pub mod band;
 pub mod cli;
 pub mod config;
 pub mod discover;
+pub mod e2e;
 pub mod emcomm;
 pub mod error;
 pub mod grid;

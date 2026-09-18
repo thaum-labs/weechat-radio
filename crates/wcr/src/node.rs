@@ -100,12 +100,15 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     tokio::spawn(async move { status::serve(status_bind, snap_s).await });
 
     let (tel_tx, tel_rx) = broadcast::channel::<TelemetryEvent>(64);
-    if cfg.mode.uses_internet() {
+    if cfg.reports_telemetry() {
         let url = cfg.telemetry.url.clone();
         let keys_t = keys.clone();
         let call = cfg.callsign.clone();
         let snap_t = snap.clone();
-        tokio::spawn(telemetry::reporter_loop(url, keys_t, call, snap_t, tel_rx));
+        let interval = cfg.telemetry.interval_secs;
+        tokio::spawn(telemetry::reporter_loop(
+            url, keys_t, call, snap_t, tel_rx, interval,
+        ));
     }
 
     let mut _modem_child: Option<ModemProcess> = None;
@@ -184,7 +187,8 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     let hub_flag = ArcFlag::new();
     let (hub_in_tx, mut hub_in_rx) = mpsc::channel::<Envelope>(64);
     let mut hub: Option<HubClient> = None;
-    if cfg.mode.uses_internet() {
+    let mut _keep_hub_tx = None;
+    if cfg.dials_hub() {
         match HubClient::connect(
             &cfg.hub.url,
             &cfg.callsign,
@@ -199,6 +203,8 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             Ok(h) => hub = Some(h),
             Err(e) => tracing::warn!("hub: {e}"),
         }
+    } else {
+        _keep_hub_tx = Some(hub_in_tx);
     }
 
     let mut lan_out: Option<mpsc::Sender<Envelope>> = None;
@@ -215,9 +221,25 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         }
     }
     if cfg.lan.discovery {
-        match LanMesh::start(&cfg.callsign, cfg.lan.port).await {
+        match LanMesh::start(
+            &cfg.callsign,
+            cfg.lan.port,
+            &cfg.lan.service,
+            &cfg.lan.hub_advertise,
+        )
+        .await
+        {
             Ok((mesh, tx)) => {
                 let _ = mesh.bind_port;
+                let peers = mesh.peer_set();
+                let snap_l = snap.clone();
+                tokio::spawn(async move {
+                    let mut tick = tokio::time::interval(Duration::from_secs(1));
+                    loop {
+                        tick.tick().await;
+                        snap_l.lock().lan_peers = peers.lock().unwrap().len();
+                    }
+                });
                 lan_out = Some(tx);
                 lan_in = Some(mesh.incoming);
             }
