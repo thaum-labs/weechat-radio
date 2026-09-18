@@ -164,13 +164,15 @@ fn prompt_mark(ui: &mut egui::Ui, wave: Color32) -> egui::Response {
                 .font(FontId::monospace(18.0)),
         );
     });
-    ui.interact(
-        inner.response.rect,
-        ui.id().with("brand_home"),
-        egui::Sense::click(),
-    )
-    .on_hover_cursor(egui::CursorIcon::PointingHand)
-    .on_hover_text("Back to live chat")
+    let home = ui
+        .interact(
+            inner.response.rect,
+            ui.id().with("brand_home"),
+            egui::Sense::click(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    hover_tip(&home, "Back to live chat");
+    home
 }
 
 fn paint_brand_mark(ui: &mut egui::Ui, wave: Color32, height: f32) {
@@ -259,8 +261,33 @@ fn apply_visuals(ctx: &egui::Context) {
     v.widgets.active.rounding = egui::Rounding::ZERO;
     v.widgets.open.rounding = egui::Rounding::ZERO;
     v.widgets.open.bg_stroke = hairline(ACCENT);
+    // Popups/tooltips (Frame::popup) — contrast with panel chrome.
+    v.window_fill = Color32::from_rgb(28, 28, 42);
+    v.window_stroke = hairline(ACCENT);
+    v.popup_shadow = egui::epaint::Shadow {
+        offset: egui::vec2(0.0, 3.0),
+        blur: 10.0,
+        spread: 0.0,
+        color: Color32::from_black_alpha(200),
+    };
     style.visuals = v;
+    style.interaction.tooltip_delay = 0.25;
+    style.interaction.show_tooltips_only_when_still = false;
     ctx.set_style(style);
+}
+
+/// Show a tooltip while the pointer is over `response`.
+///
+/// Uses [`egui::Response::show_tooltip_ui`] instead of [`egui::Response::on_hover_text`]
+/// so hints still appear when the chat pane is auto-scrolling (egui suppresses normal
+/// hover tooltips for a short time after any scroll).
+fn hover_tip(response: &egui::Response, tip: impl Into<egui::WidgetText>) {
+    if response.contains_pointer() {
+        response.show_tooltip_ui(|ui| {
+            ui.set_max_width(ui.spacing().tooltip_width);
+            ui.add(egui::Label::new(tip));
+        });
+    }
 }
 
 fn chrome(fill: Color32) -> egui::Frame {
@@ -1914,7 +1941,7 @@ fn kv_tip(ui: &mut egui::Ui, k: &str, v: &str, color: Color32, tip: Option<&str>
         );
     });
     if let Some(tip) = tip {
-        resp.response.on_hover_text(tip);
+        hover_tip(&resp.response, tip);
     }
 }
 
@@ -1968,14 +1995,12 @@ fn mode_pick(ui: &mut egui::Ui, current: Mode) -> Option<Mode> {
             .show_ui(ui, |ui| {
                 ui.set_min_width(w.max(160.0));
                 for m in Mode::all() {
-                    if ui
-                        .selectable_label(
-                            m == current,
-                            RichText::new(m.as_str()).color(mode_color(m)).monospace(),
-                        )
-                        .on_hover_text(m.display_name())
-                        .clicked()
-                    {
+                    let row = ui.selectable_label(
+                        m == current,
+                        RichText::new(m.as_str()).color(mode_color(m)).monospace(),
+                    );
+                    hover_tip(&row, m.display_name());
+                    if row.clicked() {
                         chosen = Some(m);
                     }
                 }
@@ -1997,14 +2022,12 @@ fn preset_pick(ui: &mut egui::Ui, current: &str) -> Option<String> {
                 ui.set_min_width(w.max(160.0));
                 for p in Preset::all() {
                     let value = p.as_str();
-                    if ui
-                        .selectable_label(
-                            value == current,
-                            RichText::new(value).color(PURPLE).monospace(),
-                        )
-                        .on_hover_text(p.description())
-                        .clicked()
-                    {
+                    let row = ui.selectable_label(
+                        value == current,
+                        RichText::new(value).color(PURPLE).monospace(),
+                    );
+                    hover_tip(&row, p.description());
+                    if row.clicked() {
                         chosen = Some(value.to_string());
                     }
                 }
@@ -2153,7 +2176,7 @@ fn freq_pick(
                 }
             },
         );
-        button.on_hover_text(hover);
+        hover_tip(&button, hover);
     });
     let picked = match (selected, current_row) {
         (Some(next), Some(cur)) if next == cur => None,
@@ -2308,12 +2331,12 @@ fn freq_row(
     selected: &mut Option<crate::band::CallingFreq>,
     c: crate::band::CallingFreq,
 ) {
-    ui.selectable_value(
+    let row = ui.selectable_value(
         selected,
         Some(c),
         RichText::new(c.list_label()).color(PURPLE).monospace(),
-    )
-    .on_hover_text(c.detail());
+    );
+    hover_tip(&row, c.detail());
 }
 
 fn prio_pick(ui: &mut egui::Ui, current: &str) -> Option<&'static str> {
@@ -2325,32 +2348,33 @@ fn prio_pick(ui: &mut egui::Ui, current: &str) -> Option<&'static str> {
     let mut chosen = None;
     ui.horizontal(|ui| {
         ui.label(RichText::new("priority").color(DIM).monospace());
-        egui::ComboBox::from_id_salt("chan_prio_pick")
+        let combo = egui::ComboBox::from_id_salt("chan_prio_pick")
             .selected_text(RichText::new(&selected).color(ORANGE).monospace())
             .width(120.0)
             .show_ui(ui, |ui| {
                 for level in levels {
-                    if ui
-                        .selectable_label(
-                            selected == level,
-                            RichText::new(level).color(ORANGE).monospace(),
-                        )
-                        .on_hover_text(match level {
+                    let row = ui.selectable_label(
+                        selected == level,
+                        RichText::new(level).color(ORANGE).monospace(),
+                    );
+                    hover_tip(
+                        &row,
+                        match level {
                             "routine" => "Default TTL 3 hops",
                             "priority" => "Faster relays, TTL 4 — or prefix a line with !",
                             "emergency" => "Double TX on RF, TTL 5 — or prefix !!",
                             _ => "",
-                        })
-                        .clicked()
-                    {
+                        },
+                    );
+                    if row.clicked() {
                         chosen = Some(level);
                     }
                 }
-            })
-            .response
-            .on_hover_text(
-                "Default priority for messages on this channel (synced to other stations). Override a line with ! or !!.",
-            );
+            });
+        hover_tip(
+            &combo.response,
+            "Default priority for messages on this channel (synced to other stations). Override a line with ! or !!.",
+        );
     });
     chosen.filter(|c| *c != current)
 }

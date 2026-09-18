@@ -4,6 +4,7 @@
 use crate::error::{Error, Result};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use std::cmp::Ordering;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -27,51 +28,118 @@ pub fn current_version() -> &'static str {
 }
 
 pub async fn latest() -> Result<Option<ReleaseInfo>> {
-    let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
-    let client = reqwest::Client::builder()
-        .user_agent("wcr")
-        .build()
-        .map_err(|e| Error::Net(e.to_string()))?;
+    let client = github_client()?;
+    let releases = fetch_releases(&client).await?;
+    Ok(best_downloadable(&releases, current_version()))
+}
+
+async fn fetch_releases(client: &reqwest::Client) -> Result<Vec<Release>> {
+    let url = format!("https://api.github.com/repos/{REPO}/releases?per_page=30");
     let res = client
         .get(url)
         .send()
         .await
         .map_err(|e| Error::Net(e.to_string()))?;
-    if res.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(None);
-    }
     if !res.status().is_success() {
         return Err(Error::Net(format!("GitHub releases HTTP {}", res.status())));
     }
-    let rel: Release = res.json().await.map_err(|e| Error::Net(e.to_string()))?;
-    let tag = rel.tag_name.trim_start_matches('v').to_string();
-    if tag == current_version() {
-        return Ok(None);
+    res.json().await.map_err(|e| Error::Net(e.to_string()))
+}
+
+fn github_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent("wcr")
+        .build()
+        .map_err(|e| Error::Net(e.to_string()))
+}
+
+fn parse_version(tag: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = tag.trim_start_matches('v').split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
     }
-    let picked = pick_asset(&rel.assets);
-    let aname = picked.map(|a| a.name.clone());
-    Ok(Some(ReleaseInfo {
+    Some((major, minor, patch))
+}
+
+fn version_cmp(a: &str, b: &str) -> Ordering {
+    match (parse_version(a), parse_version(b)) {
+        (Some(va), Some(vb)) => va.cmp(&vb),
+        _ => a.cmp(b),
+    }
+}
+
+fn is_newer_than_current(tag: &str, current: &str) -> bool {
+    version_cmp(tag, current) == Ordering::Greater
+}
+
+fn highest_newer_tag(releases: &[Release], current: &str) -> Option<String> {
+    releases
+        .iter()
+        .filter_map(|rel| {
+            let tag = rel.tag_name.trim_start_matches('v');
+            if is_newer_than_current(tag, current) {
+                parse_version(tag).map(|_| tag.to_string())
+            } else {
+                None
+            }
+        })
+        .max_by(|a, b| version_cmp(a, b))
+}
+
+/// Newest release newer than `current` that ships a binary for this OS/arch.
+fn best_downloadable(releases: &[Release], current: &str) -> Option<ReleaseInfo> {
+    best_downloadable_for(
+        releases,
+        current,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    )
+}
+
+fn best_downloadable_for(
+    releases: &[Release],
+    current: &str,
+    os: &str,
+    arch: &str,
+) -> Option<ReleaseInfo> {
+    releases
+        .iter()
+        .filter_map(|rel| {
+            let tag = rel.tag_name.trim_start_matches('v');
+            if !is_newer_than_current(tag, current) {
+                return None;
+            }
+            let asset = pick_asset_for(&rel.assets, os, arch)?;
+            let ver = parse_version(tag)?;
+            Some((ver, release_info(rel, asset)))
+        })
+        .max_by_key(|(ver, _)| *ver)
+        .map(|(_, info)| info)
+}
+
+fn release_info(rel: &Release, asset: &Asset) -> ReleaseInfo {
+    let tag = rel.tag_name.trim_start_matches('v').to_string();
+    let name = asset.name.clone();
+    ReleaseInfo {
         version: tag,
-        url: picked.map(|a| a.browser_download_url.clone()),
-        name: aname.clone(),
+        url: Some(asset.browser_download_url.clone()),
+        name: Some(name.clone()),
         sums_url: rel.assets.iter().find_map(|a| {
             if a.name.eq_ignore_ascii_case("SHA256SUMS.txt") {
                 Some(a.browser_download_url.clone())
-            } else if aname
-                .as_ref()
-                .is_some_and(|n| a.name.eq_ignore_ascii_case(&format!("{n}.sha256")))
-            {
+            } else if a.name.eq_ignore_ascii_case(&format!("{name}.sha256")) {
                 Some(a.browser_download_url.clone())
             } else {
                 None
             }
         }),
-    }))
+    }
 }
 
-fn pick_asset(assets: &[Asset]) -> Option<&Asset> {
-    let os = std::env::consts::OS;
-    let arch = std::env::consts::ARCH;
+fn pick_asset_for<'a>(assets: &'a [Asset], os: &str, arch: &str) -> Option<&'a Asset> {
     let preferred = match (os, arch) {
         // WoA and x64 Windows share the x86_64 release zip today.
         ("windows", "x86_64" | "aarch64") => Some("wcr-windows-x86_64.zip"),
@@ -103,21 +171,23 @@ pub struct ReleaseInfo {
 }
 
 pub async fn apply() -> Result<String> {
-    let Some(info) = latest().await? else {
-        return Ok(format!("already up to date ({})", current_version()));
+    let client = github_client()?;
+    let releases = fetch_releases(&client).await?;
+    let current = current_version();
+    let Some(info) = best_downloadable(&releases, current) else {
+        if highest_newer_tag(&releases, current).is_some() {
+            return Err(Error::Msg(format!(
+                "a newer release is still publishing for this platform — try again in a few minutes, or install manually from https://github.com/{REPO}/releases"
+            )));
+        }
+        return Ok(format!("already up to date ({current})"));
     };
-    let Some(url) = info.url else {
-        return Err(Error::Msg(format!(
-            "update {} is available but no binary for this OS. See https://github.com/{REPO}/releases",
-            info.version
-        )));
-    };
-    let client = reqwest::Client::builder()
-        .user_agent("wcr")
-        .build()
-        .map_err(|e| Error::Net(e.to_string()))?;
+    let url = info
+        .url
+        .as_ref()
+        .ok_or_else(|| unsupported_platform_msg(&info.version))?;
     let bytes = client
-        .get(&url)
+        .get(url)
         .send()
         .await
         .map_err(|e| Error::Net(e.to_string()))?
@@ -287,5 +357,77 @@ pub async fn check_background() -> Option<String> {
     match latest().await {
         Ok(Some(i)) => Some(i.version),
         _ => None,
+    }
+}
+
+fn unsupported_platform_msg(version: &str) -> Error {
+    Error::Msg(format!(
+        "update {version} is available but no binary for this OS ({}/{}). See https://github.com/{REPO}/releases",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn asset(name: &str) -> Asset {
+        Asset {
+            name: name.to_string(),
+            browser_download_url: format!("https://example.test/{name}"),
+        }
+    }
+
+    fn release(tag: &str, assets: Vec<Asset>) -> Release {
+        Release {
+            tag_name: tag.to_string(),
+            assets,
+        }
+    }
+
+    #[test]
+    fn picks_newest_release_with_platform_asset() {
+        let releases = vec![
+            release("v0.1.16", vec![asset("wcr-macos-aarch64.tar.gz")]),
+            release(
+                "v0.1.15",
+                vec![
+                    asset("wcr-windows-x86_64.zip"),
+                    asset("wcr-windows-x86_64.zip.sha256"),
+                ],
+            ),
+        ];
+        let info =
+            best_downloadable_for(&releases, "0.1.0", "windows", "x86_64").expect("should find 0.1.15");
+        assert_eq!(info.version, "0.1.15");
+        assert_eq!(
+            info.name.as_deref(),
+            Some("wcr-windows-x86_64.zip")
+        );
+    }
+
+    #[test]
+    fn windows_prefers_exact_zip_over_fuzzy_match() {
+        let assets = vec![
+            asset("modem73-windows-x86_64.exe"),
+            asset("wcr-windows-x86_64.zip"),
+        ];
+        let picked = pick_asset_for(&assets, "windows", "x86_64").unwrap();
+        assert_eq!(picked.name, "wcr-windows-x86_64.zip");
+    }
+
+    #[test]
+    fn skips_newer_tag_without_matching_asset() {
+        let releases = vec![
+            release("v0.1.16", vec![asset("wcr-macos-aarch64.tar.gz")]),
+            release("v0.1.15", vec![asset("wcr-windows-x86_64.zip")]),
+        ];
+        let info = best_downloadable_for(&releases, "0.1.15", "windows", "x86_64");
+        assert!(info.is_none());
+        assert_eq!(
+            highest_newer_tag(&releases, "0.1.15").as_deref(),
+            Some("0.1.16")
+        );
     }
 }
