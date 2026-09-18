@@ -345,11 +345,38 @@ struct ChatLine {
     text: String,
     sys: bool,
     channel: String,
+    msgid: String,
+    ticks: String,
+}
+
+impl ChatLine {
+    fn sys(text: impl Into<String>, channel: impl Into<String>) -> Self {
+        Self {
+            nick: String::new(),
+            text: text.into(),
+            sys: true,
+            channel: channel.into(),
+            msgid: String::new(),
+            ticks: String::new(),
+        }
+    }
+
+    fn user(nick: impl Into<String>, text: impl Into<String>, channel: impl Into<String>) -> Self {
+        Self {
+            nick: nick.into(),
+            text: text.into(),
+            sys: false,
+            channel: channel.into(),
+            msgid: String::new(),
+            ticks: String::new(),
+        }
+    }
 }
 
 enum IrcEvent {
     Line(ChatLine),
     Status(String),
+    Delivery { msgid: String, state: String },
     Joined(String),
     Invited { from: String, channel: String },
 }
@@ -674,12 +701,10 @@ impl GuiApp {
             return;
         }
         let _ = crate::weechat_app::configure();
-        self.chat.push(ChatLine {
-            nick: String::new(),
-            text: format!("saved {}", Config::default_path().display()),
-            sys: true,
-            channel: String::new(),
-        });
+        self.chat.push(ChatLine::sys(
+            format!("saved {}", Config::default_path().display()),
+            "",
+        ));
     }
 
     fn start_station(&mut self) {
@@ -692,12 +717,7 @@ impl GuiApp {
         match spawn_node() {
             Ok(child) => {
                 self.node = Some(child);
-                self.chat.push(ChatLine {
-                    nick: String::new(),
-                    text: "station starting…".into(),
-                    sys: true,
-                    channel: String::new(),
-                });
+                self.chat.push(ChatLine::sys("station starting…", ""));
             }
             Err(e) => self.error = e.to_string(),
         }
@@ -714,12 +734,7 @@ impl GuiApp {
         self.irc_rx = None;
         self.irc_joined.clear();
         self.status = None;
-        self.chat.push(ChatLine {
-            nick: String::new(),
-            text: "station stopped".into(),
-            sys: true,
-            channel: String::new(),
-        });
+        self.chat.push(ChatLine::sys("station stopped", ""));
         if let Some(tray) = &self.tray {
             let _ = tray.set_tooltip(Some("WeeChat Radio — station stopped"));
         }
@@ -852,19 +867,18 @@ impl GuiApp {
             return;
         }
         if text.starts_with('/') {
-            self.chat.push(ChatLine {
-                nick: String::new(),
-                text: format!("▸ {text}"),
-                sys: true,
-                channel: self.active_channel.clone(),
-            });
+            self.chat.push(ChatLine::sys(
+                format!("▸ {text}"),
+                self.active_channel.clone(),
+            ));
         } else {
-            self.chat.push(ChatLine {
-                nick: self.callsign.to_ascii_uppercase(),
-                text: text.to_string(),
-                sys: false,
-                channel: self.active_channel.clone(),
-            });
+            let mut line = ChatLine::user(
+                self.callsign.to_ascii_uppercase(),
+                text,
+                self.active_channel.clone(),
+            );
+            line.ticks = crate::store::Delivery::Queued.ticks(true).into();
+            self.chat.push(line);
         }
         for line in &wires {
             if let Some(ch) = line.strip_prefix("JOIN ") {
@@ -994,12 +1008,10 @@ impl GuiApp {
                     }
                     self.chat.push(line);
                 }
-                IrcEvent::Status(s) => self.chat.push(ChatLine {
-                    nick: String::new(),
-                    text: s,
-                    sys: true,
-                    channel: self.active_channel.clone(),
-                }),
+                IrcEvent::Delivery { msgid, state } => self.apply_delivery(&msgid, &state),
+                IrcEvent::Status(s) => self
+                    .chat
+                    .push(ChatLine::sys(s, self.active_channel.clone())),
                 IrcEvent::Joined(ch) => {
                     let ch = crate::slash::normalize_channel(&ch);
                     // Fresh history replay follows JOIN — drop stale lines for this room.
@@ -1011,12 +1023,10 @@ impl GuiApp {
                 }
                 IrcEvent::Invited { from, channel } => {
                     self.ensure_joined(&channel);
-                    self.chat.push(ChatLine {
-                        nick: String::new(),
-                        text: format!("{from} invited you to {channel}"),
-                        sys: true,
-                        channel: channel.clone(),
-                    });
+                    self.chat.push(ChatLine::sys(
+                        format!("{from} invited you to {channel}"),
+                        channel.clone(),
+                    ));
                     self.active_channel = crate::slash::normalize_channel(&channel);
                     self.persist_session();
                     let ch = self.active_channel.clone();
@@ -1026,6 +1036,35 @@ impl GuiApp {
                     }
                 }
             }
+        }
+    }
+
+    fn apply_delivery(&mut self, msgid: &str, state: &str) {
+        let Some(ticks) = delivery_ticks(state) else {
+            return;
+        };
+        if !msgid.is_empty() {
+            if let Some(line) = self
+                .chat
+                .iter_mut()
+                .rev()
+                .find(|l| !l.msgid.is_empty() && l.msgid.eq_ignore_ascii_case(msgid))
+            {
+                line.ticks = ticks.into();
+                return;
+            }
+        }
+        let me = self.callsign.clone();
+        if let Some(line) = self
+            .chat
+            .iter_mut()
+            .rev()
+            .find(|l| !l.sys && l.nick.eq_ignore_ascii_case(&me))
+        {
+            if line.msgid.is_empty() {
+                line.msgid = msgid.to_string();
+            }
+            line.ticks = ticks.into();
         }
     }
 }
@@ -1875,6 +1914,17 @@ impl eframe::App for GuiApp {
                                             ui.label(
                                                 RichText::new(&line.text).color(FG).monospace(),
                                             );
+                                            if mine && !line.ticks.is_empty() {
+                                                ui.label(
+                                                    RichText::new(&line.ticks)
+                                                        .color(if line.ticks.len() > "✓".len() {
+                                                            GREEN
+                                                        } else {
+                                                            DIM
+                                                        })
+                                                        .monospace(),
+                                                );
+                                            }
                                         });
                                     }
                                 }
@@ -3091,7 +3141,9 @@ fn irc_session(
         if joins.is_empty() {
             joins.push_str("JOIN #bulletin\r\n");
         }
-        let hello = format!("NICK {nick}\r\nUSER {nick} 0 * :WeeChat Radio\r\n{joins}");
+        let hello = format!(
+            "CAP LS\r\nNICK {nick}\r\nUSER {nick} 0 * :WeeChat Radio\r\nCAP REQ :message-tags server-time msgid\r\nCAP END\r\n{joins}"
+        );
         if stream.write_all(hello.as_bytes()).is_err() {
             continue;
         }
@@ -3126,7 +3178,12 @@ fn irc_session(
                         let _ = stream.write_all(pong.as_bytes());
                         continue;
                     }
-                    if let Some((from, ch)) = parse_invite(&line) {
+                    if line.contains(" CAP ") {
+                        continue;
+                    }
+                    if let Some((msgid, state)) = parse_delivery(&line) {
+                        let _ = events.send(IrcEvent::Delivery { msgid, state });
+                    } else if let Some((from, ch)) = parse_invite(&line) {
                         let _ = events.send(IrcEvent::Invited { from, channel: ch });
                     } else if let Some(ch) = parse_join(&line) {
                         let _ = events.send(IrcEvent::Joined(ch));
@@ -3146,6 +3203,50 @@ fn irc_session(
         }
         let _ = events.send(IrcEvent::Status("disconnected — retrying".into()));
     }
+}
+
+fn irc_tags(line: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let Some(rest) = line.strip_prefix('@') else {
+        return map;
+    };
+    let Some((tagstr, _)) = rest.split_once(' ') else {
+        return map;
+    };
+    for t in tagstr.split(';') {
+        let (raw_k, v) = t.split_once('=').unwrap_or((t, ""));
+        let k = raw_k.trim_start_matches('+');
+        map.insert(k.to_string(), v.to_string());
+    }
+    map
+}
+
+fn delivery_ticks(state: &str) -> Option<&'static str> {
+    let d = crate::store::Delivery::parse(state);
+    match state {
+        "sent" | "relayed" | "delivered" | "all" => Some(d.ticks(true)),
+        s if s.starts_with("retry") => Some(crate::store::Delivery::Queued.ticks(true)),
+        _ => None,
+    }
+}
+
+fn parse_delivery(line: &str) -> Option<(String, String)> {
+    let tags = irc_tags(line);
+    if let Some(state) = tags.get("radio/delivery") {
+        let msgid = tags
+            .get("radio/msgid")
+            .or_else(|| tags.get("msgid"))
+            .cloned()
+            .unwrap_or_default();
+        return Some((msgid, state.clone()));
+    }
+    let notice = parse_notice(line)?;
+    let rest = notice.strip_prefix('[')?;
+    let (state, msgid) = rest.split_once("] ")?;
+    if delivery_ticks(state).is_none() && !state.starts_with("retry") {
+        return None;
+    }
+    Some((msgid.trim().to_string(), state.to_string()))
 }
 
 fn irc_payload(line: &str) -> &str {
@@ -3179,6 +3280,7 @@ fn parse_notice(line: &str) -> Option<String> {
 }
 
 fn parse_privmsg(line: &str) -> Option<ChatLine> {
+    let tags = irc_tags(line);
     let rest = irc_payload(line).strip_prefix(':')?;
     let (prefix, cmd) = rest.split_once(' ')?;
     if !cmd.starts_with("PRIVMSG ") {
@@ -3199,6 +3301,8 @@ fn parse_privmsg(line: &str) -> Option<ChatLine> {
         text: text.to_string(),
         sys: false,
         channel,
+        msgid: tags.get("msgid").cloned().unwrap_or_default(),
+        ticks: String::new(),
     })
 }
 
@@ -3246,4 +3350,26 @@ fn channel_security(
         "RF plaintext"
     });
     (access, bits.join(" · "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_tagmsg_delivery() {
+        let (id, state) =
+            parse_delivery("@+radio/delivery=sent;+radio/msgid=deadbeef TAGMSG *").unwrap();
+        assert_eq!(id, "deadbeef");
+        assert_eq!(state, "sent");
+        assert_eq!(delivery_ticks("sent"), Some("✓"));
+        assert_eq!(delivery_ticks("delivered"), Some("✓✓"));
+    }
+
+    #[test]
+    fn parse_notice_delivery_fallback() {
+        let (id, state) = parse_delivery(":wcr.local NOTICE * :[delivered] cafe1234").unwrap();
+        assert_eq!(id, "cafe1234");
+        assert_eq!(state, "delivered");
+    }
 }
