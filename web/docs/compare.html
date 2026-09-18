@@ -11,9 +11,9 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=20" />
+  <link rel="stylesheet" href="/styles.css?v=22" />
 </head>
-<body class="page-doc">
+<body class="page-doc cmp-page">
   <div id="scan"></div>
   <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
   <header class="topbar">
@@ -48,84 +48,99 @@
         <p>Each score is 1 (poor) to 5 (strong) for that column only. SNR numbers for WSPR, FT8, JS8, Olivia, PSK31, RTTY, and APRS are typical published ham figures. modem73 has no side-by-side SNR table in this project. Rank WeeChat Radio HF by design (slower preset + retries), not by a claimed dB number.</p>
       </div>
 
+      <h2>Score colour</h2>
+      <div class="cmp-legend">
+        <ol class="cmp-scale" aria-label="Score from 1 poor red to 5 strong green">
+          <li data-s="1"><b>1</b> poor</li>
+          <li data-s="2"><b>2</b> weak</li>
+          <li data-s="3"><b>3</b> mid</li>
+          <li data-s="4"><b>4</b> good</li>
+          <li data-s="5"><b>5</b> strong</li>
+        </ol>
+        <ul class="cmp-legend-notes">
+          <li>Colour is that column only. 1 red (poor) → 5 green (strong). The number is always shown.</li>
+          <li>Orange row = WeeChat Radio HF. Indigo name = handheld. Those are not scores.</li>
+        </ul>
+      </div>
+
       <h2>Mode × trait</h2>
       <p>Click a header to sort. Click again to reverse. Score columns start high-to-low. Mode and Job start A–Z.</p>
       <div class="table-wrap">
         <table id="cmp-table">
-          <caption class="sr-only">Ham text-mode ratings. Click column headers to sort. Orange rows are WeeChat Radio HF presets.</caption>
+          <caption class="sr-only">Ham text-mode ratings. Click column headers to sort. Orange rows are WeeChat Radio HF presets. Score cells are coloured 1 red to 5 green.</caption>
           <thead>
             <tr>
               <th class="cmp-sort" data-key="name" scope="col" tabindex="0" aria-sort="none">Mode</th>
               <th class="cmp-sort" data-key="role" scope="col" tabindex="0" aria-sort="none">Job</th>
-              <th class="cmp-sort" data-key="snr" scope="col" tabindex="0" aria-sort="descending">Weak SNR</th>
-              <th class="cmp-sort" data-key="fade" scope="col" tabindex="0" aria-sort="none">Fading</th>
+              <th class="cmp-sort" data-key="snr" scope="col" tabindex="0" aria-sort="descending" title="Weak SNR">SNR</th>
+              <th class="cmp-sort" data-key="fade" scope="col" tabindex="0" aria-sort="none" title="Fading">Fade</th>
               <th class="cmp-sort" data-key="qrm" scope="col" tabindex="0" aria-sort="none">QRM</th>
               <th class="cmp-sort" data-key="speed" scope="col" tabindex="0" aria-sort="none">Speed</th>
-              <th class="cmp-sort" data-key="recovery" scope="col" tabindex="0" aria-sort="none">Auto recover</th>
+              <th class="cmp-sort" data-key="recovery" scope="col" tabindex="0" aria-sort="none" title="Auto recover">Recover</th>
               <th class="cmp-sort" data-key="open" scope="col" tabindex="0" aria-sort="none">Open</th>
-              <th class="cmp-sort" data-key="vhf" scope="col" tabindex="0" aria-sort="none">Quiet VHF FM</th>
+              <th class="cmp-sort" data-key="vhf" scope="col" tabindex="0" aria-sort="none" title="Quiet VHF FM">VHF FM</th>
             </tr>
           </thead>
           <tbody>
             <tr class="cmp-wcr" data-name="WeeChat Radio hf-weak / hf-poor" data-role="Normal HF chat" data-snr="3" data-fade="4" data-qrm="3" data-speed="3" data-recovery="5" data-open="4" data-vhf="1">
               <td><span class="cmp-tag">wcr</span> hf-weak / hf-poor</td>
               <td>Normal HF chat</td>
-              <td>3</td><td>4</td><td>3</td><td>3</td><td>5</td><td>4</td><td>1</td>
+              <td data-s="3">3</td><td data-s="4">4</td><td data-s="3">3</td><td data-s="3">3</td><td data-s="5">5</td><td data-s="4">4</td><td data-s="1">1</td>
             </tr>
             <tr class="cmp-wcr" data-name="WeeChat Radio hf-deep" data-role="Last-resort HF" data-snr="4" data-fade="4" data-qrm="4" data-speed="1" data-recovery="5" data-open="4" data-vhf="1">
               <td><span class="cmp-tag">wcr</span> hf-deep</td>
               <td>Last-resort HF</td>
-              <td>4</td><td>4</td><td>4</td><td>1</td><td>5</td><td>4</td><td>1</td>
+              <td data-s="4">4</td><td data-s="4">4</td><td data-s="4">4</td><td data-s="1">1</td><td data-s="5">5</td><td data-s="4">4</td><td data-s="1">1</td>
             </tr>
             <tr class="cmp-wcr-vhf" data-name="WeeChat Radio vhf-fm / handheld" data-role="Local VHF/UHF FM" data-snr="1" data-fade="2" data-qrm="2" data-speed="4" data-recovery="4" data-open="4" data-vhf="5">
               <td><span class="cmp-tag vhf">wcr</span> vhf-fm / handheld</td>
               <td>Local VHF/UHF FM</td>
-              <td>1</td><td>2</td><td>2</td><td>4</td><td>4</td><td>4</td><td>5</td>
+              <td data-s="1">1</td><td data-s="2">2</td><td data-s="2">2</td><td data-s="4">4</td><td data-s="4">4</td><td data-s="4">4</td><td data-s="5">5</td>
             </tr>
             <tr data-name="WSPR" data-role="Beacon / prop map — not chat" data-snr="5" data-fade="4" data-qrm="5" data-speed="1" data-recovery="1" data-open="5" data-vhf="1">
               <td>WSPR</td>
-              <td>Beacon / prop map — not chat</td>
-              <td>5</td><td>4</td><td>5</td><td>1</td><td>1</td><td>5</td><td>1</td>
+              <td>Beacon, not chat</td>
+              <td data-s="5">5</td><td data-s="4">4</td><td data-s="5">5</td><td data-s="1">1</td><td data-s="1">1</td><td data-s="5">5</td><td data-s="1">1</td>
             </tr>
             <tr data-name="FT8" data-role="77-bit QSO — not free text" data-snr="5" data-fade="4" data-qrm="4" data-speed="1" data-recovery="2" data-open="5" data-vhf="1">
               <td>FT8</td>
-              <td>77-bit QSO — not free text</td>
-              <td>5</td><td>4</td><td>4</td><td>1</td><td>2</td><td>5</td><td>1</td>
+              <td>77-bit QSO</td>
+              <td data-s="5">5</td><td data-s="4">4</td><td data-s="4">4</td><td data-s="1">1</td><td data-s="2">2</td><td data-s="5">5</td><td data-s="1">1</td>
             </tr>
             <tr data-name="FT4" data-role="Faster FT8 QSO — not free text" data-snr="4" data-fade="3" data-qrm="4" data-speed="2" data-recovery="2" data-open="5" data-vhf="1">
               <td>FT4</td>
-              <td>Faster FT8 QSO — not free text</td>
-              <td>4</td><td>3</td><td>4</td><td>2</td><td>2</td><td>5</td><td>1</td>
+              <td>Faster FT8 QSO</td>
+              <td data-s="4">4</td><td data-s="3">3</td><td data-s="4">4</td><td data-s="2">2</td><td data-s="2">2</td><td data-s="5">5</td><td data-s="1">1</td>
             </tr>
             <tr data-name="JS8Call" data-role="Slow HF chat (FT8-family)" data-snr="5" data-fade="4" data-qrm="4" data-speed="1" data-recovery="3" data-open="5" data-vhf="1">
               <td>JS8Call</td>
-              <td>Slow HF chat (FT8-family)</td>
-              <td>5</td><td>4</td><td>4</td><td>1</td><td>3</td><td>5</td><td>1</td>
+              <td>Slow HF chat</td>
+              <td data-s="5">5</td><td data-s="4">4</td><td data-s="4">4</td><td data-s="1">1</td><td data-s="3">3</td><td data-s="5">5</td><td data-s="1">1</td>
             </tr>
             <tr data-name="Olivia 8/250" data-role="HF typed chat" data-snr="4" data-fade="4" data-qrm="4" data-speed="1" data-recovery="2" data-open="5" data-vhf="1">
               <td>Olivia 8/250</td>
               <td>HF typed chat</td>
-              <td>4</td><td>4</td><td>4</td><td>1</td><td>2</td><td>5</td><td>1</td>
+              <td data-s="4">4</td><td data-s="4">4</td><td data-s="4">4</td><td data-s="1">1</td><td data-s="2">2</td><td data-s="5">5</td><td data-s="1">1</td>
             </tr>
             <tr data-name="VARA HF" data-role="Winlink / files" data-snr="4" data-fade="4" data-qrm="3" data-speed="4" data-recovery="5" data-open="1" data-vhf="1">
               <td>VARA HF</td>
               <td>Winlink / files</td>
-              <td>4</td><td>4</td><td>3</td><td>4</td><td>5</td><td>1</td><td>1</td>
+              <td data-s="4">4</td><td data-s="4">4</td><td data-s="3">3</td><td data-s="4">4</td><td data-s="5">5</td><td data-s="1">1</td><td data-s="1">1</td>
             </tr>
             <tr data-name="PSK31" data-role="Live keyboard HF" data-snr="3" data-fade="1" data-qrm="1" data-speed="3" data-recovery="1" data-open="5" data-vhf="1">
               <td>PSK31</td>
               <td>Live keyboard HF</td>
-              <td>3</td><td>1</td><td>1</td><td>3</td><td>1</td><td>5</td><td>1</td>
+              <td data-s="3">3</td><td data-s="1">1</td><td data-s="1">1</td><td data-s="3">3</td><td data-s="1">1</td><td data-s="5">5</td><td data-s="1">1</td>
             </tr>
             <tr data-name="RTTY 45" data-role="Contest / bulletin" data-snr="2" data-fade="1" data-qrm="1" data-speed="3" data-recovery="1" data-open="5" data-vhf="1">
               <td>RTTY 45</td>
               <td>Contest / bulletin</td>
-              <td>2</td><td>1</td><td>1</td><td>3</td><td>1</td><td>5</td><td>1</td>
+              <td data-s="2">2</td><td data-s="1">1</td><td data-s="1">1</td><td data-s="3">3</td><td data-s="1">1</td><td data-s="5">5</td><td data-s="1">1</td>
             </tr>
             <tr data-name="APRS / AX.25 1200 AFSK" data-role="VHF short text" data-snr="1" data-fade="1" data-qrm="1" data-speed="4" data-recovery="2" data-open="5" data-vhf="5">
-              <td>APRS / AX.25 1200 AFSK</td>
+              <td>APRS 1200 AFSK</td>
               <td>VHF short text</td>
-              <td>1</td><td>1</td><td>1</td><td>4</td><td>2</td><td>5</td><td>5</td>
+              <td data-s="1">1</td><td data-s="1">1</td><td data-s="1">1</td><td data-s="4">4</td><td data-s="2">2</td><td data-s="5">5</td><td data-s="5">5</td>
             </tr>
           </tbody>
         </table>
