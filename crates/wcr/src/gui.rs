@@ -1496,10 +1496,19 @@ impl eframe::App for GuiApp {
                             kv_tip(
                                 ui,
                                 "QUEUE",
-                                &format!("{} air {}", s.queue_out, s.queue_air),
+                                &format!("{}", s.queue_out),
                                 PURPLE,
                                 Some(
-                                    "Outbound messages waiting, then frames in the RF air queue. Air grows when the channel is busy (PTT shows WAIT) or the radio TNC is pacing.",
+                                    "Your outbound messages still in the store (status queued or sent, not yet delivered). This is not the chat draft. It stays up until the other station ACKs, or a relay is still holding the copy.",
+                                ),
+                            );
+                            kv_tip(
+                                ui,
+                                "AIR",
+                                &format!("{}", s.queue_air),
+                                PURPLE,
+                                Some(
+                                    "Radio frames waiting to leave this station’s TNC right now. Grows when the frequency is busy (PTT shows WAIT) or the modem is pacing. 0 means nothing is keyed or about to key.",
                                 ),
                             );
                             kv(
