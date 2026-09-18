@@ -22,6 +22,10 @@ const TOKEN_PREFIX: &str = "WCR-E2E";
 
 pub async fn run_lan(timeout_secs: u64, port: u16, hub_port: u16) -> Result<()> {
     ui_style::panel("WEECHAT RADIO", "E2E LAN");
+    println!(
+        "  {}",
+        ui_style::dim().apply_to("instructions: wcr help e2e")
+    );
     let home = e2e_home();
     let _guard = HomeGuard(home.clone());
     std::env::set_var("WCR_HOME", &home);
