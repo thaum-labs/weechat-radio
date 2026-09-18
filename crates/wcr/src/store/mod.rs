@@ -41,6 +41,15 @@ impl Delivery {
         }
     }
 
+    pub fn ticks_bracket(self) -> &'static str {
+        match self {
+            Self::Queued => "[.]",
+            Self::Sent => "[v]",
+            Self::Relayed | Self::Delivered => "[vv]",
+            Self::All => "[vvv]",
+        }
+    }
+
     pub fn ticks(self, unicode: bool) -> &'static str {
         if unicode {
             match self {
@@ -843,6 +852,15 @@ fn tuple_to_env(
 mod tests {
     use super::*;
     use crate::proto::Envelope;
+
+    #[test]
+    fn bracket_marks() {
+        assert_eq!(Delivery::Queued.ticks_bracket(), "[.]");
+        assert_eq!(Delivery::Sent.ticks_bracket(), "[v]");
+        assert_eq!(Delivery::Relayed.ticks_bracket(), "[vv]");
+        assert_eq!(Delivery::Delivered.ticks_bracket(), "[vv]");
+        assert_eq!(Delivery::All.ticks_bracket(), "[vvv]");
+    }
 
     #[test]
     fn insert_and_dedupe() {

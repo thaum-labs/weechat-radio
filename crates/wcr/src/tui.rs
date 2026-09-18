@@ -308,7 +308,11 @@ pub async fn run(cfg: &Config) -> Result<()> {
                             } else {
                                 let target = app.cur().name.clone();
                                 let nick = app.nick.clone();
-                                let ticks = if app.unicode { "·" } else { "-" };
+                                let ticks = if app.unicode {
+                                    "·"
+                                } else {
+                                    crate::store::Delivery::Queued.ticks_bracket()
+                                };
                                 out.write_all(format!("PRIVMSG {target} :{line}\r\n").as_bytes())
                                     .await?;
                                 app.cur_mut().lines.push_back(ChatLine {
@@ -419,10 +423,21 @@ fn handle_irc(app: &mut App, line: &str) {
             let uni = app.unicode;
             if let Some(last) = app.cur_mut().lines.back_mut() {
                 last.ticks = match state {
-                    "sent" => if uni { "✓" } else { "v" }.into(),
-                    "relayed" => if uni { "✓✓" } else { "vv" }.into(),
-                    "delivered" => if uni { "✓✓" } else { "VV" }.into(),
-                    "all" => if uni { "✓✓✓" } else { "VVV" }.into(),
+                    "queued" | "sent" | "relayed" | "delivered" | "all" => {
+                        let d = crate::store::Delivery::parse(state);
+                        if uni {
+                            d.ticks(true)
+                        } else {
+                            d.ticks_bracket()
+                        }
+                        .into()
+                    }
+                    s if s.starts_with("retry") => if uni {
+                        "·"
+                    } else {
+                        crate::store::Delivery::Queued.ticks_bracket()
+                    }
+                    .into(),
                     _ => last.ticks.clone(),
                 };
             }

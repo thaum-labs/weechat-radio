@@ -491,15 +491,21 @@ impl IrcServer {
         }
     }
 
-    pub async fn replay_history(&self, id: u64, lines: Vec<(String, String, String, String)>) {
-        // (time, from, target, text)
+    pub async fn replay_history(
+        &self,
+        id: u64,
+        lines: Vec<(String, String, String, String, String, String)>,
+    ) {
+        // (time, from, target, text, msgid, delivery)
         let has_batch = self.has_cap(id, "batch");
         if has_batch {
             self.send_raw(id, ":wcr.local BATCH +hist chathistory")
                 .await;
         }
-        for (time, from, target, text) in lines {
-            let tagged = format!("@server-time={time};batch=hist :{from} PRIVMSG {target} :{text}");
+        for (time, from, target, text, msgid, delivery) in lines {
+            let tagged = format!(
+                "@server-time={time};batch=hist;msgid={msgid};+radio/delivery={delivery} :{from} PRIVMSG {target} :{text}"
+            );
             self.send_raw(id, &tagged).await;
         }
         if has_batch {
