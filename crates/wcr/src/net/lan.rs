@@ -6,7 +6,7 @@ use crate::proto::Envelope;
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use crate::net::frame;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 
@@ -86,9 +86,7 @@ impl LanMesh {
                         let b = bytes.clone();
                         tokio::spawn(async move {
                             if let Ok(mut s) = TcpStream::connect(&a).await {
-                                let len = (b.len() as u32).to_be_bytes();
-                                let _ = s.write_all(&len).await;
-                                let _ = s.write_all(&b).await;
+                                let _ = frame::write_frame(&mut s, &b).await;
                             }
                         });
                     }
@@ -111,25 +109,6 @@ impl LanMesh {
     }
 }
 
-async fn handle_peer(mut stream: TcpStream, tx: mpsc::Sender<Envelope>) -> Result<()> {
-    loop {
-        let mut lenb = [0u8; 4];
-        if stream.read_exact(&mut lenb).await.is_err() {
-            break;
-        }
-        let len = u32::from_be_bytes(lenb) as usize;
-        if len == 0 || len > 8192 {
-            break;
-        }
-        let mut buf = vec![0u8; len];
-        if stream.read_exact(&mut buf).await.is_err() {
-            break;
-        }
-        if let Ok(env) = Envelope::decode(&buf) {
-            if tx.send(env).await.is_err() {
-                break;
-            }
-        }
-    }
-    Ok(())
+async fn handle_peer(stream: TcpStream, tx: mpsc::Sender<Envelope>) -> Result<()> {
+    frame::read_loop(stream, tx).await
 }

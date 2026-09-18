@@ -2,6 +2,7 @@
 //! Hub WebSocket server + telemetry HTTP API.
 
 use crate::error::Result;
+use crate::rate_limit::{self, KeyedLimiter};
 use crate::proto::frag::FragAssembler;
 use crate::proto::{verify_envelope, Callsign, Envelope, IdentityKeys, MsgType};
 use crate::store::Store;
@@ -33,6 +34,9 @@ pub struct HubState {
     pub identity: IdentityKeys,
     pub assembler: Arc<Mutex<FragAssembler>>,
     pub next_conn: Arc<AtomicU64>,
+    pub report_by_call: Arc<KeyedLimiter>,
+    pub report_by_ip: Arc<KeyedLimiter>,
+    pub hello_by_call: Arc<KeyedLimiter>,
 }
 
 pub struct Session {
@@ -75,6 +79,9 @@ pub async fn run_hub(
         identity: keys,
         assembler: Arc::new(Mutex::new(FragAssembler::new())),
         next_conn: Arc::new(AtomicU64::new(1)),
+        report_by_call: rate_limit::per_minute(120),
+        report_by_ip: rate_limit::per_minute(240),
+        hello_by_call: rate_limit::per_minute(30),
     };
     let app = Router::new()
         .route("/", get(ws_upgrade))
@@ -131,6 +138,14 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
         let _ = socket
             .send(Message::Text(
                 "{\"ok\":false,\"error\":\"bad callsign\"}".into(),
+            ))
+            .await;
+        return;
+    }
+    if !rate_limit::allow(&st.hello_by_call, &hello.callsign) {
+        let _ = socket
+            .send(Message::Text(
+                "{\"ok\":false,\"error\":\"rate limit\"}".into(),
             ))
             .await;
         return;
@@ -501,6 +516,9 @@ mod tests {
             identity: IdentityKeys::generate(),
             assembler: Arc::new(Mutex::new(FragAssembler::new())),
             next_conn: Arc::new(AtomicU64::new(1)),
+            report_by_call: rate_limit::per_minute(120),
+            report_by_ip: rate_limit::per_minute(240),
+            hello_by_call: rate_limit::per_minute(30),
         }
     }
 

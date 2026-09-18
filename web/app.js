@@ -102,6 +102,67 @@ if (mapStyleSelect) {
 
 const SPAN = 1440;
 const markers = new Map();
+const nodePos = new Map();
+let arcCanvas = null;
+let arcCtx = null;
+const activeArcs = [];
+
+function ensureArcLayer() {
+  const host = document.getElementById("map");
+  if (!host || arcCanvas) return;
+  arcCanvas = document.createElement("canvas");
+  arcCanvas.id = "map-arcs";
+  host.style.position = "relative";
+  arcCanvas.width = host.clientWidth || 800;
+  arcCanvas.height = host.clientHeight || 600;
+  host.prepend(arcCanvas);
+  arcCtx = arcCanvas.getContext("2d");
+  map.on("move", drawArcs);
+  map.on("resize", () => {
+    arcCanvas.width = host.clientWidth;
+    arcCanvas.height = host.clientHeight;
+    drawArcs();
+  });
+}
+
+function pulseMarker(callsign, kind) {
+  const m = markers.get(callsign);
+  if (!m) return;
+  const el = m.getElement();
+  el.classList.remove("pulse-tx", "pulse-rx");
+  void el.offsetWidth;
+  el.classList.add(kind === "rx" ? "pulse-rx" : "pulse-tx");
+}
+
+function pushArc(from, to, inet) {
+  activeArcs.push({ from, to, inet, until: Date.now() + 2200 });
+  ensureArcLayer();
+  drawArcs();
+}
+
+function drawArcs() {
+  if (!arcCtx || !arcCanvas) return;
+  arcCtx.clearRect(0, 0, arcCanvas.width, arcCanvas.height);
+  const now = Date.now();
+  while (activeArcs.length && activeArcs[0].until < now) activeArcs.shift();
+  for (const a of activeArcs) {
+    const p1 = nodePos.get(a.from);
+    const p2 = nodePos.get(a.to);
+    if (!p1 || !p2) continue;
+    const s1 = map.project([p1.lon, p1.lat]);
+    const s2 = map.project([p2.lon, p2.lat]);
+    arcCtx.beginPath();
+    arcCtx.moveTo(s1.x, s1.y);
+    const mx = (s1.x + s2.x) / 2;
+    const my = (s1.y + s2.y) / 2 - 40;
+    arcCtx.quadraticCurveTo(mx, my, s2.x, s2.y);
+    arcCtx.strokeStyle = a.inet ? "rgba(125,155,255,0.85)" : "rgba(57,255,20,0.65)";
+    arcCtx.setLineDash(a.inet ? [] : [6, 4]);
+    arcCtx.lineWidth = 2;
+    arcCtx.stroke();
+  }
+  if (activeArcs.length) requestAnimationFrame(drawArcs);
+}
 const ticker = document.getElementById("ticker");
 const stationList = document.getElementById("station-list");
 const hubPanel = document.getElementById("hub-panel");
@@ -353,6 +414,7 @@ function upsertNode(n) {
     m = new maplibregl.Marker({ element: el }).setLngLat([n.lon, n.lat]).addTo(map);
     el.addEventListener("click", () => showCard(n));
     markers.set(n.callsign, m);
+    nodePos.set(n.callsign, { lat: n.lat, lon: n.lon });
   } else {
     m.setLngLat([n.lon, n.lat]);
     const el = m.getElement();
@@ -362,6 +424,7 @@ function upsertNode(n) {
     }
     el.dataset.band = nodeBand(n);
     el.style.opacity = selectedBand && nodeBand(n) !== selectedBand ? "0.25" : "";
+    nodePos.set(n.callsign, { lat: n.lat, lon: n.lon });
   }
 }
 
@@ -685,12 +748,17 @@ function connectLive() {
       const m = JSON.parse(ev.data);
       lastMsgAt = Date.now();
       if (m.type === "node") refresh();
+      const origin = m.origin || m.callsign || "?";
+      const kind = (m.kind || m.type || "").toLowerCase();
+      if (kind === "tx") pulseMarker(origin, "tx");
+      if (kind === "rx" || kind === "relay") pulseMarker(origin, "rx");
+      if (m.dest && (kind === "tx" || kind === "relay" || kind === "gateway_forward")) {
+        pushArc(origin, m.dest, kind !== "relay");
+      }
       if (!liveMode) return;
       const t = new Date().toISOString().slice(11, 19);
-      const origin = m.origin || m.callsign || "?";
       const from = m.from_band || m.band || "";
       const dest = m.dest || "";
-      const kind = m.kind || m.type || "";
       const to = Array.isArray(m.to_bands) && m.to_bands.length
         ? ` -> ${m.to_bands.join(", ")}`
         : "";

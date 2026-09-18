@@ -88,6 +88,8 @@ pub struct HeardBrief {
     pub gateway: bool,
     #[serde(default)]
     pub channels: Vec<String>,
+    #[serde(default)]
+    pub welfare: String,
 }
 
 impl HeardBrief {

@@ -1,12 +1,23 @@
 {
-  "version": "0.1.1",
-  "description": "WeeChat Radio node daemon",
+  "version": "0.1.13",
+  "description": "WeeChat Radio — chat over internet and HF/VHF with store-and-forward",
   "homepage": "https://weechatradio.com",
   "license": "Apache-2.0",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/thaum-labs/weechat-radio/releases/download/v0.1.1/wcr-windows-x86_64.zip",
-      "bin": ["wcr.exe", "modem73.exe"]
+      "url": "https://github.com/thaum-labs/weechat-radio/releases/download/v0.1.13/wcr-windows-x86_64.zip",
+      "hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "bin": ["wcr.exe", "wcr-gui.exe", "modem73.exe"]
+    }
+  },
+  "checkver": {
+    "github": "https://github.com/thaum-labs/weechat-radio"
+  },
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/thaum-labs/weechat-radio/releases/download/v$version/wcr-windows-x86_64.zip"
+      }
     }
   }
 }
