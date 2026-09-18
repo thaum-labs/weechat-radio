@@ -56,7 +56,7 @@ pub enum Command {
         #[command(subcommand)]
         action: TncAction,
     },
-    /// Isolated paired tests (no public hub, no user config)
+    /// Isolated paired tests (see `wcr help e2e`)
     E2e {
         #[command(subcommand)]
         kind: E2eCmd,
