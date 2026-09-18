@@ -10,7 +10,7 @@ Installers:
   - Architecture: x64
     InstallerType: zip
     InstallerUrl: https://github.com/thaum-labs/weechat-radio/releases/download/v0.1.14/wcr-windows-x86_64.zip
-    InstallerSha256: AEBE3D75563D4732F344CDA8DF19C2650912BB4A93FD188E2ED3AC64B4724E02
+    InstallerSha256: A932D2003BE5DBCBA8B8B10353165C30E1CA79284D2393AE974FB2CA68330937
     NestedInstallerType: portable
     NestedInstallerFiles:
       - RelativeFilePath: wcr.exe
