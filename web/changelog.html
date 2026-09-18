@@ -11,7 +11,7 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="stylesheet" href="/styles.css?v=24" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -176,7 +176,7 @@ Every station talking on radio with this hub should run this build.</pre>
       <div id="log"></div>
     </main>
   </div>
-  <script src="/shell.js?v=9"></script>
+  <script src="/shell.js?v=10"></script>
   <script>
     function tidyNotes(body) {
       const seen = new Set();
@@ -208,7 +208,6 @@ Every station talking on radio with this hub should run this build.</pre>
           const when = r.published_at ? new Date(r.published_at).toUTCString() : "";
           return `<article class="release"><h3 class="title"><p>${r.tag_name}</p><p>${when}</p></h3><pre>${notes}</pre></article>`;
         }).join("");
-        if (window.WCR && window.WCR.wrapPres) window.WCR.wrapPres();
       })
       .catch(() => { document.getElementById("log").textContent = "Could not load releases."; });
   </script>
