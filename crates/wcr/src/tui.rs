@@ -45,6 +45,7 @@ struct ChatLine {
     from: String,
     text: String,
     ticks: String,
+    via: String,
     emergency: bool,
 }
 
@@ -231,7 +232,7 @@ pub async fn run(cfg: &Config) -> Result<()> {
                     }
                 }
             }
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            tokio::time::sleep(Duration::from_millis(250)).await;
         }
     });
 
@@ -319,6 +320,7 @@ pub async fn run(cfg: &Config) -> Result<()> {
                                     from: nick,
                                     text: line,
                                     ticks: ticks.into(),
+                                    via: String::new(),
                                     emergency: false,
                                 });
                             }
@@ -378,6 +380,15 @@ async fn send_mode(
     Ok(())
 }
 
+fn irc_via(line: &str) -> String {
+    line.split("radio/via=")
+        .nth(1)
+        .and_then(|rest| rest.split([';', ' ']).next())
+        .and_then(|v| crate::store::normalize_via(Some(v)))
+        .unwrap_or("")
+        .to_string()
+}
+
 fn handle_irc(app: &mut App, line: &str) {
     if line.starts_with("PING") {
         return;
@@ -401,6 +412,7 @@ fn handle_irc(app: &mut App, line: &str) {
                 from: from.clone(),
                 text: text.to_string(),
                 ticks: String::new(),
+                via: irc_via(line),
                 emergency,
             });
             if app.cur().lines.len() > 500 {
@@ -477,6 +489,16 @@ fn kv_lines(app: &App, rows: &[(&str, String)]) -> Vec<Line<'static>> {
         .collect()
 }
 
+fn tui_audio_meter(db: f32, live: bool) -> String {
+    const W: usize = 10;
+    if !live || crate::presets::audio_level_idle(db) {
+        return format!("[{}] —", "-".repeat(W));
+    }
+    let n = (crate::presets::audio_level_frac(db) * W as f32).round() as usize;
+    let n = n.min(W);
+    format!("[{}{}] {:.0}", "=".repeat(n), "-".repeat(W - n), db)
+}
+
 fn draw(f: &mut Frame, app: &App) {
     let t = app.theme;
     f.render_widget(
@@ -548,7 +570,7 @@ fn draw(f: &mut Frame, app: &App) {
 
     let left = Layout::vertical([
         Constraint::Length(8),
-        Constraint::Length(12),
+        Constraint::Length(13),
         Constraint::Min(4),
     ])
     .split(body[0]);
@@ -613,15 +635,24 @@ fn draw(f: &mut Frame, app: &App) {
                 .unwrap_or_else(|| "—".into()),
         ),
         (
-            "audio",
+            "in",
             snap.map(|s| {
-                if app.show_activity {
-                    format!("{} {:.0}dB", s.audio_label, s.audio_db)
-                } else {
-                    s.audio_label.clone()
-                }
+                tui_audio_meter(
+                    s.audio_in_db,
+                    crate::presets::audio_meter_live(&s.audio_label),
+                )
             })
-            .unwrap_or_else(|| "—".into()),
+            .unwrap_or_else(|| "[----------] —".into()),
+        ),
+        (
+            "out",
+            snap.map(|s| {
+                tui_audio_meter(
+                    s.audio_out_db,
+                    crate::presets::audio_meter_live(&s.audio_label),
+                )
+            })
+            .unwrap_or_else(|| "[----------] —".into()),
         ),
         (
             "queue",
@@ -658,10 +689,20 @@ fn draw(f: &mut Frame, app: &App) {
             } else {
                 Style::default().fg(t.fg)
             };
+            let via = crate::store::via_bracket(&l.via);
             Line::from(vec![
                 Span::styled(format!("{:<8} ", l.from), Style::default().fg(t.accent)),
                 Span::styled(l.text.clone(), style),
                 Span::raw(" "),
+                Span::styled(
+                    via.to_string(),
+                    Style::default().fg(if l.via == "rf" {
+                        Color::Rgb(255, 122, 61)
+                    } else {
+                        t.accent
+                    }),
+                ),
+                Span::raw(if via.is_empty() { "" } else { " " }),
                 Span::styled(l.ticks.clone(), Style::default().fg(t.accent)),
             ])
         })
@@ -906,4 +947,22 @@ fn should_notify(app: &App, from: &str, text: &str, to: &str) -> bool {
     }
     text.to_ascii_uppercase()
         .contains(&app.nick.to_ascii_uppercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn irc_via_from_message_tags() {
+        assert_eq!(
+            irc_via("@msgid=aa;+radio/via=rf :M0XYZ PRIVMSG #bulletin :hi"),
+            "rf"
+        );
+        assert_eq!(
+            irc_via("@+radio/via=inet :M0XYZ PRIVMSG #bulletin :hi"),
+            "inet"
+        );
+        assert_eq!(irc_via(":M0XYZ PRIVMSG #bulletin :hi"), "");
+    }
 }

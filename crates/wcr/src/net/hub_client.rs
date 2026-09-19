@@ -7,6 +7,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_util::sync::CancellationToken;
 
 enum HubOut {
     Bin(Vec<u8>),
@@ -16,6 +17,7 @@ enum HubOut {
 #[derive(Clone)]
 pub struct HubClient {
     tx: mpsc::Sender<HubOut>,
+    cancel: CancellationToken,
 }
 
 /// Nodes speak WebSocket on `/ws`. A host-only URL gets that path appended.
@@ -46,73 +48,118 @@ impl HubClient {
         let url = websocket_url(url);
         let callsign = callsign.to_string();
         let keys = keys.clone();
+        let cancel = CancellationToken::new();
+        let stop = cancel.clone();
         tokio::spawn(async move {
             let mut backoff = 1u64;
             loop {
-                match connect_async(&url).await {
-                    Ok((ws, _)) => {
-                        connected.set(true);
-                        backoff = 1;
-                        let (mut sink, mut stream) = ws.split();
-                        let ts = crate::proto::now_ts() as u64;
-                        let hello = build_hello(&callsign, &keys, &heard, freq_khz, ts);
-                        if sink.send(Message::Text(hello.into())).await.is_err() {
-                            connected.fail("hub hello send failed");
+                if stop.is_cancelled() {
+                    connected.set(false);
+                    return;
+                }
+                let ws = tokio::select! {
+                    _ = stop.cancelled() => {
+                        connected.set(false);
+                        return;
+                    }
+                    result = connect_async(&url) => match result {
+                        Ok((ws, _)) => ws,
+                        Err(e) => {
+                            tracing::warn!("hub connect failed: {e}");
+                            connected.fail(format!("hub connect failed: {e}"));
+                            tokio::select! {
+                                _ = stop.cancelled() => {
+                                    connected.set(false);
+                                    return;
+                                }
+                                _ = tokio::time::sleep(std::time::Duration::from_secs(backoff)) => {}
+                            }
+                            backoff = (backoff * 2).min(30);
                             continue;
                         }
-                        loop {
-                            tokio::select! {
-                                outgoing = out_rx.recv() => {
-                                    match outgoing {
-                                        Some(HubOut::Bin(bin)) => {
-                                            if sink.send(Message::Binary(bin.into())).await.is_err() {
-                                                break;
-                                            }
-                                        }
-                                        Some(HubOut::Text(t)) => {
-                                            if sink.send(Message::Text(t.into())).await.is_err() {
-                                                break;
-                                            }
-                                        }
-                                        None => return,
+                    }
+                };
+                if stop.is_cancelled() {
+                    connected.set(false);
+                    return;
+                }
+                connected.set(true);
+                backoff = 1;
+                let (mut sink, mut stream) = ws.split();
+                let ts = crate::proto::now_ts() as u64;
+                let hello = build_hello(&callsign, &keys, &heard, freq_khz, ts);
+                if sink.send(Message::Text(hello.into())).await.is_err() {
+                    connected.fail("hub hello send failed");
+                    continue;
+                }
+                loop {
+                    tokio::select! {
+                        _ = stop.cancelled() => {
+                            connected.set(false);
+                            return;
+                        }
+                        outgoing = out_rx.recv() => {
+                            match outgoing {
+                                Some(HubOut::Bin(bin)) => {
+                                    if sink.send(Message::Binary(bin.into())).await.is_err() {
+                                        break;
                                     }
                                 }
-                                incoming_msg = stream.next() => {
-                                    match incoming_msg {
-                                        Some(Ok(Message::Binary(b))) => {
-                                            if let Ok(env) = Envelope::decode(&b) {
-                                                let _ = incoming.send(env).await;
-                                            }
-                                        }
-                                        Some(Ok(Message::Text(t))) => {
-                                            tracing::debug!("hub text {t}");
-                                            if t.contains("\"ok\":false") {
-                                                let why = hub_error_text(&t);
-                                                connected.fail(why);
-                                                break;
-                                            }
-                                        }
-                                        Some(Ok(Message::Close(_))) | None => break,
-                                        Some(Err(_)) => break,
-                                        _ => {}
+                                Some(HubOut::Text(t)) => {
+                                    if sink.send(Message::Text(t.into())).await.is_err() {
+                                        break;
                                     }
+                                }
+                                None => {
+                                    connected.set(false);
+                                    return;
                                 }
                             }
                         }
-                        if connected.get() {
-                            connected.fail("hub disconnected");
+                        incoming_msg = stream.next() => {
+                            match incoming_msg {
+                                Some(Ok(Message::Binary(b))) => {
+                                    if let Ok(env) = Envelope::decode(&b) {
+                                        let _ = incoming.send(env).await;
+                                    }
+                                }
+                                Some(Ok(Message::Text(t))) => {
+                                    tracing::debug!("hub text {t}");
+                                    if t.contains("\"ok\":false") {
+                                        let why = hub_error_text(&t);
+                                        connected.fail(why);
+                                        break;
+                                    }
+                                }
+                                Some(Ok(Message::Close(_))) | None => break,
+                                Some(Err(_)) => break,
+                                _ => {}
+                            }
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!("hub connect failed: {e}");
-                        connected.fail(format!("hub connect failed: {e}"));
-                    }
                 }
-                tokio::time::sleep(std::time::Duration::from_secs(backoff)).await;
+                if stop.is_cancelled() {
+                    connected.set(false);
+                    return;
+                }
+                if connected.get() {
+                    connected.fail("hub disconnected");
+                }
+                tokio::select! {
+                    _ = stop.cancelled() => {
+                        connected.set(false);
+                        return;
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(backoff)) => {}
+                }
                 backoff = (backoff * 2).min(30);
             }
         });
-        Ok(Self { tx: out_tx })
+        Ok(Self { tx: out_tx, cancel })
+    }
+
+    pub fn shutdown(&self) {
+        self.cancel.cancel();
     }
 
     pub async fn send(&self, env: &Envelope) -> Result<()> {

@@ -112,7 +112,9 @@ pub async fn mock_modem73(
                                             "ptt_on": false,
                                             "last_snr": 12.0,
                                             "audio_connected": true,
-                                            "occupancy_pct": if busy { 80 } else { 0 }
+                                            "occupancy_pct": if busy { 80 } else { 0 },
+                                            "input_level_db": if busy { -12.0 } else { -48.0 },
+                                            "output_level_db": -80.0
                                         }),
                                         "set_config" => serde_json::json!({"ok": true}),
                                         _ => serde_json::json!({"ok": true}),

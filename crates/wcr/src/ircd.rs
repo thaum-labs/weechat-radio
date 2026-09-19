@@ -264,7 +264,7 @@ impl IrcServer {
                     let text = trailing(&parts[2..]);
                     let nick = self.nick(id);
                     if self.has_cap(id, "echo-message") {
-                        let tagged = self.tag_privmsg(&nick, &target, &text, None);
+                        let tagged = self.tag_privmsg(&nick, &target, &text, None, None);
                         self.send_raw(id, &tagged).await;
                     }
                     let _ = self
@@ -419,11 +419,21 @@ impl IrcServer {
             .await;
     }
 
-    pub fn tag_privmsg(&self, from: &str, target: &str, text: &str, msgid: Option<&str>) -> String {
+    pub fn tag_privmsg(
+        &self,
+        from: &str,
+        target: &str,
+        text: &str,
+        msgid: Option<&str>,
+        via: Option<&str>,
+    ) -> String {
         let time = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let mut tags = format!("server-time={time}");
         if let Some(id) = msgid {
             tags.push_str(&format!(";msgid={id}"));
+        }
+        if let Some(v) = crate::store::normalize_via(via) {
+            tags.push_str(&format!(";+radio/via={v}"));
         }
         format!("@{tags} :{from} PRIVMSG {target} :{text}")
     }
@@ -434,9 +444,15 @@ impl IrcServer {
         target: &str,
         text: &str,
         msgid: Option<&str>,
+        via: Option<&str>,
     ) {
-        let line = self.tag_privmsg(from, target, text, msgid);
-        let plain = format!(":{from} PRIVMSG {target} :{text}");
+        let line = self.tag_privmsg(from, target, text, msgid, via);
+        let via_mark = crate::store::via_bracket(via.unwrap_or(""));
+        let plain = if via_mark.is_empty() {
+            format!(":{from} PRIVMSG {target} :{text}")
+        } else {
+            format!(":{from} PRIVMSG {target} :{via_mark} {text}")
+        };
         let clients: Vec<(u64, bool, bool)> = {
             let g = self.inner.lock();
             g.clients
@@ -494,18 +510,21 @@ impl IrcServer {
     pub async fn replay_history(
         &self,
         id: u64,
-        lines: Vec<(String, String, String, String, String, String)>,
+        lines: Vec<(String, String, String, String, String, String, String)>,
     ) {
-        // (time, from, target, text, msgid, delivery)
+        // (time, from, target, text, msgid, delivery, via)
         let has_batch = self.has_cap(id, "batch");
         if has_batch {
             self.send_raw(id, ":wcr.local BATCH +hist chathistory")
                 .await;
         }
-        for (time, from, target, text, msgid, delivery) in lines {
-            let tagged = format!(
-                "@server-time={time};batch=hist;msgid={msgid};+radio/delivery={delivery} :{from} PRIVMSG {target} :{text}"
-            );
+        for (time, from, target, text, msgid, delivery, via) in lines {
+            let mut tags =
+                format!("server-time={time};batch=hist;msgid={msgid};+radio/delivery={delivery}");
+            if let Some(v) = crate::store::normalize_via(Some(via.as_str())) {
+                tags.push_str(&format!(";+radio/via={v}"));
+            }
+            let tagged = format!("@{tags} :{from} PRIVMSG {target} :{text}");
             self.send_raw(id, &tagged).await;
         }
         if has_batch {
