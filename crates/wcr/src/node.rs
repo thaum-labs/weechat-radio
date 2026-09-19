@@ -1389,6 +1389,11 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
                     .set_config(serde_json::json!({"capture_device": cfg.modem.audio_input}))
                     .await;
             }
+            if !cfg.modem.audio_output.is_empty() {
+                let _ = c
+                    .set_config(serde_json::json!({"playback_device": cfg.modem.audio_output}))
+                    .await;
+            }
             let snap_c = rt.snap.clone();
             let snr_slot = rt.last_rx_snr.clone();
             let sense_ev = sense.clone();
