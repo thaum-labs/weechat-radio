@@ -361,7 +361,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             let pending = {
                 let mut s = rt_hub.snap.lock();
                 let was = s.hub_ok;
-                s.hub_ok = hub_flag_s.get();
+                s.hub_ok = hub_flag_s.get() && rt_hub.cfg.lock().mode.uses_internet();
                 if s.hub_ok {
                     if !was {
                         drop(s);
@@ -385,9 +385,11 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 }
             };
             if let Some(batch) = pending {
-                for env in batch {
-                    if let Some(h) = rt_hub.hub() {
-                        let _ = h.send(&env).await;
+                if rt_hub.cfg.lock().mode.uses_internet() {
+                    for env in batch {
+                        if let Some(h) = rt_hub.hub() {
+                            let _ = h.send(&env).await;
+                        }
                     }
                 }
             }
@@ -516,7 +518,9 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             }
             env = hub_in_rx.recv() => {
                 if let Some(env) = env {
-                    let _ = on_envelope(&rt, env, "inet", None).await;
+                    if rt.cfg.lock().mode.uses_internet() {
+                        let _ = on_envelope(&rt, env, "inet", None).await;
+                    }
                 }
             }
             env = recv_lan(&mut lan_in) => {
@@ -528,7 +532,9 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             }
             env = recv_lan(&mut peer_in) => {
                 if let Some(env) = env {
-                    let _ = on_envelope(&rt, env, "inet", None).await;
+                    if rt.cfg.lock().mode.uses_internet() {
+                        let _ = on_envelope(&rt, env, "inet", None).await;
+                    }
                 }
             }
         }
@@ -555,15 +561,16 @@ async fn recv_lan(rx: &mut Option<mpsc::Receiver<Envelope>>) -> Option<Envelope>
 }
 
 fn apply_mode_flags(flags: &mut Flags, mode: Mode, third: bool) {
-    if mode.inet_ok_on_tx() {
-        flags.set(FLAG_INET_OK, true);
+    flags.set(FLAG_INET_OK, mode.inet_ok_on_tx());
+    flags.set(FLAG_NO_INET, mode.no_inet_on_tx());
+    flags.set(FLAG_THIRD_PARTY, third);
+}
+
+fn stamp_own_mode_flags(env: &mut Envelope, our_call: &str, mode: Mode) {
+    if env.origin.as_str() != our_call {
+        return;
     }
-    if mode.no_inet_on_tx() {
-        flags.set(FLAG_NO_INET, true);
-    }
-    if third {
-        flags.set(FLAG_THIRD_PARTY, true);
-    }
+    apply_mode_flags(&mut env.flags, mode, env.origin.is_guest());
 }
 
 async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
@@ -582,7 +589,7 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
             } else {
                 format!("#{channel}")
             };
-            let lines: Vec<(String, String, String, String, String, String)> = hist
+            let lines: Vec<(String, String, String, String, String, String, String)> = hist
                 .into_iter()
                 .filter(|m| m.env.kind == MsgType::Msg)
                 .map(|m| {
@@ -597,6 +604,12 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
                     } else {
                         m.env.dest.to_string()
                     };
+                    let via = rt
+                        .store
+                        .rx_medium(&m.env.msg_id)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default();
                     (
                         t,
                         m.env.origin.to_string(),
@@ -604,6 +617,7 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
                         m.env.body_text(),
                         m.env.msg_id.hex(),
                         m.delivery.as_str().to_string(),
+                        via,
                     )
                 })
                 .collect();
@@ -647,7 +661,13 @@ async fn send_form(rt: &Runtime, target: &str, form: Form) -> Result<String> {
     rt.irc.tagmsg_delivery(&env.msg_id.hex(), "sent").await;
     let preview = form.render_text();
     rt.irc
-        .broadcast_privmsg(&cfg_g.callsign, target, &preview, Some(&env.msg_id.hex()))
+        .broadcast_privmsg(
+            &cfg_g.callsign,
+            target,
+            &preview,
+            Some(&env.msg_id.hex()),
+            None,
+        )
         .await;
     Ok(env.msg_id.hex())
 }
@@ -762,7 +782,9 @@ async fn dispatch_rf_at(
 ) -> Result<bool> {
     let cfg = rt.cfg.lock().clone();
     let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::VhfFm);
-    let rf_env = rf_copy(env, preset);
+    let mut env = env.clone();
+    stamp_own_mode_flags(&mut env, &rt.engine.our_call, cfg.mode);
+    let rf_env = rf_copy(&env, preset);
     let bytes = rf_env.encode()?;
     let stored = rt
         .dest_rungs
@@ -855,11 +877,13 @@ async fn send_rf(
 
 async fn dispatch(rt: &Runtime, env: &Envelope) -> Result<()> {
     let cfg = rt.cfg.lock().clone();
+    let mut env = env.clone();
+    stamp_own_mode_flags(&mut env, &rt.engine.our_call, cfg.mode);
     if cfg.mode.uses_radio() {
-        let _ = dispatch_rf_rung(rt, env, 0).await;
+        let _ = dispatch_rf_rung(rt, &env, 0).await;
     }
-    if cfg.mode.uses_internet() && env.flags.inet_ok() && inet_gap_for(rt, env) {
-        offer_hub(rt, env).await;
+    if cfg.mode.uses_internet() && env.flags.inet_ok() && inet_gap_for(rt, &env) {
+        offer_hub(rt, &env).await;
     }
     if cfg.mode.uses_internet() {
         if let Some(l) = &rt.lan {
@@ -870,6 +894,9 @@ async fn dispatch(rt: &Runtime, env: &Envelope) -> Result<()> {
 }
 
 async fn offer_hub(rt: &Runtime, env: &Envelope) {
+    if !rt.cfg.lock().mode.uses_internet() {
+        return;
+    }
     if rt.hub_flag.get() {
         if let Some(h) = rt.hub() {
             let _ = h.send(env).await;
@@ -977,6 +1004,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                             &target,
                             &text,
                             Some(&env.msg_id.hex()),
+                            Some(medium),
                         )
                         .await;
                 } else {
@@ -986,12 +1014,19 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                             &target,
                             &text,
                             Some(&env.msg_id.hex()),
+                            Some(medium),
                         )
                         .await;
                 }
             } else {
                 rt.irc
-                    .broadcast_privmsg(env.origin.as_str(), &target, &text, Some(&env.msg_id.hex()))
+                    .broadcast_privmsg(
+                        env.origin.as_str(),
+                        &target,
+                        &text,
+                        Some(&env.msg_id.hex()),
+                        Some(medium),
+                    )
                     .await;
             }
             if env.kind == MsgType::Checkin {
@@ -1411,7 +1446,9 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
                 }
                 let mut s = rt.snap.lock();
                 s.audio_label = "no modem".into();
-                s.audio_db = 0.0;
+                s.audio_db = presets::AUDIO_FLOOR_DB;
+                s.audio_in_db = presets::AUDIO_FLOOR_DB;
+                s.audio_out_db = presets::AUDIO_FLOOR_DB;
                 return Err(e);
             }
         }
@@ -1447,6 +1484,7 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
                             s.snr = frame.snr;
                             s.ber = frame.ber_pct;
                             s.audio_db = frame.level_db;
+                            s.audio_in_db = frame.level_db;
                             s.audio_label = presets::audio_level_label(frame.level_db).into();
                             s.channel = "rx".into();
                         }
@@ -1540,7 +1578,9 @@ async fn start_hub(rt: &Runtime) -> Result<()> {
 }
 
 fn stop_hub(rt: &Runtime) {
-    rt.txp.lock().hub = None;
+    if let Some(h) = rt.txp.lock().hub.take() {
+        h.shutdown();
+    }
     rt.hub_flag.set(false);
     let mut s = rt.snap.lock();
     s.hub_ok = false;
@@ -1940,5 +1980,53 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                 .into()
         }
         other => format!("unknown RADIO subcommand '{other}'. Try /radio help"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn radio_tx_flags_forbid_internet() {
+        let mut flags = Flags::new().with(FLAG_INET_OK).with(FLAG_REQ_ACK);
+        apply_mode_flags(&mut flags, Mode::Radio, false);
+        assert!(flags.no_inet());
+        assert!(!flags.inet_ok());
+        apply_mode_flags(&mut flags, Mode::InternetRadio, false);
+        assert!(!flags.no_inet());
+        assert!(flags.inet_ok());
+        apply_mode_flags(&mut flags, Mode::RadioPlus, false);
+        assert!(!flags.no_inet());
+        assert!(flags.inet_ok());
+    }
+
+    #[test]
+    fn stamp_only_rewrites_our_frames() {
+        let mut ours = Envelope::new_msg(
+            Callsign::parse("G4ABC").unwrap(),
+            Callsign::parse("M0XYZ").unwrap(),
+            1,
+            b"hi".to_vec(),
+            3,
+            Flags::new().with(FLAG_INET_OK),
+        )
+        .unwrap();
+        stamp_own_mode_flags(&mut ours, "G4ABC", Mode::Radio);
+        assert!(ours.flags.no_inet());
+        assert!(!ours.flags.inet_ok());
+
+        let mut theirs = Envelope::new_msg(
+            Callsign::parse("M0XYZ").unwrap(),
+            Callsign::parse("G4ABC").unwrap(),
+            2,
+            b"ho".to_vec(),
+            3,
+            Flags::new().with(FLAG_INET_OK),
+        )
+        .unwrap();
+        stamp_own_mode_flags(&mut theirs, "G4ABC", Mode::Radio);
+        assert!(!theirs.flags.no_inet());
+        assert!(theirs.flags.inet_ok());
     }
 }
