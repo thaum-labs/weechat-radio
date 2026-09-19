@@ -511,6 +511,36 @@ pub fn now_ts() -> u32 {
         .unwrap_or(0)
 }
 
+/// How far a timestamp may be from now before we call it clock skew.
+pub const CLOCK_SKEW_SECS: u32 = 300;
+
+fn is_clock_probe(kind: MsgType) -> bool {
+    matches!(
+        kind,
+        MsgType::Beacon | MsgType::Ping | MsgType::Checkin | MsgType::Status
+    )
+}
+
+/// Update the station clock-skew latch.
+///
+/// Delayed chat / ACK / form frames are normal on radio (queue, ARQ, store-and-forward)
+/// and must not raise or keep the warning. Live probes and timestamps in the future do.
+/// A timely frame of any kind clears a previous warning (e.g. after NTP/Dimension 4).
+pub fn clock_warn_after(prev: bool, kind: MsgType, ts: u32, now: u32) -> bool {
+    let future = ts > now.saturating_add(CLOCK_SKEW_SECS);
+    if future {
+        return true;
+    }
+    let late = ts.abs_diff(now) > CLOCK_SKEW_SECS;
+    if is_clock_probe(kind) {
+        return late;
+    }
+    if !late {
+        return false;
+    }
+    prev
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -628,5 +658,20 @@ mod tests {
         assert_eq!(bytes[0], VERSION);
         let back = Envelope::decode(&bytes).unwrap();
         assert_eq!(back.msg_id, env.msg_id);
+    }
+
+    #[test]
+    fn delayed_chat_is_not_clock_skew() {
+        let now = 1_000_000;
+        let old = now - CLOCK_SKEW_SECS - 60;
+        let soon = now + 30;
+        let future = now + CLOCK_SKEW_SECS + 10;
+        assert!(!clock_warn_after(false, MsgType::Msg, old, now));
+        assert!(clock_warn_after(true, MsgType::Msg, old, now));
+        assert!(!clock_warn_after(true, MsgType::Msg, soon, now));
+        assert!(clock_warn_after(false, MsgType::Msg, future, now));
+        assert!(clock_warn_after(false, MsgType::Beacon, old, now));
+        assert!(!clock_warn_after(true, MsgType::Beacon, soon, now));
+        assert!(!clock_warn_after(true, MsgType::Ack, soon, now));
     }
 }

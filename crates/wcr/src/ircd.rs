@@ -489,7 +489,20 @@ impl IrcServer {
     }
 
     pub async fn tagmsg_delivery(&self, msgid: &str, state: &str) {
-        let line = format!("@+radio/delivery={state};+radio/msgid={msgid} TAGMSG *");
+        self.tagmsg_progress(msgid, state, None).await;
+    }
+
+    pub async fn tagmsg_progress(&self, msgid: &str, state: &str, tries: Option<u32>) {
+        let mut tags = format!("+radio/delivery={state};+radio/msgid={msgid}");
+        if let Some(n) = tries.filter(|n| *n > 0) {
+            tags.push_str(&format!(";+radio/tries={n}"));
+        }
+        let line = format!("@{tags} TAGMSG *");
+        let notice = if let Some(n) = tries.filter(|n| *n > 0) {
+            format!(":wcr.local NOTICE * :[{state} x{n}] {msgid}")
+        } else {
+            format!(":wcr.local NOTICE * :[{state}] {msgid}")
+        };
         let ids: Vec<(u64, bool)> = {
             let g = self.inner.lock();
             g.clients
@@ -501,8 +514,7 @@ impl IrcServer {
             if tags {
                 self.send_raw(id, &line).await;
             } else {
-                self.send_raw(id, &format!(":wcr.local NOTICE * :[{state}] {msgid}"))
-                    .await;
+                self.send_raw(id, &notice).await;
             }
         }
     }
@@ -510,19 +522,31 @@ impl IrcServer {
     pub async fn replay_history(
         &self,
         id: u64,
-        lines: Vec<(String, String, String, String, String, String, String)>,
+        lines: Vec<(
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+        )>,
     ) {
-        // (time, from, target, text, msgid, delivery, via)
+        // (time, from, target, text, msgid, delivery, via, tries)
         let has_batch = self.has_cap(id, "batch");
         if has_batch {
             self.send_raw(id, ":wcr.local BATCH +hist chathistory")
                 .await;
         }
-        for (time, from, target, text, msgid, delivery, via) in lines {
+        for (time, from, target, text, msgid, delivery, via, tries) in lines {
             let mut tags =
                 format!("server-time={time};batch=hist;msgid={msgid};+radio/delivery={delivery}");
             if let Some(v) = crate::store::normalize_via(Some(via.as_str())) {
                 tags.push_str(&format!(";+radio/via={v}"));
+            }
+            if !tries.is_empty() && tries != "0" {
+                tags.push_str(&format!(";+radio/tries={tries}"));
             }
             let tagged = format!("@{tags} :{from} PRIVMSG {target} :{text}");
             self.send_raw(id, &tagged).await;
