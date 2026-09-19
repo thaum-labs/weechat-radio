@@ -96,6 +96,33 @@ pub fn via_bracket(medium: &str) -> &'static str {
     }
 }
 
+pub fn tries_bracket(n: u32) -> String {
+    if n == 0 {
+        String::new()
+    } else {
+        format!("[x{n}]")
+    }
+}
+
+fn chat_when(raw: Option<&str>) -> chrono::DateTime<chrono::Local> {
+    if let Some(s) = raw.filter(|s| !s.is_empty()) {
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+            return dt.with_timezone(&chrono::Local);
+        }
+        if let Ok(secs) = s.parse::<i64>() {
+            if let Some(dt) = chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0) {
+                return dt.with_timezone(&chrono::Local);
+            }
+        }
+    }
+    chrono::Local::now()
+}
+
+/// Local date + time to the second, e.g. `2026-09-19 22:46:03`.
+pub fn chat_stamp(raw: Option<&str>) -> String {
+    chat_when(raw).format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
 pub fn via_hint(medium: &str) -> &'static str {
     match normalize_via(Some(medium)) {
         Some("rf") => "received by radio decode",
@@ -169,6 +196,10 @@ impl Store {
         let _ = conn.execute("ALTER TABLE heard ADD COLUMN band TEXT", []);
         let _ = conn.execute(
             "ALTER TABLE groups ADD COLUMN default_prio INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE messages ADD COLUMN rf_tx INTEGER NOT NULL DEFAULT 0",
             [],
         );
     }
@@ -386,6 +417,35 @@ impl Store {
             params![next_hold as i64, id.hex()],
         )?;
         Ok(())
+    }
+
+    pub fn bump_rf_tx(&self, id: &MsgId) -> Result<u32> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "UPDATE messages SET rf_tx = rf_tx + 1 WHERE msg_id = ?1",
+            params![id.hex()],
+        )?;
+        if n == 0 {
+            return Ok(0);
+        }
+        let v: i64 = conn.query_row(
+            "SELECT rf_tx FROM messages WHERE msg_id = ?1",
+            params![id.hex()],
+            |r| r.get(0),
+        )?;
+        Ok(v as u32)
+    }
+
+    pub fn rf_tx_of(&self, id: &MsgId) -> Result<u32> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT rf_tx FROM messages WHERE msg_id = ?1",
+                params![id.hex()],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?
+            .unwrap_or(0) as u32)
     }
 
     pub fn retries_of(&self, id: &MsgId) -> Result<u32> {
@@ -948,6 +1008,33 @@ mod tests {
         assert_eq!(via_bracket(""), "");
         assert_eq!(normalize_via(Some("peer")), Some("inet"));
         assert_eq!(normalize_via(None), None);
+        assert_eq!(tries_bracket(0), "");
+        assert_eq!(tries_bracket(1), "[x1]");
+        assert_eq!(tries_bracket(3), "[x3]");
+        let stamp = chat_stamp(Some("2026-09-18T12:00:00Z"));
+        assert_eq!(stamp.len(), 19);
+        assert!(stamp.chars().nth(10) == Some(' '));
+        assert!(stamp.chars().nth(13) == Some(':'));
+        assert!(stamp.chars().nth(16) == Some(':'));
+    }
+
+    #[test]
+    fn rf_tx_counts_radio_sends() {
+        let s = Store::open_memory().unwrap();
+        let env = Envelope::new_msg(
+            Callsign::parse("G4ABC").unwrap(),
+            Callsign::parse("M0XYZ").unwrap(),
+            1,
+            b"hi".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        s.insert(&env, Delivery::Queued).unwrap();
+        assert_eq!(s.rf_tx_of(&env.msg_id).unwrap(), 0);
+        assert_eq!(s.bump_rf_tx(&env.msg_id).unwrap(), 1);
+        assert_eq!(s.bump_rf_tx(&env.msg_id).unwrap(), 2);
+        assert_eq!(s.rf_tx_of(&env.msg_id).unwrap(), 2);
     }
 
     #[test]

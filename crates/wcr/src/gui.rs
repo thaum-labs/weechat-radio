@@ -348,6 +348,8 @@ struct ChatLine {
     msgid: String,
     ticks: String,
     via: String,
+    tries: u32,
+    when: String,
 }
 
 impl ChatLine {
@@ -360,6 +362,8 @@ impl ChatLine {
             msgid: String::new(),
             ticks: String::new(),
             via: String::new(),
+            tries: 0,
+            when: String::new(),
         }
     }
 
@@ -372,6 +376,8 @@ impl ChatLine {
             msgid: String::new(),
             ticks: String::new(),
             via: String::new(),
+            tries: 0,
+            when: crate::store::chat_stamp(None),
         }
     }
 }
@@ -379,9 +385,16 @@ impl ChatLine {
 enum IrcEvent {
     Line(ChatLine),
     Status(String),
-    Delivery { msgid: String, state: String },
+    Delivery {
+        msgid: String,
+        state: String,
+        tries: u32,
+    },
     Joined(String),
-    Invited { from: String, channel: String },
+    Invited {
+        from: String,
+        channel: String,
+    },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1016,7 +1029,11 @@ impl GuiApp {
                     }
                     self.chat.push(line);
                 }
-                IrcEvent::Delivery { msgid, state } => self.apply_delivery(&msgid, &state),
+                IrcEvent::Delivery {
+                    msgid,
+                    state,
+                    tries,
+                } => self.apply_delivery(&msgid, &state, tries),
                 IrcEvent::Status(s) => self
                     .chat
                     .push(ChatLine::sys(s, self.active_channel.clone())),
@@ -1047,7 +1064,7 @@ impl GuiApp {
         }
     }
 
-    fn apply_delivery(&mut self, msgid: &str, state: &str) {
+    fn apply_delivery(&mut self, msgid: &str, state: &str, tries: u32) {
         let Some(ticks) = delivery_ticks(state) else {
             return;
         };
@@ -1059,6 +1076,9 @@ impl GuiApp {
                 .find(|l| !l.msgid.is_empty() && l.msgid.eq_ignore_ascii_case(msgid))
             {
                 line.ticks = ticks.into();
+                if tries > 0 {
+                    line.tries = tries;
+                }
                 return;
             }
         }
@@ -1073,6 +1093,9 @@ impl GuiApp {
                 line.msgid = msgid.to_string();
             }
             line.ticks = ticks.into();
+            if tries > 0 {
+                line.tries = tries;
+            }
         }
     }
 }
@@ -1937,6 +1960,17 @@ impl eframe::App for GuiApp {
                                         let mine =
                                             line.nick.eq_ignore_ascii_case(&self.callsign);
                                         ui.horizontal_wrapped(|ui| {
+                                            if !line.when.is_empty() {
+                                                ui.label(
+                                                    RichText::new(&line.when)
+                                                        .color(DIM)
+                                                        .monospace(),
+                                                )
+                                                .on_hover_text(format!(
+                                                    "received {}",
+                                                    line.when
+                                                ));
+                                            }
                                             ui.label(
                                                 RichText::new(format!("[{}]", line.nick))
                                                     .color(if mine { ORANGE } else { ACCENT })
@@ -1961,6 +1995,20 @@ impl eframe::App for GuiApp {
                                                         .color(tick_color(&line.ticks))
                                                         .monospace(),
                                                 );
+                                            }
+                                            if mine && line.tries > 0 {
+                                                ui.label(
+                                                    RichText::new(crate::store::tries_bracket(
+                                                        line.tries,
+                                                    ))
+                                                    .color(DIM)
+                                                    .monospace(),
+                                                )
+                                                .on_hover_text(format!(
+                                                    "sent {} time{} over radio",
+                                                    line.tries,
+                                                    if line.tries == 1 { "" } else { "s" }
+                                                ));
                                             }
                                         });
                                     }
@@ -3438,8 +3486,12 @@ fn irc_session(
                     if line.contains(" CAP ") {
                         continue;
                     }
-                    if let Some((msgid, state)) = parse_delivery(&line) {
-                        let _ = events.send(IrcEvent::Delivery { msgid, state });
+                    if let Some((msgid, state, tries)) = parse_delivery(&line) {
+                        let _ = events.send(IrcEvent::Delivery {
+                            msgid,
+                            state,
+                            tries,
+                        });
                     } else if let Some((from, ch)) = parse_invite(&line) {
                         let _ = events.send(IrcEvent::Invited { from, channel: ch });
                     } else if let Some(ch) = parse_join(&line) {
@@ -3467,7 +3519,13 @@ fn irc_tags(line: &str) -> HashMap<String, String> {
     let Some(rest) = line.strip_prefix('@') else {
         return map;
     };
-    let Some((tagstr, _)) = rest.split_once(' ') else {
+    let tagstr = if let Some(i) = rest.find(" TAGMSG") {
+        &rest[..i]
+    } else if let Some(i) = rest.find(" :") {
+        &rest[..i]
+    } else if let Some((t, _)) = rest.split_once(' ') {
+        t
+    } else {
         return map;
     };
     for t in tagstr.split(';') {
@@ -3502,14 +3560,18 @@ fn delivery_ticks(state: &str) -> Option<&'static str> {
     }
 }
 
-fn parse_delivery(line: &str) -> Option<(String, String)> {
+fn parse_tries(raw: Option<&str>) -> u32 {
+    raw.and_then(|s| s.parse().ok()).unwrap_or(0)
+}
+
+fn parse_delivery(line: &str) -> Option<(String, String, u32)> {
     let payload = irc_payload(line);
     let cmd = if let Some(rest) = payload.strip_prefix(':') {
         rest.split_once(' ').map(|(_, c)| c).unwrap_or(rest)
     } else {
         payload
     };
-    if cmd.starts_with("TAGMSG ") {
+    if cmd.starts_with("TAGMSG ") || line.contains(" TAGMSG ") {
         let tags = irc_tags(line);
         if let Some(state) = tags.get("radio/delivery") {
             let msgid = tags
@@ -3517,17 +3579,26 @@ fn parse_delivery(line: &str) -> Option<(String, String)> {
                 .or_else(|| tags.get("msgid"))
                 .cloned()
                 .unwrap_or_default();
-            return Some((msgid, state.clone()));
+            return Some((
+                msgid,
+                state.clone(),
+                parse_tries(tags.get("radio/tries").map(String::as_str)),
+            ));
         }
         return None;
     }
     let notice = parse_notice(line)?;
     let rest = notice.strip_prefix('[')?;
-    let (state, msgid) = rest.split_once("] ")?;
-    if delivery_ticks(state).is_none() && !state.starts_with("retry") {
+    let (inside, msgid) = rest.split_once("] ")?;
+    let (state, tries) = if let Some((s, n)) = inside.rsplit_once(" x") {
+        (s.to_string(), n.parse().unwrap_or(0))
+    } else {
+        (inside.to_string(), 0)
+    };
+    if delivery_ticks(&state).is_none() && !state.starts_with("retry") {
         return None;
     }
-    Some((msgid.trim().to_string(), state.to_string()))
+    Some((msgid.trim().to_string(), state, tries))
 }
 
 fn irc_payload(line: &str) -> &str {
@@ -3591,6 +3662,8 @@ fn parse_privmsg(line: &str) -> Option<ChatLine> {
         via: crate::store::normalize_via(tags.get("radio/via").map(String::as_str))
             .unwrap_or("")
             .to_string(),
+        tries: parse_tries(tags.get("radio/tries").map(String::as_str)),
+        when: crate::store::chat_stamp(tags.get("server-time").map(String::as_str)),
     })
 }
 
@@ -3646,10 +3719,11 @@ mod tests {
 
     #[test]
     fn parse_tagmsg_delivery() {
-        let (id, state) =
+        let (id, state, tries) =
             parse_delivery("@+radio/delivery=sent;+radio/msgid=deadbeef TAGMSG *").unwrap();
         assert_eq!(id, "deadbeef");
         assert_eq!(state, "sent");
+        assert_eq!(tries, 0);
         assert_eq!(delivery_ticks("queued"), Some("[..]"));
         assert_eq!(delivery_ticks("sent"), Some("[tx]"));
         assert_eq!(delivery_ticks("relayed"), Some("[rl]"));
@@ -3659,9 +3733,28 @@ mod tests {
 
     #[test]
     fn parse_notice_delivery_fallback() {
-        let (id, state) = parse_delivery(":wcr.local NOTICE * :[delivered] cafe1234").unwrap();
+        let (id, state, tries) =
+            parse_delivery(":wcr.local NOTICE * :[delivered] cafe1234").unwrap();
         assert_eq!(id, "cafe1234");
         assert_eq!(state, "delivered");
+        assert_eq!(tries, 0);
+        let (id, state, tries) =
+            parse_delivery(":wcr.local NOTICE * :[retry 1/3 x2] cafe1234").unwrap();
+        assert_eq!(id, "cafe1234");
+        assert_eq!(state, "retry 1/3");
+        assert_eq!(tries, 2);
+    }
+
+    #[test]
+    fn tagmsg_reads_radio_tries() {
+        let (id, state, tries) = parse_delivery(
+            "@+radio/delivery=retry-1/3;+radio/msgid=deadbeef;+radio/tries=2 TAGMSG *",
+        )
+        .unwrap();
+        assert_eq!(id, "deadbeef");
+        assert_eq!(state, "retry-1/3");
+        assert_eq!(tries, 2);
+        assert_eq!(crate::store::tries_bracket(tries), "[x2]");
     }
 
     #[test]
@@ -3674,6 +3767,13 @@ mod tests {
         assert_eq!(chat.msgid, "cafe1234");
         assert_eq!(chat.ticks, "[tx]");
         assert!(chat.via.is_empty());
+        assert_eq!(chat.tries, 0);
+        assert_eq!(
+            chat.when,
+            crate::store::chat_stamp(Some("2026-09-18T12:00:00Z"))
+        );
+        let retried = "@server-time=2026-09-18T12:00:00Z;msgid=cafe1234;+radio/delivery=sent;+radio/tries=3 :G4ABC PRIVMSG #bulletin :hello";
+        assert_eq!(parse_privmsg(retried).unwrap().tries, 3);
     }
 
     #[test]

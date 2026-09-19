@@ -10,7 +10,10 @@ pub mod ids;
 pub mod sign;
 
 pub use callsign::{is_plausible_callsign, Callsign};
-pub use envelope::{now_ts, Envelope, MsgType, HEADER_LEN, MAX_BODY, VERSION, VERSION_V1};
+pub use envelope::{
+    clock_warn_after, now_ts, Envelope, MsgType, CLOCK_SKEW_SECS, HEADER_LEN, MAX_BODY, VERSION,
+    VERSION_V1,
+};
 pub use flags::{
     Flags, Priority, FLAG_COMPRESSED, FLAG_GROUP, FLAG_GROUP_IDX, FLAG_INET_OK, FLAG_NO_INET,
     FLAG_REQ_ACK, FLAG_SIGNED, FLAG_THIRD_PARTY,
