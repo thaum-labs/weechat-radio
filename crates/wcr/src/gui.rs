@@ -510,6 +510,8 @@ struct GuiApp {
     freq_pick_last: Option<crate::band::CallingFreq>,
     /// Channels already JOINed on the current IRC connection (avoid duplicate history).
     irc_joined: Vec<String>,
+    /// Skip OS notifications while IRC history is replaying after connect.
+    irc_connected_at: Option<Instant>,
 }
 
 impl GuiApp {
@@ -581,6 +583,7 @@ impl GuiApp {
             freq_pending: None,
             freq_pick_last: None,
             irc_joined: Vec::new(),
+            irc_connected_at: None,
         };
         app.install_tray();
         app
@@ -834,6 +837,7 @@ impl GuiApp {
         self.irc_tx = Some(out_tx);
         self.irc_rx = Some(ev_rx);
         self.irc_joined = self.joined.clone();
+        self.irc_connected_at = Some(Instant::now());
     }
 
     fn send_chat(&mut self) {
@@ -979,9 +983,14 @@ impl GuiApp {
         for ev in incoming {
             match ev {
                 IrcEvent::Line(line) => {
+                    let replaying = self
+                        .irc_connected_at
+                        .map(|t| t.elapsed() < Duration::from_secs(3))
+                        .unwrap_or(true);
                     if !line.sys
                         && !line.nick.is_empty()
                         && !line.nick.eq_ignore_ascii_case(&me)
+                        && !replaying
                         && !viewport_focused
                         && (line.text.starts_with("!!")
                             || line.text.starts_with('!')
@@ -997,11 +1006,7 @@ impl GuiApp {
                         } else {
                             line.text.clone()
                         };
-                        let title = format!("WeeChat Radio — {}", line.nick);
-                        let _ = notify_rust::Notification::new()
-                            .summary(&title)
-                            .body(&body)
-                            .show();
+                        crate::tui::notify(&format!("WeeChat Radio — {}", line.nick), &body);
                     }
                     self.chat.push(line);
                 }
