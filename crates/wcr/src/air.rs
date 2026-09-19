@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Notify};
 use tokio::time::Instant;
+use tokio_util::sync::CancellationToken;
 
 const BASE_CW: u32 = 4;
 const RELAY_DEFER_MIN_S: u64 = 2;
@@ -147,6 +148,7 @@ impl ModemSense {
         control: ControlClient,
         snap: Arc<SharedStatus>,
         queue: AirQueue,
+        cancel: CancellationToken,
     ) {
         tokio::spawn(async move {
             loop {
@@ -163,7 +165,10 @@ impl ModemSense {
                 } else {
                     Duration::from_secs(1)
                 };
-                tokio::time::sleep(wait).await;
+                tokio::select! {
+                    _ = cancel.cancelled() => return,
+                    _ = tokio::time::sleep(wait) => {}
+                }
             }
         });
     }
@@ -402,8 +407,12 @@ pub async fn run_air_queue(
     control: Option<ControlClient>,
     cfg: Arc<Mutex<Config>>,
     snap: Arc<SharedStatus>,
+    cancel: CancellationToken,
 ) {
     loop {
+        if cancel.is_cancelled() {
+            return;
+        }
         let rf = cfg.lock().rf.clone();
         let occ = sense.occupancy_pct();
         if rf.csma {
@@ -417,7 +426,10 @@ pub async fn run_air_queue(
         }
 
         if let Some(item) = queue.pop_ready() {
-            pace_and_send(&queue, &tx, sense.as_ref(), &control, &rf, &snap, item).await;
+            tokio::select! {
+                _ = cancel.cancelled() => return,
+                _ = pace_and_send(&queue, &tx, sense.as_ref(), &control, &rf, &snap, item) => {}
+            }
             continue;
         }
 
@@ -425,11 +437,13 @@ pub async fn run_air_queue(
         tokio::pin!(notified);
         if let Some(deadline) = queue.next_deadline() {
             tokio::select! {
+                _ = cancel.cancelled() => return,
                 _ = notified => {}
                 _ = tokio::time::sleep_until(deadline) => {}
             }
         } else {
             tokio::select! {
+                _ = cancel.cancelled() => return,
                 _ = notified => {}
                 _ = tokio::time::sleep(Duration::from_millis(rf.slot_ms.max(50) as u64)) => {}
             }
@@ -610,7 +624,15 @@ mod tests {
         c.rf.turnaround_ms = 0;
         let cfg = Arc::new(Mutex::new(c));
         let snap = status::new_shared();
-        let h = tokio::spawn(run_air_queue(q.clone(), tx, sense.clone(), None, cfg, snap));
+        let h = tokio::spawn(run_air_queue(
+            q.clone(),
+            tx,
+            sense.clone(),
+            None,
+            cfg,
+            snap,
+            CancellationToken::new(),
+        ));
         q.enqueue(item(AirClass::Emergency, 1));
         tokio::time::advance(Duration::from_millis(400)).await;
         tokio::task::yield_now().await;
@@ -631,7 +653,15 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(8);
         let cfg = test_cfg();
         let snap = status::new_shared();
-        let h = tokio::spawn(run_air_queue(q.clone(), tx, sense.clone(), None, cfg, snap));
+        let h = tokio::spawn(run_air_queue(
+            q.clone(),
+            tx,
+            sense.clone(),
+            None,
+            cfg,
+            snap,
+            CancellationToken::new(),
+        ));
         q.enqueue(item(AirClass::Emergency, 9));
         tokio::time::advance(Duration::from_millis(80)).await;
         tokio::task::yield_now().await;
@@ -650,7 +680,15 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(8);
         let cfg = test_cfg();
         let snap = status::new_shared();
-        let h = tokio::spawn(run_air_queue(q.clone(), tx, sense.clone(), None, cfg, snap));
+        let h = tokio::spawn(run_air_queue(
+            q.clone(),
+            tx,
+            sense.clone(),
+            None,
+            cfg,
+            snap,
+            CancellationToken::new(),
+        ));
         q.enqueue(item(AirClass::Background, 4));
         tokio::time::advance(Duration::from_millis(100)).await;
         tokio::task::yield_now().await;
@@ -669,7 +707,15 @@ mod tests {
         c.rf.turnaround_ms = 100;
         let cfg = Arc::new(Mutex::new(c));
         let snap = status::new_shared();
-        let h = tokio::spawn(run_air_queue(q.clone(), tx, sense.clone(), None, cfg, snap));
+        let h = tokio::spawn(run_air_queue(
+            q.clone(),
+            tx,
+            sense.clone(),
+            None,
+            cfg,
+            snap,
+            CancellationToken::new(),
+        ));
         let mut a = item(AirClass::Emergency, 1);
         a.frames = vec![vec![0u8; 100]];
         let mut b = item(AirClass::Emergency, 2);

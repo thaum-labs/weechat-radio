@@ -230,6 +230,10 @@ mod tests {
         let hf = list.iter().find(|h| h.callsign == "M0ZZZ").unwrap();
         assert_eq!(vhf.band.as_deref(), Some("2m"));
         assert_eq!(hf.band.as_deref(), Some("40m"));
+        assert!(store.recently_heard_rf("G4AAA", 600, 144950).unwrap());
+        assert!(!store.recently_heard_rf("M0ZZZ", 600, 7045).unwrap());
+        assert!(store.recently_heard_any_rf(600, 144950).unwrap());
+        assert!(!store.recently_heard_any_rf(600, 7045).unwrap());
         assert_eq!(
             crate::band::beacon_khz(b"B|internet-radio|7045"),
             Some(7045)
