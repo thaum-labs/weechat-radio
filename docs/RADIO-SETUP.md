@@ -52,9 +52,9 @@ VOX means the radio transmits when it hears sound.
 
 1. Connect computer headphone-out to radio mic-in, radio speaker-out to computer mic-in.
 2. On the radio, turn **VOX on**. Start with a medium VOX delay.
-3. Run `wcr setup` and choose **Any radio with a plain audio cable (VOX)**. This selects the `vox-safe` preset, which waits a moment so the radio is fully keyed before data starts.
-4. Start `wcr tui`. Send a short test to `#bulletin`. Tell the app the frequency on the dial: `/radio freq 144.950`.
-5. If the other station hears a clipped first character, raise `modem.vox_lead_ms` in `wcr.toml` (try 700).
+3. Run `wcr setup` and choose **Any radio with a plain audio cable (VOX)**. This selects the `vox-safe` preset: MFSK-32R (slowest, most robust) and a 900 ms lead so the radio is fully keyed before data starts.
+4. Start `wcr tui`. Send a short test to `#bulletin`. Tell the app the frequency on the dial: `/radio freq 144.950`. Keep radio VOX hang on the long side.
+5. If the other station still hears a clipped start, raise `modem.vox_lead_ms` in `wcr.toml` (try 1200).
 
 ### How you know it worked
 

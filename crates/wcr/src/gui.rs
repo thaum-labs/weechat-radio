@@ -652,6 +652,8 @@ impl GuiApp {
                 cfg.mode = Mode::InternetRadio;
                 cfg.modem.ptt = "vox".into();
                 cfg.modem.preset = Preset::VoxSafe.as_str().into();
+                cfg.modem.vox_lead_ms = Preset::VOX_SAFE_LEAD_MS;
+                cfg.modem.vox_tail_ms = Preset::VOX_SAFE_TAIL_MS;
             }
             3 => {
                 cfg.mode = Mode::InternetRadio;
@@ -969,6 +971,20 @@ impl GuiApp {
             .push(nick.clone());
         self.persist_session();
         self.send_line(&format!("/invite {nick}"));
+    }
+
+    fn clear_active_chat(&mut self) {
+        let ch = self.active_channel.clone();
+        self.chat.retain(|l| !l.channel.eq_ignore_ascii_case(&ch));
+        self.chat.push(ChatLine::sys(
+            format!("cleared {ch} on this computer"),
+            ch.clone(),
+        ));
+        if self.irc_tx.is_some() {
+            if let Some(tx) = &self.irc_tx {
+                let _ = tx.send(format!("RADIO clear {ch}"));
+            }
+        }
     }
 
     fn switch_channel(&mut self, ch: String) {
@@ -1754,6 +1770,18 @@ impl eframe::App for GuiApp {
                         .clicked()
                     {
                         self.create_channel();
+                    }
+                    let clear = ui
+                        .add(
+                            egui::Button::new(RichText::new("clear chat").color(DIM).monospace())
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(hairline(LINE)),
+                        )
+                        .on_hover_text(
+                            "Remove this channel's chat from this computer only. Other stations keep their copy. Station must be running to forget stored history.",
+                        );
+                    if clear.clicked() {
+                        self.clear_active_chat();
                     }
                 });
                 if let Some(ch) = switch_to {

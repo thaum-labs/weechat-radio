@@ -82,13 +82,13 @@
           <p>On the radio, turn <strong>VOX on</strong>. Start with a medium VOX delay.</p>
         </li>
         <li>
-          <p>Run <code>wcr setup</code> and choose <strong>Any radio with a plain audio cable (VOX)</strong>. This selects the <code>vox-safe</code> preset, which waits a moment so the radio is fully keyed before data starts.</p>
+          <p>Run <code>wcr setup</code> and choose <strong>Any radio with a plain audio cable (VOX)</strong>. This selects the <code>vox-safe</code> preset: MFSK-32R (slowest, most robust) and a 900 ms lead so the radio is fully keyed before data starts.</p>
         </li>
         <li>
           <p>Start <code>wcr tui</code>. Send a short test to <code>#bulletin</code>. Tell the app the frequency on the dial: <code>/radio freq 144.950</code>.</p>
         </li>
         <li>
-          <p>If the other station hears a clipped first character, raise <code>modem.vox_lead_ms</code> in <code>wcr.toml</code> (try <code>700</code>).</p>
+          <p>Keep radio VOX hang on the long side. If the other station still hears a clipped start, raise <code>modem.vox_lead_ms</code> in <code>wcr.toml</code> (try <code>1200</code>).</p>
         </li>
       </ol>
 

@@ -307,7 +307,21 @@ pub async fn run(cfg: &Config) -> Result<()> {
                         let line = std::mem::take(&mut app.input);
                         if !line.is_empty() {
                             if let Some(cmd) = line.strip_prefix('/') {
-                                out.write_all(format!("{cmd}\r\n").as_bytes()).await?;
+                                let cmd = cmd.trim();
+                                if cmd.eq_ignore_ascii_case("clear")
+                                    || cmd.to_ascii_lowercase().starts_with("clear ")
+                                {
+                                    let target = cmd
+                                        .split_once(char::is_whitespace)
+                                        .map(|(_, t)| t.trim().to_string())
+                                        .filter(|t| !t.is_empty())
+                                        .unwrap_or_else(|| app.cur().name.clone());
+                                    app.cur_mut().lines.clear();
+                                    out.write_all(format!("RADIO clear {target}\r\n").as_bytes())
+                                        .await?;
+                                } else {
+                                    out.write_all(format!("{cmd}\r\n").as_bytes()).await?;
+                                }
                             } else {
                                 let target = app.cur().name.clone();
                                 let nick = app.nick.clone();

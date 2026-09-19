@@ -378,6 +378,41 @@ impl Store {
         Ok(n as u64)
     }
 
+    /// Drop this computer's copy of one channel or DM. Other stations keep theirs.
+    pub fn purge_channel(&self, target: &str, our_call: Option<&str>) -> Result<u64> {
+        let trimmed = target.trim();
+        let group = trimmed.starts_with('#') || trimmed.starts_with('&');
+        let key = trimmed
+            .trim_start_matches('#')
+            .trim_start_matches('&')
+            .to_ascii_uppercase();
+        if key.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn.lock().unwrap();
+        let n = if group || key == "BULLETIN" || key == "BEACON" {
+            conn.execute(
+                "DELETE FROM messages WHERE is_group = 1 AND upper(dest) = ?1",
+                params![key],
+            )?
+        } else if let Some(us) = our_call.filter(|s| !s.is_empty()) {
+            let us = us.to_ascii_uppercase();
+            conn.execute(
+                "DELETE FROM messages WHERE is_group = 0 AND (
+                    (upper(origin) = ?1 AND upper(dest) = ?2)
+                    OR (upper(origin) = ?2 AND upper(dest) = ?1)
+                )",
+                params![us, key],
+            )?
+        } else {
+            conn.execute(
+                "DELETE FROM messages WHERE is_group = 0 AND (upper(dest) = ?1 OR upper(origin) = ?1)",
+                params![key],
+            )?
+        };
+        Ok(n as u64)
+    }
+
     pub fn hold_due(&self, now: u32) -> Result<Vec<StoredMsg>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -993,7 +1028,7 @@ fn tuple_to_env(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::Envelope;
+    use crate::proto::{Envelope, FLAG_GROUP};
 
     #[test]
     fn bracket_marks() {
@@ -1053,6 +1088,50 @@ mod tests {
         s.add_hop(&env.msg_id, "G4ABC", "rf", Some(8.0)).unwrap();
         s.add_hop(&env.msg_id, "M0XYZ", "inet", None).unwrap();
         assert_eq!(s.rx_medium(&env.msg_id).unwrap().as_deref(), Some("rf"));
+    }
+
+    #[test]
+    fn purge_channel_is_local_and_scoped() {
+        let s = Store::open_memory().unwrap();
+        let mut bulletin = Envelope::new_msg(
+            Callsign::parse("G4ABC").unwrap(),
+            Callsign::from_raw("BULLETIN"),
+            1,
+            b"pub".to_vec(),
+            3,
+            Flags::new().with(FLAG_GROUP),
+        )
+        .unwrap();
+        bulletin.flags.set(FLAG_GROUP, true);
+        let mut ops = Envelope::new_msg(
+            Callsign::parse("G4ABC").unwrap(),
+            Callsign::from_raw("OPS"),
+            2,
+            b"priv".to_vec(),
+            3,
+            Flags::new().with(FLAG_GROUP),
+        )
+        .unwrap();
+        ops.flags.set(FLAG_GROUP, true);
+        let dm = Envelope::new_msg(
+            Callsign::parse("G4ABC").unwrap(),
+            Callsign::parse("M0XYZ").unwrap(),
+            3,
+            b"dm".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        s.insert(&bulletin, Delivery::Sent).unwrap();
+        s.insert(&ops, Delivery::Sent).unwrap();
+        s.insert(&dm, Delivery::Sent).unwrap();
+        assert_eq!(s.purge_channel("#bulletin", Some("G4ABC")).unwrap(), 1);
+        assert!(s.get(&bulletin.msg_id).unwrap().is_none());
+        assert!(s.get(&ops.msg_id).unwrap().is_some());
+        assert!(s.get(&dm.msg_id).unwrap().is_some());
+        assert_eq!(s.purge_channel("M0XYZ", Some("G4ABC")).unwrap(), 1);
+        assert!(s.get(&dm.msg_id).unwrap().is_none());
+        assert!(s.get(&ops.msg_id).unwrap().is_some());
     }
 
     #[test]
