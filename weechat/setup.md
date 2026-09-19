@@ -7,7 +7,7 @@ On the web: https://weechatradio.com/guides/weechat.html
 - `wcr node` or `wcr tui` already running on this computer
 - WeeChat with the Python plugin
 
-The official installer does this for you. After `wcr node`, run `wcr weechat`.
+On Linux, the official installer tries to install WeeChat. On a Mac it does not — install WeeChat yourself, then run `wcr weechat --configure`. After `wcr node`, run `wcr weechat`.
 
 Manual steps, if you installed WeeChat yourself:
 

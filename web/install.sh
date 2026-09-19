@@ -79,20 +79,24 @@ echo "Menu launcher: $APPS/weechat-radio.desktop"
 
 if [ "${WCR_SKIP_WEECHAT:-}" != "1" ]; then
   if ! command -v weechat >/dev/null 2>&1; then
-    echo "Installing WeeChat..."
-    if [ "$OS" = "darwin" ] && command -v brew >/dev/null 2>&1; then
-      brew install weechat || true
-    elif command -v apt-get >/dev/null 2>&1; then
-      sudo apt-get update -y && sudo apt-get install -y weechat weechat-python || true
-    elif command -v dnf >/dev/null 2>&1; then
-      sudo dnf install -y weechat || true
+    if [ "$OS" = "darwin" ]; then
+      echo "Skipping WeeChat on macOS (optional). Homebrew often compiles it from source."
+      echo "Chat without it:  wcr gui"
+      echo "Add it later: https://weechatradio.com/guides/weechat.html"
     else
-      echo "Install WeeChat from https://weechat.org/ then run: wcr weechat --configure"
+      echo "Installing WeeChat..."
+      if command -v apt-get >/dev/null 2>&1; then
+        sudo apt-get update -y && sudo apt-get install -y weechat weechat-python || true
+      elif command -v dnf >/dev/null 2>&1; then
+        sudo dnf install -y weechat || true
+      else
+        echo "Install WeeChat from https://weechat.org/ then run: wcr weechat --configure"
+      fi
     fi
   fi
   if command -v weechat >/dev/null 2>&1 || command -v weechat-headless >/dev/null 2>&1; then
     "$PREFIX/wcr" weechat --configure
-  else
+  elif [ "$OS" != "darwin" ]; then
     echo "WeeChat did not install. Install it from https://weechat.org/ then run: wcr weechat --configure" >&2
   fi
 fi

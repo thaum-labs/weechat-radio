@@ -40,15 +40,10 @@
       <h2>windows (powershell)</h2>
       <p>Click Start, type <code>PowerShell</code>, press Enter. Paste:</p>
       <pre>irm https://weechatradio.com/install.ps1 | iex</pre>
-      <h2>homebrew</h2>
-      <pre>brew tap thaum-labs/tap
-brew install wcr</pre>
-      <h2>winget / scoop</h2>
-      <pre>winget install ThaumLabs.Wcr
-scoop bucket add thaum https://github.com/thaum-labs/scoop-bucket
-scoop install wcr</pre>
       <p>Release zips: <a href="https://github.com/thaum-labs/weechat-radio/releases">GitHub Releases</a>.</p>
-      <p>The installer puts a <strong>WeeChat Radio</strong> shortcut on the Start menu and desktop. Open that — it starts the station and chat. No terminal needed. It also installs WeeChat unless <code>WCR_SKIP_WEECHAT=1</code>.</p>
+      <p>On Windows, the installer puts a <strong>WeeChat Radio</strong> shortcut on the Start menu and desktop. Open that — it starts the station and chat.</p>
+      <p>On Mac and Linux the program is <code>wcr</code> in <code>~/.local/bin</code>. Open a new terminal, then <code>wcr gui</code>. If the shell says <code>wcr: command not found</code>, run <code>export PATH="$HOME/.local/bin:$PATH"</code> and add that line to your shell profile.</p>
+      <p>WeeChat (the separate IRC client) is optional. Chat is <code>wcr gui</code> or <code>wcr tui</code>. See the <a href="/guides/weechat.html">WeeChat guide</a> if you want that client later.</p>
       <p class="next">Next: <a href="/guides/start.html">5-minute start</a> · <a href="/guides/windows.html">Windows</a> · <a href="/guides/macos.html">macOS</a> · <a href="/guides/linux.html">Linux</a></p>
     </main>
   </div>
