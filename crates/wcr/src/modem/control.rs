@@ -12,6 +12,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct ModemStatus {
     pub channel_state: String,
     pub ptt_on: bool,
@@ -21,6 +22,38 @@ pub struct ModemStatus {
     pub last_ber: f32,
     pub occupancy_pct: i32,
     pub audio_connected: bool,
+    /// Capture RMS in dBFS when the modem reports it.
+    #[serde(default)]
+    pub audio_in_db: Option<f32>,
+    /// Playback RMS in dBFS when the modem reports it.
+    #[serde(default)]
+    pub audio_out_db: Option<f32>,
+}
+
+fn json_f32(v: &Value, keys: &[&str]) -> Option<f32> {
+    for k in keys {
+        if let Some(n) = v.get(*k).and_then(|x| x.as_f64()) {
+            return Some(n as f32);
+        }
+    }
+    None
+}
+
+impl ModemStatus {
+    pub fn from_json(v: Value) -> Self {
+        let mut st: Self = serde_json::from_value(v.clone()).unwrap_or_default();
+        if st.audio_in_db.is_none() {
+            st.audio_in_db = json_f32(
+                &v,
+                &["input_level_db", "audio_level_db", "capture_level_db"],
+            );
+        }
+        if st.audio_out_db.is_none() {
+            st.audio_out_db =
+                json_f32(&v, &["output_level_db", "playback_level_db", "tx_level_db"]);
+        }
+        st
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -77,7 +110,7 @@ impl ControlClient {
         let v = self
             .request(serde_json::json!({"cmd": "get_status"}))
             .await?;
-        Ok(serde_json::from_value(v).unwrap_or_default())
+        Ok(ModemStatus::from_json(v))
     }
 
     pub async fn set_config(&self, fields: Value) -> Result<()> {
@@ -263,5 +296,24 @@ mod tests {
         let decoded = decode_control_frames(&mut buf).unwrap();
         assert_eq!(decoded, vec![v]);
         assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn status_parses_in_out_level_aliases() {
+        let st = ModemStatus::from_json(serde_json::json!({
+            "channel_state": "idle",
+            "audio_connected": true,
+            "input_level_db": -18.5,
+            "output_level_db": -6.0
+        }));
+        assert!(st.audio_connected);
+        assert_eq!(st.audio_in_db, Some(-18.5));
+        assert_eq!(st.audio_out_db, Some(-6.0));
+        let st = ModemStatus::from_json(serde_json::json!({
+            "audio_level_db": -22.0,
+            "playback_level_db": -9.0
+        }));
+        assert_eq!(st.audio_in_db, Some(-22.0));
+        assert_eq!(st.audio_out_db, Some(-9.0));
     }
 }

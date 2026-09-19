@@ -159,12 +159,9 @@ impl ModemSense {
                     s.occupancy_pct = self.occupancy_pct();
                     s.ptt_on = st.ptt_on;
                     s.queue_air = queue.depth();
+                    s.apply_modem_audio(&st);
                 }
-                let wait = if queue.depth() > 0 {
-                    Duration::from_millis(250)
-                } else {
-                    Duration::from_secs(1)
-                };
+                let wait = Duration::from_millis(250);
                 tokio::select! {
                     _ = cancel.cancelled() => return,
                     _ = tokio::time::sleep(wait) => {}

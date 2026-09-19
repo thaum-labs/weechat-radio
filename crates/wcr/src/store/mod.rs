@@ -76,6 +76,35 @@ impl Delivery {
     }
 }
 
+/// First-hop receive path: radio decode (`rf`), hub (`inet`), or LAN mesh (`lan`).
+pub fn normalize_via(medium: Option<&str>) -> Option<&'static str> {
+    match medium.map(str::trim).unwrap_or("") {
+        "rf" => Some("rf"),
+        "lan" => Some("lan"),
+        "inet" => Some("inet"),
+        "" => None,
+        _ => Some("inet"),
+    }
+}
+
+pub fn via_bracket(medium: &str) -> &'static str {
+    match normalize_via(Some(medium)) {
+        Some("rf") => "[rf]",
+        Some("lan") => "[lan]",
+        Some("inet") => "[net]",
+        _ => "",
+    }
+}
+
+pub fn via_hint(medium: &str) -> &'static str {
+    match normalize_via(Some(medium)) {
+        Some("rf") => "received by radio decode",
+        Some("lan") => "received on the local network",
+        Some("inet") => "received over the internet",
+        _ => "",
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct StoredMsg {
     pub env: Envelope,
@@ -573,6 +602,14 @@ impl Store {
         Ok(())
     }
 
+    pub fn rx_medium(&self, id: &MsgId) -> Result<Option<String>> {
+        Ok(self
+            .trace(id)?
+            .into_iter()
+            .next()
+            .map(|(_, medium, _, _)| medium))
+    }
+
     pub fn trace(&self, id: &MsgId) -> Result<Vec<(String, String, u32, Option<f32>)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -905,6 +942,30 @@ mod tests {
         assert_eq!(Delivery::Relayed.ticks_bracket(), "[rl]");
         assert_eq!(Delivery::Delivered.ticks_bracket(), "[ok]");
         assert_eq!(Delivery::All.ticks_bracket(), "[all]");
+        assert_eq!(via_bracket("rf"), "[rf]");
+        assert_eq!(via_bracket("inet"), "[net]");
+        assert_eq!(via_bracket("lan"), "[lan]");
+        assert_eq!(via_bracket(""), "");
+        assert_eq!(normalize_via(Some("peer")), Some("inet"));
+        assert_eq!(normalize_via(None), None);
+    }
+
+    #[test]
+    fn rx_medium_is_first_hop() {
+        let s = Store::open_memory().unwrap();
+        let env = Envelope::new_msg(
+            Callsign::parse("G4ABC").unwrap(),
+            Callsign::parse("M0XYZ").unwrap(),
+            1,
+            b"hi".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        assert!(s.rx_medium(&env.msg_id).unwrap().is_none());
+        s.add_hop(&env.msg_id, "G4ABC", "rf", Some(8.0)).unwrap();
+        s.add_hop(&env.msg_id, "M0XYZ", "inet", None).unwrap();
+        assert_eq!(s.rx_medium(&env.msg_id).unwrap().as_deref(), Some("rf"));
     }
 
     #[test]

@@ -390,6 +390,38 @@ pub fn audio_level_label(level_db: f32) -> &'static str {
     }
 }
 
+/// Silent floor for VU meters (dBFS). Matches modem73's level bar.
+pub const AUDIO_FLOOR_DB: f32 = -80.0;
+/// Nominal TX playback level when PTT is keyed and the modem has no output meter.
+pub const AUDIO_TX_NOMINAL_DB: f32 = -8.0;
+
+pub fn default_audio_db() -> f32 {
+    AUDIO_FLOOR_DB
+}
+
+/// Map dBFS onto 0..=1 for a horizontal meter. `-80` is empty, `0` is full.
+pub fn audio_level_frac(level_db: f32) -> f32 {
+    ((level_db - AUDIO_FLOOR_DB) / -AUDIO_FLOOR_DB).clamp(0.0, 1.0)
+}
+
+/// Fall toward silence each status tick (~250 ms) so a last-frame peak decays.
+pub fn decay_audio_db(current: f32) -> f32 {
+    let next = current + (AUDIO_FLOOR_DB - current) * 0.45;
+    if next < AUDIO_FLOOR_DB + 0.5 {
+        AUDIO_FLOOR_DB
+    } else {
+        next
+    }
+}
+
+pub fn audio_meter_live(label: &str) -> bool {
+    !matches!(label, "" | "—" | "no modem" | "no audio")
+}
+
+pub fn audio_level_idle(level_db: f32) -> bool {
+    level_db <= AUDIO_FLOOR_DB + 1.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,6 +452,18 @@ mod tests {
         assert_eq!(adjust_rung(2, 12.0), 1);
         assert_eq!(adjust_rung(2, 1.0), 3);
         assert_eq!(adjust_rung(2, 5.0), 2);
+    }
+
+    #[test]
+    fn audio_meter_maps_db() {
+        assert_eq!(audio_level_frac(AUDIO_FLOOR_DB), 0.0);
+        assert_eq!(audio_level_frac(0.0), 1.0);
+        assert!(audio_level_frac(-40.0) > 0.4 && audio_level_frac(-40.0) < 0.6);
+        assert!(decay_audio_db(-8.0) < -8.0);
+        assert!(!audio_meter_live("no modem"));
+        assert!(audio_meter_live("good"));
+        assert!(audio_level_idle(AUDIO_FLOOR_DB));
+        assert!(!audio_level_idle(-12.0));
     }
 
     #[test]

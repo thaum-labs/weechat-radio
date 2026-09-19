@@ -373,6 +373,27 @@ def tagmsg_cb(data, signal, signal_data):
     return weechat.WEECHAT_RC_OK
 
 
+def _via_label(via):
+    return {"rf": "[rf]", "inet": "[net]", "lan": "[lan]"}.get(via, "")
+
+
+def via_mod(_data, _modifier, _modifier_data, string):
+    line = string or ""
+    if "radio/via=" not in line:
+        return string
+    try:
+        via = line.split("radio/via=")[1].split(";")[0].split(" ")[0]
+    except Exception:
+        return string
+    label = _via_label(via)
+    if not label or " :" not in line:
+        return string
+    head, text = line.rsplit(" :", 1)
+    if text.startswith("[rf] ") or text.startswith("[net] ") or text.startswith("[lan] "):
+        return string
+    return "%s :%s %s" % (head, label, text)
+
+
 if weechat.register(SCRIPT_NAME, SCRIPT_AUTHOR, SCRIPT_VERSION, SCRIPT_LICENSE, SCRIPT_DESC, "", ""):
     if not weechat.config_is_set_plugin("theme"):
         weechat.config_set_plugin("theme", "tron")
@@ -389,6 +410,7 @@ if weechat.register(SCRIPT_NAME, SCRIPT_AUTHOR, SCRIPT_VERSION, SCRIPT_LICENSE, 
     )
     weechat.hook_modifier("input_text_content", "input_cb", "")
     weechat.hook_signal("*,irc_in_TAGMSG", "tagmsg_cb", "")
+    weechat.hook_modifier("irc_in2_privmsg", "via_mod", "")
     weechat.hook_timer(4000, 0, 0, "timer_cb", "")
     weechat.hook_signal("irc_server_connected", "connected_cb", "")
     if not weechat.bar_search("radio_bar"):
