@@ -18,7 +18,7 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{TcpStream, UdpSocket};
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
 const TOKEN_PREFIX: &str = "WCR-E2E";
 /// Keep sending after we PASS so the slower machine still hears our token.
@@ -148,16 +148,12 @@ pub async fn run_lan(timeout_secs: u64, port: u16, hub_port: u16) -> Result<()> 
                 ex.peer,
                 hub.peer_grid
             );
-            println!("  map  (from repo/web)  python -m http.server 5173");
-            println!(
-                "       then open http://127.0.0.1:5173/?api={}",
-                elected.map_http
-            );
             println!(
                 "  {}",
                 ui_style::dim()
                     .apply_to("leave this running (map needs the hub). Ctrl-C when you are done.")
             );
+            start_map_page(&elected.map_http).await;
             ex.hold_until_ctrl_c().await;
             shutdown_e2e(node, hub_task).await;
             Ok(())
@@ -193,6 +189,150 @@ async fn shutdown_e2e(
     if let Some(h) = hub_task {
         h.abort();
         let _ = h.await;
+    }
+}
+
+const MAP_PORT: u16 = 5173;
+
+async fn start_map_page(api: &str) {
+    let url = match serve_map().await {
+        Ok(port) => format!("http://127.0.0.1:{port}/?api={api}"),
+        Err(e) => {
+            println!(
+                "  {}",
+                ui_style::dim().apply_to(format!(
+                    "map server skipped ({e}). From repo/web: python -m http.server {MAP_PORT}"
+                ))
+            );
+            format!("http://127.0.0.1:{MAP_PORT}/?api={api}")
+        }
+    };
+    println!("  map  {url}");
+    open_browser(&url);
+}
+
+async fn serve_map() -> Result<u16> {
+    if TcpStream::connect(("127.0.0.1", MAP_PORT)).await.is_ok() {
+        return Ok(MAP_PORT);
+    }
+    let listener = match TcpListener::bind(("127.0.0.1", MAP_PORT)).await {
+        Ok(l) => l,
+        Err(_) => TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .map_err(|e| Error::Net(e.to_string()))?,
+    };
+    let port = listener
+        .local_addr()
+        .map_err(|e| Error::Net(e.to_string()))?
+        .port();
+    let app = map_router();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    Ok(port)
+}
+
+fn map_router() -> axum::Router {
+    if let Some(web) = find_web_dir() {
+        return axum::Router::new().fallback_service(
+            tower_http::services::ServeDir::new(web).append_index_html_on_directories(true),
+        );
+    }
+    use axum::http::header;
+    use axum::response::Html;
+    use axum::routing::get;
+    axum::Router::new()
+        .route(
+            "/",
+            get(|| async { Html(include_str!("../../../web/index.html")) }),
+        )
+        .route(
+            "/index.html",
+            get(|| async { Html(include_str!("../../../web/index.html")) }),
+        )
+        .route(
+            "/app.js",
+            get(|| async {
+                (
+                    [(
+                        header::CONTENT_TYPE,
+                        "application/javascript; charset=utf-8",
+                    )],
+                    include_str!("../../../web/app.js"),
+                )
+            }),
+        )
+        .route(
+            "/shell.js",
+            get(|| async {
+                (
+                    [(
+                        header::CONTENT_TYPE,
+                        "application/javascript; charset=utf-8",
+                    )],
+                    include_str!("../../../web/shell.js"),
+                )
+            }),
+        )
+        .route(
+            "/styles.css",
+            get(|| async {
+                (
+                    [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
+                    include_str!("../../../web/styles.css"),
+                )
+            }),
+        )
+}
+
+fn find_web_dir() -> Option<std::path::PathBuf> {
+    let mut cands = Vec::new();
+    if let Ok(dir) = std::env::current_dir() {
+        let mut p = dir;
+        for _ in 0..8 {
+            cands.push(p.join("web"));
+            if !p.pop() {
+                break;
+            }
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let mut p = dir.to_path_buf();
+            for _ in 0..8 {
+                cands.push(p.join("web"));
+                if !p.pop() {
+                    break;
+                }
+            }
+        }
+    }
+    cands.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web"));
+    cands.into_iter().find(|p| p.join("index.html").is_file())
+}
+
+fn open_browser(url: &str) {
+    #[cfg(feature = "desktop")]
+    {
+        let _ = open::that_detached(url);
+    }
+    #[cfg(not(feature = "desktop"))]
+    {
+        #[cfg(windows)]
+        {
+            let _ = std::process::Command::new("cmd")
+                .arg("/C")
+                .arg(format!("start \"\" \"{url}\""))
+                .spawn();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = std::process::Command::new("open").arg(url).spawn();
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+        }
     }
 }
 
@@ -890,5 +1030,52 @@ mod tests {
         assert_ne!(a, b);
         assert!(Callsign::parse(&a).unwrap().is_guest());
         assert!(Callsign::parse(&b).unwrap().is_guest());
+    }
+
+    #[test]
+    fn finds_repo_web_dir() {
+        let web = find_web_dir().expect("web/");
+        assert!(web.join("index.html").is_file());
+        assert!(web.join("app.js").is_file());
+    }
+
+    #[tokio::test]
+    async fn map_router_serves_index_and_app() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let app = map_router();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let base = format!("http://127.0.0.1:{port}");
+        let client = reqwest::Client::new();
+        let mut index = String::new();
+        for _ in 0..40 {
+            if let Ok(res) = client.get(format!("{base}/")).send().await {
+                if res.status().is_success() {
+                    index = res.text().await.unwrap_or_default();
+                    if !index.is_empty() {
+                        break;
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(
+            index.contains("LIVE MAP") || index.contains("maplibre"),
+            "index: {index}"
+        );
+        let js = client
+            .get(format!("{base}/app.js"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(
+            js.contains("api") || js.contains("nodes"),
+            "app.js too short"
+        );
     }
 }
