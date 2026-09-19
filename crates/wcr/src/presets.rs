@@ -210,7 +210,7 @@ impl Preset {
                 band.into(),
             ],
             Self::HfDeep | Self::VoxSafe => vec![
-                "-m".into(),
+                "--mfsk-mode".into(),
                 "MFSK-32R".into(),
                 "--csma-band".into(),
                 band.into(),
@@ -493,6 +493,20 @@ mod tests {
         let v = Preset::VoxSafe.control_config();
         assert_eq!(v.get("modem_type").and_then(|x| x.as_u64()), Some(1));
         assert_eq!(v.get("mfsk_mode").and_then(|x| x.as_u64()), Some(3));
+        let args = Preset::VoxSafe.modem73_args();
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--mfsk-mode" && w[1] == "MFSK-32R"));
+        assert!(
+            !args
+                .windows(2)
+                .any(|w| w[0] == "-m" || w[0] == "--modulation"),
+            "MFSK-32R is not an OFDM -m value; modem73 exits on that"
+        );
+        assert!(Preset::HfDeep
+            .modem73_args()
+            .windows(2)
+            .any(|w| { w[0] == "--mfsk-mode" && w[1] == "MFSK-32R" }));
     }
 
     #[test]
