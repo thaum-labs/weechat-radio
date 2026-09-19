@@ -29,9 +29,19 @@ On the web (with pictures): https://weechatradio.com/guides/start.html
    irm https://weechatradio.com/install.ps1 | iex
    ```
 
-3. Open **WeeChat Radio** (Start menu / applications menu, or `wcr gui`). First launch asks for your callsign. After that the window starts the station and `#bulletin` chat. No extra terminal.
+3. Run setup first:
 
-   Terminal options: `wcr tui`, or `wcr node` plus `wcr weechat`.
+   ```
+   wcr setup
+   ```
+
+   If you have no radio, choose internet-only. You can add a radio later.
+
+4. Then open the chat window:
+
+   ```
+   wcr gui
+   ```
 
 ## How you know it worked
 
