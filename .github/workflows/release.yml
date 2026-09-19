@@ -64,12 +64,12 @@ jobs:
           - os: macos-latest
             target: x86_64-apple-darwin
             asset: wcr-macos-x86_64.tar.gz
-            modem_asset: modem73-macos-x86_64
+            modem_asset: modem73-macos-x86_64.tar.gz
             modem_deb: ""
           - os: macos-latest
             target: aarch64-apple-darwin
             asset: wcr-macos-aarch64.tar.gz
-            modem_asset: modem73-macos-aarch64
+            modem_asset: modem73-macos-aarch64.tar.gz
             modem_deb: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -106,16 +106,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p dist
-          if gh release download --repo RFnexus/modem73 --pattern "modem73_*_macos*.zip" --dir /tmp/m73 2>/dev/null; then
-            unzip -q /tmp/m73/modem73_*_macos*.zip -d /tmp/m73/out
-            find /tmp/m73/out -type f -name modem73 -exec cp {} dist/modem73 \;
-            chmod +x dist/modem73
-            cp dist/modem73 "${{ matrix.modem_asset }}"
-            cp third_party/modem73/NOTICE dist/MODEM73-NOTICE
-          else
-            echo "No official macOS modem73 zip yet — wcr-only archive."
-          fi
+          set -euo pipefail
+          mkdir -p dist/libs /tmp/m73/out
+          case "${{ matrix.target }}" in
+            aarch64-apple-darwin) PATTERN="modem73_*_macos-arm64.tar.gz" ;;
+            *) PATTERN="modem73_*_macos-x86_64.tar.gz" ;;
+          esac
+          gh release download --repo RFnexus/modem73 --pattern "$PATTERN" --dir /tmp/m73
+          tar -xzf /tmp/m73/modem73_*_macos*.tar.gz -C /tmp/m73/out
+          find /tmp/m73/out -type f -name modem73 -exec cp {} dist/modem73 \;
+          test -s dist/modem73
+          chmod +x dist/modem73
+          LIBS="$(find /tmp/m73/out -type d -name libs | head -n 1)"
+          test -n "$LIBS"
+          cp -R "$LIBS"/. dist/libs/
+          test -n "$(ls -A dist/libs)"
+          tar -czf "${{ matrix.modem_asset }}" -C dist modem73 libs
+          cp third_party/modem73/NOTICE dist/MODEM73-NOTICE
+          if [ -f /tmp/m73/out/modem73/LICENSE ]; then cp /tmp/m73/out/modem73/LICENSE dist/MODEM73-LICENSE; fi
       - name: quickstart pdf
         if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
@@ -168,8 +176,13 @@ jobs:
           $h = (Get-FileHash -Algorithm SHA256 "${{ matrix.asset }}").Hash.ToLower()
           Set-Content -Path "${{ matrix.asset }}.sha256" -Value $h -NoNewline
       - name: refuse unix archive without modem73
-        if: runner.os == 'Linux' && matrix.modem_asset != ''
-        run: tar -tzf "${{ matrix.asset }}" | grep -E '(^|/)modem73$'
+        if: (runner.os == 'Linux' || runner.os == 'macOS') && matrix.modem_asset != ''
+        run: |
+          set -euo pipefail
+          tar -tzf "${{ matrix.asset }}" | grep -E '(^|/)modem73$'
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            tar -tzf "${{ matrix.asset }}" | grep -E 'libs/libhamlib'
+          fi
       - name: Upload release assets
         uses: nick-fields/retry@v3
         env:

@@ -33,7 +33,7 @@ The install command is the same as Linux. Then run setup, then the window.
    wcr setup
    ```
 
-   Windows and Linux already bundle modem73 (the radio sound box). On a Mac, install modem73 from https://modem73.app if you want radio.
+   The installer puts `modem73` (the radio sound box) next to `wcr`, same as Windows and Linux. After setup, a test line in radio mode should play tones on the speakers.
 
 4. Then open the chat window:
 

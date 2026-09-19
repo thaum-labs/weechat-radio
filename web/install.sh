@@ -3,6 +3,35 @@
 # Install wcr, modem73, and WeeChat. Configures WeeChat for the local node.
 set -eu
 REPO="thaum-labs/weechat-radio"
+
+fetch_macos_modem73() {
+  dest="$1"
+  arch="$2"
+  if [ "$arch" = "aarch64" ]; then
+    needle="macos-arm64.tar.gz"
+  else
+    needle="macos-x86_64.tar.gz"
+  fi
+  echo "Downloading macOS modem73 (radio sound) from RFnexus..."
+  json=$(curl -fsSL -H "User-Agent: wcr-install" "https://api.github.com/repos/RFnexus/modem73/releases/latest")
+  url=$(printf '%s\n' "$json" | tr ',' '\n' | grep browser_download_url | grep "$needle" | grep -v sha | head -n 1 | sed 's/.*"browser_download_url": *"//;s/".*//')
+  if [ -z "$url" ]; then
+    echo "Could not find RFnexus modem73 for $needle" >&2
+    return 1
+  fi
+  curl -fsSL "$url" -o "$dest/m73.tgz"
+  mkdir -p "$dest/m73out"
+  tar -xzf "$dest/m73.tgz" -C "$dest/m73out"
+  bin=$(find "$dest/m73out" -type f -name modem73 | head -n 1)
+  libs=$(find "$dest/m73out" -type d -name libs | head -n 1)
+  if [ -z "$bin" ] || [ -z "$libs" ]; then
+    echo "RFnexus archive is missing modem73 or libs/" >&2
+    return 1
+  fi
+  cp "$bin" "$dest/modem73"
+  rm -rf "$dest/libs"
+  cp -R "$libs" "$dest/libs"
+}
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 case "$ARCH" in
@@ -33,14 +62,36 @@ fi
 MODEM=""
 if [ -f "$TMP/modem73" ]; then MODEM="$TMP/modem73"; fi
 if [ -z "$MODEM" ]; then MODEM=$(find "$TMP" -maxdepth 2 -type f -name modem73 2>/dev/null | head -n 1); fi
-if [ "$OS" = "linux" ]; then
+if [ ! -d "$TMP/libs" ]; then
+  FOUND_LIBS=$(find "$TMP" -maxdepth 3 -type d -name libs 2>/dev/null | head -n 1)
+  if [ -n "$FOUND_LIBS" ]; then cp -R "$FOUND_LIBS" "$TMP/libs"; fi
+fi
+if [ "$OS" = "darwin" ] && { [ -z "$MODEM" ] || [ ! -d "$TMP/libs" ]; }; then
+  fetch_macos_modem73 "$TMP" "$ARCH" || {
+    echo "Could not install modem73 (needed for radio sound)." >&2
+    exit 1
+  }
+  MODEM="$TMP/modem73"
+fi
+if [ "$OS" = "linux" ] || [ "$OS" = "darwin" ]; then
   if [ -z "$MODEM" ]; then
-    echo "Release archive is missing modem73. Use v0.1.1 or newer." >&2
+    echo "Release archive is missing modem73. Use v0.1.33 or newer." >&2
     exit 1
   fi
   chmod +x "$MODEM"
   mv "$MODEM" "$PREFIX/modem73"
   echo "Installed $PREFIX/modem73"
+  if [ -d "$TMP/libs" ]; then
+    rm -rf "$PREFIX/libs"
+    cp -R "$TMP/libs" "$PREFIX/libs"
+    echo "Installed $PREFIX/libs (modem73 audio libraries)"
+  elif [ "$OS" = "darwin" ]; then
+    echo "Release archive is missing modem73 libs. Use v0.1.33 or newer." >&2
+    exit 1
+  fi
+  if [ "$OS" = "darwin" ]; then
+    xattr -dr com.apple.quarantine "$PREFIX/wcr" "$PREFIX/wcr-gui" "$PREFIX/modem73" "$PREFIX/libs" 2>/dev/null || true
+  fi
 elif [ -n "$MODEM" ]; then
   chmod +x "$MODEM"
   mv "$MODEM" "$PREFIX/modem73"
