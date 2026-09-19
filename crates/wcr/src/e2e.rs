@@ -3,8 +3,8 @@
 
 use crate::config::{
     self, Config, E2E_HUB_PORT, E2E_IRC_BIND, E2E_LAN_PORT, E2E_LAN_SERVICE, E2E_RADIO_CTRL_A,
-    E2E_RADIO_CTRL_B, E2E_RADIO_IRC_A, E2E_RADIO_IRC_B, E2E_RADIO_KISS_A, E2E_RADIO_KISS_B,
-    E2E_RADIO_STATUS_A, E2E_RADIO_STATUS_B, E2E_STATUS_BIND,
+    E2E_RADIO_CTRL_B, E2E_RADIO_HUB_PORT, E2E_RADIO_IRC_A, E2E_RADIO_IRC_B, E2E_RADIO_KISS_A,
+    E2E_RADIO_KISS_B, E2E_RADIO_STATUS_A, E2E_RADIO_STATUS_B, E2E_STATUS_BIND,
 };
 use crate::error::{Error, Result};
 use crate::modes::Mode;
@@ -403,14 +403,14 @@ pub async fn run_radio(timeout_secs: u64) -> Result<()> {
     );
     let snap_a = fetch_status(E2E_RADIO_STATUS_A).await.ok();
     let snap_b = fetch_status(E2E_RADIO_STATUS_B).await.ok();
-    node_a.abort();
-    node_b.abort();
-    let _ = node_a.await;
-    let _ = node_b.await;
 
     match (ex_a, ex_b) {
         (Ok(a), Ok(b)) => {
             if a.peer != call_b.to_ascii_uppercase() || b.peer != call_a.to_ascii_uppercase() {
+                node_a.abort();
+                node_b.abort();
+                let _ = node_a.await;
+                let _ = node_b.await;
                 return Err(Error::Msg(format!(
                     "peer mismatch A heard {} B heard {}",
                     a.peer, b.peer
@@ -419,6 +419,10 @@ pub async fn run_radio(timeout_secs: u64) -> Result<()> {
             if snap_a.as_ref().is_some_and(|s| s.hub_ok)
                 || snap_b.as_ref().is_some_and(|s| s.hub_ok)
             {
+                node_a.abort();
+                node_b.abort();
+                let _ = node_a.await;
+                let _ = node_b.await;
                 return Err(Error::Msg(
                     "radio e2e dialed a hub; simulated RF test must stay offline".into(),
                 ));
@@ -437,9 +441,25 @@ pub async fn run_radio(timeout_secs: u64) -> Result<()> {
                 "{} A={call_a} B={call_b} peer_ok=true hub_ok=false queue_air={qa} retries={ra} heard_peer={heard}",
                 ui_style::ok().apply_to("PASS")
             );
-            Ok(())
+            println!(
+                "  {}",
+                ui_style::dim().apply_to(
+                    "leave this running (map needs the stations). Ctrl-C when you are done."
+                )
+            );
+            let map =
+                show_radio_map(&call_a, &call_b, &cfg_a.grid, &cfg_b.grid, qa as u64, a, b).await;
+            node_a.abort();
+            node_b.abort();
+            let _ = node_a.await;
+            let _ = node_b.await;
+            map
         }
         (Err(e), _) | (_, Err(e)) => {
+            node_a.abort();
+            node_b.abort();
+            let _ = node_a.await;
+            let _ = node_b.await;
             println!("{} {e}", ui_style::err().apply_to("FAIL"));
             Err(e)
         }
@@ -514,6 +534,108 @@ async fn spawn_radio_node(
     Ok(tokio::spawn(async move {
         crate::node::run_node(cfg, false).await
     }))
+}
+
+async fn show_radio_map(
+    call_a: &str,
+    call_b: &str,
+    grid_a: &str,
+    grid_b: &str,
+    queue: u64,
+    mut ex_a: Exchange,
+    mut ex_b: Exchange,
+) -> Result<()> {
+    let home = std::env::temp_dir().join(format!("wcr-e2e-rf-map-{}", std::process::id()));
+    let _guard = HomeGuard(home.clone());
+    std::env::set_var("WCR_HOME", &home);
+    config::ensure_dirs()?;
+    let tel = std::sync::Arc::new(crate::telemetry::TelemetryDb::open(
+        &config::default_data_dir().join("telemetry.db"),
+    )?);
+    seed_radio_map(&tel, call_a, call_b, grid_a, grid_b, queue)?;
+    let bind = format!("127.0.0.1:{E2E_RADIO_HUB_PORT}");
+    let hub = spawn_hub(&bind, tel.clone()).await?;
+    wait_http_ok(
+        &format!("http://127.0.0.1:{E2E_RADIO_HUB_PORT}/api/v1/nodes"),
+        Duration::from_secs(10),
+    )
+    .await?;
+    start_map_page(&format!("http://127.0.0.1:{E2E_RADIO_HUB_PORT}")).await;
+    let refresh = {
+        let tel = tel.clone();
+        let call_a = call_a.to_string();
+        let call_b = call_b.to_string();
+        let grid_a = grid_a.to_string();
+        let grid_b = grid_b.to_string();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                let _ = seed_radio_map(&tel, &call_a, &call_b, &grid_a, &grid_b, queue);
+            }
+        })
+    };
+    tokio::select! {
+        _ = ex_a.hold_until_ctrl_c() => {}
+        _ = ex_b.hold_until_ctrl_c() => {}
+    }
+    refresh.abort();
+    hub.abort();
+    let _ = hub.await;
+    Ok(())
+}
+
+fn seed_radio_map(
+    tel: &crate::telemetry::TelemetryDb,
+    call_a: &str,
+    call_b: &str,
+    grid_a: &str,
+    grid_b: &str,
+    queue: u64,
+) -> Result<()> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let band = crate::band::band_label(144_950);
+    for (call, grid) in [(call_a, grid_a), (call_b, grid_b)] {
+        tel.upsert_node(&crate::telemetry::NodeReport {
+            callsign: call.into(),
+            ts,
+            grid: grid.into(),
+            mode: "radio".into(),
+            ptt: "none".into(),
+            preset: "vhf-fm".into(),
+            snr: 0.0,
+            ber: 0.0,
+            queue,
+            hub_ok: false,
+            settings: serde_json::json!({}),
+            events: vec![],
+            freq_khz: 144_950,
+            band: band.clone(),
+        })?;
+    }
+    tel.add_event(&crate::telemetry::TelemetryEvent {
+        ts,
+        kind: "tx".into(),
+        origin: Some(call_a.to_ascii_uppercase()),
+        dest: Some(call_b.to_ascii_uppercase()),
+        hops: Some(1),
+        snr: None,
+        msgid: Some("e2e-radio".into()),
+        band: Some(band.clone()),
+    })?;
+    tel.add_event(&crate::telemetry::TelemetryEvent {
+        ts,
+        kind: "rx".into(),
+        origin: Some(call_b.to_ascii_uppercase()),
+        dest: Some(call_a.to_ascii_uppercase()),
+        hops: Some(1),
+        snr: None,
+        msgid: Some("e2e-radio".into()),
+        band: Some(band),
+    })?;
+    Ok(())
 }
 
 async fn wait_tcp(addr: &str, timeout: Duration) -> Result<()> {
@@ -644,13 +766,20 @@ fn join_hub(hostport: &str) -> ElectedHub {
 }
 
 async fn spawn_local_hub(bind: &str) -> Result<tokio::task::JoinHandle<Result<()>>> {
+    let tel = std::sync::Arc::new(crate::telemetry::TelemetryDb::open(
+        &config::default_data_dir().join("telemetry.db"),
+    )?);
+    spawn_hub(bind, tel).await
+}
+
+async fn spawn_hub(
+    bind: &str,
+    tel: std::sync::Arc<crate::telemetry::TelemetryDb>,
+) -> Result<tokio::task::JoinHandle<Result<()>>> {
     let store = std::sync::Arc::new(crate::store::Store::open(
         &config::default_data_dir().join("hub.db"),
         72,
         50_000,
-    )?);
-    let tel = std::sync::Arc::new(crate::telemetry::TelemetryDb::open(
-        &config::default_data_dir().join("telemetry.db"),
     )?);
     let keys = crate::proto::load_or_create(&Config::key_path())?;
     let bind = bind.to_string();
@@ -1023,6 +1152,15 @@ mod tests {
         assert_ne!(a, b);
         assert!(Callsign::parse(&a).unwrap().is_guest());
         assert!(Callsign::parse(&b).unwrap().is_guest());
+    }
+
+    #[test]
+    fn radio_map_seed_plots_two_stations() {
+        let tel = crate::telemetry::TelemetryDb::open_memory().unwrap();
+        seed_radio_map(&tel, "~AAAAAAA", "~BBBBBBB", "IO91WM", "FN20XR", 1).unwrap();
+        let body = serde_json::json!({ "nodes": tel.nodes() });
+        let hit = nodes_show_pair(&body, "~AAAAAAA", "~BBBBBBB", "IO91WM").unwrap();
+        assert_eq!(hit.peer_grid, "FN20XR");
     }
 
     #[test]

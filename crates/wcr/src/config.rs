@@ -287,6 +287,7 @@ pub const E2E_RADIO_IRC_A: &str = "127.0.0.1:16668";
 pub const E2E_RADIO_IRC_B: &str = "127.0.0.1:16669";
 pub const E2E_RADIO_STATUS_A: &str = "127.0.0.1:18075";
 pub const E2E_RADIO_STATUS_B: &str = "127.0.0.1:18076";
+pub const E2E_RADIO_HUB_PORT: u16 = 18077;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
