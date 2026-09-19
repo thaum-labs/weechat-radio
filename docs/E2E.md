@@ -14,7 +14,7 @@ Same command on both computers. They chat over Wi-Fi, elect a **private hub** (n
 ### What you need
 
 - Two computers on the **same Wi-Fi** (Windows, macOS, or Linux)
-- The same `wcr` build on both (`wcr e2e lan` from 0.1.25; map linger from 0.1.27)
+- The same `wcr` build on both (`wcr e2e lan` from 0.1.25; map linger from 0.1.27; map server from 0.1.29)
 - No radio. No WeeChat.
 
 ### Steps
@@ -31,21 +31,7 @@ Same command on both computers. They chat over Wi-Fi, elect a **private hub** (n
 
 2. If Windows asks, allow UDP/TCP. Set the Wi-Fi profile to **Private** if discovery hangs.
 
-3. Leave both terminals running. The private hub dies when `wcr e2e lan` exits.
-
-   On the computer that has this repo, from `web/`:
-
-   ```
-   python -m http.server 5173
-   ```
-
-   Then open the URL the test printed:
-
-   ```
-   http://127.0.0.1:5173/?api=http://<hub-lan-ip>:7376
-   ```
-
-   Ctrl-C the e2e terminals when you are done with the map.
+3. Leave both terminals running. After PASS, `wcr` starts the map page and prints a `map  http://127.0.0.1:…` URL (it also tries to open a browser). The hub dies when you Ctrl-C.
 
 PASS looks like:
 
