@@ -5,7 +5,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
-    "build": "mkdir -p build && cp index.html styles.css app.js shell.js downloads.html guides.html docs.html status.html changelog.html favicon.png apple-touch-icon.png icon.png build/ && cp -r fonts vendor guides docs icons build/",
+    "build": "mkdir -p build && cp index.html styles.css app.js shell.js downloads.html guides.html docs.html why.html status.html changelog.html favicon.png apple-touch-icon.png icon.png build/ && cp -r fonts vendor guides docs icons build/",
     "dev": "python -m http.server 5173"
   }
 }
