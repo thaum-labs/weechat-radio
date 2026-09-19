@@ -93,6 +93,42 @@ pub fn status() -> Result<String> {
     Ok("unknown".into())
 }
 
+/// Bounce a previously installed background node so `wcr update` does not leave
+/// the old binary running (which drops Mac speaker audio).
+pub fn restart_if_installed() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let path = plist_path();
+        if !path.is_file() {
+            return false;
+        }
+        let plist = path.to_str().unwrap_or("");
+        let _ = std::process::Command::new("launchctl")
+            .args(["unload", plist])
+            .status();
+        return std::process::Command::new("launchctl")
+            .args(["load", plist])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if !unit_path().is_file() {
+            return false;
+        }
+        return std::process::Command::new("systemctl")
+            .args(["--user", "restart", "wcr.service"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        false
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn unit_path() -> PathBuf {
     let home = env::var("HOME").unwrap_or_else(|_| ".".into());
