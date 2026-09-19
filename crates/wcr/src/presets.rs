@@ -175,9 +175,19 @@ impl Preset {
         }
     }
 
+    /// Slow MFSK/RDM is quieter than the default -30 dB CSMA gate, so the
+    /// modem keys over an inbound frame after the lead tone. MFSK sync is
+    /// not used as DCD.
+    pub fn csma_threshold_db(self) -> Option<i16> {
+        match self {
+            Self::HfPoor | Self::HfWeak | Self::HfDeep | Self::VoxSafe => Some(-50),
+            _ => None,
+        }
+    }
+
     pub fn modem73_args(self) -> Vec<String> {
         let band = self.csma_band_name();
-        match self {
+        let mut args = match self {
             // modem73 has no AFSK mode; if someone forces this preset onto a
             // sound-card modem, fall back to the plain VHF profile.
             Self::VhfFm | Self::Afsk1200 => vec![
@@ -215,11 +225,15 @@ impl Preset {
                 "--csma-band".into(),
                 band.into(),
             ],
+        };
+        if let Some(db) = self.csma_threshold_db() {
+            args.extend(["--csma-threshold".into(), db.to_string()]);
         }
+        args
     }
 
     pub fn control_config(self) -> serde_json::Value {
-        match self {
+        let mut v = match self {
             Self::VhfFm | Self::Afsk1200 => serde_json::json!({
                 "cmd": "set_config",
                 "modem_type": 0,
@@ -258,7 +272,13 @@ impl Preset {
                 "csma_band": self.csma_band(),
                 "csma_enabled": true
             }),
+        };
+        if let Some(db) = self.csma_threshold_db() {
+            if let Some(obj) = v.as_object_mut() {
+                obj.insert("carrier_threshold_db".into(), serde_json::json!(db));
+            }
         }
+        v
     }
 }
 
@@ -493,7 +513,14 @@ mod tests {
         let v = Preset::VoxSafe.control_config();
         assert_eq!(v.get("modem_type").and_then(|x| x.as_u64()), Some(1));
         assert_eq!(v.get("mfsk_mode").and_then(|x| x.as_u64()), Some(3));
+        assert_eq!(
+            v.get("carrier_threshold_db").and_then(|x| x.as_i64()),
+            Some(-50)
+        );
         let args = Preset::VoxSafe.modem73_args();
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--csma-threshold" && w[1] == "-50"));
         assert!(args
             .windows(2)
             .any(|w| w[0] == "--mfsk-mode" && w[1] == "MFSK-32R"));
