@@ -231,11 +231,20 @@ pub async fn apply() -> Result<String> {
             }
         }
     }
-    Ok(format!(
-        "updated to {} at {} — close this window and run wcr --version in a new terminal",
-        info.version,
-        exe.display()
-    ))
+    let restarted = crate::service::restart_if_installed();
+    if restarted {
+        Ok(format!(
+            "updated to {} at {} — station restarted so radio audio keeps working",
+            info.version,
+            exe.display()
+        ))
+    } else {
+        Ok(format!(
+            "updated to {} at {} — close this window and run wcr --version in a new terminal",
+            info.version,
+            exe.display()
+        ))
+    }
 }
 
 fn running_exe() -> Result<PathBuf> {

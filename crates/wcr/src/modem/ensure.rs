@@ -264,7 +264,7 @@ fn unpack_tar_gz(bytes: &[u8], dest_binary: &Path) -> Result<()> {
     Ok(())
 }
 
-fn strip_quarantine(path: &Path) {
+pub(crate) fn strip_quarantine(path: &Path) {
     #[cfg(target_os = "macos")]
     {
         let _ = std::process::Command::new("xattr")
