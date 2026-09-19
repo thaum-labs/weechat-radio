@@ -68,6 +68,7 @@ struct Runtime {
     dest_rungs: Arc<Mutex<HashMap<String, usize>>>,
     assembler: Arc<Mutex<FragAssembler>>,
     last_rx_snr: Arc<Mutex<Option<f32>>>,
+    radio_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Runtime {
@@ -95,12 +96,13 @@ async fn connect_kiss_retry(
     addr: &str,
 ) -> crate::error::Result<(KissClient, mpsc::Receiver<Vec<u8>>)> {
     let mut last = None;
-    for _ in 0..25 {
+    // Audio device open on macOS often takes several seconds; 5s was not enough.
+    for _ in 0..80 {
         match KissClient::connect(addr).await {
             Ok(pair) => return Ok(pair),
             Err(e) => {
                 last = Some(e);
-                tokio::time::sleep(Duration::from_millis(200)).await;
+                tokio::time::sleep(Duration::from_millis(250)).await;
             }
         }
     }
@@ -245,6 +247,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         dest_rungs: Arc::new(Mutex::new(HashMap::new())),
         assembler: Arc::new(Mutex::new(FragAssembler::new())),
         last_rx_snr,
+        radio_lock: Arc::new(tokio::sync::Mutex::new(())),
     };
     refresh_group_prios(&rt);
 
@@ -252,6 +255,23 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         if let Err(e) = start_radio(&rt).await {
             tracing::warn!("{e}");
         }
+    }
+    {
+        let rt_w = rt.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(8));
+            tick.tick().await;
+            loop {
+                tick.tick().await;
+                let want = rt_w.cfg.lock().mode.uses_radio();
+                if want && rt_w.kiss().is_none() {
+                    tracing::warn!("radio sound engine not connected; retrying");
+                    if let Err(e) = start_radio(&rt_w).await {
+                        tracing::warn!("{e}");
+                    }
+                }
+            }
+        });
     }
     if want_hub {
         if let Err(e) = start_hub(&rt).await {
@@ -1332,6 +1352,10 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
     if rt.kiss().is_some() {
         return Ok(());
     }
+    let _guard = rt.radio_lock.lock().await;
+    if rt.kiss().is_some() {
+        return Ok(());
+    }
     let cfg = rt.cfg.lock().clone();
     let radio_tnc = cfg.modem.uses_tnc();
     let sense = Arc::new(if radio_tnc {
@@ -1359,19 +1383,32 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
         kiss = Some(k);
         kiss_rx = Some(rx);
     } else {
-        if cfg.modem.manage {
+        let kiss_addr = format!("{}:{}", cfg.modem.host, cfg.modem.kiss_port);
+        let already = KissClient::connect(&kiss_addr).await.ok();
+        if already.is_none() && cfg.modem.manage && rt.txp.lock().modem.is_none() {
             match ModemProcess::spawn(&cfg).await {
                 Ok(c) => modem = Some(c),
                 Err(e) => tracing::warn!("{e}"),
             }
         }
-        let kiss_addr = format!("{}:{}", cfg.modem.host, cfg.modem.kiss_port);
-        match connect_kiss_retry(&kiss_addr).await {
+        let connected = if let Some(pair) = already {
+            Ok(pair)
+        } else {
+            connect_kiss_retry(&kiss_addr).await
+        };
+        match connected {
             Ok((k, rx)) => {
                 kiss = Some(k);
                 kiss_rx = Some(rx);
             }
             Err(e) => {
+                // Keep the child alive so a later retry can attach to KISS.
+                {
+                    let mut txp = rt.txp.lock();
+                    if txp.modem.is_none() {
+                        txp.modem = modem;
+                    }
+                }
                 let mut s = rt.snap.lock();
                 s.audio_label = "no modem".into();
                 s.audio_db = 0.0;
@@ -1441,7 +1478,9 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
 
     {
         let mut txp = rt.txp.lock();
-        txp.modem = modem;
+        if modem.is_some() {
+            txp.modem = modem;
+        }
         txp.kiss = kiss;
         txp.control = control;
         txp.air = Some(air_q);
