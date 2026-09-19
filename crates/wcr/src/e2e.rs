@@ -2,7 +2,9 @@
 //! Paired LAN end-to-end test: two machines run `wcr e2e lan`.
 
 use crate::config::{
-    self, Config, E2E_HUB_PORT, E2E_IRC_BIND, E2E_LAN_PORT, E2E_LAN_SERVICE, E2E_STATUS_BIND,
+    self, Config, E2E_HUB_PORT, E2E_IRC_BIND, E2E_LAN_PORT, E2E_LAN_SERVICE, E2E_RADIO_CTRL_A,
+    E2E_RADIO_CTRL_B, E2E_RADIO_IRC_A, E2E_RADIO_IRC_B, E2E_RADIO_KISS_A, E2E_RADIO_KISS_B,
+    E2E_RADIO_STATUS_A, E2E_RADIO_STATUS_B, E2E_STATUS_BIND,
 };
 use crate::error::{Error, Result};
 use crate::modes::Mode;
@@ -20,7 +22,6 @@ use tokio::net::{TcpStream, UdpSocket};
 
 const TOKEN_PREFIX: &str = "WCR-E2E";
 /// Keep sending after we PASS so the slower machine still hears our token.
-const PEER_LINGER: Duration = Duration::from_secs(20);
 
 pub async fn run_lan(timeout_secs: u64, port: u16, hub_port: u16) -> Result<()> {
     ui_style::panel("WEECHAT RADIO", "E2E LAN");
@@ -127,7 +128,7 @@ pub async fn run_lan(timeout_secs: u64, port: u16, hub_port: u16) -> Result<()> 
     let node = tokio::spawn(async move { crate::node::run_node(cfg_n, false).await });
 
     let deadline = Instant::now() + timeout;
-    let outcome = match run_exchange(&cfg, &callsign, &token, deadline).await {
+    let outcome = match run_exchange(&cfg, &callsign, &token, deadline, true).await {
         Ok(ex) => {
             match wait_hub_nodes(&elected.local_http, &callsign, &ex.peer, &grid, deadline).await {
                 Ok(hub) => Ok((ex, hub)),
@@ -154,9 +155,10 @@ pub async fn run_lan(timeout_secs: u64, port: u16, hub_port: u16) -> Result<()> 
             );
             println!(
                 "  {}",
-                ui_style::dim().apply_to("leave this running until the other machine prints PASS")
+                ui_style::dim()
+                    .apply_to("leave this running (map needs the hub). Ctrl-C when you are done.")
             );
-            ex.linger(PEER_LINGER).await;
+            ex.hold_until_ctrl_c().await;
             shutdown_e2e(node, hub_task).await;
             Ok(())
         }
@@ -191,6 +193,206 @@ async fn shutdown_e2e(
     if let Some(h) = hub_task {
         h.abort();
         let _ = h.await;
+    }
+}
+
+pub async fn run_radio(timeout_secs: u64) -> Result<()> {
+    ui_style::panel("WEECHAT RADIO", "E2E RADIO");
+    println!(
+        "  {}",
+        ui_style::dim().apply_to("simulated RF on this computer — no transmitter. wcr help e2e")
+    );
+    let timeout = Duration::from_secs(timeout_secs);
+    let air = crate::sim::SharedAir::new(0.0);
+    crate::sim::mock_modem73(
+        &format!("127.0.0.1:{E2E_RADIO_KISS_A}"),
+        &format!("127.0.0.1:{E2E_RADIO_CTRL_A}"),
+        air.clone(),
+    )
+    .await?;
+    crate::sim::mock_modem73(
+        &format!("127.0.0.1:{E2E_RADIO_KISS_B}"),
+        &format!("127.0.0.1:{E2E_RADIO_CTRL_B}"),
+        air,
+    )
+    .await?;
+    wait_tcp(&format!("127.0.0.1:{E2E_RADIO_KISS_A}"), timeout).await?;
+    wait_tcp(&format!("127.0.0.1:{E2E_RADIO_KISS_B}"), timeout).await?;
+
+    let home_a = std::env::temp_dir().join(format!("wcr-e2e-rf-a-{}", std::process::id()));
+    let home_b = std::env::temp_dir().join(format!("wcr-e2e-rf-b-{}", std::process::id()));
+    let _ga = HomeGuard(home_a.clone());
+    let _gb = HomeGuard(home_b.clone());
+
+    let call_a = guest_callsign_from_host("e2e-radio-a");
+    let call_b = guest_callsign_from_host("e2e-radio-b");
+    let token_a = format!(
+        "{TOKEN_PREFIX} {call_a} {}",
+        hex::encode(rand::thread_rng().gen::<[u8; 8]>())
+    );
+    let token_b = format!(
+        "{TOKEN_PREFIX} {call_b} {}",
+        hex::encode(rand::thread_rng().gen::<[u8; 8]>())
+    );
+    println!(
+        "  {}",
+        ui_style::dim().apply_to(format!(
+            "A {call_a}  B {call_b}  mode radio  air queue + CSMA"
+        ))
+    );
+
+    let cfg_a = radio_station_cfg(
+        &call_a,
+        E2E_RADIO_KISS_A,
+        E2E_RADIO_CTRL_A,
+        E2E_RADIO_IRC_A,
+        E2E_RADIO_STATUS_A,
+        &home_a,
+    )?;
+    let node_a = spawn_radio_node(cfg_a.clone(), &home_a).await?;
+    wait_irc(E2E_RADIO_IRC_A, Instant::now() + timeout).await?;
+
+    let cfg_b = radio_station_cfg(
+        &call_b,
+        E2E_RADIO_KISS_B,
+        E2E_RADIO_CTRL_B,
+        E2E_RADIO_IRC_B,
+        E2E_RADIO_STATUS_B,
+        &home_b,
+    )?;
+    let node_b = spawn_radio_node(cfg_b.clone(), &home_b).await?;
+    wait_irc(E2E_RADIO_IRC_B, Instant::now() + timeout).await?;
+
+    let deadline = Instant::now() + timeout;
+    let (ex_a, ex_b) = tokio::join!(
+        run_exchange(&cfg_a, &call_a, &token_a, deadline, false),
+        run_exchange(&cfg_b, &call_b, &token_b, deadline, false)
+    );
+    let snap_a = fetch_status(E2E_RADIO_STATUS_A).await.ok();
+    let snap_b = fetch_status(E2E_RADIO_STATUS_B).await.ok();
+    node_a.abort();
+    node_b.abort();
+    let _ = node_a.await;
+    let _ = node_b.await;
+
+    match (ex_a, ex_b) {
+        (Ok(a), Ok(b)) => {
+            if a.peer != call_b.to_ascii_uppercase() || b.peer != call_a.to_ascii_uppercase() {
+                return Err(Error::Msg(format!(
+                    "peer mismatch A heard {} B heard {}",
+                    a.peer, b.peer
+                )));
+            }
+            if snap_a.as_ref().is_some_and(|s| s.hub_ok)
+                || snap_b.as_ref().is_some_and(|s| s.hub_ok)
+            {
+                return Err(Error::Msg(
+                    "radio e2e dialed a hub; simulated RF test must stay offline".into(),
+                ));
+            }
+            let qa = snap_a.as_ref().map(|s| s.queue_air).unwrap_or(0);
+            let ra = snap_a.as_ref().map(|s| s.retries).unwrap_or(0);
+            let heard = snap_a
+                .as_ref()
+                .map(|s| {
+                    s.heard
+                        .iter()
+                        .any(|h| h.callsign.eq_ignore_ascii_case(&call_b))
+                })
+                .unwrap_or(false);
+            println!(
+                "{} A={call_a} B={call_b} peer_ok=true hub_ok=false queue_air={qa} retries={ra} heard_peer={heard}",
+                ui_style::ok().apply_to("PASS")
+            );
+            Ok(())
+        }
+        (Err(e), _) | (_, Err(e)) => {
+            println!("{} {e}", ui_style::err().apply_to("FAIL"));
+            Err(e)
+        }
+    }
+}
+
+fn radio_station_cfg(
+    callsign: &str,
+    kiss: u16,
+    ctrl: u16,
+    irc: &str,
+    status: &str,
+    home: &std::path::Path,
+) -> Result<Config> {
+    std::env::set_var("WCR_HOME", home);
+    config::ensure_dirs()?;
+    let mut cfg = Config {
+        callsign: callsign.into(),
+        grid: grid_from_host(callsign),
+        mode: Mode::Radio,
+        hub: crate::config::HubConfig {
+            url: String::new(),
+            ..Default::default()
+        },
+        telemetry: crate::config::TelemetryConfig {
+            url: String::new(),
+            ..Default::default()
+        },
+        lan: crate::config::LanConfig {
+            discovery: false,
+            ..Default::default()
+        },
+        irc: crate::config::IrcConfig { bind: irc.into() },
+        status: crate::config::StatusConfig {
+            bind: status.into(),
+        },
+        modem: crate::config::ModemConfig {
+            manage: false,
+            ptt: "none".into(),
+            kiss_port: kiss,
+            control_port: ctrl,
+            host: "127.0.0.1".into(),
+            preset: "vhf-fm".into(),
+            ..Default::default()
+        },
+        rf: crate::config::RfConfig {
+            turnaround_ms: 0,
+            slot_ms: 40,
+            quiet_ms: 40,
+            ack_dither_ms: 0,
+            retry_jitter: false,
+            frequency_khz: 144_950,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    cfg.normalize();
+    cfg.save(&Config::default_path())?;
+    if cfg.dials_hub() || cfg.reports_telemetry() {
+        return Err(Error::Msg(
+            "radio e2e config would dial the internet".into(),
+        ));
+    }
+    Ok(cfg)
+}
+
+async fn spawn_radio_node(
+    cfg: Config,
+    home: &std::path::Path,
+) -> Result<tokio::task::JoinHandle<Result<()>>> {
+    std::env::set_var("WCR_HOME", home);
+    Ok(tokio::spawn(async move {
+        crate::node::run_node(cfg, false).await
+    }))
+}
+
+async fn wait_tcp(addr: &str, timeout: Duration) -> Result<()> {
+    let deadline = Instant::now() + timeout.min(Duration::from_secs(10));
+    loop {
+        if Instant::now() >= deadline {
+            return Err(Error::Msg(format!("{addr} never accepted")));
+        }
+        if TcpStream::connect(addr).await.is_ok() {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
@@ -422,17 +624,20 @@ struct Exchange {
 }
 
 impl Exchange {
-    async fn linger(&mut self, dur: Duration) {
-        let end = Instant::now() + dur;
-        while Instant::now() < end {
-            if self.last_send.elapsed() >= Duration::from_secs(2) {
-                let _ = self
-                    .writer
-                    .write_all(format!("PRIVMSG #bulletin :{}\r\n", self.token).as_bytes())
-                    .await;
-                self.last_send = Instant::now();
+    async fn hold_until_ctrl_c(&mut self) {
+        loop {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => return,
+                _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                    if self.last_send.elapsed() >= Duration::from_secs(2) {
+                        let _ = self
+                            .writer
+                            .write_all(format!("PRIVMSG #bulletin :{}\r\n", self.token).as_bytes())
+                            .await;
+                        self.last_send = Instant::now();
+                    }
+                }
             }
-            tokio::time::sleep(Duration::from_millis(250)).await;
         }
     }
 }
@@ -442,6 +647,7 @@ async fn run_exchange(
     callsign: &str,
     token: &str,
     deadline: Instant,
+    need_hub: bool,
 ) -> Result<Exchange> {
     let mut stream = wait_irc(&cfg.irc.bind, deadline).await?;
     irc_register(&mut stream, callsign).await?;
@@ -479,21 +685,26 @@ async fn run_exchange(
         if let Ok(snap) = fetch_status(&cfg.status.bind).await {
             hub_ok = snap.hub_ok;
         }
-        if peer.is_some() && hub_ok {
+        if peer.is_some() && (!need_hub || hub_ok) {
             break;
         }
     }
 
     let Some(peer) = peer else {
         return Err(Error::Msg(format!(
-            "no peer token in {}s (allow UDP/TCP on the LAN port if Windows asked)",
+            "no peer token in {}s ({})",
             deadline
                 .saturating_duration_since(Instant::now())
                 .as_secs()
-                .max(1)
+                .max(1),
+            if need_hub {
+                "allow UDP/TCP on the LAN port if Windows asked"
+            } else {
+                "simulated RF path — KISS mock or air queue"
+            }
         )));
     };
-    if !hub_ok {
+    if need_hub && !hub_ok {
         return Err(Error::Msg(
             "local hub never connected (status hub_ok=false)".into(),
         ));
@@ -670,5 +881,14 @@ mod tests {
             ]
         });
         assert!(nodes_show_pair(&same, "~AAA1111", "~BBB2222", "IO91WM").is_none());
+    }
+
+    #[test]
+    fn radio_e2e_callsigns_differ() {
+        let a = guest_callsign_from_host("e2e-radio-a");
+        let b = guest_callsign_from_host("e2e-radio-b");
+        assert_ne!(a, b);
+        assert!(Callsign::parse(&a).unwrap().is_guest());
+        assert!(Callsign::parse(&b).unwrap().is_guest());
     }
 }
