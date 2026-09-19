@@ -90,7 +90,17 @@ impl IrcServer {
 
     pub async fn listen(self, bind: &str) -> Result<()> {
         let listener = TcpListener::bind(bind).await?;
-        tracing::info!("IRC listening on {bind}");
+        self.accept_loop(listener).await
+    }
+
+    pub async fn accept_loop(self, listener: TcpListener) -> Result<()> {
+        tracing::info!(
+            "IRC listening on {}",
+            listener
+                .local_addr()
+                .map(|a| a.to_string())
+                .unwrap_or_else(|_| "irc".into())
+        );
         loop {
             let (stream, addr) = listener.accept().await?;
             tracing::debug!("IRC client {addr}");

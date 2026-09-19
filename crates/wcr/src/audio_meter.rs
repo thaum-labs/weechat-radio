@@ -101,7 +101,7 @@ fn run_input_meter(
         std::thread::sleep(Duration::from_millis(100));
         let db = peak_millidb.swap(-80_000, Ordering::Relaxed) as f32 / 1000.0;
         let mut s = snap.lock();
-        if !matches!(s.audio_label.as_str(), "no modem" | "no audio") {
+        if s.audio_label.as_str() != "no modem" {
             s.audio_in_db = db;
             s.audio_db = db;
             s.audio_label = crate::presets::audio_level_label(db).into();

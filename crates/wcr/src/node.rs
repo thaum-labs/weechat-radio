@@ -115,12 +115,12 @@ async fn connect_control_retry(
     addr: &str,
 ) -> crate::error::Result<(ControlClient, mpsc::Receiver<crate::modem::RxFrameEvent>)> {
     let mut last = None;
-    for _ in 0..25 {
+    for _ in 0..80 {
         match ControlClient::connect(addr).await {
             Ok(pair) => return Ok(pair),
             Err(e) => {
                 last = Some(e);
-                tokio::time::sleep(Duration::from_millis(200)).await;
+                tokio::time::sleep(Duration::from_millis(250)).await;
             }
         }
     }
@@ -137,12 +137,6 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             "no callsign set. Run `wcr setup` first.",
         ));
     }
-    let keys = load_or_create(&Config::key_path())?;
-    let store = Arc::new(Store::open(
-        &cfg.store.path,
-        cfg.store.max_age_hours,
-        cfg.store.max_msgs,
-    )?);
     let snap = status::new_shared();
     {
         let mut s = snap.lock();
@@ -163,19 +157,40 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         s.version = crate::update::current_version().into();
     }
 
+    // Bind chat and status before opening the store. A locked SQLite (old
+    // LaunchAgent, leftover node) is synchronous and would otherwise leave
+    // the GUI on "station starting…" forever.
     let (irc_tx, mut irc_rx) = mpsc::channel(64);
     let irc = IrcServer::new(irc_tx);
     let irc_bind = cfg.irc.bind.clone();
-    let irc_s = irc.clone();
-    tokio::spawn(async move {
-        if let Err(e) = irc_s.listen(&irc_bind).await {
-            tracing::error!("irc: {e}");
+    match tokio::net::TcpListener::bind(&irc_bind).await {
+        Ok(listener) => {
+            let irc_s = irc.clone();
+            tokio::spawn(async move {
+                if let Err(e) = irc_s.accept_loop(listener).await {
+                    tracing::error!("irc: {e}");
+                }
+            });
         }
-    });
+        Err(e) => tracing::error!("irc {irc_bind}: {e}"),
+    }
 
     let status_bind = cfg.status.bind.clone();
-    let snap_s = snap.clone();
-    tokio::spawn(async move { status::serve(status_bind, snap_s).await });
+    match tokio::net::TcpListener::bind(&status_bind).await {
+        Ok(listener) => {
+            tracing::info!("status HTTP on {status_bind}");
+            let snap_s = snap.clone();
+            tokio::spawn(async move { status::serve_listener(listener, snap_s).await });
+        }
+        Err(e) => tracing::warn!("status HTTP {status_bind}: {e}"),
+    }
+
+    let keys = load_or_create(&Config::key_path())?;
+    let store = Arc::new(Store::open(
+        &cfg.store.path,
+        cfg.store.max_age_hours,
+        cfg.store.max_msgs,
+    )?);
 
     let (tel_tx, tel_rx) = broadcast::channel::<TelemetryEvent>(64);
     if cfg.reports_telemetry() {
@@ -264,8 +279,17 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             loop {
                 tick.tick().await;
                 let want = rt_w.cfg.lock().mode.uses_radio();
-                if want && rt_w.kiss().is_none() {
-                    tracing::warn!("radio sound engine not connected; retrying");
+                let modem_dead = {
+                    let mut txp = rt_w.txp.lock();
+                    txp.modem.as_mut().is_some_and(|m| m.exited())
+                };
+                if want && (rt_w.kiss().is_none() || modem_dead) {
+                    if modem_dead {
+                        tracing::warn!("modem73 exited; restarting radio");
+                        stop_radio(&rt_w);
+                    } else {
+                        tracing::warn!("radio sound engine not connected; retrying");
+                    }
                     if let Err(e) = start_radio(&rt_w).await {
                         tracing::warn!("{e}");
                     }
@@ -1552,6 +1576,12 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
             rt.snap.clone(),
             cancel.clone(),
         );
+        {
+            let mut s = rt.snap.lock();
+            if matches!(s.audio_label.as_str(), "no modem" | "no audio") {
+                s.audio_label = "—".into();
+            }
+        }
     }
 
     let air_q = AirQueue::new();
