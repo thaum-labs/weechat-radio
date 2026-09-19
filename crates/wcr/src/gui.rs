@@ -739,6 +739,7 @@ impl GuiApp {
             self.connect_chat();
             return;
         }
+        crate::service::stop_job();
         match spawn_node() {
             Ok(child) => {
                 self.node = Some(child);
