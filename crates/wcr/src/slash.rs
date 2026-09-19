@@ -66,7 +66,7 @@ const PRESET_ARGS: &[Arg] = &[
     },
     Arg {
         value: "vox-safe",
-        hint: "VOX audio cable — extra lead/tail",
+        hint: "VOX audio cable — MFSK-32R + long lead",
     },
     Arg {
         value: "afsk-1200",
@@ -267,6 +267,13 @@ const COMMANDS: &[Cmd] = &[
         send_bare: false,
     },
     Cmd {
+        name: "clear",
+        usage: "/clear",
+        summary: "Clear this channel on this computer",
+        args: &[],
+        send_bare: true,
+    },
+    Cmd {
         name: "history",
         usage: "/history purge [target]",
         summary: "Delete stored messages",
@@ -374,6 +381,22 @@ pub fn to_wire(raw: &str, channel: &str) -> Vec<String> {
                 return Vec::new();
             }
             vec![format!("JOIN {ch}")]
+        }
+        "clear" => {
+            let target = if tail.is_empty() {
+                channel.to_string()
+            } else {
+                let raw = tail.split_whitespace().next().unwrap_or("");
+                if raw.starts_with('~') || raw.chars().any(|c| c.is_ascii_digit()) {
+                    raw.to_ascii_uppercase()
+                } else {
+                    normalize_channel(raw)
+                }
+            };
+            if target.is_empty() {
+                return Vec::new();
+            }
+            vec![format!("RADIO clear {target}")]
         }
         "part" => vec![format!("PART {channel}")],
         "invite" => {
@@ -529,5 +552,21 @@ mod tests {
             vec!["JOIN #ops".to_string()]
         );
         assert!(to_wire("hello", "#ops")[0].starts_with("PRIVMSG #ops"));
+    }
+
+    #[test]
+    fn clear_uses_active_channel() {
+        assert_eq!(
+            to_wire("/clear", "#bulletin"),
+            vec!["RADIO clear #bulletin".to_string()]
+        );
+        assert_eq!(
+            to_wire("/clear ops", "#bulletin"),
+            vec!["RADIO clear #ops".to_string()]
+        );
+        assert_eq!(
+            to_wire("/clear M0XYZ", "#bulletin"),
+            vec!["RADIO clear M0XYZ".to_string()]
+        );
     }
 }

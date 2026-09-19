@@ -61,7 +61,7 @@ impl Preset {
             Self::HfPoor => "Fading HF, NVIS (ROBUST RDM-600S)",
             Self::HfWeak => "Very weak HF (RDM-300S)",
             Self::VoxSafe => {
-                "Any radio with VOX: extra lead/tail so the first symbols are not clipped"
+                "Any radio with VOX: MFSK-32R plus a long lead so the radio is keyed before data"
             }
             Self::HfDeep => "Deep-fade HF backup (MFSK-32R, below the noise floor)",
             Self::Afsk1200 => {
@@ -82,7 +82,7 @@ impl Preset {
             Self::HfGood => 2400,
             Self::HfPoor => 378,
             Self::HfWeak => 194,
-            Self::VoxSafe => 1200,
+            Self::VoxSafe => 99,
             Self::HfDeep => 99,
             Self::Afsk1200 => 1200,
         }
@@ -95,7 +95,7 @@ impl Preset {
             Self::HfGood => 512,
             Self::HfPoor => 170,
             Self::HfWeak => 170,
-            Self::VoxSafe => 256,
+            Self::VoxSafe => 55,
             Self::HfDeep => 55,
             // AX.25 info field; the built-in TNC is happiest well under 256.
             Self::Afsk1200 => 200,
@@ -105,7 +105,7 @@ impl Preset {
     /// Preamble + lead-tone overhead in milliseconds.
     pub fn overhead_ms(self) -> u32 {
         match self {
-            Self::VoxSafe => 900,
+            Self::VoxSafe => 1200,
             // TXDELAY 600 ms + HDLC flags + 18-byte AX.25 header.
             Self::Afsk1200 => 900,
             _ => 400,
@@ -115,7 +115,7 @@ impl Preset {
     pub fn is_hf(self) -> bool {
         matches!(
             self,
-            Self::HfGood | Self::HfPoor | Self::HfWeak | Self::HfDeep
+            Self::HfGood | Self::HfPoor | Self::HfWeak | Self::HfDeep | Self::VoxSafe
         )
     }
 
@@ -138,16 +138,40 @@ impl Preset {
 
     /// Strip Ed25519 on RF for the slower HF presets so a chat line fits one frame.
     pub fn unsigned_on_rf(self) -> bool {
-        matches!(self, Self::HfPoor | Self::HfWeak | Self::HfDeep)
+        matches!(
+            self,
+            Self::HfPoor | Self::HfWeak | Self::HfDeep | Self::VoxSafe
+        )
+    }
+
+    /// Minimum VOX lead before MFSK-32R data. A clipped preamble wastes the whole burst.
+    pub const VOX_SAFE_LEAD_MS: u32 = 900;
+    /// Hold the radio keyed after the last symbols so VOX does not drop the tail.
+    pub const VOX_SAFE_TAIL_MS: u32 = 300;
+
+    pub fn vox_lead_ms(self, configured: u32) -> u32 {
+        if matches!(self, Self::VoxSafe) {
+            configured.max(Self::VOX_SAFE_LEAD_MS)
+        } else {
+            configured
+        }
+    }
+
+    pub fn vox_tail_ms(self, configured: u32) -> u32 {
+        if matches!(self, Self::VoxSafe) {
+            configured.max(Self::VOX_SAFE_TAIL_MS)
+        } else {
+            configured
+        }
     }
 
     /// Starting index on the robustness ladder (0 = fastest).
     pub fn ladder_start(self) -> usize {
         match self {
-            Self::VhfFm | Self::VoxSafe | Self::HfGood | Self::Afsk1200 => 0,
+            Self::VhfFm | Self::HfGood | Self::Afsk1200 => 0,
             Self::HfPoor => 2,
             Self::HfWeak => 3,
-            Self::HfDeep => 4,
+            Self::HfDeep | Self::VoxSafe => 4,
         }
     }
 
@@ -185,16 +209,7 @@ impl Preset {
                 "--csma-band".into(),
                 band.into(),
             ],
-            Self::VoxSafe => vec![
-                "-m".into(),
-                "QPSK".into(),
-                "-r".into(),
-                "1/2".into(),
-                "--short".into(),
-                "--csma-band".into(),
-                band.into(),
-            ],
-            Self::HfDeep => vec![
+            Self::HfDeep | Self::VoxSafe => vec![
                 "-m".into(),
                 "MFSK-32R".into(),
                 "--csma-band".into(),
@@ -236,16 +251,7 @@ impl Preset {
                 "csma_band": self.csma_band(),
                 "csma_enabled": true
             }),
-            Self::VoxSafe => serde_json::json!({
-                "cmd": "set_config",
-                "modem_type": 0,
-                "modulation": "QPSK",
-                "code_rate": "1/2",
-                "short_frame": true,
-                "csma_band": self.csma_band(),
-                "csma_enabled": true
-            }),
-            Self::HfDeep => serde_json::json!({
+            Self::HfDeep | Self::VoxSafe => serde_json::json!({
                 "cmd": "set_config",
                 "modem_type": 1,
                 "mfsk_mode": 3,
@@ -471,6 +477,22 @@ mod tests {
         assert_eq!(Preset::parse("hf-deep"), Some(Preset::HfDeep));
         assert!(Preset::HfDeep.unsigned_on_rf());
         assert_eq!(Preset::HfPoor.payload_bytes(), 170);
+    }
+
+    #[test]
+    fn vox_safe_stays_on_mfsk() {
+        assert_eq!(Preset::VoxSafe.ladder_start(), 4);
+        assert_eq!(rung_for(Preset::VoxSafe, 0, 0, 40), Rung::Mfsk32R);
+        assert_eq!(rung_for(Preset::VoxSafe, 0, 3, 40), Rung::Mfsk32R);
+        assert!(Preset::VoxSafe.unsigned_on_rf());
+        assert!(Preset::VoxSafe.is_hf());
+        assert_eq!(Preset::VoxSafe.payload_bytes(), 55);
+        assert_eq!(Preset::VoxSafe.vox_lead_ms(500), Preset::VOX_SAFE_LEAD_MS);
+        assert_eq!(Preset::VoxSafe.vox_lead_ms(1200), 1200);
+        assert_eq!(Preset::VoxSafe.vox_tail_ms(150), Preset::VOX_SAFE_TAIL_MS);
+        let v = Preset::VoxSafe.control_config();
+        assert_eq!(v.get("modem_type").and_then(|x| x.as_u64()), Some(1));
+        assert_eq!(v.get("mfsk_mode").and_then(|x| x.as_u64()), Some(3));
     }
 
     #[test]

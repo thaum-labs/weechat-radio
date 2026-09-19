@@ -23,9 +23,9 @@ impl ModemProcess {
                     "--ptt".into(),
                     "vox".into(),
                     "--vox-lead".into(),
-                    cfg.modem.vox_lead_ms.to_string(),
+                    preset.vox_lead_ms(cfg.modem.vox_lead_ms).to_string(),
                     "--vox-tail".into(),
-                    cfg.modem.vox_tail_ms.to_string(),
+                    preset.vox_tail_ms(cfg.modem.vox_tail_ms).to_string(),
                 ]);
             }
             "digirig" | "com" => {

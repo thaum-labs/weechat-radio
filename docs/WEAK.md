@@ -19,7 +19,7 @@ Switch with `/radio preset <name>` or `/preset <name>` in the window.
 | Preset | Use when |
 |--------|----------|
 | `vhf-fm` | Local VHF/UHF FM, a clean signal |
-| `vox-safe` | Any radio keyed by VOX (extra lead-in so the first symbols are not clipped) |
+| `vox-safe` | Any radio keyed by VOX. Always MFSK-32R, with a long lead so the radio is keyed before data |
 | `hf-good` | Steady HF SSB |
 | `hf-poor` | Fading HF / NVIS (the usual HF calling preset) |
 | `hf-weak` | The other station is faint |
