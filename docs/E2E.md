@@ -7,7 +7,7 @@ Offline: `wcr help e2e` (also `wcr help test`).
 ## What you need
 
 - Two computers on the **same Wi-Fi** (Windows, macOS, or Linux)
-- The same `wcr` build on both (`wcr e2e lan` from 0.1.25; `wcr help e2e` from 0.1.26)
+- The same `wcr` build on both (`wcr e2e lan` from 0.1.25; linger-after-PASS from 0.1.27)
 - No radio. No WeeChat. Your normal `wcr.toml` is not touched.
 
 ## Steps
@@ -60,7 +60,7 @@ Each terminal prints a line like:
 PASS local=~A1B2C3D grid=FN20XR peer=~Z9Y8X7W peer_grid=IO91WM lan_peers=1 hub_ok=true
 ```
 
-The map page shows two marks, not one stacked pin. `FAIL` dumps `lan_peers`, `hub_ok`, and the heard list.
+The first machine to PASS keeps running for about 20 seconds so the other can still hear `#bulletin`. Leave that terminal open until both print `PASS`. The map page shows two marks, not one stacked pin. `FAIL` dumps `lan_peers`, `hub_ok`, and the heard list.
 
 ## If it fails
 
