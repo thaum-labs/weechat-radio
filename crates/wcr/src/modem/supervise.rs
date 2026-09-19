@@ -58,6 +58,9 @@ impl ModemProcess {
         if !cfg.modem.audio_input.trim().is_empty() {
             args.extend(["--input-device".into(), cfg.modem.audio_input.clone()]);
         }
+        if !cfg.modem.audio_output.trim().is_empty() {
+            args.extend(["--output-device".into(), cfg.modem.audio_output.clone()]);
+        }
         let log_path = crate::config::default_data_dir().join("modem73.log");
         if let Some(parent) = log_path.parent() {
             std::fs::create_dir_all(parent)?;

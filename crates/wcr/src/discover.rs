@@ -64,17 +64,32 @@ pub fn find_digirig(ports: &[LabeledPort]) -> Option<String> {
 }
 
 pub fn list_audio_inputs() -> Vec<String> {
+    list_audio_devices(true)
+}
+
+pub fn list_audio_outputs() -> Vec<String> {
+    list_audio_devices(false)
+}
+
+fn list_audio_devices(inputs: bool) -> Vec<String> {
     #[cfg(feature = "setup-probe")]
     {
         use cpal::traits::{DeviceTrait, HostTrait};
         let host = cpal::default_host();
-        let Ok(devs) = host.input_devices() else {
-            return Vec::new();
+        let names = if inputs {
+            host.input_devices()
+                .ok()
+                .map(|devs| devs.filter_map(|d| d.name().ok()).collect())
+        } else {
+            host.output_devices()
+                .ok()
+                .map(|devs| devs.filter_map(|d| d.name().ok()).collect())
         };
-        devs.filter_map(|d| d.name().ok()).collect()
+        names.unwrap_or_default()
     }
     #[cfg(not(feature = "setup-probe"))]
     {
+        let _ = inputs;
         Vec::new()
     }
 }
