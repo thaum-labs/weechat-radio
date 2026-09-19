@@ -52,6 +52,10 @@ impl ModemProcess {
             _ => {}
         }
         let binary = ensure::ensure_binary(&cfg.modem.binary).await?;
+        ensure::strip_quarantine(&binary);
+        if let Some(parent) = binary.parent() {
+            ensure::strip_quarantine(&parent.join("libs"));
+        }
         if !cfg.callsign.trim().is_empty() {
             args.extend(["--callsign".into(), cfg.callsign.clone()]);
         }
