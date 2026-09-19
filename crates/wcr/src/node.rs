@@ -1465,6 +1465,12 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
     } else {
         let kiss_addr = format!("{}:{}", cfg.modem.host, cfg.modem.kiss_port);
         let already = KissClient::connect(&kiss_addr).await.ok();
+        {
+            let mut txp = rt.txp.lock();
+            if txp.modem.as_mut().is_some_and(|m| m.exited()) {
+                txp.modem = None;
+            }
+        }
         if already.is_none() && cfg.modem.manage && rt.txp.lock().modem.is_none() {
             match ModemProcess::spawn(&cfg).await {
                 Ok(c) => modem = Some(c),
@@ -1482,11 +1488,14 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
                 kiss_rx = Some(rx);
             }
             Err(e) => {
-                // Keep the child alive so a later retry can attach to KISS.
-                {
-                    let mut txp = rt.txp.lock();
-                    if txp.modem.is_none() {
-                        txp.modem = modem;
+                // Keep a still-running child so a later retry can attach to KISS
+                // (macOS often needs longer than the first connect window).
+                if let Some(mut child) = modem {
+                    if !child.exited() {
+                        let mut txp = rt.txp.lock();
+                        if txp.modem.is_none() {
+                            txp.modem = Some(child);
+                        }
                     }
                 }
                 let mut s = rt.snap.lock();

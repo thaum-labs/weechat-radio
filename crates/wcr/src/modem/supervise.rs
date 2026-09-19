@@ -98,4 +98,9 @@ impl ModemProcess {
         }
         Ok(())
     }
+
+    /// True when the child has already exited (bad CLI args, missing audio, …).
+    pub fn exited(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)))
+    }
 }
