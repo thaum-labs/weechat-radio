@@ -51,7 +51,7 @@ wcr e2e radio
 
 Optional: `wcr e2e radio --timeout 60`
 
-Uses loopback KISS **18001 / 18002** and IRC **16668 / 16669**.
+Uses loopback KISS **18001 / 18002**, IRC **16668 / 16669**, and a private map hub on **18077**. After PASS it starts the map page (same as LAN) and holds until Ctrl-C. The stations never dial the public hub.
 
 PASS looks like:
 
@@ -72,5 +72,5 @@ This does **not** replace an on-air test with you as control operator.
 
 ## If radio fails
 
-- Ports 18001–18002 and 16668–16669 free
-- `wcr --version` 0.1.28 or later
+- Ports 18001–18002, 16668–16669, and 18077 free
+- `wcr --version` 0.1.30 or later
