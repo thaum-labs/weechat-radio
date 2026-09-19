@@ -109,10 +109,10 @@ Run `wcr setup` and pick the path that matches your station. Suggested calling f
 
 ## Using WeeChat
 
-The official installer installs WeeChat and points it at the local node.
+WeeChat is optional. On Linux the installer may install it. On a Mac it does not, because Homebrew often compiles WeeChat from source. Chat is `wcr gui` or `wcr tui`. To add WeeChat later:
 
 ```
-wcr setup
+wcr weechat --configure
 wcr node
 wcr weechat
 ```
