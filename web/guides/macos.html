@@ -42,34 +42,37 @@
         <ul>
           <li>A Mac</li>
           <li>Terminal (Command + Space, type <code>Terminal</code>, press Enter)</li>
-          <li>Homebrew, or use the one-line installer below</li>
         </ul>
       </div>
 
       <h2>Steps</h2>
       <ol class="steps">
         <li>
-          <p>Install. Homebrew:</p>
-          <pre>brew tap thaum-labs/tap
-brew install wcr</pre>
-          <p>Or the website installer:</p>
+          <p>Install:</p>
           <pre>curl -fsSL https://weechatradio.com/install.sh | sh</pre>
+          <p>This downloads <code>wcr</code>. It does not run <code>brew install weechat</code>. Homebrew has no tap for this project yet, and on older macOS it would compile WeeChat from source.</p>
         </li>
         <li>
-          <p>Answer the questions:</p>
+          <p>If a new terminal says <code>wcr: command not found</code>:</p>
+          <pre>export PATH="$HOME/.local/bin:$PATH"</pre>
+          <p>Add that line to <code>~/.zshrc</code> so it sticks.</p>
+        </li>
+        <li>
+          <p>Answer the questions, or skip this and open the window in the next step (it asks the same things):</p>
           <pre>wcr setup</pre>
           <p>Windows and Linux already bundle modem73 (the radio sound box). On a Mac, install <a href="https://modem73.app">modem73</a> if you want radio.</p>
         </li>
         <li>
           <p>Start chatting:</p>
-          <pre>wcr tui</pre>
+          <pre>wcr gui</pre>
+          <p>Terminal instead: <code>wcr tui</code>.</p>
         </li>
         <li>
           <p>To run in the background:</p>
           <pre>wcr service install</pre>
         </li>
         <li>
-          <p>The installer also sets up WeeChat. After <code>wcr node</code>, run <code>wcr weechat</code>. To rewrite the server and script: <code>wcr weechat --configure</code>.</p>
+          <p>WeeChat is optional. To add it later, see the <a href="/guides/weechat.html">WeeChat guide</a>.</p>
         </li>
       </ol>
 

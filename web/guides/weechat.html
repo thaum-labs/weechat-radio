@@ -80,14 +80,18 @@
         <h2>What you need</h2>
         <ul>
           <li><code>wcr node</code> or <code>wcr tui</code> already running on this computer</li>
-          <li>WeeChat with the Python plugin (the official installer adds this)</li>
+          <li>WeeChat with the Python plugin</li>
         </ul>
       </div>
 
       <h2>Easy way</h2>
-      <p>The official installer does this for you.</p>
-      <pre>wcr node
+      <p>On Linux, the official installer tries to install WeeChat with the system package manager.</p>
+      <p>On a Mac it does not. Homebrew has no bottles on older macOS, so <code>brew install weechat</code> compiles dozens of packages from source and looks stuck. Install WeeChat yourself, then point it at the node:</p>
+      <pre>brew install weechat
+wcr weechat --configure
+wcr node
 wcr weechat</pre>
+      <p>If Homebrew has no bottle for your macOS, use <a href="https://www.macports.org">MacPorts</a> instead (<code>sudo port install weechat</code>), then the same <code>wcr weechat --configure</code> line.</p>
       <p>To rewrite the server and script later:</p>
       <pre>wcr weechat --configure</pre>
 
