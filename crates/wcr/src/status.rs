@@ -154,9 +154,10 @@ impl StatusSnapshot {
         }
         if let Some(db) = st.audio_out_db {
             self.audio_out_db = db;
-        } else if st.ptt_on {
+        } else if st.ptt_on || st.channel_state.eq_ignore_ascii_case("tx") {
             self.audio_out_db = crate::presets::AUDIO_TX_NOMINAL_DB;
-        } else {
+        } else if !cfg!(windows) {
+            // Windows owns OUT via the WASAPI endpoint peak (no second stream).
             self.audio_out_db = crate::presets::decay_audio_db(self.audio_out_db);
         }
         self.audio_db = self.audio_in_db;
@@ -309,5 +310,16 @@ mod tests {
         s.apply_modem_audio(&st);
         assert_eq!(s.audio_out_db, AUDIO_TX_NOMINAL_DB);
         assert_ne!(s.audio_label, "no modem");
+    }
+
+    #[test]
+    fn tx_channel_fills_out_without_ptt_flag() {
+        let mut s = StatusSnapshot::default();
+        s.apply_modem_audio(&ModemStatus {
+            audio_connected: true,
+            channel_state: "tx".into(),
+            ..Default::default()
+        });
+        assert_eq!(s.audio_out_db, AUDIO_TX_NOMINAL_DB);
     }
 }
