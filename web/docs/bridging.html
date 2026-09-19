@@ -260,6 +260,7 @@
         </div>
         <figcaption>A group counts as heard if any member was heard on this dial. Guest names starting with <code>~</code> need <code>third_party = "allow"</code> as well.</figcaption>
       </figure>
+      <p>Heard means on RF on this frequency, not a map pin or a LAN/hub sighting. A group flag alone does not key the radio; at least one listed member must have been heard here in the last ten minutes. <code>#bulletin</code> keys only if someone was heard on this dial over RF.</p>
       <ul>
         <li>RF → internet: the message must allow internet (<code>INET_OK</code>). <code>radio</code> mode never forwards to the hub.</li>
         <li>Internet → RF: <code>[gateway] rf_egress = true</code> in <code>wcr.toml</code>. Guest names starting with <code>~</code> stay off RF unless <code>third_party = "allow"</code>.</li>

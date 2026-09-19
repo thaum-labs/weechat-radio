@@ -27,6 +27,28 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
+use tokio_util::sync::CancellationToken;
+
+#[derive(Default)]
+struct Transports {
+    hub: Option<HubClient>,
+    kiss: Option<KissClient>,
+    control: Option<ControlClient>,
+    modem: Option<ModemProcess>,
+    air: Option<AirQueue>,
+    sense: Option<Arc<ModemSense>>,
+    peers: Option<mpsc::Sender<Envelope>>,
+    _peers_mesh: Option<DirectPeers>,
+    radio_cancel: Option<CancellationToken>,
+}
+
+#[derive(Default)]
+struct IoSwap {
+    kiss_rx: Option<mpsc::Receiver<Vec<u8>>>,
+    drop_kiss: bool,
+    peer_in: Option<mpsc::Receiver<Envelope>>,
+    drop_peer: bool,
+}
 
 #[derive(Clone)]
 struct Runtime {
@@ -35,20 +57,38 @@ struct Runtime {
     keys: IdentityKeys,
     engine: Engine,
     irc: IrcServer,
-    kiss: Option<KissClient>,
-    hub: Option<HubClient>,
+    txp: Arc<Mutex<Transports>>,
+    io_swap: Arc<Mutex<IoSwap>>,
+    hub_in_tx: mpsc::Sender<Envelope>,
     hub_flag: ArcFlag,
     pending_inet: Arc<Mutex<Vec<Envelope>>>,
-    peers: Option<mpsc::Sender<Envelope>>,
     lan: Option<mpsc::Sender<Envelope>>,
     snap: Arc<SharedStatus>,
     tel: broadcast::Sender<TelemetryEvent>,
-    control: Option<ControlClient>,
     dest_rungs: Arc<Mutex<HashMap<String, usize>>>,
     assembler: Arc<Mutex<FragAssembler>>,
     last_rx_snr: Arc<Mutex<Option<f32>>>,
-    air: Option<AirQueue>,
-    sense: Option<Arc<ModemSense>>,
+}
+
+impl Runtime {
+    fn hub(&self) -> Option<HubClient> {
+        self.txp.lock().hub.clone()
+    }
+    fn kiss(&self) -> Option<KissClient> {
+        self.txp.lock().kiss.clone()
+    }
+    fn control(&self) -> Option<ControlClient> {
+        self.txp.lock().control.clone()
+    }
+    fn air(&self) -> Option<AirQueue> {
+        self.txp.lock().air.clone()
+    }
+    fn sense(&self) -> Option<Arc<ModemSense>> {
+        self.txp.lock().sense.clone()
+    }
+    fn peers_tx(&self) -> Option<mpsc::Sender<Envelope>> {
+        self.txp.lock().peers.clone()
+    }
 }
 
 async fn connect_kiss_retry(
@@ -147,119 +187,16 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         ));
     }
 
-    let mut _modem_child: Option<ModemProcess> = None;
-    let mut kiss: Option<KissClient> = None;
-    let mut kiss_rx: Option<mpsc::Receiver<Vec<u8>>> = None;
-    let mut control: Option<ControlClient> = None;
     let last_rx_snr = Arc::new(Mutex::new(None::<f32>));
-    let air_q = AirQueue::new();
-    let radio_tnc = cfg.modem.uses_tnc();
-    let sense = Arc::new(if radio_tnc {
-        ModemSense::passive()
-    } else {
-        ModemSense::new()
-    });
-    if cfg.mode.uses_radio() && radio_tnc {
-        // Radio with its own KISS TNC (VR-N76 / UV-PRO / GA-5WB over Bluetooth,
-        // or any TNC on a serial port). No modem73, no control port.
-        {
-            let mut s = snap.lock();
-            s.ptt = "tnc".into();
-            s.tnc = if cfg.modem.is_bluetooth() {
-                format!("searching for {}…", cfg.tnc.bt_name)
-            } else {
-                format!("opening {}…", cfg.tnc.serial)
-            };
-        }
-        let (k, rx) = crate::tnc::start_link(&cfg, snap.clone(), sense.clone());
-        kiss = Some(k);
-        kiss_rx = Some(rx);
-    } else if cfg.mode.uses_radio() {
-        if cfg.modem.manage {
-            match ModemProcess::spawn(&cfg).await {
-                Ok(c) => _modem_child = Some(c),
-                Err(e) => tracing::warn!("{e}"),
-            }
-        }
-        let kiss_addr = format!("{}:{}", cfg.modem.host, cfg.modem.kiss_port);
-        match connect_kiss_retry(&kiss_addr).await {
-            Ok((k, rx)) => {
-                kiss = Some(k);
-                kiss_rx = Some(rx);
-            }
-            Err(e) => {
-                tracing::warn!("{e}");
-                let mut s = snap.lock();
-                s.audio_label = "no modem".into();
-                s.audio_db = 0.0;
-            }
-        }
-        let ctrl_addr = format!("{}:{}", cfg.modem.host, cfg.modem.control_port);
-        if let Ok((c, mut ev)) = connect_control_retry(&ctrl_addr).await {
-            if let Some(p) = Preset::parse(&cfg.modem.preset) {
-                let _ = c.set_config(p.control_config()).await;
-            }
-            let _ = c.apply_ptt(&cfg.modem.ptt, &cfg.modem).await;
-            if !cfg.modem.audio_input.is_empty() {
-                let _ = c
-                    .set_config(serde_json::json!({"capture_device": cfg.modem.audio_input}))
-                    .await;
-            }
-            let snap_c = snap.clone();
-            let snr_slot = last_rx_snr.clone();
-            let sense_ev = sense.clone();
-            tokio::spawn(async move {
-                while let Some(frame) = ev.recv().await {
-                    sense_ev.note_rx();
-                    *snr_slot.lock() = Some(frame.snr);
-                    let mut s = snap_c.lock();
-                    s.snr = frame.snr;
-                    s.ber = frame.ber_pct;
-                    s.audio_db = frame.level_db;
-                    s.audio_label = presets::audio_level_label(frame.level_db).into();
-                    s.channel = "rx".into();
-                }
-            });
-            control = Some(c);
-        }
-    }
-
     let hub_flag = ArcFlag::new();
     let (hub_in_tx, mut hub_in_rx) = mpsc::channel::<Envelope>(64);
-    let mut hub: Option<HubClient> = None;
-    let mut _keep_hub_tx = None;
-    if cfg.dials_hub() {
-        match HubClient::connect(
-            &cfg.hub.url,
-            &cfg.callsign,
-            &keys,
-            vec![],
-            cfg.rf.frequency_khz,
-            hub_in_tx,
-            hub_flag.clone(),
-        )
-        .await
-        {
-            Ok(h) => hub = Some(h),
-            Err(e) => tracing::warn!("hub: {e}"),
-        }
-    } else {
-        _keep_hub_tx = Some(hub_in_tx);
-    }
+    let txp = Arc::new(Mutex::new(Transports::default()));
+    let io_swap = Arc::new(Mutex::new(IoSwap::default()));
+    let mut kiss_rx: Option<mpsc::Receiver<Vec<u8>>> = None;
+    let mut peer_in: Option<mpsc::Receiver<Envelope>> = None;
 
     let mut lan_out: Option<mpsc::Sender<Envelope>> = None;
     let mut lan_in: Option<mpsc::Receiver<Envelope>> = None;
-    let mut peers_out: Option<mpsc::Sender<Envelope>> = None;
-    let mut peer_in: Option<mpsc::Receiver<Envelope>> = None;
-    if !cfg.hub.peers.is_empty() && cfg.mode.uses_internet() {
-        match DirectPeers::start(cfg.hub.peers.clone()).await {
-            Ok((_mesh, rx, tx)) => {
-                peer_in = Some(rx);
-                peers_out = Some(tx);
-            }
-            Err(e) => tracing::warn!("peers: {e}"),
-        }
-    }
     if cfg.lan.discovery {
         match LanMesh::start(
             &cfg.callsign,
@@ -288,57 +225,45 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     }
 
     let engine = Engine::new(store.clone(), cfg.callsign.clone());
-    let uses_radio = cfg.mode.uses_radio();
-    let have_kiss = kiss.is_some();
+    let want_radio = cfg.mode.uses_radio();
+    let want_hub = cfg.dials_hub();
+    let want_peers = cfg.mode.uses_internet() && !cfg.hub.peers.is_empty();
     let rt = Runtime {
         cfg: Arc::new(Mutex::new(cfg)),
         store: store.clone(),
         keys,
         engine,
         irc: irc.clone(),
-        kiss,
-        hub,
+        txp,
+        io_swap,
+        hub_in_tx: hub_in_tx.clone(),
         hub_flag: hub_flag.clone(),
         pending_inet: Arc::new(Mutex::new(Vec::new())),
-        peers: peers_out,
         lan: lan_out,
         snap: snap.clone(),
         tel: tel_tx,
-        control,
         dest_rungs: Arc::new(Mutex::new(HashMap::new())),
         assembler: Arc::new(Mutex::new(FragAssembler::new())),
         last_rx_snr,
-        air: if uses_radio && have_kiss {
-            Some(air_q.clone())
-        } else {
-            None
-        },
-        sense: if uses_radio {
-            Some(sense.clone())
-        } else {
-            None
-        },
     };
     refresh_group_prios(&rt);
 
-    if uses_radio {
-        if let Some(c) = &rt.control {
-            sense
-                .clone()
-                .spawn_poller(c.clone(), snap.clone(), air_q.clone());
-        }
-        if let Some(k) = &rt.kiss {
-            let q = air_q.clone();
-            let tx = k.tx.clone();
-            let s = sense.clone();
-            let ctrl = rt.control.clone();
-            let cfg_a = rt.cfg.clone();
-            let snap_a = snap.clone();
-            tokio::spawn(async move {
-                air::run_air_queue(q, tx, s, ctrl, cfg_a, snap_a).await;
-            });
+    if want_radio {
+        if let Err(e) = start_radio(&rt).await {
+            tracing::warn!("{e}");
         }
     }
+    if want_hub {
+        if let Err(e) = start_hub(&rt).await {
+            tracing::warn!("hub: {e}");
+        }
+    }
+    if want_peers {
+        if let Err(e) = start_peers(&rt).await {
+            tracing::warn!("peers: {e}");
+        }
+    }
+    drain_io_swap(&rt, &mut kiss_rx, &mut peer_in);
 
     // Hold-queue pump: relay other stations' frames, not our own (those use ARQ).
     {
@@ -381,7 +306,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 };
                 if let Ok(due) = rt_r.store.retry_due(now, &our, max) {
                     for (m, retries) in due {
-                        if let Some(s) = &rt_r.sense {
+                        if let Some(s) = rt_r.sense() {
                             if s.state() != ChannelState::Idle {
                                 continue;
                             }
@@ -441,7 +366,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             };
             if let Some(batch) = pending {
                 for env in batch {
-                    if let Some(h) = &rt_hub.hub {
+                    if let Some(h) = rt_hub.hub() {
                         let _ = h.send(&env).await;
                     }
                 }
@@ -468,7 +393,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 if !uses_rf {
                     continue;
                 }
-                if let Some(s) = &rt_b.sense {
+                if let Some(s) = rt_b.sense() {
                     if s.occupancy_pct() >= congested {
                         continue;
                     }
@@ -514,7 +439,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 tick.tick().await;
                 if rt_f.cfg.lock().rig.enabled && last_rig.elapsed() >= Duration::from_secs(10) {
                     last_rig = std::time::Instant::now();
-                    if let Some(c) = &rt_f.control {
+                    if let Some(c) = rt_f.control() {
                         if let Ok(resp) = c.rigctl("f").await {
                             if let Some(khz) = crate::band::parse_rigctl_hz(&resp) {
                                 rt_f.snap.lock().set_freq(khz, "rig");
@@ -524,7 +449,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 }
                 refresh_heard(&rt_f);
                 refresh_group_prios(&rt_f);
-                if let Some(h) = &rt_f.hub {
+                if let Some(h) = rt_f.hub() {
                     let (khz, heard, hub_ok) = {
                         let s = rt_f.snap.lock();
                         (
@@ -587,6 +512,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 }
             }
         }
+        drain_io_swap(&rt, &mut kiss_rx, &mut peer_in);
         if with_tui {
             // TUI runs in the caller; this loop is the node.
         }
@@ -849,8 +775,8 @@ async fn enqueue_rf(
     cfg: &Config,
     opts: EnqueueOpts,
 ) -> Result<bool> {
-    let Some(air) = &rt.air else {
-        if let Some(k) = &rt.kiss {
+    let Some(air) = rt.air() else {
+        if let Some(k) = rt.kiss() {
             let mtu = preset.payload_bytes();
             if frag::should_fragment(rf_env, preset.is_hf(), bytes.len(), mtu) {
                 let frags = frag::split(rf_env, cfg.rf.frag_k, cfg.rf.frag_m)?;
@@ -912,17 +838,8 @@ async fn dispatch(rt: &Runtime, env: &Envelope) -> Result<()> {
     if cfg.mode.uses_radio() {
         let _ = dispatch_rf_rung(rt, env, 0).await;
     }
-    if cfg.mode.uses_internet() && env.flags.inet_ok() {
-        if rt.hub_flag.get() {
-            if let Some(h) = &rt.hub {
-                let _ = h.send(env).await;
-            }
-        } else {
-            rt.pending_inet.lock().push(env.clone());
-        }
-        if let Some(p) = &rt.peers {
-            let _ = p.send(env.clone()).await;
-        }
+    if cfg.mode.uses_internet() && env.flags.inet_ok() && inet_gap_for(rt, env) {
+        offer_hub(rt, env).await;
     }
     if cfg.mode.uses_internet() {
         if let Some(l) = &rt.lan {
@@ -930,6 +847,51 @@ async fn dispatch(rt: &Runtime, env: &Envelope) -> Result<()> {
         }
     }
     Ok(())
+}
+
+async fn offer_hub(rt: &Runtime, env: &Envelope) {
+    if rt.hub_flag.get() {
+        if let Some(h) = rt.hub() {
+            let _ = h.send(env).await;
+        }
+    } else {
+        rt.pending_inet.lock().push(env.clone());
+    }
+    if let Some(p) = rt.peers_tx() {
+        let _ = p.send(env.clone()).await;
+    }
+}
+
+fn dest_is_bulletin(dest: &str) -> bool {
+    dest.trim_start_matches('#')
+        .trim_start_matches('&')
+        .eq_ignore_ascii_case("bulletin")
+}
+
+fn inet_gap_for(rt: &Runtime, env: &Envelope) -> bool {
+    let mode = rt.cfg.lock().mode;
+    let dest = env.dest.as_str();
+    let is_group = env.flags.group();
+    let is_bulletin = dest_is_bulletin(dest);
+    let freq = rt.snap.lock().freq_khz;
+    let dest_heard = rt.store.recently_heard_rf(dest, 600, freq).unwrap_or(false);
+    let group_heard = if is_group && !is_bulletin {
+        group_member_heard_rf(&rt.store, dest, freq)
+    } else {
+        false
+    };
+    relay::needs_inet_gap(mode, is_group, is_bulletin, dest_heard, group_heard)
+}
+
+fn group_member_heard_rf(store: &Store, dest: &str, freq: u32) -> bool {
+    let name = dest
+        .trim_start_matches('#')
+        .trim_start_matches('&')
+        .to_ascii_lowercase();
+    let members = store.group_members(&name).unwrap_or_default();
+    members
+        .iter()
+        .any(|m| store.recently_heard_rf(m, 600, freq).unwrap_or(false))
 }
 
 async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>) -> Result<()> {
@@ -950,7 +912,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
     let freq = heard_freq(rt, &env, medium);
     let decision = rt.engine.on_rx(&env, medium, snr, freq)?;
     if decision.action == Action::Suppress {
-        if let Some(air) = &rt.air {
+        if let Some(air) = rt.air() {
             air.cancel(env.msg_id);
         }
     }
@@ -1043,10 +1005,8 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                     let _ = dispatch(rt, &ack).await;
                 } else {
                     let cfg_g = rt.cfg.lock().clone();
-                    if cfg_g.mode.uses_internet() && ack.flags.inet_ok() {
-                        if let Some(h) = &rt.hub {
-                            let _ = h.send(&ack).await;
-                        }
+                    if cfg_g.mode.uses_internet() && ack.flags.inet_ok() && inet_gap_for(rt, &ack) {
+                        offer_hub(rt, &ack).await;
                     }
                     if cfg_g.mode.uses_internet() {
                         if let Some(l) = &rt.lan {
@@ -1075,7 +1035,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
             if let Some(id) = env.acked_id() {
                 rt.store.set_delivery(&id, Delivery::Delivered)?;
                 let _ = rt.store.set_hold(&id, 0, 0);
-                if let Some(air) = &rt.air {
+                if let Some(air) = rt.air() {
                     air.cancel(id);
                 }
                 rt.irc.tagmsg_delivery(&id.hex(), "delivered").await;
@@ -1129,22 +1089,33 @@ async fn forward_gateway(rt: &Runtime, env: &Envelope, medium: &str) -> Result<(
     let cfg_g = rt.cfg.lock().clone();
     if medium == "rf"
         && relay::may_inet_forward(
-            cfg_g.mode.uses_internet(),
+            cfg_g.mode.is_gateway(),
             env.flags.inet_ok(),
             env.flags.no_inet(),
         )
     {
-        if let Some(h) = &rt.hub {
+        if let Some(h) = rt.hub() {
             let _ = h.send(env).await;
         }
     }
     if medium == "inet" || medium == "lan" {
-        let heard = rt.store.recently_heard(env.dest.as_str(), 600)?;
-        let group_heard = env.flags.group();
+        let freq = rt.snap.lock().freq_khz;
+        let dest = env.dest.as_str();
+        let is_group = env.flags.group();
+        let is_bulletin = dest_is_bulletin(dest);
+        let dest_heard = rt.store.recently_heard_rf(dest, 600, freq).unwrap_or(false);
+        let member_heard = if is_group && !is_bulletin {
+            group_member_heard_rf(&rt.store, dest, freq)
+        } else {
+            false
+        };
+        let any_on_dial = rt.store.recently_heard_any_rf(600, freq).unwrap_or(false);
+        let heard =
+            relay::rf_egress_heard(is_group, is_bulletin, dest_heard, member_heard, any_on_dial);
         if relay::may_rf_egress(
             cfg_g.mode.is_gateway(),
             cfg_g.gateway.rf_egress,
-            heard || group_heard,
+            heard,
             env.flags.third_party(),
             cfg_g.gateway.third_party_allow(),
             env.flags.inet_ok(),
@@ -1304,6 +1275,265 @@ fn persist_cfg(cfg: &Config) {
     let _ = cfg.save(&Config::default_path());
 }
 
+fn drain_io_swap(
+    rt: &Runtime,
+    kiss_rx: &mut Option<mpsc::Receiver<Vec<u8>>>,
+    peer_in: &mut Option<mpsc::Receiver<Envelope>>,
+) {
+    let mut swap = rt.io_swap.lock();
+    if swap.drop_kiss {
+        *kiss_rx = None;
+        swap.drop_kiss = false;
+    }
+    if let Some(rx) = swap.kiss_rx.take() {
+        *kiss_rx = Some(rx);
+    }
+    if swap.drop_peer {
+        *peer_in = None;
+        swap.drop_peer = false;
+    }
+    if let Some(rx) = swap.peer_in.take() {
+        *peer_in = Some(rx);
+    }
+}
+
+async fn apply_mode_change(rt: &Runtime, old: Mode, mode: Mode) -> String {
+    if old == mode {
+        return format!("mode is now {}", mode.display_name());
+    }
+    let mut notes = Vec::new();
+    if Mode::stop_radio(old, mode) {
+        stop_radio(rt);
+    } else if Mode::start_radio(old, mode) {
+        if let Err(e) = start_radio(rt).await {
+            notes.push(format!("radio: {e}"));
+        }
+    }
+    if Mode::stop_hub(old, mode) {
+        stop_hub(rt);
+        stop_peers(rt);
+        rt.pending_inet.lock().clear();
+    } else if Mode::start_hub(old, mode) {
+        if let Err(e) = start_hub(rt).await {
+            notes.push(format!("hub: {e}"));
+        }
+        if let Err(e) = start_peers(rt).await {
+            notes.push(format!("peers: {e}"));
+        }
+    }
+    if notes.is_empty() {
+        format!("mode is now {}", mode.display_name())
+    } else {
+        format!("mode is now {} ({})", mode.display_name(), notes.join("; "))
+    }
+}
+
+async fn start_radio(rt: &Runtime) -> Result<()> {
+    if rt.kiss().is_some() {
+        return Ok(());
+    }
+    let cfg = rt.cfg.lock().clone();
+    let radio_tnc = cfg.modem.uses_tnc();
+    let sense = Arc::new(if radio_tnc {
+        ModemSense::passive()
+    } else {
+        ModemSense::new()
+    });
+    let cancel = CancellationToken::new();
+    let mut modem = None;
+    let mut control = None;
+    let kiss;
+    let kiss_rx;
+
+    if radio_tnc {
+        {
+            let mut s = rt.snap.lock();
+            s.ptt = "tnc".into();
+            s.tnc = if cfg.modem.is_bluetooth() {
+                format!("searching for {}…", cfg.tnc.bt_name)
+            } else {
+                format!("opening {}…", cfg.tnc.serial)
+            };
+        }
+        let (k, rx) = crate::tnc::start_link(&cfg, rt.snap.clone(), sense.clone());
+        kiss = Some(k);
+        kiss_rx = Some(rx);
+    } else {
+        if cfg.modem.manage {
+            match ModemProcess::spawn(&cfg).await {
+                Ok(c) => modem = Some(c),
+                Err(e) => tracing::warn!("{e}"),
+            }
+        }
+        let kiss_addr = format!("{}:{}", cfg.modem.host, cfg.modem.kiss_port);
+        match connect_kiss_retry(&kiss_addr).await {
+            Ok((k, rx)) => {
+                kiss = Some(k);
+                kiss_rx = Some(rx);
+            }
+            Err(e) => {
+                let mut s = rt.snap.lock();
+                s.audio_label = "no modem".into();
+                s.audio_db = 0.0;
+                return Err(e);
+            }
+        }
+        let ctrl_addr = format!("{}:{}", cfg.modem.host, cfg.modem.control_port);
+        if let Ok((c, mut ev)) = connect_control_retry(&ctrl_addr).await {
+            if let Some(p) = Preset::parse(&cfg.modem.preset) {
+                let _ = c.set_config(p.control_config()).await;
+            }
+            let _ = c.apply_ptt(&cfg.modem.ptt, &cfg.modem).await;
+            if !cfg.modem.audio_input.is_empty() {
+                let _ = c
+                    .set_config(serde_json::json!({"capture_device": cfg.modem.audio_input}))
+                    .await;
+            }
+            let snap_c = rt.snap.clone();
+            let snr_slot = rt.last_rx_snr.clone();
+            let sense_ev = sense.clone();
+            let cancel_ev = cancel.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = cancel_ev.cancelled() => return,
+                        frame = ev.recv() => {
+                            let Some(frame) = frame else { return };
+                            sense_ev.note_rx();
+                            *snr_slot.lock() = Some(frame.snr);
+                            let mut s = snap_c.lock();
+                            s.snr = frame.snr;
+                            s.ber = frame.ber_pct;
+                            s.audio_db = frame.level_db;
+                            s.audio_label = presets::audio_level_label(frame.level_db).into();
+                            s.channel = "rx".into();
+                        }
+                    }
+                }
+            });
+            control = Some(c);
+        }
+    }
+
+    let air_q = AirQueue::new();
+    if let Some(c) = &control {
+        sense
+            .clone()
+            .spawn_poller(c.clone(), rt.snap.clone(), air_q.clone(), cancel.clone());
+    }
+    if let Some(k) = &kiss {
+        let q = air_q.clone();
+        let tx = k.tx.clone();
+        let s = sense.clone();
+        let ctrl = control.clone();
+        let cfg_a = rt.cfg.clone();
+        let snap_a = rt.snap.clone();
+        let cancel_a = cancel.clone();
+        tokio::spawn(async move {
+            air::run_air_queue(q, tx, s, ctrl, cfg_a, snap_a, cancel_a).await;
+        });
+    }
+
+    {
+        let mut txp = rt.txp.lock();
+        txp.modem = modem;
+        txp.kiss = kiss;
+        txp.control = control;
+        txp.air = Some(air_q);
+        txp.sense = Some(sense);
+        txp.radio_cancel = Some(cancel);
+    }
+    let mut swap = rt.io_swap.lock();
+    swap.kiss_rx = kiss_rx;
+    swap.drop_kiss = false;
+    Ok(())
+}
+
+fn stop_radio(rt: &Runtime) {
+    let mut txp = rt.txp.lock();
+    if let Some(c) = txp.radio_cancel.take() {
+        c.cancel();
+    }
+    txp.kiss = None;
+    txp.control = None;
+    txp.air = None;
+    txp.sense = None;
+    drop(txp.modem.take());
+    rt.io_swap.lock().drop_kiss = true;
+    let mut s = rt.snap.lock();
+    s.tnc.clear();
+    s.tnc_ok = false;
+    s.channel = "idle".into();
+    s.ptt_on = false;
+    s.queue_air = 0;
+}
+
+async fn start_hub(rt: &Runtime) -> Result<()> {
+    if rt.hub().is_some() {
+        return Ok(());
+    }
+    let cfg = rt.cfg.lock().clone();
+    if !cfg.hub.enabled() {
+        return Ok(());
+    }
+    match HubClient::connect(
+        &cfg.hub.url,
+        &cfg.callsign,
+        &rt.keys,
+        vec![],
+        cfg.rf.frequency_khz,
+        rt.hub_in_tx.clone(),
+        rt.hub_flag.clone(),
+    )
+    .await
+    {
+        Ok(h) => {
+            rt.txp.lock().hub = Some(h);
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn stop_hub(rt: &Runtime) {
+    rt.txp.lock().hub = None;
+    rt.hub_flag.set(false);
+    let mut s = rt.snap.lock();
+    s.hub_ok = false;
+    s.hub_banner.clear();
+}
+
+async fn start_peers(rt: &Runtime) -> Result<()> {
+    let peers = rt.cfg.lock().hub.peers.clone();
+    if peers.is_empty() {
+        return Ok(());
+    }
+    if rt.peers_tx().is_some() {
+        return Ok(());
+    }
+    match DirectPeers::start(peers).await {
+        Ok((mesh, rx, tx)) => {
+            {
+                let mut txp = rt.txp.lock();
+                txp.peers = Some(tx);
+                txp._peers_mesh = Some(mesh);
+            }
+            let mut swap = rt.io_swap.lock();
+            swap.peer_in = Some(rx);
+            swap.drop_peer = false;
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn stop_peers(rt: &Runtime) {
+    let mut txp = rt.txp.lock();
+    txp.peers = None;
+    txp._peers_mesh = None;
+    rt.io_swap.lock().drop_peer = true;
+}
+
 fn set_manual_freq(rt: &Runtime, khz: u32) -> String {
     {
         let mut cfg = rt.cfg.lock();
@@ -1331,10 +1561,11 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                                 return "Switching to Radio drops the internet. Type: /radio mode radio confirm".into();
                             }
                         }
+                        let old = cfg.lock().mode;
                         cfg.lock().mode = mode;
                         snap.lock().mode = mode;
                         persist_cfg(&cfg.lock());
-                        format!("mode is now {}", mode.display_name())
+                        apply_mode_change(rt, old, mode).await
                     }
                     Err(e) => e,
                 }
@@ -1533,7 +1764,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                 };
                 let rig_on = cfg.lock().rig.enabled;
                 if rig_on {
-                    if let Some(c) = &rt.control {
+                    if let Some(c) = rt.control() {
                         let hz = khz as u64 * 1000;
                         if c.rigctl(&format!("F {hz}")).await.is_ok() {
                             snap.lock().set_freq(khz, "rig");

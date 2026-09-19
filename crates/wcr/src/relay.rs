@@ -2,6 +2,7 @@
 //! Store-and-forward relay: dedupe, TTL, jitter + suppression, hold queue, ACKs.
 
 use crate::error::Result;
+use crate::modes::Mode;
 use crate::proto::{Envelope, MsgType, Priority};
 use crate::store::{Delivery, Store};
 use rand::Rng;
@@ -113,8 +114,51 @@ pub fn may_rf_egress(
 }
 
 /// Should this node forward an RF frame to the internet?
-pub fn may_inet_forward(mode_uses_internet: bool, inet_ok: bool, no_inet: bool) -> bool {
-    mode_uses_internet && inet_ok && !no_inet
+/// `mode_is_gateway` is the live mode's [`Mode::is_gateway`] — leftover radio
+/// after switching to `internet` must not upload overheard RF.
+pub fn may_inet_forward(mode_is_gateway: bool, inet_ok: bool, no_inet: bool) -> bool {
+    mode_is_gateway && inet_ok && !no_inet
+}
+
+/// In `internet-radio`, offer the hub only when RF will not reach the dest.
+pub fn needs_inet_gap(
+    mode: Mode,
+    is_group: bool,
+    is_bulletin: bool,
+    dest_heard_rf_on_dial: bool,
+    group_member_heard_rf_on_dial: bool,
+) -> bool {
+    if !mode.uses_internet() {
+        return false;
+    }
+    if !mode.uses_radio() {
+        return true;
+    }
+    if is_bulletin {
+        return true;
+    }
+    if is_group {
+        return !group_member_heard_rf_on_dial;
+    }
+    !dest_heard_rf_on_dial
+}
+
+/// Gateway RF-egress "heard" gate: dest on this dial over RF, or a group member,
+/// or (for bulletin) any RF hear on this dial.
+pub fn rf_egress_heard(
+    is_group: bool,
+    is_bulletin: bool,
+    dest_heard_rf_on_dial: bool,
+    group_member_heard_rf_on_dial: bool,
+    any_rf_hear_on_dial: bool,
+) -> bool {
+    if is_bulletin {
+        return any_rf_hear_on_dial;
+    }
+    if is_group {
+        return group_member_heard_rf_on_dial;
+    }
+    dest_heard_rf_on_dial
 }
 
 #[derive(Clone)]
@@ -286,6 +330,53 @@ mod tests {
         assert!(!may_inet_forward(true, true, true));
         assert!(may_inet_forward(true, true, false));
         assert!(!may_inet_forward(false, true, false));
+    }
+
+    #[test]
+    fn inet_gap_is_hub_only_when_rf_cannot_reach() {
+        use crate::modes::Mode;
+        assert!(needs_inet_gap(Mode::Internet, false, false, true, false));
+        assert!(!needs_inet_gap(Mode::Radio, false, false, false, false));
+        assert!(!needs_inet_gap(Mode::RadioPlus, false, false, false, false));
+        assert!(!needs_inet_gap(
+            Mode::InternetRadio,
+            false,
+            false,
+            true,
+            false
+        ));
+        assert!(needs_inet_gap(
+            Mode::InternetRadio,
+            false,
+            false,
+            false,
+            false
+        ));
+        assert!(!needs_inet_gap(
+            Mode::InternetRadio,
+            true,
+            false,
+            false,
+            true
+        ));
+        assert!(needs_inet_gap(
+            Mode::InternetRadio,
+            true,
+            false,
+            false,
+            false
+        ));
+        assert!(needs_inet_gap(Mode::InternetRadio, true, true, true, true));
+    }
+
+    #[test]
+    fn rf_egress_heard_requires_dial_members() {
+        assert!(rf_egress_heard(false, false, true, false, false));
+        assert!(!rf_egress_heard(false, false, false, true, true));
+        assert!(rf_egress_heard(true, false, false, true, false));
+        assert!(!rf_egress_heard(true, false, true, false, true));
+        assert!(rf_egress_heard(true, true, false, false, true));
+        assert!(!rf_egress_heard(true, true, true, true, false));
     }
 
     #[test]

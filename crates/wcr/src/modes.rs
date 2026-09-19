@@ -72,6 +72,26 @@ impl Mode {
         matches!(self, Self::InternetRadio)
     }
 
+    /// Start the radio path when switching `from` → `to`.
+    pub fn start_radio(from: Self, to: Self) -> bool {
+        !from.uses_radio() && to.uses_radio()
+    }
+
+    /// Stop the radio path when switching `from` → `to`.
+    pub fn stop_radio(from: Self, to: Self) -> bool {
+        from.uses_radio() && !to.uses_radio()
+    }
+
+    /// Connect hub/peers when switching `from` → `to`.
+    pub fn start_hub(from: Self, to: Self) -> bool {
+        !from.uses_internet() && to.uses_internet()
+    }
+
+    /// Drop hub/peers when switching `from` → `to`.
+    pub fn stop_hub(from: Self, to: Self) -> bool {
+        from.uses_internet() && !to.uses_internet()
+    }
+
     pub fn all() -> [Mode; 4] {
         [
             Self::Internet,
@@ -120,5 +140,48 @@ mod tests {
         assert!(!Mode::RadioPlus.uses_internet());
         assert!(Mode::Internet.uses_internet());
         assert!(Mode::InternetRadio.uses_internet());
+    }
+
+    #[test]
+    fn mode_switch_starts_and_stops_the_right_paths() {
+        use Mode::*;
+        let cases = [
+            (Internet, InternetRadio, true, false, false, false),
+            (Internet, Radio, true, false, false, true),
+            (Internet, RadioPlus, true, false, false, true),
+            (InternetRadio, Internet, false, true, false, false),
+            (InternetRadio, Radio, false, false, false, true),
+            (InternetRadio, RadioPlus, false, false, false, true),
+            (Radio, Internet, false, true, true, false),
+            (Radio, InternetRadio, false, false, true, false),
+            (Radio, RadioPlus, false, false, false, false),
+            (RadioPlus, Internet, false, true, true, false),
+            (RadioPlus, InternetRadio, false, false, true, false),
+            (RadioPlus, Radio, false, false, false, false),
+        ];
+        for (from, to, start_rf, stop_rf, start_net, stop_net) in cases {
+            assert_eq!(
+                Mode::start_radio(from, to),
+                start_rf,
+                "{from} → {to} start radio"
+            );
+            assert_eq!(
+                Mode::stop_radio(from, to),
+                stop_rf,
+                "{from} → {to} stop radio"
+            );
+            assert_eq!(
+                Mode::start_hub(from, to),
+                start_net,
+                "{from} → {to} start hub"
+            );
+            assert_eq!(Mode::stop_hub(from, to), stop_net, "{from} → {to} stop hub");
+        }
+        for m in Mode::all() {
+            assert!(!Mode::start_radio(m, m));
+            assert!(!Mode::stop_radio(m, m));
+            assert!(!Mode::start_hub(m, m));
+            assert!(!Mode::stop_hub(m, m));
+        }
     }
 }

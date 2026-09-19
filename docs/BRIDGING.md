@@ -70,6 +70,8 @@ What a gateway will and will not put on the air
 
 A group counts as heard if any member was heard on this dial. Guest names starting with `~` also need `third_party = "allow"`.
 
+Heard means **on RF on this frequency**, not a map pin or a LAN/hub sighting. A group flag by itself is not enough; at least one listed member must have been heard here in the last 10 minutes. `#bulletin` keys only if *someone* was heard on this dial over RF, so a silent gateway stays quiet.
+
 What the program never does
 - It never changes your radio frequency by itself. `/radio qsy` (or the FREQ list) is always your action.
 - A radio-only station is never put on the hub.

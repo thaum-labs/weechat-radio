@@ -8,11 +8,19 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 type WriterTx = mpsc::Sender<Vec<u8>>;
 
 pub struct DirectPeers {
     writers: Arc<Mutex<Vec<WriterTx>>>,
+    stop: CancellationToken,
+}
+
+impl Drop for DirectPeers {
+    fn drop(&mut self) {
+        self.stop.cancel();
+    }
 }
 
 impl DirectPeers {
@@ -22,6 +30,7 @@ impl DirectPeers {
         let (tx_in, rx_in) = mpsc::channel(64);
         let (tx_out, mut rx_out) = mpsc::channel::<Envelope>(64);
         let writers: Arc<Mutex<Vec<WriterTx>>> = Arc::new(Mutex::new(Vec::new()));
+        let stop = CancellationToken::new();
 
         for raw in peers {
             let peer = raw.trim().to_string();
@@ -30,9 +39,13 @@ impl DirectPeers {
             }
             let tx = tx_in.clone();
             let writers_c = writers.clone();
+            let stop_c = stop.clone();
             tokio::spawn(async move {
                 let mut backoff = 1u64;
                 loop {
+                    if stop_c.is_cancelled() {
+                        return;
+                    }
                     match TcpStream::connect(&peer).await {
                         Ok(stream) => {
                             backoff = 1;
@@ -63,6 +76,10 @@ impl DirectPeers {
                             });
                             loop {
                                 tokio::select! {
+                                    _ = stop_c.cancelled() => {
+                                        read_done.abort();
+                                        return;
+                                    }
                                     bytes = wrx.recv() => {
                                         match bytes {
                                             Some(b) => {
@@ -82,26 +99,36 @@ impl DirectPeers {
                         }
                         Err(e) => tracing::debug!("peer {peer}: {e}"),
                     }
-                    tokio::time::sleep(std::time::Duration::from_secs(backoff)).await;
+                    tokio::select! {
+                        _ = stop_c.cancelled() => return,
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(backoff)) => {}
+                    }
                     backoff = (backoff * 2).min(30);
                 }
             });
         }
 
         let writers_out = writers.clone();
+        let stop_out = stop.clone();
         tokio::spawn(async move {
-            while let Some(env) = rx_out.recv().await {
-                if let Ok(bytes) = env.encode() {
-                    let writers: Vec<WriterTx> = writers_out.lock().clone();
-                    for w in writers {
-                        let b = bytes.clone();
-                        let _ = w.send(b).await;
+            loop {
+                tokio::select! {
+                    _ = stop_out.cancelled() => return,
+                    env = rx_out.recv() => {
+                        let Some(env) = env else { return };
+                        if let Ok(bytes) = env.encode() {
+                            let writers: Vec<WriterTx> = writers_out.lock().clone();
+                            for w in writers {
+                                let b = bytes.clone();
+                                let _ = w.send(b).await;
+                            }
+                        }
                     }
                 }
             }
         });
 
-        Ok((Self { writers }, rx_in, tx_out))
+        Ok((Self { writers, stop }, rx_in, tx_out))
     }
 
     pub fn connected(&self) -> usize {

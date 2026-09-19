@@ -122,8 +122,8 @@
           <tbody>
             <tr><td><code>internet</code></td><td>off</td><td>hub only</td><td class="mode-swatch"><img class="mode-mark" src="/icons/mark-internet.svg" alt="">cyan</td></tr>
             <tr><td><code>internet-radio</code></td><td>on, primary</td><td>fills gaps</td><td class="mode-swatch"><img class="mode-mark" src="/icons/mark-internet-radio.svg" alt="">green</td></tr>
-            <tr><td><code>radio</code></td><td>on</td><td>none</td><td class="mode-swatch"><img class="mode-mark" src="/icons/mark-radio.svg" alt="">amber</td></tr>
-            <tr><td><code>radio-plus</code></td><td>on</td><td>none locally</td><td class="mode-swatch"><img class="mode-mark" src="/icons/mark-radio-plus.svg" alt="">magenta</td></tr>
+            <tr><td><code>radio</code></td><td>on</td><td>none (not hub or LAN)</td><td class="mode-swatch"><img class="mode-mark" src="/icons/mark-radio.svg" alt="">amber</td></tr>
+            <tr><td><code>radio-plus</code></td><td>on</td><td>none locally (not hub or LAN)</td><td class="mode-swatch"><img class="mode-mark" src="/icons/mark-radio-plus.svg" alt="">magenta</td></tr>
           </tbody>
         </table>
       </div>
@@ -158,7 +158,8 @@
         </div>
         <figcaption>Messages wait. Nobody has to leave a radio on all night.</figcaption>
       </figure>
-      <p>If you are in <code>internet-radio</code> and the hub goes away, radio keeps working. The status bar says <strong>Internet down, radio only</strong>. Traffic that needed the internet waits in the hold queue and goes out when the hub returns.</p>
+      <p>Changing mode starts or stops the hub and radio path immediately. In <code>internet-radio</code> every chat still goes on RF; the hub is used only when the destination is not recently heard on this dial over radio (groups: no member heard here). <code>#bulletin</code> always offers the hub.</p>
+      <p>If you are in <code>internet-radio</code> and the hub goes away, radio keeps working. The status bar says <strong>Internet down, radio only</strong>. Traffic that still needed the hub waits in an internet hold and goes out when the hub returns. That is separate from the RF retry hold queue.</p>
 
       <h2>Weak-signal behaviour</h2>
       <p>On a faint or fading path the program retries your message and asks modem73 for a slower waveform. The status bar shows <strong>TX</strong> (current waveform) and <strong>RETRY</strong>. Presets: <code>hf-good</code>, <code>hf-poor</code>, <code>hf-weak</code>, <code>hf-deep</code>.</p>
