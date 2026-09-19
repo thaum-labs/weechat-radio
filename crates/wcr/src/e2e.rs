@@ -193,6 +193,10 @@ async fn shutdown_e2e(
 }
 
 const MAP_PORT: u16 = 5173;
+const MAP_INDEX: &str = include_str!(concat!(env!("OUT_DIR"), "/index.html"));
+const MAP_APP: &str = include_str!(concat!(env!("OUT_DIR"), "/app.js"));
+const MAP_SHELL: &str = include_str!(concat!(env!("OUT_DIR"), "/shell.js"));
+const MAP_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/styles.css"));
 
 async fn start_map_page(api: &str) {
     let url = match serve_map().await {
@@ -242,14 +246,8 @@ fn map_router() -> axum::Router {
     use axum::response::Html;
     use axum::routing::get;
     axum::Router::new()
-        .route(
-            "/",
-            get(|| async { Html(include_str!("../../../web/index.html")) }),
-        )
-        .route(
-            "/index.html",
-            get(|| async { Html(include_str!("../../../web/index.html")) }),
-        )
+        .route("/", get(|| async { Html(MAP_INDEX) }))
+        .route("/index.html", get(|| async { Html(MAP_INDEX) }))
         .route(
             "/app.js",
             get(|| async {
@@ -258,7 +256,7 @@ fn map_router() -> axum::Router {
                         header::CONTENT_TYPE,
                         "application/javascript; charset=utf-8",
                     )],
-                    include_str!("../../../web/app.js"),
+                    MAP_APP,
                 )
             }),
         )
@@ -270,18 +268,13 @@ fn map_router() -> axum::Router {
                         header::CONTENT_TYPE,
                         "application/javascript; charset=utf-8",
                     )],
-                    include_str!("../../../web/shell.js"),
+                    MAP_SHELL,
                 )
             }),
         )
         .route(
             "/styles.css",
-            get(|| async {
-                (
-                    [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
-                    include_str!("../../../web/styles.css"),
-                )
-            }),
+            get(|| async { ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], MAP_CSS) }),
         )
 }
 
