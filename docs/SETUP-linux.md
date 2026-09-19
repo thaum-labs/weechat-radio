@@ -5,7 +5,8 @@ On the web: https://weechatradio.com/guides/linux.html
 ## What you need
 
 - A current Linux (Debian, Ubuntu, Fedora, Arch, Raspberry Pi OS)
-- The installer installs WeeChat when apt, dnf, or brew is available, then points it at `127.0.0.1:6667`
+
+The install command is the same as macOS. Then run setup, then the window.
 
 ## Steps
 
@@ -21,12 +22,16 @@ On the web: https://weechatradio.com/guides/linux.html
    sudo usermod -aG dialout $USER
    ```
 
-3. Run `wcr setup`.
-
-4. Start:
+3. Run setup first:
 
    ```
-   wcr tui
+   wcr setup
+   ```
+
+4. Then open the chat window:
+
+   ```
+   wcr gui
    ```
 
 5. Background service:
