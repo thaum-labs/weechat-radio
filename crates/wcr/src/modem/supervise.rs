@@ -52,19 +52,35 @@ impl ModemProcess {
             _ => {}
         }
         let binary = ensure::ensure_binary(&cfg.modem.binary).await?;
-        let child = Command::new(&binary)
-            .args(&args)
+        if !cfg.callsign.trim().is_empty() {
+            args.extend(["--callsign".into(), cfg.callsign.clone()]);
+        }
+        if !cfg.modem.audio_input.trim().is_empty() {
+            args.extend(["--input-device".into(), cfg.modem.audio_input.clone()]);
+        }
+        let log_path = crate::config::default_data_dir().join("modem73.log");
+        if let Some(parent) = log_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let log = std::fs::File::create(&log_path)
+            .map_err(|e| Error::Modem(format!("cannot write {}: {e}", log_path.display())))?;
+        let err_log = log.try_clone().map_err(|e| Error::Modem(e.to_string()))?;
+        let mut cmd = Command::new(&binary);
+        cmd.args(&args)
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|e| {
-                Error::Modem(format!(
-                    "could not start {}: {e}. Re-run the installer or set modem.binary in wcr.toml.",
-                    binary.display()
-                ))
-            })?;
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(err_log))
+            .kill_on_drop(true);
+        if let Some(dir) = binary.parent() {
+            cmd.current_dir(dir);
+        }
+        let child = cmd.spawn().map_err(|e| {
+            Error::Modem(format!(
+                "could not start {}: {e}. Re-run the installer or set modem.binary in wcr.toml.",
+                binary.display()
+            ))
+        })?;
+        tracing::info!("started {} (log {})", binary.display(), log_path.display());
         Ok(Self { child })
     }
 

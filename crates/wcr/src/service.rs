@@ -131,17 +131,35 @@ fn install_launchd(exe: &std::path::Path) -> Result<String> {
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p)?;
     }
+    let log = crate::config::default_data_dir().join("node.log");
+    if let Some(parent) = log.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let body = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>com.thaum-labs.wcr</string>
   <key>ProgramArguments</key><array><string>{}</string><string>node</string></array>
+  <key>WorkingDirectory</key><string>{}</string>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>{}</string>
+  <key>StandardErrorPath</key><string>{}</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin:{}</string>
+  </dict>
 </dict></plist>
 "#,
-        exe.display()
+        exe.display(),
+        exe.parent().unwrap_or(exe).display(),
+        log.display(),
+        log.display(),
+        exe.parent()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "/usr/bin".into()),
     );
     std::fs::write(&path, body)?;
     let _ = std::process::Command::new("launchctl")
