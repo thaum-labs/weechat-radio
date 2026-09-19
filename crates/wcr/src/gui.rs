@@ -347,6 +347,7 @@ struct ChatLine {
     channel: String,
     msgid: String,
     ticks: String,
+    via: String,
 }
 
 impl ChatLine {
@@ -358,6 +359,7 @@ impl ChatLine {
             channel: channel.into(),
             msgid: String::new(),
             ticks: String::new(),
+            via: String::new(),
         }
     }
 
@@ -369,6 +371,7 @@ impl ChatLine {
             channel: channel.into(),
             msgid: String::new(),
             ticks: String::new(),
+            via: String::new(),
         }
     }
 }
@@ -588,6 +591,7 @@ impl GuiApp {
             irc_connected_at: None,
         };
         app.install_tray();
+        crate::service::soften_keep_alive();
         app
     }
 
@@ -731,6 +735,7 @@ impl GuiApp {
 
     fn stop_station(&mut self) {
         self.user_stopped = true;
+        crate::service::stop_job();
         if let Some(mut c) = self.node.take() {
             kill_pid_tree(c.id());
             let _ = c.kill();
@@ -765,11 +770,9 @@ impl GuiApp {
 
     fn quit_app(&mut self, ctx: &egui::Context) {
         self.allow_close = true;
-        self.user_stopped = true;
+        self.stop_station();
+        crate::service::forget_login_agent();
         drop(self.tray.take());
-        if let Some(mut c) = self.node.take() {
-            let _ = c.kill();
-        }
         ctx.send_viewport_cmd(ViewportCommand::Close);
         force_quit();
     }
@@ -1075,12 +1078,22 @@ impl GuiApp {
 }
 
 impl eframe::App for GuiApp {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        crate::service::stop_job();
+        crate::service::forget_login_agent();
+        if let Some(mut c) = self.node.take() {
+            kill_pid_tree(c.id());
+            let _ = c.kill();
+        }
+        kill_sidecars();
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint_after(Duration::from_millis(250));
         self.poll_grid_detect();
         self.poll_find_radio();
         self.poll_tray(ctx);
-        if self.last_poll.elapsed() > Duration::from_millis(800) {
+        if self.last_poll.elapsed() > Duration::from_millis(250) {
             self.last_poll = Instant::now();
             if self.user_stopped {
                 if fetch_status().is_some() {
@@ -1494,15 +1507,19 @@ impl eframe::App for GuiApp {
                                     preset_cmd = Some(format!("/preset {next}"));
                                 }
                             }
-                            kv(
+                            audio_meter_row(
                                 ui,
-                                "AUDIO",
-                                &s.audio_label,
-                                if s.audio_label == "no modem" || s.audio_label == "—" {
-                                    ORANGE
-                                } else {
-                                    GREEN
-                                },
+                                "IN",
+                                s.audio_in_db,
+                                crate::presets::audio_meter_live(&s.audio_label),
+                                "Receive audio from the radio (sound card capture). Green is a healthy level; orange is clipping.",
+                            );
+                            audio_meter_row(
+                                ui,
+                                "OUT",
+                                s.audio_out_db,
+                                crate::presets::audio_meter_live(&s.audio_label),
+                                "Transmit audio to the radio (sound card playback). Fills while PTT is keyed.",
                             );
                             kv(ui, "SNR", &format!("{:.0}", s.snr), PURPLE);
                             kv(
@@ -1928,6 +1945,16 @@ impl eframe::App for GuiApp {
                                             ui.label(
                                                 RichText::new(&line.text).color(FG).monospace(),
                                             );
+                                            if !line.via.is_empty() {
+                                                ui.label(
+                                                    RichText::new(crate::store::via_bracket(
+                                                        &line.via,
+                                                    ))
+                                                    .color(via_color(&line.via))
+                                                    .monospace(),
+                                                )
+                                                .on_hover_text(crate::store::via_hint(&line.via));
+                                            }
                                             if mine && !line.ticks.is_empty() {
                                                 ui.label(
                                                     RichText::new(&line.ticks)
@@ -2002,6 +2029,79 @@ fn kv_tip(ui: &mut egui::Ui, k: &str, v: &str, color: Color32, tip: Option<&str>
         );
         hover_tip(&resp, tip);
     }
+}
+
+fn audio_meter_row(ui: &mut egui::Ui, k: &str, db: f32, live: bool, tip: &str) {
+    let inner = ui.horizontal(|ui| {
+        station_key(ui, k);
+        let h = ui.spacing().interact_size.y;
+        let db_w = 36.0;
+        let bar_w = (ui.available_width() - db_w).max(28.0);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(bar_w, h), egui::Sense::hover());
+        let bar = egui::Rect::from_center_size(
+            rect.center(),
+            egui::vec2(rect.width(), (h - 8.0).clamp(6.0, 10.0)),
+        );
+        let painter = ui.painter();
+        painter.rect_filled(bar, 0.0, LINE);
+        let show = live && !crate::presets::audio_level_idle(db);
+        let frac = if show {
+            crate::presets::audio_level_frac(db)
+        } else {
+            0.0
+        };
+        if frac > 0.01 {
+            let zones = [
+                (0.00, 0.66, GREEN),
+                (0.66, 0.88, PURPLE),
+                (0.88, 1.00, ORANGE),
+            ];
+            for (start, end, color) in zones {
+                let a = frac.min(end);
+                if a <= start {
+                    continue;
+                }
+                let x0 = bar.left() + bar.width() * start;
+                let x1 = bar.left() + bar.width() * a;
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        egui::pos2(x0, bar.top()),
+                        egui::pos2(x1, bar.bottom()),
+                    ),
+                    0.0,
+                    color,
+                );
+            }
+        }
+        let db_text = if show {
+            format!("{db:.0}")
+        } else {
+            "—".into()
+        };
+        let db_color = if !show {
+            if live {
+                DIM
+            } else {
+                ORANGE
+            }
+        } else if db > -3.0 {
+            ORANGE
+        } else if db < -35.0 {
+            DIM
+        } else {
+            GREEN
+        };
+        ui.add_sized(
+            [db_w, h],
+            egui::Label::new(RichText::new(db_text).color(db_color).monospace()),
+        );
+    });
+    let resp = ui.interact(
+        inner.response.rect,
+        ui.id().with(("audio_meter", k)),
+        egui::Sense::hover(),
+    );
+    hover_tip(&resp, tip);
 }
 
 fn audio_device_row(
@@ -2666,6 +2766,8 @@ fn run_hidden(cmd: &mut Command) {
 }
 
 fn force_quit() -> ! {
+    crate::service::stop_job();
+    crate::service::forget_login_agent();
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -2677,13 +2779,13 @@ fn force_quit() -> ! {
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .spawn();
+                .status();
         }
     }
     #[cfg(not(windows))]
     {
         for name in ["wcr", "modem73"] {
-            let _ = Command::new("pkill").args(["-x", name]).spawn();
+            let _ = Command::new("pkill").args(["-x", name]).status();
         }
     }
     std::process::exit(0);
@@ -3384,6 +3486,13 @@ fn tick_color(ticks: &str) -> Color32 {
     }
 }
 
+fn via_color(via: &str) -> Color32 {
+    match crate::store::normalize_via(Some(via)) {
+        Some("rf") => ORANGE,
+        _ => ACCENT,
+    }
+}
+
 fn delivery_ticks(state: &str) -> Option<&'static str> {
     let d = crate::store::Delivery::parse(state);
     match state {
@@ -3479,6 +3588,9 @@ fn parse_privmsg(line: &str) -> Option<ChatLine> {
             .and_then(|s| delivery_ticks(s))
             .unwrap_or("")
             .to_string(),
+        via: crate::store::normalize_via(tags.get("radio/via").map(String::as_str))
+            .unwrap_or("")
+            .to_string(),
     })
 }
 
@@ -3561,5 +3673,18 @@ mod tests {
         assert_eq!(chat.text, "hello");
         assert_eq!(chat.msgid, "cafe1234");
         assert_eq!(chat.ticks, "[tx]");
+        assert!(chat.via.is_empty());
+    }
+
+    #[test]
+    fn privmsg_reads_receive_path() {
+        let rf = "@server-time=2026-09-18T12:00:00Z;msgid=cafe1234;+radio/via=rf :M0XYZ PRIVMSG #bulletin :heard you";
+        let chat = parse_privmsg(rf).unwrap();
+        assert_eq!(chat.via, "rf");
+        assert_eq!(crate::store::via_bracket(&chat.via), "[rf]");
+        let net = "@msgid=aa;+radio/via=inet :M0XYZ PRIVMSG #bulletin :hub";
+        assert_eq!(parse_privmsg(net).unwrap().via, "inet");
+        let lan = "@+radio/via=lan :M0XYZ PRIVMSG #bulletin :mesh";
+        assert_eq!(parse_privmsg(lan).unwrap().via, "lan");
     }
 }

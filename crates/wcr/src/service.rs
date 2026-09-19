@@ -40,10 +40,13 @@ pub fn uninstall() -> Result<String> {
     }
     #[cfg(target_os = "macos")]
     {
+        macos_bootout();
         let plist = plist_path();
-        let _ = std::process::Command::new("launchctl")
-            .args(["unload", plist.to_str().unwrap_or("")])
-            .status();
+        if let Some(p) = plist.to_str() {
+            let _ = std::process::Command::new("launchctl")
+                .args(["unload", "-w", p])
+                .status();
+        }
         if plist.exists() {
             std::fs::remove_file(&plist)?;
         }
@@ -61,6 +64,45 @@ pub fn uninstall() -> Result<String> {
     }
     #[allow(unreachable_code)]
     Err(Error::Msg("unsupported".into()))
+}
+
+/// Stop a running node job so Quit/Stop can actually kill `wcr`.
+/// On macOS the LaunchAgent used to use KeepAlive=true, which immediately
+/// respawned the process after pkill.
+pub fn stop_job() {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("systemctl")
+            .args(["--user", "stop", "wcr.service"])
+            .status();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos_bootout();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("sc")
+            .args(["stop", "wcr"])
+            .status();
+    }
+}
+
+/// Remove the macOS login agent so a reboot does not start a headless `wcr`.
+/// Other platforms leave an explicitly installed service in place.
+pub fn forget_login_agent() {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = uninstall();
+    }
+}
+
+/// Rewrite an old KeepAlive=true LaunchAgent so a killed node stays dead.
+pub fn soften_keep_alive() {
+    #[cfg(target_os = "macos")]
+    {
+        macos_soften_keep_alive();
+    }
 }
 
 pub fn status() -> Result<String> {
@@ -171,37 +213,63 @@ fn install_launchd(exe: &std::path::Path) -> Result<String> {
     if let Some(parent) = log.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let body = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>com.thaum-labs.wcr</string>
-  <key>ProgramArguments</key><array><string>{}</string><string>node</string></array>
-  <key>WorkingDirectory</key><string>{}</string>
-  <key>ProcessType</key><string>Interactive</string>
-  <key>LimitLoadToSessionType</key><string>Aqua</string>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>{}</string>
-  <key>StandardErrorPath</key><string>{}</string>
-  <key>EnvironmentVariables</key><dict>
-    <key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin:{}</string>
-  </dict>
-</dict></plist>
-"#,
-        exe.display(),
-        exe.parent().unwrap_or(exe).display(),
-        log.display(),
-        log.display(),
-        exe.parent()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "/usr/bin".into()),
+    let workdir = exe.parent().unwrap_or(exe);
+    let path_env = workdir.to_str().unwrap_or("/usr/bin");
+    let body = macos_agent_plist(
+        &exe.display().to_string(),
+        &workdir.display().to_string(),
+        &log.display().to_string(),
+        path_env,
     );
+    macos_bootout();
     std::fs::write(&path, body)?;
-    let _ = std::process::Command::new("launchctl")
-        .args(["load", path.to_str().unwrap_or("")])
-        .status();
+    macos_bootstrap(&path);
     Ok(format!("installed {}", path.display()))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_bootout() {
+    let uid = unsafe { libc::getuid() };
+    let domain = format!("gui/{uid}/com.thaum-labs.wcr");
+    let _ = std::process::Command::new("launchctl")
+        .args(["bootout", &domain])
+        .status();
+    let plist = plist_path();
+    if let Some(p) = plist.to_str() {
+        let _ = std::process::Command::new("launchctl")
+            .args(["unload", p])
+            .status();
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_bootstrap(plist: &std::path::Path) {
+    let Some(p) = plist.to_str() else {
+        return;
+    };
+    let uid = unsafe { libc::getuid() };
+    let domain = format!("gui/{uid}");
+    let _ = std::process::Command::new("launchctl")
+        .args(["bootstrap", &domain, p])
+        .status();
+    let _ = std::process::Command::new("launchctl")
+        .args(["load", "-w", p])
+        .status();
+}
+
+#[cfg(target_os = "macos")]
+fn macos_soften_keep_alive() {
+    let path = plist_path();
+    let Ok(body) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    if !body.contains("<key>KeepAlive</key><true/>") {
+        return;
+    }
+    let updated = body.replace("<key>KeepAlive</key><true/>", MACOS_KEEP_ALIVE);
+    let _ = std::fs::write(&path, updated);
+    macos_bootout();
+    macos_bootstrap(&path);
 }
 
 #[cfg(target_os = "windows")]
@@ -228,4 +296,50 @@ fn install_windows(exe: &std::path::Path) -> Result<String> {
         .args(["start", "wcr"])
         .status();
     Ok("installed Windows service wcr".into())
+}
+
+/// Restart only if the node crashed — not after Quit, Stop, or SIGTERM.
+const MACOS_KEEP_ALIVE: &str = r#"<key>KeepAlive</key>
+  <dict>
+    <key>Crashed</key>
+    <true/>
+  </dict>"#;
+
+fn macos_agent_plist(exe: &str, workdir: &str, log: &str, path_env: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.thaum-labs.wcr</string>
+  <key>ProgramArguments</key><array><string>{exe}</string><string>node</string></array>
+  <key>WorkingDirectory</key><string>{workdir}</string>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+  <key>RunAtLoad</key><true/>
+  {MACOS_KEEP_ALIVE}
+  <key>StandardOutPath</key><string>{log}</string>
+  <key>StandardErrorPath</key><string>{log}</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin:{path_env}</string>
+  </dict>
+</dict></plist>
+"#
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn macos_plist_does_not_respawn_on_quit() {
+        let body = macos_agent_plist("/opt/wcr", "/opt", "/tmp/n.log", "/opt");
+        assert!(body.contains("<key>Crashed</key>"));
+        assert!(body.contains("<key>KeepAlive</key>"));
+        assert!(
+            !body.contains("<key>KeepAlive</key><true/>"),
+            "boolean KeepAlive respawns the node after Quit"
+        );
+        assert!(body.contains("<key>RunAtLoad</key><true/>"));
+    }
 }

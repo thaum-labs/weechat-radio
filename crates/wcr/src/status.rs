@@ -19,7 +19,14 @@ pub struct StatusSnapshot {
     pub snr: f32,
     pub ber: f32,
     pub audio_label: String,
+    #[serde(default = "crate::presets::default_audio_db")]
     pub audio_db: f32,
+    /// Capture (radio → PC) level in dBFS.
+    #[serde(default = "crate::presets::default_audio_db")]
+    pub audio_in_db: f32,
+    /// Playback (PC → radio) level in dBFS.
+    #[serde(default = "crate::presets::default_audio_db")]
+    pub audio_out_db: f32,
     pub queue_out: u64,
     pub queue_hold: u64,
     pub hub_ok: bool,
@@ -134,6 +141,31 @@ impl StatusSnapshot {
         };
     }
 
+    pub fn apply_modem_audio(&mut self, st: &crate::modem::control::ModemStatus) {
+        if self.audio_label == "no modem" {
+            return;
+        }
+        if !st.audio_connected {
+            self.audio_in_db = crate::presets::AUDIO_FLOOR_DB;
+            self.audio_out_db = crate::presets::AUDIO_FLOOR_DB;
+            self.audio_db = crate::presets::AUDIO_FLOOR_DB;
+            self.audio_label = "no audio".into();
+            return;
+        }
+        if let Some(db) = st.audio_in_db {
+            self.audio_in_db = db;
+        }
+        if let Some(db) = st.audio_out_db {
+            self.audio_out_db = db;
+        } else if st.ptt_on {
+            self.audio_out_db = crate::presets::AUDIO_TX_NOMINAL_DB;
+        } else {
+            self.audio_out_db = crate::presets::decay_audio_db(self.audio_out_db);
+        }
+        self.audio_db = self.audio_in_db;
+        self.audio_label = crate::presets::audio_level_label(self.audio_in_db).into();
+    }
+
     pub fn prio_for_channel(&self, channel: &str) -> &str {
         let key = channel.trim_start_matches('#').to_ascii_lowercase();
         self.group_prios
@@ -158,7 +190,9 @@ impl Default for StatusSnapshot {
             snr: 0.0,
             ber: 0.0,
             audio_label: "—".into(),
-            audio_db: 0.0,
+            audio_db: crate::presets::AUDIO_FLOOR_DB,
+            audio_in_db: crate::presets::AUDIO_FLOOR_DB,
+            audio_out_db: crate::presets::AUDIO_FLOOR_DB,
             queue_out: 0,
             queue_hold: 0,
             hub_ok: false,
@@ -205,5 +239,43 @@ pub async fn serve(bind: String, snap: Arc<SharedStatus>) {
     if let Ok(listener) = tokio::net::TcpListener::bind(&bind).await {
         tracing::info!("status HTTP on {bind}");
         let _ = axum::serve(listener, app).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modem::control::ModemStatus;
+    use crate::presets::{AUDIO_FLOOR_DB, AUDIO_TX_NOMINAL_DB};
+
+    #[test]
+    fn modem_audio_ptt_fills_out() {
+        let mut s = StatusSnapshot::default();
+        s.audio_label = "good".into();
+        let st = ModemStatus {
+            audio_connected: true,
+            ptt_on: true,
+            audio_in_db: Some(-16.0),
+            ..Default::default()
+        };
+        s.apply_modem_audio(&st);
+        assert_eq!(s.audio_in_db, -16.0);
+        assert_eq!(s.audio_out_db, AUDIO_TX_NOMINAL_DB);
+        assert_eq!(s.audio_label, "good");
+    }
+
+    #[test]
+    fn missing_sound_card_clears_meters() {
+        let mut s = StatusSnapshot::default();
+        s.audio_label = "good".into();
+        s.audio_in_db = -12.0;
+        let st = ModemStatus {
+            audio_connected: false,
+            ..Default::default()
+        };
+        s.apply_modem_audio(&st);
+        assert_eq!(s.audio_label, "no audio");
+        assert_eq!(s.audio_in_db, AUDIO_FLOOR_DB);
+        assert_eq!(s.audio_out_db, AUDIO_FLOOR_DB);
     }
 }

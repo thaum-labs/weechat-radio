@@ -211,6 +211,8 @@ fn manager<F>(
                             let mut s = snap.lock();
                             s.channel = "rx".into();
                             s.audio_label = "good".into();
+                            s.audio_db = -12.0;
+                            s.audio_in_db = -12.0;
                         }
                         let payload = if cfg.tnc.ax25 {
                             ax25::payload_of(&frame).to_vec()

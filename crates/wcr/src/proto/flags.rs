@@ -186,6 +186,15 @@ mod tests {
     }
 
     #[test]
+    fn no_inet_wins_over_inet_ok() {
+        let mut f = Flags::new().with(FLAG_INET_OK).with(FLAG_NO_INET);
+        assert!(f.no_inet());
+        assert!(!f.inet_ok());
+        f.set(FLAG_NO_INET, false);
+        assert!(f.inet_ok());
+    }
+
+    #[test]
     fn chan_meta_roundtrip_names() {
         for p in [Priority::Routine, Priority::Priority, Priority::Emergency] {
             assert_eq!(Priority::parse_name(p.as_str()), Some(p));
