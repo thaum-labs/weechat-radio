@@ -22,7 +22,7 @@ pub fn run_wizard() -> Result<Config> {
     );
     println!();
 
-    let total_steps = 6;
+    let total_steps = 7;
     let (grid_tx, grid_rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let _ = grid_tx.send(crate::grid::detect_from_ip());
@@ -176,12 +176,26 @@ pub fn run_wizard() -> Result<Config> {
                 ))
             );
         }
-        cfg.modem.audio_input = pick_audio_input(&theme, total_steps)?;
-        if !cfg.modem.audio_input.is_empty() {
+        cfg.modem.audio_input = pick_audio_device(
+            &theme,
+            5,
+            total_steps,
+            "Audio in (decode — radio speaker / interface capture)",
+            crate::discover::list_audio_inputs(),
+        )?;
+        cfg.modem.audio_output = pick_audio_device(
+            &theme,
+            6,
+            total_steps,
+            "Audio out (transmit — radio mic / interface playback)",
+            crate::discover::list_audio_outputs(),
+        )?;
+        if !cfg.modem.audio_input.is_empty() || !cfg.modem.audio_output.is_empty() {
             println!(
                 "  {}",
-                ui_style::dim()
-                    .apply_to("We pass this to modem73 as capture_device when the node starts.")
+                ui_style::dim().apply_to(
+                    "Passed to modem73 as --input-device / --output-device when the node starts.",
+                )
             );
         }
         println!();
@@ -277,14 +291,19 @@ fn pick_serial_port(
     }
 }
 
-fn pick_audio_input(theme: &dyn dialoguer::theme::Theme, total_steps: u8) -> Result<String> {
-    let devs = crate::discover::list_audio_inputs();
+fn pick_audio_device(
+    theme: &dyn dialoguer::theme::Theme,
+    step: u8,
+    total_steps: u8,
+    prompt: &str,
+    devs: Vec<String>,
+) -> Result<String> {
     if devs.is_empty() {
         let audio: String = Input::with_theme(theme)
             .with_prompt(ui_style::step(
-                5,
+                step,
                 total_steps,
-                "Audio input device name (Enter = system default)",
+                &format!("{prompt} (Enter = system default)"),
             ))
             .allow_empty(true)
             .interact_text()?;
@@ -293,7 +312,7 @@ fn pick_audio_input(theme: &dyn dialoguer::theme::Theme, total_steps: u8) -> Res
     let mut items = vec!["(system default)".to_string()];
     items.extend(devs);
     let idx = Select::with_theme(theme)
-        .with_prompt(ui_style::step(5, total_steps, "Audio input device"))
+        .with_prompt(ui_style::step(step, total_steps, prompt))
         .items(&items)
         .default(0)
         .interact()?;
