@@ -21,7 +21,7 @@ If the hub goes away while you are in `internet-radio`, radio keeps working. The
 
 On radio, `wcr` does not demodulate audio — [modem73](https://github.com/RFnexus/modem73) does that. What `wcr` can do is spend less time on air, retry, and pick a slower modem73 mode.
 
-- Presets: `hf-good` (OFDM 8PSK 1/2 + postamble), `hf-poor` (RDM-600S), `hf-weak` (RDM-300S), `hf-deep` (MFSK-32R).
+- Presets: `hf-good` (OFDM 8PSK 1/2 + postamble), `hf-poor` (RDM-600S), `hf-weak` (RDM-300S), `hf-deep` (MFSK-32R), `vox-safe` (MFSK-32R + long VOX lead).
 - Unacked messages are retransmitted (`[rf] max_retries`, default 3). Each retry steps down the ladder: QPSK 1/2 → RDM-1200S → RDM-600S → RDM-300S → MFSK-32R (last step only if the frame fits in 55 bytes).
 - ACKs carry the receiver's SNR so the sender can step back up on a good path.
 - Emergency (`!!`) frames are sent twice, a fraction of a second apart.

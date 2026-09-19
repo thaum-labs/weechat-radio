@@ -104,8 +104,10 @@ pub fn run_wizard() -> Result<Config> {
             cfg.mode = Mode::InternetRadio;
             cfg.modem.ptt = "vox".into();
             cfg.modem.preset = Preset::VoxSafe.as_str().into();
-            println!("  VOX adds a short delay before the radio keys. We pad the start of each");
-            println!("  transmission so the first symbols are not clipped.");
+            cfg.modem.vox_lead_ms = Preset::VOX_SAFE_LEAD_MS;
+            cfg.modem.vox_tail_ms = Preset::VOX_SAFE_TAIL_MS;
+            println!("  VOX uses MFSK-32R (slow, most robust) and a long lead so the radio is");
+            println!("  fully keyed before data. Keep radio VOX hang on the long side.");
         }
         3 => {
             cfg.mode = Mode::InternetRadio;

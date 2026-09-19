@@ -1811,6 +1811,15 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                 "usage: /radio trace <msgid>".into()
             }
         }
+        "clear" => {
+            let t = sp.next().unwrap_or("");
+            if t.is_empty() {
+                return "usage: /radio clear <#channel|callsign>".into();
+            }
+            let us = cfg.lock().callsign.clone();
+            let n = store.purge_channel(t, Some(&us)).unwrap_or(0);
+            format!("cleared {n} local messages in {t}")
+        }
         "history" => {
             if sp.next() == Some("purge") {
                 let t = sp.next();
