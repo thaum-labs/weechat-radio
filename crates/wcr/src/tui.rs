@@ -46,6 +46,8 @@ struct ChatLine {
     text: String,
     ticks: String,
     via: String,
+    tries: u32,
+    when: String,
     emergency: bool,
 }
 
@@ -321,6 +323,8 @@ pub async fn run(cfg: &Config) -> Result<()> {
                                     text: line,
                                     ticks: ticks.into(),
                                     via: String::new(),
+                                    tries: 0,
+                                    when: crate::store::chat_stamp(None),
                                     emergency: false,
                                 });
                             }
@@ -380,6 +384,22 @@ async fn send_mode(
     Ok(())
 }
 
+fn irc_tries(line: &str) -> u32 {
+    line.split("radio/tries=")
+        .nth(1)
+        .and_then(|rest| rest.split([';', ' ']).next())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+}
+
+fn irc_time(line: &str) -> String {
+    let raw = line
+        .split("server-time=")
+        .nth(1)
+        .and_then(|rest| rest.split([';', ' ']).next());
+    crate::store::chat_stamp(raw)
+}
+
 fn irc_via(line: &str) -> String {
     line.split("radio/via=")
         .nth(1)
@@ -413,6 +433,8 @@ fn handle_irc(app: &mut App, line: &str) {
                 text: text.to_string(),
                 ticks: String::new(),
                 via: irc_via(line),
+                tries: irc_tries(line),
+                when: irc_time(line),
                 emergency,
             });
             if app.cur().lines.len() > 500 {
@@ -432,8 +454,12 @@ fn handle_irc(app: &mut App, line: &str) {
     if line.contains("radio/delivery=") {
         if let Some(rest) = line.split("radio/delivery=").nth(1) {
             let state = rest.split(';').next().unwrap_or("");
+            let tries = irc_tries(line);
             let uni = app.unicode;
             if let Some(last) = app.cur_mut().lines.back_mut() {
+                if tries > 0 {
+                    last.tries = tries;
+                }
                 last.ticks = match state {
                     "queued" | "sent" | "relayed" | "delivered" | "all" => {
                         let d = crate::store::Delivery::parse(state);
@@ -690,7 +716,16 @@ fn draw(f: &mut Frame, app: &App) {
                 Style::default().fg(t.fg)
             };
             let via = crate::store::via_bracket(&l.via);
+            let tries = crate::store::tries_bracket(l.tries);
             Line::from(vec![
+                Span::styled(
+                    if l.when.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{} ", l.when)
+                    },
+                    Style::default().fg(t.dim),
+                ),
                 Span::styled(format!("{:<8} ", l.from), Style::default().fg(t.accent)),
                 Span::styled(l.text.clone(), style),
                 Span::raw(" "),
@@ -704,6 +739,8 @@ fn draw(f: &mut Frame, app: &App) {
                 ),
                 Span::raw(if via.is_empty() { "" } else { " " }),
                 Span::styled(l.ticks.clone(), Style::default().fg(t.accent)),
+                Span::raw(if tries.is_empty() { "" } else { " " }),
+                Span::styled(tries, Style::default().fg(t.dim)),
             ])
         })
         .collect();
@@ -964,5 +1001,14 @@ mod tests {
             "inet"
         );
         assert_eq!(irc_via(":M0XYZ PRIVMSG #bulletin :hi"), "");
+        assert_eq!(
+            irc_tries("@+radio/tries=3;+radio/delivery=sent TAGMSG *"),
+            3
+        );
+        assert_eq!(irc_tries(":M0XYZ PRIVMSG #bulletin :hi"), 0);
+        assert_eq!(
+            irc_time("@server-time=2026-09-18T12:00:00Z :M0XYZ PRIVMSG #bulletin :hi"),
+            crate::store::chat_stamp(Some("2026-09-18T12:00:00Z"))
+        );
     }
 }

@@ -365,10 +365,18 @@ def tagmsg_cb(data, signal, signal_data):
     except Exception:
         pass
     tick = TICKS.get(state, "")
+    tries = ""
+    if "radio/tries=" in line:
+        try:
+            n = line.split("radio/tries=")[1].split(";")[0].split(" ")[0]
+            if n.isdigit() and int(n) > 0:
+                tries = " x%s" % n
+        except Exception:
+            pass
     weechat.prnt(
         "",
         "%s%s delivery %s"
-        % (weechat.prefix("network"), _col(ACCENT), tick + " " + state),
+        % (weechat.prefix("network"), _col(ACCENT), tick + " " + state + tries),
     )
     return weechat.WEECHAT_RC_OK
 
