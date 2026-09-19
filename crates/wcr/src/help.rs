@@ -11,7 +11,7 @@ pub fn topics() -> &'static [(&'static str, &'static str, &'static str)] {
         ),
         (
             "e2e",
-            "two PCs: LAN chat, private hub, map",
+            "LAN hub/map test, or simulated RF on one PC",
             include_str!("../../../docs/E2E.md"),
         ),
         (
@@ -84,7 +84,7 @@ pub fn topics() -> &'static [(&'static str, &'static str, &'static str)] {
 
 fn canonical_topic(raw: &str) -> String {
     match raw.trim().to_ascii_lowercase().as_str() {
-        "test" | "lan" | "e2e-lan" => "e2e".into(),
+        "test" | "lan" | "e2e-lan" | "e2e-radio" | "sim" => "e2e".into(),
         other => other.to_string(),
     }
 }
@@ -122,7 +122,7 @@ mod tests {
     fn index_lists_e2e_with_blurb() {
         let idx = render(None);
         assert!(idx.contains("wcr help e2e"));
-        assert!(idx.contains("private hub"));
+        assert!(idx.contains("simulated RF") || idx.contains("LAN hub"));
         assert!(idx.contains("wcr help test"));
     }
 
@@ -130,9 +130,11 @@ mod tests {
     fn e2e_aliases_load_the_guide() {
         let body = render(Some("e2e"));
         assert!(body.contains("wcr e2e lan"));
+        assert!(body.contains("wcr e2e radio"));
         assert!(body.contains("7375"));
         assert_eq!(render(Some("test")), body);
         assert_eq!(render(Some("lan")), body);
+        assert_eq!(render(Some("sim")), body);
         assert!(render(Some("nope")).contains("unknown topic"));
     }
 }
