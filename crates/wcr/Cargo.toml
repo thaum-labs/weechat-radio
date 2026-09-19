@@ -78,6 +78,9 @@ windows-sys = { version = "0.59", features = [
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2.7"
+
 [build-dependencies]
 winresource = "0.1"
 

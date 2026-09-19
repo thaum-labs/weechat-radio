@@ -6175,7 +6175,7 @@ dependencies = [
 
 [[package]]
 name = "wcr"
-version = "0.1.30"
+version = "0.1.31"
 dependencies = [
  "anyhow",
  "axum",
@@ -6200,6 +6200,7 @@ dependencies = [
  "libc",
  "mdns-sd",
  "notify-rust",
+ "objc",
  "open",
  "parking_lot 0.12.5",
  "rand 0.8.8",
