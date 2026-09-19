@@ -6,5 +6,6 @@ https://github.com/RFnexus/modem73-win
 
 Release archives include the upstream binary as-is so a station can be
 installed with no extra download. That binary is not Apache-2.0.
+macOS archives also include the `libs/` folder (`@executable_path/libs`).
 See the Unlicense at the upstream repository, and MODEM73-LICENSE in the
 release zip when present.

@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.80-DEA584?logo=rust&logoColor=white" alt="Rust 1.80" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="Apache-2.0" /></a>
-  <img src="https://img.shields.io/badge/version-0.1.32-7d9bff" alt="Version 0.1.32" />
+  <img src="https://img.shields.io/badge/version-0.1.33-7d9bff" alt="Version 0.1.33" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6" alt="Windows, macOS and Linux" />
   <br/>
   <a href="https://weechat.org/"><img src="https://img.shields.io/badge/WeeChat-IRC-00A7E0" alt="WeeChat" /></a>
@@ -93,7 +93,7 @@ Full table: [modes](https://weechatradio.com/docs/modes.html)
 
 ## Radio
 
-You need a valid licence, a radio, and audio into the PC. [modem73](https://github.com/RFnexus/modem73) is the TNC. Windows and Linux installers put it next to `wcr`. Common paths:
+You need a valid licence, a radio, and audio into the PC. [modem73](https://github.com/RFnexus/modem73) is the TNC. Windows, macOS, and Linux installers put it next to `wcr`. Common paths:
 
 | Path | What you need |
 |------|----------------|

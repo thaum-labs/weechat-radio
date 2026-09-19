@@ -209,14 +209,25 @@ pub async fn apply() -> Result<String> {
     let extracted = extract_payload(&bytes, info.name.as_deref())?;
     install_binary(&exe, &extracted)?;
     if let Some(dir) = extracted.parent() {
-        let gui_name = if cfg!(windows) {
-            "wcr-gui.exe"
-        } else {
-            "wcr-gui"
-        };
-        if let Some(gui_src) = find_named(dir, gui_name) {
-            if let Some(parent) = exe.parent() {
+        if let Some(parent) = exe.parent() {
+            let gui_name = if cfg!(windows) {
+                "wcr-gui.exe"
+            } else {
+                "wcr-gui"
+            };
+            if let Some(gui_src) = find_named(dir, gui_name) {
                 let _ = install_binary(&parent.join(gui_name), &gui_src);
+            }
+            let modem_name = if cfg!(windows) {
+                "modem73.exe"
+            } else {
+                "modem73"
+            };
+            if let Some(modem_src) = find_named(dir, modem_name) {
+                let _ = install_binary(&parent.join(modem_name), &modem_src);
+            }
+            if let Some(libs_src) = find_dir_named(dir, "libs") {
+                let _ = replace_dir(&libs_src, &parent.join("libs"));
             }
         }
     }
@@ -348,6 +359,50 @@ fn find_named(dir: &Path, name: &str) -> Option<PathBuf> {
         None
     }
     walk(dir, name, 3)
+}
+
+fn find_dir_named(dir: &Path, name: &str) -> Option<PathBuf> {
+    fn walk(dir: &Path, name: &str, depth: u8) -> Option<PathBuf> {
+        let direct = dir.join(name);
+        if direct.is_dir() {
+            return Some(direct);
+        }
+        if depth == 0 {
+            return None;
+        }
+        let entries = fs::read_dir(dir).ok()?;
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                if let Some(found) = walk(&p, name, depth - 1) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    walk(dir, name, 3)
+}
+
+fn replace_dir(src: &Path, dst: &Path) -> Result<()> {
+    if dst.exists() {
+        fs::remove_dir_all(dst)?;
+    }
+    copy_tree(src, dst)
+}
+
+fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let to = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_tree(&entry.path(), &to)?;
+        } else {
+            fs::copy(entry.path(), to)?;
+        }
+    }
+    Ok(())
 }
 
 fn install_binary(dest: &Path, src: &Path) -> Result<()> {
