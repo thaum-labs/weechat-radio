@@ -9,11 +9,13 @@ Four modes. Switch with `/radio mode <name>` or `F2` in the TUI.
 | `internet` | off | hub only | cyan |
 | `internet-radio` | on, primary | fills gaps; this node is a gateway | green |
 | `radio` | on | none. Frames are never put on the internet or the LAN mesh | amber |
-| `radio-plus` | on | none locally; a gateway that hears you may forward | magenta |
+| `radio-plus` | on | none locally (not the hub or LAN mesh); a gateway that hears you may forward | magenta |
 
-Switching to `radio` asks for confirmation: it drops the internet and map upload.
+Switching to `radio` asks for confirmation: it drops the internet and map upload. Changing mode starts or stops the hub and radio path immediately — you do not need to restart the station.
 
-If the hub goes away while you are in `internet-radio`, radio keeps working. The status bar says **Internet down, radio only**. Messages that needed the internet wait in the hold queue and go out when the hub returns.
+In `internet-radio`, every chat still goes on RF. The hub is used only when the destination is not recently heard on this dial over radio (or, for a group, when no member was heard here). `#bulletin` always offers the hub because the audience is not a local RF list.
+
+If the hub goes away while you are in `internet-radio`, radio keeps working. The status bar says **Internet down, radio only**. Messages that still needed the hub wait in an internet hold (`pending_inet`) and go out when the hub returns. That is separate from the RF ARQ hold queue used for retries.
 
 ## Weak-signal behaviour
 
