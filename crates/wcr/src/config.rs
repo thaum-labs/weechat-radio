@@ -90,6 +90,8 @@ pub struct ModemConfig {
     pub rigctl: String,
     /// Optional capture device name for modem73 (empty = system default).
     pub audio_input: String,
+    /// Optional playback device name for modem73 (empty = system default).
+    pub audio_output: String,
 }
 
 impl Default for ModemConfig {
@@ -110,6 +112,7 @@ impl Default for ModemConfig {
             cm108_gpio: 3,
             rigctl: "127.0.0.1:4532".into(),
             audio_input: String::new(),
+            audio_output: String::new(),
         }
     }
 }
@@ -551,6 +554,8 @@ mod tests {
         assert_eq!(back.mode, Mode::InternetRadio);
         assert_eq!(back.hub.url, PUBLIC_HUB);
         assert_eq!(back.modem.backend, "modem73");
+        assert_eq!(back.modem.audio_input, "");
+        assert_eq!(back.modem.audio_output, "");
         assert_eq!(back.tnc.bt_name, "VR-N76");
     }
 

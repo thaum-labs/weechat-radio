@@ -476,6 +476,7 @@ struct GuiApp {
     serial_path: String,
     rigctl: String,
     audio_input: String,
+    audio_output: String,
     hw: Option<HardwareProbe>,
     hw_rx: Option<Receiver<HardwareProbe>>,
     freq_mhz: String,
@@ -553,6 +554,7 @@ impl GuiApp {
             serial_path: form.serial,
             rigctl: form.rigctl,
             audio_input: form.audio_input,
+            audio_output: form.audio_output,
             hw: None,
             hw_rx: None,
             freq_mhz: form.freq_mhz.clone(),
@@ -684,6 +686,7 @@ impl GuiApp {
         }
         if matches!(self.path, 1 | 2 | 3) {
             cfg.modem.audio_input = self.audio_input.trim().to_string();
+            cfg.modem.audio_output = self.audio_output.trim().to_string();
         }
         cfg.ui.theme = "tron".into();
         if self.path != 0 {
@@ -1355,38 +1358,27 @@ impl eframe::App for GuiApp {
                         });
                     }
                     if matches!(self.path, 1 | 2 | 3) {
-                        ui.horizontal(|ui| {
-                            ui.add_space(20.0);
-                            ui.label(RichText::new("Audio  ").color(DIM));
-                            if let Some(hw) = &self.hw {
-                                if !hw.audio.is_empty() {
-                                    let label = if self.audio_input.is_empty() {
-                                        "(system default)".to_string()
-                                    } else {
-                                        self.audio_input.clone()
-                                    };
-                                    egui::ComboBox::from_id_salt("audio_in")
-                                        .selected_text(label)
-                                        .width(280.0)
-                                        .show_ui(ui, |ui| {
-                                            if ui
-                                                .selectable_label(self.audio_input.is_empty(), "(system default)")
-                                                .clicked()
-                                            {
-                                                self.audio_input.clear();
-                                            }
-                                            for d in &hw.audio {
-                                                ui.selectable_value(&mut self.audio_input, d.clone(), d);
-                                            }
-                                        });
-                                }
-                            }
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.audio_input)
-                                    .desired_width(200.0)
-                                    .hint_text("optional device name"),
-                            );
-                        });
+                        let (ins, outs) = self
+                            .hw
+                            .as_ref()
+                            .map(|h| (h.audio_in.as_slice(), h.audio_out.as_slice()))
+                            .unwrap_or((&[], &[]));
+                        audio_device_row(
+                            ui,
+                            "In     ",
+                            "decode — radio speaker",
+                            &mut self.audio_input,
+                            ins,
+                            "audio_in",
+                        );
+                        audio_device_row(
+                            ui,
+                            "Out    ",
+                            "transmit — radio mic",
+                            &mut self.audio_output,
+                            outs,
+                            "audio_out",
+                        );
                     }
                     if self.path != 0 {
                         ui.horizontal(|ui| {
@@ -2010,6 +2002,46 @@ fn kv_tip(ui: &mut egui::Ui, k: &str, v: &str, color: Color32, tip: Option<&str>
         );
         hover_tip(&resp, tip);
     }
+}
+
+fn audio_device_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    hint: &str,
+    value: &mut String,
+    devices: &[String],
+    salt: &str,
+) {
+    ui.horizontal(|ui| {
+        ui.add_space(20.0);
+        ui.label(RichText::new(label).color(DIM));
+        if !devices.is_empty() {
+            let shown = if value.is_empty() {
+                "(system default)".to_string()
+            } else {
+                value.clone()
+            };
+            egui::ComboBox::from_id_salt(salt)
+                .selected_text(shown)
+                .width(280.0)
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(value.is_empty(), "(system default)")
+                        .clicked()
+                    {
+                        value.clear();
+                    }
+                    for d in devices {
+                        ui.selectable_value(value, d.clone(), d);
+                    }
+                });
+        }
+        ui.add(
+            egui::TextEdit::singleline(value)
+                .desired_width(200.0)
+                .hint_text(hint),
+        );
+    });
 }
 
 fn cheat_line(ui: &mut egui::Ui, key: &str, tip: &str) {
@@ -2894,7 +2926,8 @@ impl GuiApp {
 
 struct HardwareProbe {
     ports: Vec<crate::discover::LabeledPort>,
-    audio: Vec<String>,
+    audio_in: Vec<String>,
+    audio_out: Vec<String>,
     rigctld: Vec<String>,
     digirig: Option<String>,
 }
@@ -2904,11 +2937,13 @@ fn spawn_hardware_probe() -> Receiver<HardwareProbe> {
     std::thread::spawn(move || {
         let ports = crate::discover::serial_ports();
         let digirig = crate::discover::find_digirig(&ports);
-        let audio = crate::discover::list_audio_inputs();
+        let audio_in = crate::discover::list_audio_inputs();
+        let audio_out = crate::discover::list_audio_outputs();
         let rigctld = crate::discover::probe_rigctld_hosts();
         let _ = tx.send(HardwareProbe {
             ports,
-            audio,
+            audio_in,
+            audio_out,
             rigctld,
             digirig,
         });
@@ -2927,6 +2962,7 @@ struct Form {
     serial: String,
     rigctl: String,
     audio_input: String,
+    audio_output: String,
     freq_mhz: String,
 }
 
@@ -2956,6 +2992,7 @@ fn load_form() -> Form {
             serial: cfg.tnc.serial,
             rigctl: cfg.modem.rigctl,
             audio_input: cfg.modem.audio_input,
+            audio_output: cfg.modem.audio_output,
             freq_mhz: if cfg.rf.frequency_khz > 0 {
                 crate::band::fmt_mhz(cfg.rf.frequency_khz)
             } else {
