@@ -1,21 +1,33 @@
 //! SPDX-License-Identifier: Apache-2.0
-//! Live sound-card capture meter.
+//! Live sound-card meters.
 //!
-//! modem73 2.4 reports RX level only after a complete frame decodes. This
-//! monitor opens the same capture device in shared mode so ordinary audio is
-//! visible while an operator sets the radio/computer input gain.
+//! modem73 2.4 reports RX level only after a complete frame decodes. On
+//! macOS/Linux this monitor opens the capture device in shared mode. On
+//! Windows a second WASAPI capture makes modem73 report audio unhealthy and
+//! reconnect in a loop — so we read endpoint peak values instead (no stream).
 
 use crate::status::SharedStatus;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-#[cfg(feature = "setup-probe")]
+#[cfg(all(feature = "setup-probe", not(windows)))]
 pub fn spawn_input_meter(device_name: String, snap: Arc<SharedStatus>, cancel: CancellationToken) {
     let _ = std::thread::Builder::new()
         .name("wcr-audio-meter".into())
         .spawn(move || {
             if let Err(e) = run_input_meter(&device_name, snap, cancel) {
                 tracing::warn!("live audio input meter unavailable: {e}");
+            }
+        });
+}
+
+#[cfg(all(feature = "setup-probe", windows))]
+pub fn spawn_input_meter(_device_name: String, snap: Arc<SharedStatus>, cancel: CancellationToken) {
+    let _ = std::thread::Builder::new()
+        .name("wcr-audio-meter".into())
+        .spawn(move || {
+            if let Err(e) = run_wasapi_peak_meters(snap, cancel) {
+                tracing::warn!("WASAPI peak meters unavailable: {e}");
             }
         });
 }
@@ -28,7 +40,65 @@ pub fn spawn_input_meter(
 ) {
 }
 
-#[cfg(feature = "setup-probe")]
+#[cfg(all(feature = "setup-probe", windows))]
+fn run_wasapi_peak_meters(
+    snap: Arc<SharedStatus>,
+    cancel: CancellationToken,
+) -> Result<(), String> {
+    use std::time::Duration;
+    use windows::Win32::Media::Audio::Endpoints::IAudioMeterInformation;
+    use windows::Win32::Media::Audio::{
+        eCapture, eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator,
+    };
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
+    };
+
+    unsafe {
+        CoInitializeEx(None, COINIT_MULTITHREADED)
+            .ok()
+            .map_err(|e| e.to_string())?;
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(|e| e.to_string())?;
+        let capture = enumerator
+            .GetDefaultAudioEndpoint(eCapture, eConsole)
+            .map_err(|e| format!("capture endpoint: {e}"))?;
+        let render = enumerator
+            .GetDefaultAudioEndpoint(eRender, eConsole)
+            .map_err(|e| format!("render endpoint: {e}"))?;
+        let in_meter: IAudioMeterInformation = capture
+            .Activate(CLSCTX_ALL, None)
+            .map_err(|e| format!("capture meter: {e}"))?;
+        let out_meter: IAudioMeterInformation = render
+            .Activate(CLSCTX_ALL, None)
+            .map_err(|e| format!("render meter: {e}"))?;
+        tracing::info!("WASAPI endpoint peak meters (no extra capture stream)");
+        while !cancel.is_cancelled() {
+            std::thread::sleep(Duration::from_millis(100));
+            let in_db = peak_to_db(in_meter.GetPeakValue().unwrap_or(0.0));
+            let out_db = peak_to_db(out_meter.GetPeakValue().unwrap_or(0.0));
+            let mut s = snap.lock();
+            if s.audio_label.as_str() != "no modem" {
+                s.audio_in_db = in_db;
+                s.audio_out_db = out_db;
+                s.audio_db = in_db;
+                s.audio_label = crate::presets::audio_level_label(in_db).into();
+            }
+        }
+    }
+    Ok(())
+}
+
+fn peak_to_db(peak: f32) -> f32 {
+    let peak = peak.clamp(0.0, 1.0) as f64;
+    if peak <= 0.0001 {
+        crate::presets::AUDIO_FLOOR_DB
+    } else {
+        (20.0 * peak.log10()) as f32
+    }
+}
+
+#[cfg(all(feature = "setup-probe", not(windows)))]
 fn run_input_meter(
     device_name: &str,
     snap: Arc<SharedStatus>,
@@ -110,12 +180,12 @@ fn run_input_meter(
     Ok(())
 }
 
-#[cfg(feature = "setup-probe")]
+#[cfg(all(feature = "setup-probe", not(windows)))]
 fn note_f32(data: &[f32], peak: &std::sync::atomic::AtomicI32) {
     note_level(samples_db(data.iter().copied()), peak);
 }
 
-#[cfg(feature = "setup-probe")]
+#[cfg(all(feature = "setup-probe", not(windows)))]
 fn note_i16(data: &[i16], peak: &std::sync::atomic::AtomicI32) {
     note_level(
         samples_db(data.iter().map(|&v| v as f32 / i16::MAX as f32)),
@@ -123,7 +193,7 @@ fn note_i16(data: &[i16], peak: &std::sync::atomic::AtomicI32) {
     );
 }
 
-#[cfg(feature = "setup-probe")]
+#[cfg(all(feature = "setup-probe", not(windows)))]
 fn note_u16(data: &[u16], peak: &std::sync::atomic::AtomicI32) {
     note_level(
         samples_db(data.iter().map(|&v| (v as f32 - 32_768.0) / 32_768.0)),
@@ -131,7 +201,7 @@ fn note_u16(data: &[u16], peak: &std::sync::atomic::AtomicI32) {
     );
 }
 
-#[cfg(feature = "setup-probe")]
+#[cfg(all(feature = "setup-probe", not(windows)))]
 fn note_level(db: f32, peak: &std::sync::atomic::AtomicI32) {
     use std::sync::atomic::Ordering;
     peak.fetch_max((db * 1000.0) as i32, Ordering::Relaxed);
@@ -161,5 +231,12 @@ mod tests {
         assert_eq!(samples_db([0.0; 8].into_iter()), -80.0);
         assert!((samples_db([1.0; 8].into_iter()) - 0.0).abs() < 0.001);
         assert!((samples_db([0.1; 8].into_iter()) - -20.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn peak_maps_silence_and_full_scale() {
+        assert_eq!(peak_to_db(0.0), -80.0);
+        assert!((peak_to_db(1.0) - 0.0).abs() < 0.001);
+        assert!((peak_to_db(0.1) - -20.0).abs() < 0.01);
     }
 }
