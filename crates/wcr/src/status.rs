@@ -142,9 +142,6 @@ impl StatusSnapshot {
     }
 
     pub fn apply_modem_audio(&mut self, st: &crate::modem::control::ModemStatus) {
-        if self.audio_label == "no modem" {
-            return;
-        }
         if !st.audio_connected {
             self.audio_in_db = crate::presets::AUDIO_FLOOR_DB;
             self.audio_out_db = crate::presets::AUDIO_FLOOR_DB;
@@ -225,6 +222,16 @@ pub fn new_shared() -> Arc<SharedStatus> {
 }
 
 pub async fn serve(bind: String, snap: Arc<SharedStatus>) {
+    match tokio::net::TcpListener::bind(&bind).await {
+        Ok(listener) => {
+            tracing::info!("status HTTP on {bind}");
+            serve_listener(listener, snap).await;
+        }
+        Err(e) => tracing::warn!("status HTTP {bind}: {e}"),
+    }
+}
+
+pub async fn serve_listener(listener: tokio::net::TcpListener, snap: Arc<SharedStatus>) {
     use axum::{routing::get, Json, Router};
     let app = Router::new().route(
         "/status",
@@ -236,10 +243,7 @@ pub async fn serve(bind: String, snap: Arc<SharedStatus>) {
             }
         }),
     );
-    if let Ok(listener) = tokio::net::TcpListener::bind(&bind).await {
-        tracing::info!("status HTTP on {bind}");
-        let _ = axum::serve(listener, app).await;
-    }
+    let _ = axum::serve(listener, app).await;
 }
 
 #[cfg(test)]
@@ -277,5 +281,33 @@ mod tests {
         assert_eq!(s.audio_label, "no audio");
         assert_eq!(s.audio_in_db, AUDIO_FLOOR_DB);
         assert_eq!(s.audio_out_db, AUDIO_FLOOR_DB);
+    }
+
+    #[test]
+    fn modem73_negative_rx_count_still_fills_out() {
+        let mut s = StatusSnapshot::default();
+        let st = ModemStatus::from_json(serde_json::json!({
+            "channel_state": "tx",
+            "ptt_on": true,
+            "rx_frame_count": -1,
+            "audio_connected": true
+        }));
+        s.apply_modem_audio(&st);
+        assert_eq!(s.audio_out_db, AUDIO_TX_NOMINAL_DB);
+        assert_ne!(s.audio_label, "no audio");
+    }
+
+    #[test]
+    fn reconnect_clears_no_modem_latch() {
+        let mut s = StatusSnapshot::default();
+        s.audio_label = "no modem".into();
+        let st = ModemStatus {
+            audio_connected: true,
+            ptt_on: true,
+            ..Default::default()
+        };
+        s.apply_modem_audio(&st);
+        assert_eq!(s.audio_out_db, AUDIO_TX_NOMINAL_DB);
+        assert_ne!(s.audio_label, "no modem");
     }
 }

@@ -39,24 +39,69 @@ fn json_f32(v: &Value, keys: &[&str]) -> Option<f32> {
     None
 }
 
+fn json_bool(v: &Value, key: &str) -> Option<bool> {
+    v.get(key).and_then(|x| x.as_bool())
+}
+
+fn json_string(v: &Value, key: &str) -> String {
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// modem73 can emit a negative `rx_frame_count` (sync minus errors). That
+/// must not fail the whole object — serde `u64` would drop `audio_connected`.
+fn json_u64(v: &Value, key: &str) -> u64 {
+    if let Some(n) = v.get(key).and_then(|x| x.as_i64()) {
+        return n.max(0) as u64;
+    }
+    v.get(key).and_then(|x| x.as_u64()).unwrap_or(0)
+}
+
+fn json_i32(v: &Value, key: &str) -> i32 {
+    v.get(key)
+        .and_then(|x| x.as_i64())
+        .map(|n| n.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
+        .unwrap_or(0)
+}
+
 impl ModemStatus {
     pub fn from_json(v: Value) -> Self {
-        let mut st: Self = serde_json::from_value(v.clone()).unwrap_or_default();
-        if st.audio_in_db.is_none() {
-            st.audio_in_db = json_f32(
+        Self {
+            channel_state: json_string(&v, "channel_state"),
+            ptt_on: json_bool(&v, "ptt_on").unwrap_or(false),
+            rx_frame_count: json_u64(&v, "rx_frame_count"),
+            tx_frame_count: json_u64(&v, "tx_frame_count"),
+            last_snr: json_f32(&v, &["last_snr"]).unwrap_or(0.0),
+            last_ber: json_f32(&v, &["last_ber"]).unwrap_or(0.0),
+            occupancy_pct: json_i32(&v, "occupancy_pct"),
+            // Missing field: keep meters alive (control events have no flag).
+            audio_connected: json_bool(&v, "audio_connected").unwrap_or(true),
+            audio_in_db: json_f32(
                 &v,
-                &["input_level_db", "audio_level_db", "capture_level_db"],
-            );
+                &[
+                    "audio_in_db",
+                    "input_level_db",
+                    "audio_level_db",
+                    "capture_level_db",
+                ],
+            ),
+            audio_out_db: json_f32(
+                &v,
+                &[
+                    "audio_out_db",
+                    "output_level_db",
+                    "playback_level_db",
+                    "tx_level_db",
+                ],
+            ),
         }
-        if st.audio_out_db.is_none() {
-            st.audio_out_db =
-                json_f32(&v, &["output_level_db", "playback_level_db", "tx_level_db"]);
-        }
-        st
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct RxFrameEvent {
     pub seq: u64,
     pub time: f64,
@@ -67,6 +112,10 @@ pub struct RxFrameEvent {
     pub modem: String,
     pub mode: String,
     pub callsign: Option<String>,
+}
+
+fn is_control_event(v: &Value) -> bool {
+    v.get("event").and_then(|e| e.as_str()).is_some()
 }
 
 pub enum ControlCmd {
@@ -183,6 +232,28 @@ impl ControlClient {
     }
 }
 
+async fn write_request(
+    write: &mut WriteHalf<TcpStream>,
+    json: Value,
+    reply: oneshot::Sender<Result<Value>>,
+) -> Option<oneshot::Sender<Result<Value>>> {
+    let payload = match serde_json::to_vec(&json) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = reply.send(Err(Error::from(e)));
+            return None;
+        }
+    };
+    let mut frame = Vec::with_capacity(4 + payload.len());
+    frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    frame.extend_from_slice(&payload);
+    if write.write_all(&frame).await.is_err() {
+        let _ = reply.send(Err(Error::Modem("control write failed".into())));
+        return None;
+    }
+    Some(reply)
+}
+
 async fn control_loop(
     mut read: ReadHalf<TcpStream>,
     mut write: WriteHalf<TcpStream>,
@@ -190,42 +261,43 @@ async fn control_loop(
     events: mpsc::Sender<RxFrameEvent>,
 ) {
     let mut pending: Option<oneshot::Sender<Result<Value>>> = None;
+    let mut queued: std::collections::VecDeque<(Value, oneshot::Sender<Result<Value>>)> =
+        std::collections::VecDeque::new();
     let mut incoming = Vec::new();
     loop {
         tokio::select! {
             cmd = cmds.recv() => {
                 let Some(cmd) = cmd else { break };
-                match cmd {
-                    ControlCmd::Request { json, reply } => {
-                        let payload = match serde_json::to_vec(&json) {
-                            Ok(p) => p,
-                            Err(e) => {
-                                let _ = reply.send(Err(Error::from(e)));
-                                continue;
-                            }
-                        };
-                        let mut frame = Vec::with_capacity(4 + payload.len());
-                        frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-                        frame.extend_from_slice(&payload);
-                        if write.write_all(&frame).await.is_err() {
-                            let _ = reply.send(Err(Error::Modem("control write failed".into())));
-                            break;
-                        }
-                        pending = Some(reply);
-                    }
+                let ControlCmd::Request { json, reply } = cmd;
+                if pending.is_some() {
+                    queued.push_back((json, reply));
+                    continue;
+                }
+                match write_request(&mut write, json, reply).await {
+                    Some(r) => pending = Some(r),
+                    None => break,
                 }
             }
             res = read_frame(&mut read, &mut incoming) => {
                 match res {
                     Ok(None) => break,
                     Ok(Some(v)) => {
-                        if v.get("event").and_then(|e| e.as_str()) == Some("rx_frame") {
-                            if let Ok(ev) = serde_json::from_value::<RxFrameEvent>(v.clone()) {
-                                let _ = events.send(ev).await;
+                        if is_control_event(&v) {
+                            if v.get("event").and_then(|e| e.as_str()) == Some("rx_frame") {
+                                if let Ok(ev) = serde_json::from_value::<RxFrameEvent>(v) {
+                                    let _ = events.send(ev).await;
+                                }
                             }
+                            continue;
                         }
                         if let Some(reply) = pending.take() {
                             let _ = reply.send(Ok(v));
+                        }
+                        if let Some((json, reply)) = queued.pop_front() {
+                            match write_request(&mut write, json, reply).await {
+                                Some(r) => pending = Some(r),
+                                None => break,
+                            }
                         }
                     }
                     Err(_) => break,
@@ -315,5 +387,47 @@ mod tests {
         }));
         assert_eq!(st.audio_in_db, Some(-22.0));
         assert_eq!(st.audio_out_db, Some(-9.0));
+        assert!(st.audio_connected);
+    }
+
+    #[test]
+    fn negative_rx_count_keeps_audio_and_ptt() {
+        let st = ModemStatus::from_json(serde_json::json!({
+            "channel_state": "tx",
+            "ptt_on": true,
+            "tx_queue": 0,
+            "rx_frame_count": -1,
+            "tx_frame_count": 0,
+            "last_snr": 0,
+            "last_ber": -1,
+            "audio_connected": true,
+            "occupancy_pct": 9,
+            "ok": true
+        }));
+        assert!(st.audio_connected);
+        assert!(st.ptt_on);
+        assert_eq!(st.channel_state, "tx");
+        assert_eq!(st.rx_frame_count, 0);
+        assert_eq!(st.occupancy_pct, 9);
+    }
+
+    #[test]
+    fn control_events_are_not_status_replies() {
+        let ev = serde_json::json!({"event": "config_changed"});
+        assert!(is_control_event(&ev));
+        assert!(!is_control_event(&serde_json::json!({
+            "ok": true,
+            "audio_connected": true
+        })));
+        let frame = serde_json::from_value::<RxFrameEvent>(serde_json::json!({
+            "event": "rx_frame",
+            "snr": 8.5,
+            "level_db": -14.0,
+            "modem": "mfsk",
+            "mode": "MFSK-32R"
+        }))
+        .unwrap();
+        assert!((frame.snr - 8.5).abs() < 0.01);
+        assert!((frame.level_db - -14.0).abs() < 0.01);
     }
 }
