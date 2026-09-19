@@ -102,5 +102,5 @@ if [ "${WCR_SKIP_WEECHAT:-}" != "1" ]; then
 fi
 
 echo "Next:"
-echo "  wcr-gui     (or  wcr gui)"
-echo "Or from a terminal:  wcr setup && wcr tui"
+echo "  wcr setup"
+echo "  wcr gui"
