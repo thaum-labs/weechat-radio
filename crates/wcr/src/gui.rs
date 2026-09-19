@@ -741,9 +741,7 @@ impl GuiApp {
     }
 
     fn show_window(&self, ctx: &egui::Context) {
-        ctx.send_viewport_cmd(ViewportCommand::Visible(true));
-        ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
-        ctx.send_viewport_cmd(ViewportCommand::Focus);
+        bring_window_front(ctx);
     }
 
     fn hide_to_tray(&mut self, ctx: &egui::Context) {
@@ -796,7 +794,6 @@ impl GuiApp {
             .with_menu(Box::new(menu))
             .with_tooltip("WeeChat Radio")
             .with_icon(icon)
-            .with_title("WeeChat Radio")
             .build()
         {
             Ok(tray) => self.tray = Some(tray),
@@ -1453,17 +1450,7 @@ impl eframe::App for GuiApp {
             .exact_width(280.0)
             .frame(chrome(TOPBAR))
             .show(ctx, |ui| {
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                    ui.label(
-                        RichText::new(version_label())
-                            .color(DIM)
-                            .font(FontId::monospace(11.0)),
-                    );
-                    ui.add_space(6.0);
-                    cheat_sheet(ui);
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(4.0);
+                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                         module_title(ui, "STATION", "");
                         ui.add_space(8.0);
@@ -1598,6 +1585,27 @@ impl eframe::App for GuiApp {
                             ui.label(RichText::new(&self.error).color(ORANGE).small());
                         }
                     });
+                    ui.add_space(8.0);
+                    ui.separator();
+                    let leftover = ui.available_height();
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), leftover.max(0.0)),
+                        egui::Layout::bottom_up(egui::Align::Min),
+                        |ui| {
+                            ui.label(
+                                RichText::new(version_label())
+                                    .color(DIM)
+                                    .font(FontId::monospace(11.0)),
+                            );
+                            ui.add_space(6.0);
+                            egui::ScrollArea::vertical()
+                                .id_salt("cheat_sheet")
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    cheat_sheet(ui);
+                                });
+                        },
+                    );
                 });
             });
 
@@ -2637,11 +2645,52 @@ fn force_quit() -> ! {
 
 fn request_show() {
     TRAY_ACTION.store(1, Ordering::SeqCst);
+    macos_bring_to_front();
     if let Some(ctx) = GUI_CTX.get() {
-        ctx.send_viewport_cmd(ViewportCommand::Visible(true));
-        ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
-        ctx.send_viewport_cmd(ViewportCommand::Focus);
-        ctx.request_repaint();
+        bring_window_front(ctx);
+    }
+}
+
+fn bring_window_front(ctx: &egui::Context) {
+    macos_bring_to_front();
+    ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+    ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+    ctx.send_viewport_cmd(ViewportCommand::Focus);
+    ctx.request_repaint();
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_bring_to_front() {}
+
+/// winit's Visible(true) does not restore a hidden NSWindow. Unhide the app
+/// and order every window front from AppKit on the tray-event thread.
+#[cfg(target_os = "macos")]
+fn macos_bring_to_front() {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+    unsafe {
+        let null: *mut Object = std::ptr::null_mut();
+        let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+        if app.is_null() {
+            return;
+        }
+        let _: () = msg_send![app, unhide: null];
+        let _: () = msg_send![app, activateIgnoringOtherApps: true];
+        let windows: *mut Object = msg_send![app, windows];
+        if windows.is_null() {
+            return;
+        }
+        let n: usize = msg_send![windows, count];
+        for i in 0..n {
+            let w: *mut Object = msg_send![windows, objectAtIndex: i];
+            if w.is_null() {
+                continue;
+            }
+            let _: () = msg_send![w, setIsVisible: true];
+            let _: () = msg_send![w, deminiaturize: null];
+            let _: () = msg_send![w, makeKeyAndOrderFront: null];
+            let _: () = msg_send![w, orderFrontRegardless];
+        }
     }
 }
 

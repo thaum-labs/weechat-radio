@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.80-DEA584?logo=rust&logoColor=white" alt="Rust 1.80" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="Apache-2.0" /></a>
-  <img src="https://img.shields.io/badge/version-0.1.30-7d9bff" alt="Version 0.1.30" />
+  <img src="https://img.shields.io/badge/version-0.1.31-7d9bff" alt="Version 0.1.31" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6" alt="Windows, macOS and Linux" />
   <br/>
   <a href="https://weechat.org/"><img src="https://img.shields.io/badge/WeeChat-IRC-00A7E0" alt="WeeChat" /></a>
