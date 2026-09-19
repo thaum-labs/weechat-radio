@@ -851,10 +851,41 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
 }
 
 pub fn notify(title: &str, body: &str) {
-    let _ = notify_rust::Notification::new()
-        .summary(title)
-        .body(body)
-        .show();
+    let title = title.to_string();
+    let body = body.to_string();
+    std::thread::spawn(move || {
+        #[cfg(target_os = "macos")]
+        {
+            // notify-rust looks up a bundle ID with AppleScript, which opens a
+            // modal inside the GUI event loop and aborts winit. `display
+            // notification` is enough for a CLI binary.
+            let script = format!(
+                "display notification \"{}\" with title \"{}\"",
+                applescript_escape(&body),
+                applescript_escape(&title)
+            );
+            let _ = std::process::Command::new("osascript")
+                .args(["-e", &script])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = notify_rust::Notification::new()
+                .summary(&title)
+                .body(&body)
+                .show();
+        }
+    });
+}
+
+fn applescript_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', " ")
+        .replace('\r', "")
 }
 
 fn should_notify(app: &App, from: &str, text: &str, to: &str) -> bool {
