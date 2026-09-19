@@ -19,6 +19,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpStream, UdpSocket};
 
 const TOKEN_PREFIX: &str = "WCR-E2E";
+/// Keep sending after we PASS so the slower machine still hears our token.
+const PEER_LINGER: Duration = Duration::from_secs(20);
 
 pub async fn run_lan(timeout_secs: u64, port: u16, hub_port: u16) -> Result<()> {
     ui_style::panel("WEECHAT RADIO", "E2E LAN");
@@ -125,25 +127,24 @@ pub async fn run_lan(timeout_secs: u64, port: u16, hub_port: u16) -> Result<()> 
     let node = tokio::spawn(async move { crate::node::run_node(cfg_n, false).await });
 
     let deadline = Instant::now() + timeout;
-    let chat = run_exchange(&cfg, &callsign, &token, deadline).await;
-    let hub_nodes = match &chat {
-        Ok(peer) => wait_hub_nodes(&elected.local_http, &callsign, peer, &grid, deadline).await,
-        Err(_) => Err(Error::Msg("skipped hub check".into())),
+    let outcome = match run_exchange(&cfg, &callsign, &token, deadline).await {
+        Ok(ex) => {
+            match wait_hub_nodes(&elected.local_http, &callsign, &ex.peer, &grid, deadline).await {
+                Ok(hub) => Ok((ex, hub)),
+                Err(e) => Err(e),
+            }
+        }
+        Err(e) => Err(e),
     };
     let snap = fetch_status(&cfg.status.bind).await.ok();
-    node.abort();
-    let _ = node.await;
-    if let Some(h) = hub_task {
-        h.abort();
-        let _ = h.await;
-    }
 
-    match (chat, hub_nodes) {
-        (Ok(peer), Ok(hub)) => {
+    match outcome {
+        Ok((mut ex, hub)) => {
             let peers = snap.as_ref().map(|s| s.lan_peers).unwrap_or(0);
             println!(
-                "{} local={callsign} grid={grid} peer={peer} peer_grid={} lan_peers={peers} hub_ok=true",
+                "{} local={callsign} grid={grid} peer={} peer_grid={} lan_peers={peers} hub_ok=true",
                 ui_style::ok().apply_to("PASS"),
+                ex.peer,
                 hub.peer_grid
             );
             println!("  map  (from repo/web)  python -m http.server 5173");
@@ -151,9 +152,16 @@ pub async fn run_lan(timeout_secs: u64, port: u16, hub_port: u16) -> Result<()> 
                 "       then open http://127.0.0.1:5173/?api={}",
                 elected.map_http
             );
+            println!(
+                "  {}",
+                ui_style::dim().apply_to("leave this running until the other machine prints PASS")
+            );
+            ex.linger(PEER_LINGER).await;
+            shutdown_e2e(node, hub_task).await;
             Ok(())
         }
-        (Err(e), _) | (Ok(_), Err(e)) => {
+        Err(e) => {
+            shutdown_e2e(node, hub_task).await;
             if let Some(snap) = snap {
                 println!(
                     "{} {e}  lan_peers={} hub_ok={} heard={}",
@@ -171,6 +179,18 @@ pub async fn run_lan(timeout_secs: u64, port: u16, hub_port: u16) -> Result<()> 
             }
             Err(e)
         }
+    }
+}
+
+async fn shutdown_e2e(
+    node: tokio::task::JoinHandle<Result<()>>,
+    hub_task: Option<tokio::task::JoinHandle<Result<()>>>,
+) {
+    node.abort();
+    let _ = node.await;
+    if let Some(h) = hub_task {
+        h.abort();
+        let _ = h.await;
     }
 }
 
@@ -394,12 +414,35 @@ fn node_lat_lon(n: &serde_json::Value) -> Option<(f64, f64)> {
     Some((n.get("lat")?.as_f64()?, n.get("lon")?.as_f64()?))
 }
 
+struct Exchange {
+    peer: String,
+    token: String,
+    last_send: Instant,
+    writer: tokio::net::tcp::OwnedWriteHalf,
+}
+
+impl Exchange {
+    async fn linger(&mut self, dur: Duration) {
+        let end = Instant::now() + dur;
+        while Instant::now() < end {
+            if self.last_send.elapsed() >= Duration::from_secs(2) {
+                let _ = self
+                    .writer
+                    .write_all(format!("PRIVMSG #bulletin :{}\r\n", self.token).as_bytes())
+                    .await;
+                self.last_send = Instant::now();
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+}
+
 async fn run_exchange(
     cfg: &Config,
     callsign: &str,
     token: &str,
     deadline: Instant,
-) -> Result<String> {
+) -> Result<Exchange> {
     let mut stream = wait_irc(&cfg.irc.bind, deadline).await?;
     irc_register(&mut stream, callsign).await?;
     let (reader, mut writer) = stream.into_split();
@@ -455,7 +498,12 @@ async fn run_exchange(
             "local hub never connected (status hub_ok=false)".into(),
         ));
     }
-    Ok(peer)
+    Ok(Exchange {
+        peer,
+        token: token.to_string(),
+        last_send,
+        writer,
+    })
 }
 
 async fn wait_irc(bind: &str, deadline: Instant) -> Result<TcpStream> {
