@@ -51,6 +51,42 @@ struct Runtime {
     sense: Option<Arc<ModemSense>>,
 }
 
+async fn connect_kiss_retry(
+    addr: &str,
+) -> crate::error::Result<(KissClient, mpsc::Receiver<Vec<u8>>)> {
+    let mut last = None;
+    for _ in 0..25 {
+        match KissClient::connect(addr).await {
+            Ok(pair) => return Ok(pair),
+            Err(e) => {
+                last = Some(e);
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        }
+    }
+    Err(last.unwrap_or_else(|| {
+        crate::error::Error::Modem(format!("cannot connect to modem73 KISS at {addr}"))
+    }))
+}
+
+async fn connect_control_retry(
+    addr: &str,
+) -> crate::error::Result<(ControlClient, mpsc::Receiver<crate::modem::RxFrameEvent>)> {
+    let mut last = None;
+    for _ in 0..25 {
+        match ControlClient::connect(addr).await {
+            Ok(pair) => return Ok(pair),
+            Err(e) => {
+                last = Some(e);
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        }
+    }
+    Err(last.unwrap_or_else(|| {
+        crate::error::Error::Modem(format!("cannot connect to modem73 control at {addr}"))
+    }))
+}
+
 pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     cfg.normalize();
     crate::config::ensure_dirs()?;
@@ -144,18 +180,22 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 Ok(c) => _modem_child = Some(c),
                 Err(e) => tracing::warn!("{e}"),
             }
-            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
         }
         let kiss_addr = format!("{}:{}", cfg.modem.host, cfg.modem.kiss_port);
-        match KissClient::connect(&kiss_addr).await {
+        match connect_kiss_retry(&kiss_addr).await {
             Ok((k, rx)) => {
                 kiss = Some(k);
                 kiss_rx = Some(rx);
             }
-            Err(e) => tracing::warn!("{e}"),
+            Err(e) => {
+                tracing::warn!("{e}");
+                let mut s = snap.lock();
+                s.audio_label = "no modem".into();
+                s.audio_db = 0.0;
+            }
         }
         let ctrl_addr = format!("{}:{}", cfg.modem.host, cfg.modem.control_port);
-        if let Ok((c, mut ev)) = ControlClient::connect(&ctrl_addr).await {
+        if let Ok((c, mut ev)) = connect_control_retry(&ctrl_addr).await {
             if let Some(p) = Preset::parse(&cfg.modem.preset) {
                 let _ = c.set_config(p.control_config()).await;
             }
