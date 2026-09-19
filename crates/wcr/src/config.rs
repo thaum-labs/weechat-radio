@@ -279,6 +279,14 @@ pub const E2E_LAN_PORT: u16 = 7375;
 pub const E2E_HUB_PORT: u16 = 7376;
 pub const E2E_IRC_BIND: &str = "127.0.0.1:16667";
 pub const E2E_STATUS_BIND: &str = "127.0.0.1:18074";
+pub const E2E_RADIO_KISS_A: u16 = 18001;
+pub const E2E_RADIO_CTRL_A: u16 = 18073;
+pub const E2E_RADIO_KISS_B: u16 = 18002;
+pub const E2E_RADIO_CTRL_B: u16 = 18074;
+pub const E2E_RADIO_IRC_A: &str = "127.0.0.1:16668";
+pub const E2E_RADIO_IRC_B: &str = "127.0.0.1:16669";
+pub const E2E_RADIO_STATUS_A: &str = "127.0.0.1:18075";
+pub const E2E_RADIO_STATUS_B: &str = "127.0.0.1:18076";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

@@ -264,10 +264,10 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   height: 26px;
   cursor: pointer;
 }
-.map-mark-wrap.pulse-tx {
+.map-mark-wrap.pulse-tx svg {
   animation: wcr-pulse-tx 1.2s ease-out 1;
 }
-.map-mark-wrap.pulse-rx {
+.map-mark-wrap.pulse-rx svg {
   animation: wcr-pulse-rx 1.2s ease-out 1;
 }
 @keyframes wcr-pulse-tx {

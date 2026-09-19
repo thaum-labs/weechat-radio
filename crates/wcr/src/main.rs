@@ -116,6 +116,9 @@ async fn real_main() -> Result<()> {
             } => {
                 wcr::e2e::run_lan(timeout, port, hub_port).await?;
             }
+            wcr::cli::E2eCmd::Radio { timeout } => {
+                wcr::e2e::run_radio(timeout).await?;
+            }
         },
     }
     Ok(())

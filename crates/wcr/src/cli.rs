@@ -130,4 +130,10 @@ pub enum E2eCmd {
         #[arg(long, default_value_t = 7376)]
         hub_port: u16,
     },
+    /// One computer: two stations on a simulated RF air (queue, CSMA, no transmitter)
+    Radio {
+        /// Seconds to wait for the token over simulated RF
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+    },
 }

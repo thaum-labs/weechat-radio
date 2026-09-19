@@ -101,11 +101,21 @@ if (mapStyleSelect) {
 }
 
 const SPAN = 1440;
+const LINK_MS = 10 * 60 * 1000;
 const markers = new Map();
 const nodePos = new Map();
 let arcCanvas = null;
 let arcCtx = null;
-const activeArcs = [];
+const qsoLinks = new Map();
+
+function nodeKey(call) {
+  if (!call) return null;
+  const u = String(call).toUpperCase();
+  for (const k of nodePos.keys()) {
+    if (k.toUpperCase() === u) return k;
+  }
+  return null;
+}
 
 function ensureArcLayer() {
   const host = document.getElementById("map");
@@ -113,55 +123,144 @@ function ensureArcLayer() {
   arcCanvas = document.createElement("canvas");
   arcCanvas.id = "map-arcs";
   host.style.position = "relative";
-  arcCanvas.width = host.clientWidth || 800;
-  arcCanvas.height = host.clientHeight || 600;
-  host.prepend(arcCanvas);
+  host.appendChild(arcCanvas);
   arcCtx = arcCanvas.getContext("2d");
+  syncArcCanvas();
   map.on("move", drawArcs);
   map.on("resize", () => {
-    arcCanvas.width = host.clientWidth;
-    arcCanvas.height = host.clientHeight;
+    syncArcCanvas();
     drawArcs();
   });
 }
 
+function syncArcCanvas() {
+  const host = document.getElementById("map");
+  if (!host || !arcCanvas || !arcCtx) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = host.clientWidth || 800;
+  const h = host.clientHeight || 600;
+  arcCanvas.style.width = `${w}px`;
+  arcCanvas.style.height = `${h}px`;
+  arcCanvas.width = Math.round(w * dpr);
+  arcCanvas.height = Math.round(h * dpr);
+  arcCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+const lastPulseAt = new Map();
+
 function pulseMarker(callsign, kind) {
-  const m = markers.get(callsign);
+  const key = nodeKey(callsign);
+  const m = key ? markers.get(key) : markers.get(callsign);
   if (!m) return;
+  const now = Date.now();
+  const id = key || callsign;
+  if (now - (lastPulseAt.get(id) || 0) < 500) return;
+  lastPulseAt.set(id, now);
   const el = m.getElement();
   el.classList.remove("pulse-tx", "pulse-rx");
   void el.offsetWidth;
   el.classList.add(kind === "rx" ? "pulse-rx" : "pulse-tx");
 }
 
-function pushArc(from, to, inet) {
-  activeArcs.push({ from, to, inet, until: Date.now() + 2200 });
+function isTrafficKind(kind, type) {
+  const k = String(kind || type || "").toLowerCase();
+  return (
+    k === "tx" ||
+    k === "rx" ||
+    k === "msg" ||
+    k === "relay" ||
+    k === "hub_forward" ||
+    k === "gateway_forward"
+  );
+}
+
+function linkPairKey(a, b) {
+  const [x, y] = [a.toUpperCase(), b.toUpperCase()].sort();
+  return `${x}|${y}`;
+}
+
+function arcTargets(from, to) {
+  const fromKey = nodeKey(from);
+  if (!fromKey) return [];
+  const toKey = nodeKey(to);
+  if (toKey && toKey !== fromKey) return [toKey];
+  const out = [];
+  for (const call of nodePos.keys()) {
+    if (call.toUpperCase() !== fromKey.toUpperCase()) out.push(call);
+  }
+  return out;
+}
+
+function rememberLink(from, to, inet, draw) {
+  const fromKey = nodeKey(from);
+  if (!fromKey || !to) return;
+  const now = Date.now();
+  for (const dest of arcTargets(fromKey, to)) {
+    qsoLinks.set(linkPairKey(fromKey, dest), {
+      a: fromKey,
+      b: dest,
+      inet: !!inet,
+      at: now,
+    });
+  }
+  if (draw === false) return;
   ensureArcLayer();
   drawArcs();
 }
 
+function strokePinLink(s1, s2, color, dash) {
+  const dx = s2.x - s1.x;
+  const dy = s2.y - s1.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const bulge = Math.min(90, Math.max(28, dist * 0.22));
+  const mx = (s1.x + s2.x) / 2;
+  const my = (s1.y + s2.y) / 2 - bulge;
+  arcCtx.beginPath();
+  arcCtx.moveTo(s1.x, s1.y);
+  arcCtx.quadraticCurveTo(mx, my, s2.x, s2.y);
+  arcCtx.strokeStyle = color;
+  arcCtx.setLineDash(dash);
+  arcCtx.lineWidth = 2.5;
+  arcCtx.lineCap = "round";
+  arcCtx.stroke();
+}
+
 function drawArcs() {
   if (!arcCtx || !arcCanvas) return;
-  arcCtx.clearRect(0, 0, arcCanvas.width, arcCanvas.height);
+  const cssW = arcCanvas.clientWidth || 800;
+  const cssH = arcCanvas.clientHeight || 600;
+  arcCtx.clearRect(0, 0, cssW, cssH);
   const now = Date.now();
-  while (activeArcs.length && activeArcs[0].until < now) activeArcs.shift();
-  for (const a of activeArcs) {
-    const p1 = nodePos.get(a.from);
-    const p2 = nodePos.get(a.to);
+  for (const [k, link] of [...qsoLinks]) {
+    if (now - link.at > LINK_MS) qsoLinks.delete(k);
+  }
+  for (const link of qsoLinks.values()) {
+    const p1 = nodePos.get(link.a);
+    const p2 = nodePos.get(link.b);
     if (!p1 || !p2) continue;
+    const age = (now - link.at) / LINK_MS;
+    const alpha = Math.max(0.35, 0.95 - age * 0.55);
     const s1 = map.project([p1.lon, p1.lat]);
     const s2 = map.project([p2.lon, p2.lat]);
-    arcCtx.beginPath();
-    arcCtx.moveTo(s1.x, s1.y);
-    const mx = (s1.x + s2.x) / 2;
-    const my = (s1.y + s2.y) / 2 - 40;
-    arcCtx.quadraticCurveTo(mx, my, s2.x, s2.y);
-    arcCtx.strokeStyle = a.inet ? "rgba(125,155,255,0.85)" : "rgba(57,255,20,0.65)";
-    arcCtx.setLineDash(a.inet ? [] : [6, 4]);
-    arcCtx.lineWidth = 2;
-    arcCtx.stroke();
+    const color = link.inet
+      ? `rgba(125,155,255,${alpha})`
+      : `rgba(57,255,20,${alpha})`;
+    const dash = link.inet ? [] : [6, 4];
+    strokePinLink(s1, s2, color, dash);
   }
-  if (activeArcs.length) requestAnimationFrame(drawArcs);
+}
+
+function seedLinksFromEvents(events) {
+  const cutoff = Date.now() / 1000 - LINK_MS / 1000;
+  (events || []).forEach((x) => {
+    if ((x.ts || 0) < cutoff) return;
+    if (!isTrafficKind(x.kind, x.type) || !x.origin || !x.dest) return;
+    rememberLink(x.origin, x.dest, String(x.kind || "").toLowerCase() !== "relay", false);
+  });
+  if (qsoLinks.size) {
+    ensureArcLayer();
+    drawArcs();
+  }
 }
 const ticker = document.getElementById("ticker");
 const stationList = document.getElementById("station-list");
@@ -631,6 +730,7 @@ async function ensureReplay() {
     replayCache = ev.events || [];
     replayLoadedAt = Date.now();
     drawSpark(replayCache);
+    seedLinksFromEvents(replayCache);
     if (liveMode && !liveLogSeeded) seedLiveLog();
   } catch (_) {}
 }
@@ -752,10 +852,20 @@ async function refresh() {
     const stats = await (await fetch(`${API}/api/v1/stats`)).json();
     document.getElementById("n-tx").textContent = stats.forwarded ?? "—";
     await ensureReplay();
+    seedLinksFromEvents(replayCache);
   } catch (e) {
     hubPanel.textContent = "hub unreachable — showing last data";
   }
   renderConn();
+}
+
+let refreshSoon = null;
+function scheduleRefresh() {
+  if (refreshSoon) return;
+  refreshSoon = setTimeout(() => {
+    refreshSoon = null;
+    refresh();
+  }, 2000);
 }
 
 function connectLive() {
@@ -769,13 +879,16 @@ function connectLive() {
     try {
       const m = JSON.parse(ev.data);
       lastMsgAt = Date.now();
-      if (m.type === "node") refresh();
+      if (m.type === "node") {
+        scheduleRefresh();
+        return;
+      }
       const origin = m.origin || m.callsign || "?";
       const kind = (m.kind || m.type || "").toLowerCase();
-      if (kind === "tx") pulseMarker(origin, "tx");
+      if (kind === "tx" || kind === "msg" || m.type === "hub_forward") pulseMarker(origin, "tx");
       if (kind === "rx" || kind === "relay") pulseMarker(origin, "rx");
-      if (m.dest && (kind === "tx" || kind === "relay" || kind === "gateway_forward")) {
-        pushArc(origin, m.dest, kind !== "relay");
+      if (m.dest && isTrafficKind(kind, m.type)) {
+        rememberLink(origin, m.dest, kind !== "relay");
       }
       if (!liveMode) return;
       tick(eventLine(m));

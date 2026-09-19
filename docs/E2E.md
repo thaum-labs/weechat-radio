@@ -1,70 +1,90 @@
-# Paired LAN test (two computers, no radio)
+# Isolated tests (no live radio)
 
-Same command on both machines. They chat over your Wi-Fi, elect a **private hub** (not the public map), and plot two pins at different grid squares even though they sit on the same LAN.
+Offline: `wcr help e2e` (also `wcr help test`). Your normal `wcr.toml` is not touched.
 
-Offline: `wcr help e2e` (also `wcr help test`).
+| Command | Machines | What it is |
+|---------|----------|------------|
+| `wcr e2e lan` | Two, same Wi-Fi | Internet path, private hub, map |
+| `wcr e2e radio` | One | Simulated RF: air queue, CSMA, KISS. No transmitter |
 
-## What you need
+## LAN (`wcr e2e lan`)
+
+Same command on both computers. They chat over Wi-Fi, elect a **private hub** (not the public map), and plot two pins at different grid squares even though they sit on the same LAN.
+
+### What you need
 
 - Two computers on the **same Wi-Fi** (Windows, macOS, or Linux)
-- The same `wcr` build on both (`wcr e2e lan` from 0.1.25; linger-after-PASS from 0.1.27)
-- No radio. No WeeChat. Your normal `wcr.toml` is not touched.
+- The same `wcr` build on both (`wcr e2e lan` from 0.1.25; map linger from 0.1.27)
+- No radio. No WeeChat.
 
-## Steps
+### Steps
 
-1. On **both** computers, in a terminal:
+1. On **both** computers:
 
    ```
    wcr e2e lan
    ```
 
-   Optional flags:
+   Optional: `wcr e2e lan --timeout 60 --port 7375 --hub-port 7376`
 
-   ```
-   wcr e2e lan --timeout 60 --port 7375 --hub-port 7376
-   ```
+   Ports **7375** (LAN) and **7376** (hub) stay off 6667 / 7373 so a live station can keep running.
 
-   Ports **7375** (LAN) and **7376** (hub) are chosen so a live station on 6667 / 7373 can stay running.
+2. If Windows asks, allow UDP/TCP. Set the Wi-Fi profile to **Private** if discovery hangs.
 
-2. If Windows asks, allow UDP/TCP for those ports. Set the Wi-Fi profile to **Private** if discovery hangs.
+3. Leave both terminals running. The private hub dies when `wcr e2e lan` exits.
 
-3. Wait. One machine becomes the private hub; the other joins it. Each prints a guest callsign (`~` plus seven characters) and a hashed Maidenhead grid.
-
-4. When both print `PASS`, open the map against that hub. On either computer, from the repo `web/` folder:
+   On the computer that has this repo, from `web/`:
 
    ```
    python -m http.server 5173
    ```
 
-   Then open the URL the test printed, of the form:
+   Then open the URL the test printed:
 
    ```
    http://127.0.0.1:5173/?api=http://<hub-lan-ip>:7376
    ```
 
-   `?api=` points the live map at the private hub. It does not use weechatradio.com.
+   Ctrl-C the e2e terminals when you are done with the map.
 
-## What it checks
-
-- `#bulletin` token from the other machine (real local IRC path)
-- `hub_ok` on the private hub
-- `GET /api/v1/nodes` shows **both** callsigns with **different** grids and coordinates
-
-It never dials `hub.weechatradio.com`. Identity keys live under a temp `WCR_HOME`, not your normal config folder.
-
-## How you know it worked
-
-Each terminal prints a line like:
+PASS looks like:
 
 ```
 PASS local=~A1B2C3D grid=FN20XR peer=~Z9Y8X7W peer_grid=IO91WM lan_peers=1 hub_ok=true
 ```
 
-The first machine to PASS keeps running for about 20 seconds so the other can still hear `#bulletin`. Leave that terminal open until both print `PASS`. The map page shows two marks, not one stacked pin. `FAIL` dumps `lan_peers`, `hub_ok`, and the heard list.
+It never dials `hub.weechatradio.com`.
 
-## If it fails
+## Radio (`wcr e2e radio`)
+
+One computer. Two stations share a fake modem73 and a loss-free in-process “air”. Mode is **radio**. There is no audio, no PTT, and no RF leaving the PC.
+
+```
+wcr e2e radio
+```
+
+Optional: `wcr e2e radio --timeout 60`
+
+Uses loopback KISS **18001 / 18002** and IRC **16668 / 16669**.
+
+PASS looks like:
+
+```
+PASS A=~AAAAAAA B=~BBBBBBB peer_ok=true hub_ok=false queue_air=0 retries=0 heard_peer=true
+```
+
+That means `#bulletin` crossed the **air queue and KISS mock**, not the internet hub.
+
+This does **not** replace an on-air test with you as control operator.
+
+## If LAN fails
 
 - Same Wi-Fi, not a guest/AP isolation network
 - Firewall allow **7375** and **7376**
-- Same `wcr` version on both machines (`wcr --version`)
-- Do not point this test at the public hub
+- Same `wcr` version (`wcr --version`)
+- Do not point the test at the public hub
+
+## If radio fails
+
+- Ports 18001–18002 and 16668–16669 free
+- `wcr --version` 0.1.28 or later
