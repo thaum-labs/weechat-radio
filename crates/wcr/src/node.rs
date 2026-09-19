@@ -576,7 +576,9 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             }
             env = recv_lan(&mut lan_in) => {
                 if let Some(env) = env {
-                    let _ = on_envelope(&rt, env, "lan", None).await;
+                    if rt.cfg.lock().mode.uses_internet() {
+                        let _ = on_envelope(&rt, env, "lan", None).await;
+                    }
                 }
             }
             env = recv_lan(&mut peer_in) => {
@@ -922,8 +924,10 @@ async fn dispatch(rt: &Runtime, env: &Envelope) -> Result<()> {
             let _ = p.send(env.clone()).await;
         }
     }
-    if let Some(l) = &rt.lan {
-        let _ = l.send(env.clone()).await;
+    if cfg.mode.uses_internet() {
+        if let Some(l) = &rt.lan {
+            let _ = l.send(env.clone()).await;
+        }
     }
     Ok(())
 }
@@ -1044,8 +1048,10 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                             let _ = h.send(&ack).await;
                         }
                     }
-                    if let Some(l) = &rt.lan {
-                        let _ = l.send(ack.clone()).await;
+                    if cfg_g.mode.uses_internet() {
+                        if let Some(l) = &rt.lan {
+                            let _ = l.send(ack.clone()).await;
+                        }
                     }
                     let _ = dispatch_rf_at(rt, &ack, 0, dither, 0).await;
                 }

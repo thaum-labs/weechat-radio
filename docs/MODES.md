@@ -8,7 +8,7 @@ Four modes. Switch with `/radio mode <name>` or `F2` in the TUI.
 |------|-------|----------|------------|
 | `internet` | off | hub only | cyan |
 | `internet-radio` | on, primary | fills gaps; this node is a gateway | green |
-| `radio` | on | none. Frames are never put on the internet | amber |
+| `radio` | on | none. Frames are never put on the internet or the LAN mesh | amber |
 | `radio-plus` | on | none locally; a gateway that hears you may forward | magenta |
 
 Switching to `radio` asks for confirmation: it drops the internet and map upload.

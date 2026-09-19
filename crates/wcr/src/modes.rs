@@ -117,6 +117,8 @@ mod tests {
         assert!(Mode::Radio.no_inet_on_tx());
         assert!(Mode::InternetRadio.is_gateway());
         assert!(!Mode::Radio.uses_internet());
+        assert!(!Mode::RadioPlus.uses_internet());
         assert!(Mode::Internet.uses_internet());
+        assert!(Mode::InternetRadio.uses_internet());
     }
 }
