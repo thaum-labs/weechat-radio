@@ -133,6 +133,7 @@ mod tests {
         assert!(body.contains("wcr e2e radio"));
         assert!(body.contains("7375"));
         assert!(body.contains("starts the map page"));
+        assert!(body.contains("18077"));
         assert_eq!(render(Some("test")), body);
         assert_eq!(render(Some("lan")), body);
         assert_eq!(render(Some("sim")), body);
