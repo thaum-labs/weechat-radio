@@ -7,6 +7,8 @@ On the web: https://weechatradio.com/guides/macos.html
 - A Mac
 - Terminal (Command + Space, type `Terminal`, press Enter)
 
+The install command is the same as Linux. Then run setup, then the window.
+
 ## Steps
 
 1. Install:
@@ -25,17 +27,19 @@ On the web: https://weechatradio.com/guides/macos.html
 
    Add that line to `~/.zshrc` so it sticks.
 
-3. Run `wcr setup`, or skip this and open the window in the next step (it asks the same things).
+3. Run setup first:
+
+   ```
+   wcr setup
+   ```
 
    Windows and Linux already bundle modem73 (the radio sound box). On a Mac, install modem73 from https://modem73.app if you want radio.
 
-4. Start:
+4. Then open the chat window:
 
    ```
    wcr gui
    ```
-
-   Terminal instead: `wcr tui`.
 
 5. To run in the background:
 

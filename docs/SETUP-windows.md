@@ -6,7 +6,6 @@ On the web: https://weechatradio.com/guides/windows.html
 
 - Windows 10 or 11
 - PowerShell
-- The installer installs WeeChat (Cygwin) and points it at `127.0.0.1:6667`. Use `wcr tui` if you skip that.
 
 ## Steps
 
@@ -18,9 +17,19 @@ On the web: https://weechatradio.com/guides/windows.html
 
    Or download the zip from GitHub Releases and put `wcr.exe` on your PATH.
 
-2. Open <strong>WeeChat Radio</strong> from the Start menu or the desktop shortcut. First launch asks for your callsign; after that it starts the station and chat.
+2. Run setup first:
 
-   The terminal is optional: `wcr gui` is the same window. `wcr tui` / `wcr weechat` still work.
+   ```
+   wcr setup
+   ```
+
+3. Then open the chat window:
+
+   ```
+   wcr gui
+   ```
+
+   Or open **WeeChat Radio** from the Start menu.
 
 3. To keep relaying when the window is closed, open PowerShell as Administrator and run:
 
