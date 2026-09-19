@@ -1493,6 +1493,11 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
             });
             control = Some(c);
         }
+        crate::audio_meter::spawn_input_meter(
+            cfg.modem.audio_input.clone(),
+            rt.snap.clone(),
+            cancel.clone(),
+        );
     }
 
     let air_q = AirQueue::new();
@@ -1547,6 +1552,10 @@ fn stop_radio(rt: &Runtime) {
     s.tnc_ok = false;
     s.channel = "idle".into();
     s.ptt_on = false;
+    s.audio_db = presets::AUDIO_FLOOR_DB;
+    s.audio_in_db = presets::AUDIO_FLOOR_DB;
+    s.audio_out_db = presets::AUDIO_FLOOR_DB;
+    s.audio_label = "—".into();
     s.queue_air = 0;
 }
 
