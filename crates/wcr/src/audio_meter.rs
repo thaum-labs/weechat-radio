@@ -3,8 +3,9 @@
 //!
 //! modem73 2.4 reports RX level only after a complete frame decodes. On
 //! macOS/Linux this monitor opens the capture device in shared mode. On
-//! Windows a second WASAPI capture makes modem73 report audio unhealthy and
-//! reconnect in a loop — so we read endpoint peak values instead (no stream).
+//! Windows a second WASAPI capture (or even IAudioMeterInformation on the
+//! capture endpoint) glitches modem73's stream so MFSK CRC dies. We only
+//! meter the render endpoint.
 
 use crate::status::SharedStatus;
 use std::sync::Arc;
@@ -48,7 +49,7 @@ fn run_wasapi_peak_meters(
     use std::time::Duration;
     use windows::Win32::Media::Audio::Endpoints::IAudioMeterInformation;
     use windows::Win32::Media::Audio::{
-        eCapture, eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator,
+        eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator,
     };
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
@@ -60,29 +61,19 @@ fn run_wasapi_peak_meters(
             .map_err(|e| e.to_string())?;
         let enumerator: IMMDeviceEnumerator =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(|e| e.to_string())?;
-        let capture = enumerator
-            .GetDefaultAudioEndpoint(eCapture, eConsole)
-            .map_err(|e| format!("capture endpoint: {e}"))?;
         let render = enumerator
             .GetDefaultAudioEndpoint(eRender, eConsole)
             .map_err(|e| format!("render endpoint: {e}"))?;
-        let in_meter: IAudioMeterInformation = capture
-            .Activate(CLSCTX_ALL, None)
-            .map_err(|e| format!("capture meter: {e}"))?;
         let out_meter: IAudioMeterInformation = render
             .Activate(CLSCTX_ALL, None)
             .map_err(|e| format!("render meter: {e}"))?;
-        tracing::info!("WASAPI endpoint peak meters (no extra capture stream)");
+        tracing::info!("WASAPI render peak meter (capture left to modem73)");
         while !cancel.is_cancelled() {
             std::thread::sleep(Duration::from_millis(100));
-            let in_db = peak_to_db(in_meter.GetPeakValue().unwrap_or(0.0));
             let out_db = peak_to_db(out_meter.GetPeakValue().unwrap_or(0.0));
             let mut s = snap.lock();
             if s.audio_label.as_str() != "no modem" {
-                s.audio_in_db = in_db;
                 s.audio_out_db = out_db;
-                s.audio_db = in_db;
-                s.audio_label = crate::presets::audio_level_label(in_db).into();
             }
         }
     }
