@@ -343,8 +343,13 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         let next =
                             relay::next_retry_hold_jittered(n, now, m.env.priority(), jitter);
                         let _ = rt_r.store.bump_retry(&m.env.msg_id, next);
+                        let tries = rt_r.store.rf_tx_of(&m.env.msg_id).ok();
                         rt_r.irc
-                            .tagmsg_delivery(&m.env.msg_id.hex(), &format!("retry {n}/{max}"))
+                            .tagmsg_progress(
+                                &m.env.msg_id.hex(),
+                                &format!("retry-{n}/{max}"),
+                                tries,
+                            )
                             .await;
                     }
                 }
@@ -589,13 +594,23 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
             } else {
                 format!("#{channel}")
             };
-            let lines: Vec<(String, String, String, String, String, String, String)> = hist
+            let lines: Vec<(
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+            )> = hist
                 .into_iter()
                 .filter(|m| m.env.kind == MsgType::Msg)
                 .map(|m| {
-                    let t = chrono::DateTime::<chrono::Utc>::from_timestamp(m.env.ts as i64, 0)
+                    let received = if m.rx_time > 0 { m.rx_time } else { m.env.ts };
+                    let t = chrono::DateTime::<chrono::Utc>::from_timestamp(received as i64, 0)
                         .unwrap_or(chrono::Utc::now())
-                        .to_rfc3339();
+                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
                     let target = if m.env.flags.group()
                         || irc_target.starts_with('#')
                         || irc_target.starts_with('&')
@@ -610,6 +625,7 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
                         .ok()
                         .flatten()
                         .unwrap_or_default();
+                    let tries = rt.store.rf_tx_of(&m.env.msg_id).unwrap_or(0);
                     (
                         t,
                         m.env.origin.to_string(),
@@ -618,6 +634,11 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
                         m.env.msg_id.hex(),
                         m.delivery.as_str().to_string(),
                         via,
+                        if tries > 0 {
+                            tries.to_string()
+                        } else {
+                            String::new()
+                        },
                     )
                 })
                 .collect();
@@ -658,7 +679,10 @@ async fn send_form(rt: &Runtime, target: &str, form: Form) -> Result<String> {
     rt.store.insert(&env, Delivery::Queued)?;
     dispatch(rt, &env).await?;
     rt.store.set_delivery(&env.msg_id, Delivery::Sent)?;
-    rt.irc.tagmsg_delivery(&env.msg_id.hex(), "sent").await;
+    let tries = rt.store.rf_tx_of(&env.msg_id).ok().filter(|n| *n > 0);
+    rt.irc
+        .tagmsg_progress(&env.msg_id.hex(), "sent", tries)
+        .await;
     let preview = form.render_text();
     rt.irc
         .broadcast_privmsg(
@@ -729,7 +753,10 @@ async fn send_chat(rt: &Runtime, target: &str, text: &str) -> Result<()> {
         let hold = relay::next_retry_hold_jittered(0, now, prio, jitter);
         let _ = rt.store.set_hold(&env.msg_id, hold, env.hops_left);
     }
-    rt.irc.tagmsg_delivery(&env.msg_id.hex(), "sent").await;
+    let tries = rt.store.rf_tx_of(&env.msg_id).ok().filter(|n| *n > 0);
+    rt.irc
+        .tagmsg_progress(&env.msg_id.hex(), "sent", tries)
+        .await;
     let band = {
         let s = rt.snap.lock();
         if s.band.is_empty() {
@@ -828,6 +855,7 @@ async fn enqueue_rf(
             } else {
                 k.send(bytes).await?;
             }
+            note_own_rf_tx(rt, rf_env);
         }
         return Ok(true);
     };
@@ -849,7 +877,18 @@ async fn enqueue_rf(
     if let Some(r) = opts.rung {
         item = item.with_rung(r);
     }
-    Ok(air.enqueue(item))
+    let queued = air.enqueue(item);
+    if queued {
+        note_own_rf_tx(rt, rf_env);
+    }
+    Ok(queued)
+}
+
+fn note_own_rf_tx(rt: &Runtime, env: &Envelope) {
+    if env.origin.as_str() != rt.engine.our_call {
+        return;
+    }
+    let _ = rt.store.bump_rf_tx(&env.msg_id);
 }
 
 async fn send_rf(
@@ -963,8 +1002,14 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
             air.cancel(env.msg_id);
         }
     }
-    if env.ts.abs_diff(crate::proto::now_ts()) > 300 {
-        rt.snap.lock().clock_warn = true;
+    {
+        let mut snap = rt.snap.lock();
+        snap.clock_warn = crate::proto::clock_warn_after(
+            snap.clock_warn,
+            env.kind,
+            env.ts,
+            crate::proto::now_ts(),
+        );
     }
     if !should_apply_local_effects(decision.action) {
         refresh_heard(rt);
