@@ -520,6 +520,50 @@ impl Store {
             .unwrap_or(false))
     }
 
+    /// Heard on RF on this dial recently. Rows with `freq_khz == 0` never match.
+    pub fn recently_heard_rf(
+        &self,
+        callsign: &str,
+        within_secs: u32,
+        freq_khz: u32,
+    ) -> Result<bool> {
+        if freq_khz == 0 {
+            return Ok(false);
+        }
+        let conn = self.conn.lock().unwrap();
+        let row: Option<(i64, String, i64)> = conn
+            .query_row(
+                "SELECT last_heard, medium, freq_khz FROM heard WHERE callsign = ?1",
+                params![callsign],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2).unwrap_or(0))),
+            )
+            .optional()?;
+        Ok(row
+            .map(|(last, medium, khz)| {
+                medium == "rf"
+                    && khz > 0
+                    && khz as u32 == freq_khz
+                    && Self::now().saturating_sub(last as u32) <= within_secs
+            })
+            .unwrap_or(false))
+    }
+
+    /// Any station heard on RF on this dial recently.
+    pub fn recently_heard_any_rf(&self, within_secs: u32, freq_khz: u32) -> Result<bool> {
+        if freq_khz == 0 {
+            return Ok(false);
+        }
+        let cutoff = Self::now().saturating_sub(within_secs) as i64;
+        let conn = self.conn.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM heard
+             WHERE medium = 'rf' AND freq_khz = ?1 AND last_heard >= ?2",
+            params![freq_khz as i64, cutoff],
+            |r| r.get(0),
+        )?;
+        Ok(n > 0)
+    }
+
     pub fn add_hop(&self, id: &MsgId, hop: &str, medium: &str, snr: Option<f32>) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -937,5 +981,30 @@ mod tests {
         let p = dir.join("hub.db");
         Store::open(&p, 1, 10).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recently_heard_rf_filters_medium_and_dial() {
+        let s = Store::open_memory().unwrap();
+        s.heard_touch("G4ABC", None, None, false, "inet", Some(144950))
+            .unwrap();
+        assert!(!s.recently_heard_rf("G4ABC", 600, 144950).unwrap());
+        assert!(s.recently_heard("G4ABC", 600).unwrap());
+
+        s.heard_touch("G4ABC", None, None, false, "rf", Some(7045))
+            .unwrap();
+        assert!(!s.recently_heard_rf("G4ABC", 600, 144950).unwrap());
+        assert!(s.recently_heard_rf("G4ABC", 600, 7045).unwrap());
+        assert!(!s.recently_heard_rf("G4ABC", 600, 0).unwrap());
+
+        s.heard_touch("M0XYZ", None, None, false, "rf", None)
+            .unwrap();
+        assert!(!s.recently_heard_rf("M0XYZ", 600, 144950).unwrap());
+
+        s.heard_touch("M7TJF", None, None, false, "rf", Some(144950))
+            .unwrap();
+        assert!(s.recently_heard_any_rf(600, 144950).unwrap());
+        assert!(s.recently_heard_any_rf(600, 7045).unwrap());
+        assert!(!s.recently_heard_any_rf(600, 146520).unwrap());
     }
 }
