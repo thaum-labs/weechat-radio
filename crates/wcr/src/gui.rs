@@ -1497,7 +1497,16 @@ impl eframe::App for GuiApp {
                                     preset_cmd = Some(format!("/preset {next}"));
                                 }
                             }
-                            kv(ui, "AUDIO", &s.audio_label, GREEN);
+                            kv(
+                                ui,
+                                "AUDIO",
+                                &s.audio_label,
+                                if s.audio_label == "no modem" || s.audio_label == "—" {
+                                    ORANGE
+                                } else {
+                                    GREEN
+                                },
+                            );
                             kv(ui, "SNR", &format!("{:.0}", s.snr), PURPLE);
                             kv(
                                 ui,
