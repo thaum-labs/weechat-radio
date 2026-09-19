@@ -151,9 +151,20 @@ impl ModemSense {
         cancel: CancellationToken,
     ) {
         tokio::spawn(async move {
+            let mut unhealthy = 0_u8;
             loop {
                 if let Ok(st) = control.get_status().await {
                     self.apply_status(&st);
+                    let mut st = st;
+                    if st.audio_connected {
+                        unhealthy = 0;
+                    } else {
+                        unhealthy = unhealthy.saturating_add(1);
+                        // One reconnect blip must not wipe the meters.
+                        if unhealthy < 4 {
+                            st.audio_connected = true;
+                        }
+                    }
                     let mut s = snap.lock();
                     s.channel = self.state().as_str().into();
                     s.occupancy_pct = self.occupancy_pct();
