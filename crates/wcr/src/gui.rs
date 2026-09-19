@@ -2645,29 +2645,72 @@ fn force_quit() -> ! {
 
 fn request_show() {
     TRAY_ACTION.store(1, Ordering::SeqCst);
-    macos_bring_to_front();
+    os_bring_window_front();
     if let Some(ctx) = GUI_CTX.get() {
-        bring_window_front(ctx);
+        ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(ViewportCommand::Focus);
+        ctx.request_repaint();
     }
 }
 
 fn bring_window_front(ctx: &egui::Context) {
-    macos_bring_to_front();
+    os_bring_window_front();
     ctx.send_viewport_cmd(ViewportCommand::Visible(true));
     ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
     ctx.send_viewport_cmd(ViewportCommand::Focus);
     ctx.request_repaint();
 }
 
-#[cfg(not(target_os = "macos"))]
-fn macos_bring_to_front() {}
+#[cfg(not(any(windows, target_os = "macos")))]
+fn os_bring_window_front() {}
 
-/// winit's Visible(true) does not restore a hidden NSWindow. Unhide the app
-/// and order every window front from AppKit on the tray-event thread.
+#[cfg(windows)]
+fn os_bring_window_front() {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        BringWindowToTop, FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+    };
+    let title: Vec<u16> = app_window_title()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        let hwnd: HWND = FindWindowW(std::ptr::null(), title.as_ptr());
+        if hwnd.is_null() {
+            return;
+        }
+        ShowWindow(hwnd, SW_RESTORE);
+        ShowWindow(hwnd, SW_SHOW);
+        BringWindowToTop(hwnd);
+        SetForegroundWindow(hwnd);
+    }
+}
+
 #[cfg(target_os = "macos")]
-fn macos_bring_to_front() {
-    use objc::runtime::Object;
+fn os_bring_window_front() {
+    extern "C" {
+        static _dispatch_main_q: u8;
+        fn dispatch_async_f(
+            queue: *const u8,
+            context: *mut std::ffi::c_void,
+            work: extern "C" fn(*mut std::ffi::c_void),
+        );
+    }
+    unsafe {
+        dispatch_async_f(
+            &_dispatch_main_q,
+            std::ptr::null_mut(),
+            macos_unhide_on_main,
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
+extern "C" fn macos_unhide_on_main(_: *mut std::ffi::c_void) {
+    use objc::runtime::{Object, BOOL, YES};
     use objc::{class, msg_send, sel, sel_impl};
+    use std::ffi::CStr;
     unsafe {
         let null: *mut Object = std::ptr::null_mut();
         let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
@@ -2675,7 +2718,7 @@ fn macos_bring_to_front() {
             return;
         }
         let _: () = msg_send![app, unhide: null];
-        let _: () = msg_send![app, activateIgnoringOtherApps: true];
+        let _: () = msg_send![app, activateIgnoringOtherApps: YES];
         let windows: *mut Object = msg_send![app, windows];
         if windows.is_null() {
             return;
@@ -2686,10 +2729,26 @@ fn macos_bring_to_front() {
             if w.is_null() {
                 continue;
             }
-            let _: () = msg_send![w, setIsVisible: true];
+            let can_key: BOOL = msg_send![w, canBecomeKeyWindow];
+            if can_key != YES {
+                continue;
+            }
+            let title: *mut Object = msg_send![w, title];
+            if title.is_null() {
+                continue;
+            }
+            let utf8: *const std::os::raw::c_char = msg_send![title, UTF8String];
+            if utf8.is_null() {
+                continue;
+            }
+            let Ok(s) = CStr::from_ptr(utf8).to_str() else {
+                continue;
+            };
+            if !s.starts_with("WeeChat Radio") {
+                continue;
+            }
             let _: () = msg_send![w, deminiaturize: null];
             let _: () = msg_send![w, makeKeyAndOrderFront: null];
-            let _: () = msg_send![w, orderFrontRegardless];
         }
     }
 }
