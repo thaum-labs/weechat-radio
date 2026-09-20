@@ -1680,7 +1680,7 @@ impl eframe::App for GuiApp {
                 .frame(chrome(TOPBAR))
                 .show(ctx, |ui| {
                     ui.label(
-                        RichText::new("Radio mode drops the internet. Messages stay on RF only.")
+                        RichText::new("Radio mode drops hub chat. Messages stay on RF. The map still updates if telemetry is on.")
                             .color(FG)
                             .monospace(),
                     );

@@ -501,9 +501,12 @@ impl Config {
         self.mode.uses_internet() && self.hub.enabled()
     }
 
-    /// True when this station will POST telemetry.
+    /// True when this station will POST map telemetry.
+    ///
+    /// Independent of chat mode: radio-only conversations stay off the hub,
+    /// but a configured telemetry URL still updates the live map.
     pub fn reports_telemetry(&self) -> bool {
-        self.mode.uses_internet() && self.telemetry.enabled()
+        self.telemetry.enabled()
     }
 }
 
@@ -611,6 +614,19 @@ mod tests {
         assert!(!cfg.reports_telemetry());
         cfg.hub.url = PUBLIC_HUB.into();
         assert!(cfg.dials_hub());
+    }
+
+    #[test]
+    fn radio_reports_map_without_dialing_hub_chat() {
+        let mut cfg = Config {
+            mode: Mode::Radio,
+            ..Default::default()
+        };
+        cfg.normalize();
+        assert!(!cfg.dials_hub());
+        assert!(cfg.reports_telemetry());
+        cfg.telemetry.url.clear();
+        assert!(!cfg.reports_telemetry());
     }
 
     #[test]

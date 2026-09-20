@@ -33,6 +33,7 @@ url = "wss://hub.weechatradio.com/ws"
 peers = []
 
 [telemetry]
+# Empty URL = stay off the live map. Chat mode does not control this.
 url = "https://hub.weechatradio.com/api/v1/report"
 interval_secs = 30
 

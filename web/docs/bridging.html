@@ -169,7 +169,7 @@
       </figure>
 
       <h2>Radio-plus (you stay offline)</h2>
-      <p><code>radio-plus</code> never uploads. A nearby gateway that hears you on RF may forward your traffic to the hub, then on to internet stations or another band.</p>
+      <p><code>radio-plus</code> never uploads chat. A nearby gateway that hears you on RF may forward your traffic to the hub, then on to internet stations or another band. Map metadata still POSTs if <code>[telemetry] url</code> is set.</p>
       <figure class="diagram">
         <div class="dgm-wrap">
           <svg class="dgm" viewBox="0 0 720 200" role="img" aria-labelledby="d4t d4d">
@@ -263,7 +263,7 @@
       </figure>
       <p>Heard means on RF on this frequency, not a map pin or a LAN/hub sighting. A group flag alone does not key the radio; at least one listed member must have been heard here in the last ten minutes. <code>#bulletin</code> keys only if someone was heard on this dial over RF.</p>
       <ul>
-        <li>RF → internet: the message must allow internet (<code>INET_OK</code>). <code>radio</code> mode never forwards to the hub.</li>
+        <li>RF → internet: the message must allow internet (<code>INET_OK</code>). <code>radio</code> mode never forwards chat to the hub.</li>
         <li>Internet → RF: <code>[gateway] rf_egress = true</code> in <code>wcr.toml</code>. Guest names starting with <code>~</code> stay off RF unless <code>third_party = "allow"</code>.</li>
         <li>Same LAN: nodes on your local network can pass frames without the public hub. The same gateway rules still apply.</li>
       </ul>
