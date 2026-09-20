@@ -55,10 +55,10 @@ impl Delivery {
         if unicode {
             match self {
                 Self::Queued => "·",
-                Self::Sent => "✓",
-                Self::Relayed => "✓✓",
-                Self::Delivered => "✓✓",
-                Self::All => "✓✓✓",
+                Self::Sent => "[tx]",
+                Self::Relayed => "[rl]",
+                Self::Delivered => "[ok]",
+                Self::All => "[all]",
             }
         } else {
             match self {
@@ -73,6 +73,21 @@ impl Delivery {
 
     pub fn highlight_delivered(self) -> bool {
         matches!(self, Self::Delivered | Self::All)
+    }
+
+    fn rank(self) -> u8 {
+        match self {
+            Self::Queued => 0,
+            Self::Sent => 1,
+            Self::Relayed => 2,
+            Self::Delivered => 3,
+            Self::All => 4,
+        }
+    }
+
+    /// True when `next` is the same state or further along.
+    pub fn can_advance(self, next: Self) -> bool {
+        next.rank() >= self.rank()
     }
 }
 
@@ -1038,6 +1053,12 @@ mod tests {
         assert_eq!(Delivery::Relayed.ticks_bracket(), "[rl]");
         assert_eq!(Delivery::Delivered.ticks_bracket(), "[ok]");
         assert_eq!(Delivery::All.ticks_bracket(), "[all]");
+        assert_eq!(Delivery::Relayed.ticks(true), "[rl]");
+        assert_eq!(Delivery::Delivered.ticks(true), "[ok]");
+        assert_ne!(
+            Delivery::Relayed.ticks(true),
+            Delivery::Delivered.ticks(true)
+        );
         assert_eq!(via_bracket("rf"), "[rf]");
         assert_eq!(via_bracket("inet"), "[net]");
         assert_eq!(via_bracket("lan"), "[lan]");
@@ -1047,6 +1068,9 @@ mod tests {
         assert_eq!(tries_bracket(0), "");
         assert_eq!(tries_bracket(1), "[x1]");
         assert_eq!(tries_bracket(3), "[x3]");
+        assert!(Delivery::Relayed.can_advance(Delivery::Delivered));
+        assert!(!Delivery::Delivered.can_advance(Delivery::Relayed));
+        assert!(Delivery::Delivered.can_advance(Delivery::Delivered));
         let stamp = chat_stamp(Some("2026-09-18T12:00:00Z"));
         assert_eq!(stamp.len(), 19);
         assert!(stamp.chars().nth(10) == Some(' '));
