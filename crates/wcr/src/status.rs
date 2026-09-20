@@ -5,6 +5,7 @@ use crate::modes::Mode;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusSnapshot {
@@ -76,6 +77,24 @@ pub struct StatusSnapshot {
     /// Running `wcr` build version (from Cargo package version).
     #[serde(default = "default_version")]
     pub version: String,
+    /// Unix time the next identity beacon will try to key. 0 = none.
+    #[serde(default)]
+    pub beacon_due: u32,
+    /// Full wait for this beacon cycle (seconds).
+    #[serde(default)]
+    pub beacon_span: u32,
+    /// `vox`, `off`, or empty while a beacon is scheduled.
+    #[serde(default)]
+    pub beacon_note: String,
+    /// Unix time of the next relay or ARQ retry hold. 0 = none.
+    #[serde(default)]
+    pub hold_due: u32,
+    /// Full hold when `hold_due` last changed (seconds).
+    #[serde(default)]
+    pub hold_span: u32,
+    /// `relay` or `retry`.
+    #[serde(default)]
+    pub hold_kind: String,
 }
 
 fn default_version() -> String {
@@ -176,6 +195,112 @@ impl StatusSnapshot {
             .map(|g| g.priority.as_str())
             .unwrap_or("routine")
     }
+
+    pub fn set_hold_due(&mut self, due: u32, kind: &str, now: u32) {
+        if due == 0 {
+            self.hold_due = 0;
+            self.hold_span = 0;
+            self.hold_kind.clear();
+            return;
+        }
+        if self.hold_due != due {
+            self.hold_span = due.saturating_sub(now).max(1);
+            self.hold_due = due;
+            self.hold_kind = kind.to_string();
+        }
+    }
+
+    pub fn has_live_countdown(&self) -> bool {
+        self.beacon_due > 0 || self.hold_due > 0
+    }
+
+    pub fn beacon_lane(&self, now: f64) -> DueLane {
+        match self.beacon_note.as_str() {
+            "vox" => DueLane::idle("off · vox"),
+            "off" => DueLane::idle("off"),
+            _ if self.beacon_due == 0 => DueLane::idle("—"),
+            _ => DueLane::live(
+                countdown_label(self.beacon_due, now),
+                remaining_frac(self.beacon_due, self.beacon_span, now),
+            ),
+        }
+    }
+
+    pub fn hold_lane(&self, now: f64) -> DueLane {
+        if self.hold_due == 0 {
+            return DueLane::idle("—");
+        }
+        let kind = if self.hold_kind.is_empty() {
+            "hold"
+        } else {
+            self.hold_kind.as_str()
+        };
+        DueLane::live(
+            format!("{kind} {}", countdown_label(self.hold_due, now)),
+            remaining_frac(self.hold_due, self.hold_span, now),
+        )
+    }
+}
+
+/// One countdown row (beacon or hold) for GUI / TUI.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DueLane {
+    pub label: String,
+    pub frac: f32,
+    pub live: bool,
+}
+
+impl DueLane {
+    fn idle(label: &str) -> Self {
+        Self {
+            label: label.into(),
+            frac: 0.0,
+            live: false,
+        }
+    }
+
+    fn live(label: String, frac: f32) -> Self {
+        Self {
+            label,
+            frac,
+            live: true,
+        }
+    }
+}
+
+pub fn unix_now_f64() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+pub fn remaining_secs_f(due: u32, now: f64) -> f64 {
+    if due == 0 {
+        0.0
+    } else {
+        (due as f64 - now).max(0.0)
+    }
+}
+
+pub fn remaining_frac(due: u32, span: u32, now: f64) -> f32 {
+    if due == 0 || span == 0 {
+        return 0.0;
+    }
+    (remaining_secs_f(due, now) / span as f64).clamp(0.0, 1.0) as f32
+}
+
+pub fn fmt_mmss(secs: u32) -> String {
+    format!("{}:{:02}", secs / 60, secs % 60)
+}
+
+pub fn countdown_label(due: u32, now: f64) -> String {
+    let rem = remaining_secs_f(due, now);
+    if rem < 0.5 {
+        "now".into()
+    } else {
+        fmt_mmss(rem.ceil() as u32)
+    }
 }
 
 impl Default for StatusSnapshot {
@@ -216,6 +341,12 @@ impl Default for StatusSnapshot {
             group_prios: Vec::new(),
             activity_panel: true,
             version: default_version(),
+            beacon_due: 0,
+            beacon_span: 0,
+            beacon_note: String::new(),
+            hold_due: 0,
+            hold_span: 0,
+            hold_kind: String::new(),
         }
     }
 }
@@ -357,5 +488,32 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(s.audio_in_db, -12.0);
+    }
+
+    #[test]
+    fn countdown_math_is_exact() {
+        assert_eq!(fmt_mmss(0), "0:00");
+        assert_eq!(fmt_mmss(75), "1:15");
+        assert_eq!(countdown_label(100, 100.0), "now");
+        assert_eq!(countdown_label(145, 100.2), "0:45");
+        assert!((remaining_frac(160, 60, 130.0) - 0.5).abs() < f32::EPSILON);
+        assert_eq!(remaining_frac(0, 60, 130.0), 0.0);
+        let mut s = StatusSnapshot::default();
+        s.beacon_note = "vox".into();
+        assert_eq!(s.beacon_lane(0.0).label, "off · vox");
+        s.beacon_note.clear();
+        s.beacon_due = 200;
+        s.beacon_span = 60;
+        let lane = s.beacon_lane(170.0);
+        assert!(lane.live);
+        assert_eq!(lane.label, "0:30");
+        s.set_hold_due(250, "relay", 200);
+        assert_eq!(s.hold_span, 50);
+        s.set_hold_due(250, "relay", 220);
+        assert_eq!(s.hold_span, 50);
+        assert_eq!(s.hold_lane(230.0).label, "relay 0:20");
+        s.set_hold_due(0, "", 0);
+        s.beacon_due = 0;
+        assert!(!s.has_live_countdown());
     }
 }
