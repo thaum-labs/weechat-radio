@@ -132,6 +132,11 @@ impl ModemConfig {
             "bluetooth" | "bt"
         )
     }
+
+    /// VOX keys the radio (or speakers) for every RF burst, including beacons.
+    pub fn is_vox(&self) -> bool {
+        self.ptt.trim().eq_ignore_ascii_case("vox")
+    }
 }
 
 /// Radio-side KISS TNC (Bluetooth SPP or a serial port).
@@ -553,6 +558,10 @@ mod tests {
         let back: Config = toml::from_str(&s).unwrap();
         assert_eq!(back.mode, Mode::InternetRadio);
         assert_eq!(back.hub.url, PUBLIC_HUB);
+        assert!(!back.modem.is_vox());
+        let mut vox = Config::default();
+        vox.modem.ptt = "vox".into();
+        assert!(vox.modem.is_vox());
         assert_eq!(back.modem.backend, "modem73");
         assert_eq!(back.modem.audio_input, "");
         assert_eq!(back.modem.audio_output, "");

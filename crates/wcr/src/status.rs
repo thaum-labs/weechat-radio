@@ -151,6 +151,10 @@ impl StatusSnapshot {
         }
         if let Some(db) = st.audio_in_db {
             self.audio_in_db = db;
+        } else if cfg!(windows) && !st.channel_state.eq_ignore_ascii_case("rx") {
+            // No live capture meter on Windows (that glitched MFSK). Fall
+            // toward empty so the last decode does not leave IN stuck.
+            self.audio_in_db = crate::presets::decay_audio_db(self.audio_in_db);
         }
         if let Some(db) = st.audio_out_db {
             self.audio_out_db = db;
@@ -321,5 +325,37 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(s.audio_out_db, AUDIO_TX_NOMINAL_DB);
+    }
+
+    #[test]
+    fn last_rx_in_decays_when_modem_has_no_live_level() {
+        let mut s = StatusSnapshot::default();
+        s.audio_in_db = -12.0;
+        s.audio_label = "low".into();
+        s.apply_modem_audio(&ModemStatus {
+            audio_connected: true,
+            channel_state: "idle".into(),
+            audio_in_db: None,
+            ..Default::default()
+        });
+        if cfg!(windows) {
+            assert!(s.audio_in_db < -12.0, "{}", s.audio_in_db);
+            assert!(s.audio_in_db >= AUDIO_FLOOR_DB);
+        } else {
+            assert_eq!(s.audio_in_db, -12.0);
+        }
+    }
+
+    #[test]
+    fn in_holds_during_rx_without_modem_level() {
+        let mut s = StatusSnapshot::default();
+        s.audio_in_db = -12.0;
+        s.apply_modem_audio(&ModemStatus {
+            audio_connected: true,
+            channel_state: "rx".into(),
+            audio_in_db: None,
+            ..Default::default()
+        });
+        assert_eq!(s.audio_in_db, -12.0);
     }
 }

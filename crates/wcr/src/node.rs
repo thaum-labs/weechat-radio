@@ -430,18 +430,19 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         let rt_b = rt.clone();
         tokio::spawn(async move {
             loop {
-                let (jitter_s, congested, uses_rf) = {
+                let (jitter_s, congested) = {
                     let cfg = rt_b.cfg.lock();
-                    (
-                        cfg.rf.beacon_jitter_s,
-                        cfg.rf.congested_pct,
-                        cfg.mode.uses_radio(),
-                    )
+                    (cfg.rf.beacon_jitter_s, cfg.rf.congested_pct)
                 };
                 let j = jitter_s as i64;
                 let wait = (60i64 + rand::thread_rng().gen_range(-j..=j)).clamp(15, 120) as u64;
                 tokio::time::sleep(Duration::from_secs(wait)).await;
-                if !uses_rf {
+                let (uses_rf, vox) = {
+                    let cfg = rt_b.cfg.lock();
+                    (cfg.mode.uses_radio(), cfg.modem.is_vox())
+                };
+                // VOX beacons are a 1400 ms tone on the air; they walk on inbound frames.
+                if !uses_rf || vox {
                     continue;
                 }
                 if let Some(s) = rt_b.sense() {
