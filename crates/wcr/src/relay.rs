@@ -120,7 +120,7 @@ pub fn may_inet_forward(mode_is_gateway: bool, inet_ok: bool, no_inet: bool) -> 
     mode_is_gateway && inet_ok && !no_inet
 }
 
-/// In `internet-radio`, offer the hub only when RF will not reach the dest.
+/// In `internet-radio`, offer the hub and LAN mesh only when RF will not reach the dest.
 pub fn needs_inet_gap(
     mode: Mode,
     is_group: bool,
