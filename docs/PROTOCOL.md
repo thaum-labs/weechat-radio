@@ -86,7 +86,7 @@ Body is a comma-separated list of hex msg ids in a closed group window.
 
 ## FRAG (erasure coding)
 
-Type `FRAG` (10). Used for group messages on HF presets, or any payload larger than the current PHY MTU.
+Type `FRAG` (10). Used when the encoded frame is larger than the current PHY MTU.
 
 Each fragment body starts with:
 
