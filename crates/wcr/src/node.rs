@@ -871,7 +871,7 @@ async fn enqueue_rf(
     let Some(air) = rt.air() else {
         if let Some(k) = rt.kiss() {
             let mtu = preset.payload_bytes();
-            if frag::should_fragment(rf_env, preset.is_hf(), bytes.len(), mtu) {
+            if frag::should_fragment(rf_env, bytes.len(), mtu) {
                 let frags = frag::split(rf_env, cfg.rf.frag_k, cfg.rf.frag_m)?;
                 for f in frags {
                     k.send(&f.encode()?).await?;
@@ -884,7 +884,7 @@ async fn enqueue_rf(
         return Ok(true);
     };
     let mtu = preset.payload_bytes();
-    let frames = if frag::should_fragment(rf_env, preset.is_hf(), bytes.len(), mtu) {
+    let frames = if frag::should_fragment(rf_env, bytes.len(), mtu) {
         let frags = frag::split(rf_env, cfg.rf.frag_k, cfg.rf.frag_m)?;
         let mut out = Vec::with_capacity(frags.len());
         for f in frags {

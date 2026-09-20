@@ -373,7 +373,7 @@ impl Default for RelayConfig {
 pub struct RfConfig {
     /// Retransmit our own unacked RF messages this many times.
     pub max_retries: u32,
-    /// Data shards when erasure-coding a group / oversized frame.
+    /// Data shards when erasure-coding a frame that does not fit the PHY MTU.
     pub frag_k: u8,
     /// Parity shards (any k of k+m reconstruct).
     pub frag_m: u8,
