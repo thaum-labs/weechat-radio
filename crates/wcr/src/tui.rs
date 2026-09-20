@@ -474,24 +474,31 @@ fn handle_irc(app: &mut App, line: &str) {
                 if tries > 0 {
                     last.tries = tries;
                 }
-                last.ticks = match state {
-                    "queued" | "sent" | "relayed" | "delivered" | "all" => {
-                        let d = crate::store::Delivery::parse(state);
-                        if uni {
-                            d.ticks(true)
-                        } else {
-                            d.ticks_bracket()
+                let next = crate::store::Delivery::parse(state);
+                let keep_ok = matches!(
+                    next,
+                    crate::store::Delivery::Relayed | crate::store::Delivery::Sent
+                ) && (last.ticks == "[ok]" || last.ticks == "[all]");
+                if !keep_ok {
+                    last.ticks = match state {
+                        "queued" | "sent" | "relayed" | "delivered" | "all" => {
+                            let d = crate::store::Delivery::parse(state);
+                            if uni {
+                                d.ticks(true)
+                            } else {
+                                d.ticks_bracket()
+                            }
+                            .into()
                         }
-                        .into()
-                    }
-                    s if s.starts_with("retry") => if uni {
-                        "·"
-                    } else {
-                        crate::store::Delivery::Queued.ticks_bracket()
-                    }
-                    .into(),
-                    _ => last.ticks.clone(),
-                };
+                        s if s.starts_with("retry") => if uni {
+                            "·"
+                        } else {
+                            crate::store::Delivery::Queued.ticks_bracket()
+                        }
+                        .into(),
+                        _ => last.ticks.clone(),
+                    };
+                }
             }
         }
     }
