@@ -234,14 +234,11 @@ fn paint_quarter_arc(painter: &egui::Painter, c: egui::Pos2, r: f32, stroke: Str
         painter.circle_filled(b, cap, stroke.color);
     }
 }
-fn apply_visuals(ctx: &egui::Context) {
-    let mut style = (*ctx.style()).clone();
+fn dark_visuals() -> egui::Visuals {
     let mut v = egui::Visuals::dark();
     v.panel_fill = BG;
-    v.window_fill = BG;
     v.extreme_bg_color = TOPBAR;
     v.faint_bg_color = SHELL;
-    v.window_stroke = hairline(LINE);
     v.widgets.noninteractive.bg_stroke = hairline(LINE);
     v.override_text_color = Some(FG);
     v.hyperlink_color = ORANGE;
@@ -258,9 +255,13 @@ fn apply_visuals(ctx: &egui::Context) {
     v.widgets.hovered.fg_stroke = hairline(ORANGE);
     v.widgets.hovered.rounding = egui::Rounding::ZERO;
     v.widgets.active.bg_fill = Color32::from_rgb(18, 22, 36);
+    v.widgets.active.weak_bg_fill = Color32::from_rgb(18, 22, 36);
     v.widgets.active.bg_stroke = hairline(ORANGE);
     v.widgets.active.fg_stroke = hairline(ORANGE);
     v.widgets.active.rounding = egui::Rounding::ZERO;
+    v.widgets.open.bg_fill = Color32::BLACK;
+    v.widgets.open.weak_bg_fill = CODE;
+    v.widgets.open.fg_stroke = hairline(ACCENT);
     v.widgets.open.rounding = egui::Rounding::ZERO;
     v.widgets.open.bg_stroke = hairline(ACCENT);
     // Popups/tooltips (Frame::popup) — contrast with panel chrome.
@@ -272,12 +273,46 @@ fn apply_visuals(ctx: &egui::Context) {
         spread: 0.0,
         color: Color32::from_black_alpha(200),
     };
-    style.visuals = v;
+    v
+}
+
+fn apply_visuals(ctx: &egui::Context) {
+    // egui 0.29 follows the OS theme by default. A Mac in Light mode then
+    // uses stock light TextEdit/ComboBox fills (white), so mode green
+    // disappears. Lock both style slots to the same dark chrome as Windows.
+    ctx.set_theme(egui::ThemePreference::Dark);
+    let mut style = (*ctx.style()).clone();
+    style.visuals = dark_visuals();
     style.interaction.selectable_labels = false;
     style.interaction.tooltip_delay = 0.0;
     style.interaction.show_tooltips_only_when_still = false;
-    ctx.set_style(style);
+    ctx.set_style_of(egui::Theme::Dark, style.clone());
+    ctx.set_style_of(egui::Theme::Light, style);
+    macos_force_dark_appearance();
 }
+
+#[cfg(target_os = "macos")]
+fn macos_force_dark_appearance() {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+    unsafe {
+        let name: *mut Object = msg_send![
+            class!(NSString),
+            stringWithUTF8String: b"NSAppearanceNameDarkAqua\0".as_ptr()
+        ];
+        if name.is_null() {
+            return;
+        }
+        let appearance: *mut Object = msg_send![class!(NSAppearance), appearanceNamed: name];
+        let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+        if !app.is_null() && !appearance.is_null() {
+            let _: () = msg_send![app, setAppearance: appearance];
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_force_dark_appearance() {}
 
 /// Tooltip next to the pointer whenever it is inside `response.rect`.
 ///
@@ -1064,18 +1099,7 @@ impl GuiApp {
                     }
                 }
                 IrcEvent::Invited { from, channel } => {
-                    self.ensure_joined(&channel);
-                    self.chat.push(ChatLine::sys(
-                        format!("{from} invited you to {channel}"),
-                        channel.clone(),
-                    ));
-                    self.active_channel = crate::slash::normalize_channel(&channel);
-                    self.persist_session();
-                    let ch = self.active_channel.clone();
-                    if !self.irc_joined.iter().any(|c| c.eq_ignore_ascii_case(&ch)) {
-                        self.irc_joined.push(ch.clone());
-                        self.send_line(&format!("/join {ch}"));
-                    }
+                    self.apply_invited(&from, &channel, viewport_focused);
                 }
             }
         }
@@ -1083,6 +1107,38 @@ impl GuiApp {
 
     fn apply_delivery(&mut self, msgid: &str, state: &str, tries: u32) {
         apply_delivery_to(&mut self.chat, &self.callsign, msgid, state, tries);
+    }
+
+    fn apply_invited(&mut self, from: &str, channel: &str, viewport_focused: bool) {
+        let ch = crate::slash::normalize_channel(channel);
+        if ch.len() < 3 || crate::slash::is_bulletin(&ch) {
+            return;
+        }
+        let already = self.joined.iter().any(|c| c.eq_ignore_ascii_case(&ch));
+        self.ensure_joined(&ch);
+        let me = self.callsign.to_ascii_uppercase();
+        let from_u = from.to_ascii_uppercase();
+        let list = self.members.entry(ch.clone()).or_default();
+        for n in [from_u, me] {
+            if !n.is_empty() && !list.iter().any(|x| x.eq_ignore_ascii_case(&n)) {
+                list.push(n);
+            }
+        }
+        if !already {
+            self.chat.push(ChatLine::sys(
+                format!("{from} invited you to {ch}"),
+                ch.clone(),
+            ));
+        }
+        self.active_channel = ch.clone();
+        self.persist_session();
+        if !viewport_focused {
+            crate::tui::notify("WeeChat Radio", &format!("{from} invited you to {ch}"));
+        }
+        if !self.irc_joined.iter().any(|c| c.eq_ignore_ascii_case(&ch)) {
+            self.irc_joined.push(ch.clone());
+            self.send_line(&format!("/join {ch}"));
+        }
     }
 }
 
@@ -1098,6 +1154,7 @@ impl eframe::App for GuiApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.set_theme(egui::ThemePreference::Dark);
         ctx.request_repaint_after(Duration::from_millis(250));
         self.poll_grid_detect();
         self.poll_find_radio();
@@ -2913,6 +2970,7 @@ extern "C" fn macos_unhide_on_main(_: *mut std::ffi::c_void) {
         }
         let _: () = msg_send![app, unhide: null];
         let _: () = msg_send![app, activateIgnoringOtherApps: YES];
+        macos_force_dark_appearance();
         let windows: *mut Object = msg_send![app, windows];
         if windows.is_null() {
             return;
@@ -3726,14 +3784,7 @@ fn parse_join(line: &str) -> Option<String> {
 }
 
 fn parse_invite(line: &str) -> Option<(String, String)> {
-    let rest = irc_payload(line).strip_prefix(':')?;
-    let (prefix, cmd) = rest.split_once(' ')?;
-    let rest = cmd.strip_prefix("INVITE ")?;
-    let mut bits = rest.split_whitespace();
-    bits.next()?;
-    let ch = bits.next()?.to_string();
-    let from = prefix.split('!').next().unwrap_or(prefix).to_string();
-    Some((from, ch))
+    crate::slash::parse_irc_invite(line)
 }
 
 fn channel_security(
@@ -3852,5 +3903,22 @@ mod tests {
         assert_eq!(chat[0].ticks, "[ok]");
         apply_delivery_to(&mut chat, "M7TJF", "cafe1234", "delivered", 0);
         assert_eq!(chat[0].ticks, "[ok]");
+    }
+
+    #[test]
+    fn parse_irc_invite_line() {
+        let (from, ch) = parse_invite(":M7TJF INVITE TF101 #compatriots").unwrap();
+        assert_eq!(from, "M7TJF");
+        assert_eq!(ch, "#compatriots");
+        assert!(parse_invite(":M7TJF PRIVMSG TF101 :hello").is_none());
+    }
+
+    #[test]
+    fn dark_visuals_keep_text_fields_dark() {
+        let v = dark_visuals();
+        assert!(v.dark_mode);
+        assert!(v.extreme_bg_color.r() < 40);
+        assert!(v.widgets.inactive.bg_fill.r() < 40);
+        assert!(v.widgets.open.bg_fill.r() < 40);
     }
 }

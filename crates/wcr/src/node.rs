@@ -1108,6 +1108,19 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                         .await;
                 }
             } else {
+                if env.kind == MsgType::Msg
+                    && !env.flags.group()
+                    && env.dest.as_str() == rt.engine.our_call
+                {
+                    if let Some(ch) = record_remote_invite(
+                        &rt.store,
+                        &rt.engine.our_call,
+                        env.origin.as_str(),
+                        &text,
+                    ) {
+                        rt.irc.send_invite(env.origin.as_str(), &ch).await;
+                    }
+                }
                 rt.irc
                     .broadcast_privmsg(
                         env.origin.as_str(),
@@ -1396,6 +1409,14 @@ fn refresh_group_prios(rt: &Runtime) {
         })
         .collect();
     rt.snap.lock().group_prios = briefs;
+}
+
+/// Remember a closed channel when another station invites us over the air.
+fn record_remote_invite(store: &Store, our_call: &str, from: &str, body: &str) -> Option<String> {
+    let ch = crate::slash::parse_invite_text(body)?;
+    let name = ch.trim_start_matches('#');
+    let _ = store.group_create(name, &[our_call.to_string(), from.to_ascii_uppercase()]);
+    Some(ch)
 }
 
 /// Channel-default priority control frame body (`WCRMETA prio=priority`).
@@ -2148,5 +2169,22 @@ mod tests {
         stamp_own_mode_flags(&mut theirs, "G4ABC", Mode::Radio);
         assert!(!theirs.flags.no_inet());
         assert!(theirs.flags.inet_ok());
+    }
+
+    #[test]
+    fn remote_invite_creates_group() {
+        let store = Store::open_memory().unwrap();
+        let ch = record_remote_invite(
+            &store,
+            "TF101",
+            "M7TJF",
+            "You are invited to #compatriots on WeeChat Radio. Join that channel to talk.",
+        )
+        .unwrap();
+        assert_eq!(ch, "#compatriots");
+        let members = store.group_members("compatriots").unwrap();
+        assert!(members.iter().any(|m| m == "TF101"));
+        assert!(members.iter().any(|m| m == "M7TJF"));
+        assert!(record_remote_invite(&store, "TF101", "M7TJF", "hello").is_none());
     }
 }
