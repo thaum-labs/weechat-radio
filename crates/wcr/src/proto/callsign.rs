@@ -200,6 +200,13 @@ mod tests {
     }
 
     #[test]
+    fn long_group_names_pack_as_eight_chars() {
+        let c = Callsign::from_raw("COMPATRIOTS");
+        let back = Callsign::unpack(&c.pack()).unwrap();
+        assert_eq!(back.as_str(), "COMPATRI");
+    }
+
+    #[test]
     fn guests_flag() {
         assert!(Callsign::parse("~BOB").unwrap().is_guest());
         assert!(!Callsign::parse("W1AW").unwrap().is_guest());
