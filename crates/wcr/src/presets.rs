@@ -388,12 +388,11 @@ pub fn rung_for(preset: Preset, stored: usize, retries: u32, frame_len: usize) -
     Rung::from_index(idx)
 }
 
-/// After an ACK, move the stored rung toward a better or worse mode.
+/// After an ACK the mode already worked. Step up on a strong report; do not
+/// step down — retries already walk the ladder when a frame is missing.
 pub fn adjust_rung(current: usize, snr_db: f32) -> usize {
     if snr_db >= 8.0 {
         current.saturating_sub(1)
-    } else if snr_db < 3.0 {
-        (current + 1).min(Rung::COUNT - 1)
     } else {
         current
     }
@@ -476,7 +475,7 @@ mod tests {
     #[test]
     fn snr_adjusts_rung() {
         assert_eq!(adjust_rung(2, 12.0), 1);
-        assert_eq!(adjust_rung(2, 1.0), 3);
+        assert_eq!(adjust_rung(2, 1.0), 2);
         assert_eq!(adjust_rung(2, 5.0), 2);
     }
 

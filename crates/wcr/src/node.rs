@@ -1007,6 +1007,16 @@ fn group_member_heard_rf(store: &Store, dest: &str, freq: u32) -> bool {
 
 async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>) -> Result<()> {
     if env.origin.as_str() == rt.engine.our_call {
+        // Acoustic echo or a relay of our own frame. Do not pull [ok] back to [rl].
+        if matches!(
+            rt.store.delivery_of(&env.msg_id)?,
+            Some(Delivery::Delivered) | Some(Delivery::All)
+        ) {
+            if let Some(air) = rt.air() {
+                air.cancel(env.msg_id);
+            }
+            return Ok(());
+        }
         rt.store.set_delivery(&env.msg_id, Delivery::Relayed)?;
         rt.irc.tagmsg_delivery(&env.msg_id.hex(), "relayed").await;
         return Ok(());
