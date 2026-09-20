@@ -129,6 +129,10 @@ const GROUP_ARGS: &[Arg] = &[
         value: "members",
         hint: "members <name>",
     },
+    Arg {
+        value: "leave",
+        hint: "leave <name>",
+    },
 ];
 
 const PRIO_ARGS: &[Arg] = &[
@@ -248,13 +252,20 @@ const COMMANDS: &[Cmd] = &[
     Cmd {
         name: "part",
         usage: "/part",
-        summary: "Leave this channel",
+        summary: "Leave this channel (this computer only)",
+        args: &[],
+        send_bare: true,
+    },
+    Cmd {
+        name: "leave",
+        usage: "/leave",
+        summary: "Leave this channel (this computer only)",
         args: &[],
         send_bare: true,
     },
     Cmd {
         name: "group",
-        usage: "/group list|create|members|invite",
+        usage: "/group list|create|members|invite|leave",
         summary: "Named callsign lists",
         args: GROUP_ARGS,
         send_bare: false,
@@ -334,22 +345,34 @@ pub fn to_radio_args(raw: &str) -> Option<String> {
         .to_ascii_lowercase();
     if matches!(
         head.as_str(),
-        "join" | "j" | "part" | "invite" | "prio" | "priority"
+        "join" | "j" | "part" | "leave" | "invite" | "prio" | "priority"
     ) {
         return None;
     }
     Some(rest.to_string())
 }
 
+/// Packed group dest is 8 characters (same as a callsign). Longer names
+/// silently became a different room on the air (`compatriots` → `compatri`).
+pub const CHANNEL_NAME_MAX: usize = 8;
+
 pub fn normalize_channel(raw: &str) -> String {
-    let t = raw
+    let t: String = raw
         .trim()
         .trim_start_matches('#')
         .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .take(CHANNEL_NAME_MAX)
         .collect::<String>()
         .to_ascii_lowercase();
     format!("#{t}")
+}
+
+/// Wire dest for a `#channel` (uppercase, at most [`CHANNEL_NAME_MAX`]).
+pub fn channel_dest(raw: &str) -> String {
+    normalize_channel(raw)
+        .trim_start_matches('#')
+        .to_ascii_uppercase()
 }
 
 pub fn is_bulletin(channel: &str) -> bool {
@@ -405,6 +428,41 @@ pub fn parse_invite_text(text: &str) -> Option<String> {
     Some(ch)
 }
 
+/// Shown in the channel when a station leaves (not the RF control body).
+pub fn leave_notice(channel: &str) -> String {
+    format!("left {}", normalize_channel(channel))
+}
+
+pub fn parse_leave_text(text: &str) -> Option<String> {
+    let mut t = text.trim();
+    for prefix in ["[rf] ", "[lan] ", "[inet] ", "[net] "] {
+        if let Some(rest) = t.strip_prefix(prefix) {
+            t = rest;
+            break;
+        }
+    }
+    let rest = t.strip_prefix("left ")?;
+    let ch = normalize_channel(rest.split_whitespace().next()?);
+    if ch.len() < 3 || is_bulletin(&ch) {
+        return None;
+    }
+    Some(ch)
+}
+
+/// Server notice `{CALL} left #channel`.
+pub fn parse_peer_left_notice(text: &str) -> Option<(String, String)> {
+    let (nick, rest) = text.trim().split_once(" left #")?;
+    let nick = nick.trim();
+    if nick.is_empty() || nick.contains(' ') {
+        return None;
+    }
+    let ch = normalize_channel(rest);
+    if ch.len() < 3 || is_bulletin(&ch) {
+        return None;
+    }
+    Some((nick.to_string(), ch))
+}
+
 /// Turn a GUI line into one or more IRC commands (no trailing CRLF).
 pub fn to_wire(raw: &str, channel: &str) -> Vec<String> {
     let t = raw.trim();
@@ -447,7 +505,12 @@ pub fn to_wire(raw: &str, channel: &str) -> Vec<String> {
             }
             vec![format!("RADIO clear {target}")]
         }
-        "part" => vec![format!("PART {channel}")],
+        "part" | "leave" => {
+            if is_bulletin(channel) {
+                return Vec::new();
+            }
+            vec![format!("PART {channel}")]
+        }
         "invite" => {
             let nick = tail
                 .split_whitespace()
@@ -592,6 +655,14 @@ mod tests {
     }
 
     #[test]
+    fn long_channel_names_fit_the_radio_dest() {
+        assert_eq!(normalize_channel("#compatriots"), "#compatri");
+        assert_eq!(normalize_channel("friends"), "#friends");
+        assert_eq!(channel_dest("#compatriots"), "COMPATRI");
+        assert_eq!(CHANNEL_NAME_MAX, 8);
+    }
+
+    #[test]
     fn join_is_irc_not_radio() {
         assert_eq!(to_radio_args("/join #ops"), None);
         assert_eq!(
@@ -633,6 +704,24 @@ mod tests {
         let (from, ch) = parse_irc_invite(":M7TJF INVITE TF101 #compatriots").unwrap();
         assert_eq!(from, "M7TJF");
         assert_eq!(ch, "#compatriots");
+    }
+
+    #[test]
+    fn part_and_leave_are_irc_part() {
+        assert_eq!(to_wire("/part", "#compatriots"), vec!["PART #compatriots"]);
+        assert_eq!(to_wire("/leave", "#ops"), vec!["PART #ops"]);
+        assert!(to_wire("/part", "#bulletin").is_empty());
+        assert_eq!(
+            parse_leave_text("left #compatriots").as_deref(),
+            Some("#compatriots")
+        );
+        assert_eq!(parse_leave_text("[rf] left #ops").as_deref(), Some("#ops"));
+        assert!(parse_leave_text("hello").is_none());
+        assert!(parse_leave_text("left #bulletin").is_none());
+        let (nick, ch) = parse_peer_left_notice("M7TJF left #compatriots").unwrap();
+        assert_eq!(nick, "M7TJF");
+        assert_eq!(ch, "#compatriots");
+        assert!(parse_peer_left_notice("channel default left alone").is_none());
     }
 
     #[test]

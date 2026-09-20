@@ -243,6 +243,12 @@ impl IrcServer {
             "PART" => {
                 if let Some(ch) = parts.get(1) {
                     let nick = self.nick(id);
+                    {
+                        let mut g = self.inner.lock();
+                        if let Some(c) = g.clients.get_mut(&id) {
+                            c.channels.remove(ch);
+                        }
+                    }
                     self.send_raw(id, &format!(":{nick} PART {ch}")).await;
                     let _ = self
                         .events
