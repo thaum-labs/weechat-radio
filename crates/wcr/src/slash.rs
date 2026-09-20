@@ -35,7 +35,7 @@ const MODE_ARGS: &[Arg] = &[
     },
     Arg {
         value: "radio",
-        hint: "RF only — drops the internet (needs confirm)",
+        hint: "RF chat only — hub chat off (needs confirm)",
     },
     Arg {
         value: "radio-plus",
