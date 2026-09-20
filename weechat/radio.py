@@ -19,6 +19,7 @@
 """WeeChat Radio helper: status bar, /radio alias, delivery ticks, airtime."""
 
 import json
+import time
 import urllib.request
 
 try:
@@ -127,6 +128,28 @@ def _status():
         return {}
 
 
+def _due_token(s):
+    now = time.time()
+    events = []
+    beacon_due = int(s.get("beacon_due") or 0)
+    if beacon_due:
+        events.append(("B", beacon_due))
+    hold_due = int(s.get("hold_due") or 0)
+    if hold_due:
+        kind = "R" if (s.get("hold_kind") or "") == "relay" else "Q"
+        events.append((kind, hold_due))
+    note = s.get("beacon_note") or ""
+    if not events:
+        if note == "vox":
+            return "B VOX"
+        return "B OFF" if note == "off" else ""
+    kind, due = min(events, key=lambda item: item[1])
+    rem = max(0, int(due - now))
+    if rem <= 0:
+        return "%s NOW" % kind
+    return "%s %d:%02d" % (kind, rem // 60, rem % 60)
+
+
 def bar_item_cb(*_args):
     try:
         s = _status()
@@ -143,6 +166,7 @@ def bar_item_cb(*_args):
         )
         audio = (s.get("audio_label") or "?").upper()
         q = s.get("queue_out", 0)
+        due = _due_token(s)
         snr = s.get("snr") or 0
         khz = s.get("freq_khz") or 0
         band = (s.get("band") or "").upper()
@@ -173,6 +197,7 @@ def bar_item_cb(*_args):
             + audio
             + sep
             + "Q%s" % q
+            + ((sep + due) if due else "")
             + sep
             + hub
             + upd

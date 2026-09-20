@@ -80,6 +80,21 @@ pub fn next_retry_hold(retries: u32, now: u32, priority: Priority) -> u32 {
     next_retry_hold_jittered(retries, now, priority, true)
 }
 
+pub const BEACON_BASE_S: i64 = 60;
+pub const BEACON_MIN_S: i64 = 15;
+pub const BEACON_MAX_S: i64 = 120;
+
+/// Next identity-beacon wait, 60 s ± jitter, clamped to 15–120 s.
+pub fn beacon_interval_secs(jitter_s: u32) -> u64 {
+    let j = jitter_s as i64;
+    let roll = if j <= 0 {
+        0
+    } else {
+        rand::thread_rng().gen_range(-j..=j)
+    };
+    (BEACON_BASE_S + roll).clamp(BEACON_MIN_S, BEACON_MAX_S) as u64
+}
+
 pub fn next_retry_hold_jittered(retries: u32, now: u32, priority: Priority, jitter: bool) -> u32 {
     let target = next_retry_hold_base(retries, 0, priority);
     let delay = if jitter {
@@ -411,6 +426,20 @@ mod tests {
         assert!(!rf_egress_heard(true, false, true, false, true));
         assert!(rf_egress_heard(true, true, false, false, true));
         assert!(!rf_egress_heard(true, true, true, true, false));
+    }
+
+    #[test]
+    fn beacon_interval_stays_in_bounds() {
+        for j in [0u32, 15, 60, 200] {
+            for _ in 0..40 {
+                let w = beacon_interval_secs(j);
+                assert!(
+                    (BEACON_MIN_S as u64..=BEACON_MAX_S as u64).contains(&w),
+                    "jitter {j}: wait {w}"
+                );
+            }
+        }
+        assert_eq!(beacon_interval_secs(0), BEACON_BASE_S as u64);
     }
 
     #[test]

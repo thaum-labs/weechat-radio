@@ -154,6 +154,12 @@ pub struct StoredMsg {
     pub delivery: Delivery,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NextHold {
+    pub due: u32,
+    pub kind: &'static str,
+}
+
 #[derive(Debug, Clone)]
 pub struct HeardStation {
     pub callsign: String,
@@ -189,6 +195,7 @@ impl Store {
             max_age_hours,
             max_msgs,
         };
+        s.pack_group_names()?;
         s.gc()?;
         Ok(s)
     }
@@ -197,11 +204,13 @@ impl Store {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
         Self::migrate(&conn);
-        Ok(Self {
+        let s = Self {
             conn: Mutex::new(conn),
             max_age_hours: 72,
             max_msgs: 10_000,
-        })
+        };
+        s.pack_group_names()?;
+        Ok(s)
     }
 
     fn migrate(conn: &Connection) {
@@ -218,6 +227,82 @@ impl Store {
             "ALTER TABLE messages ADD COLUMN rf_tx INTEGER NOT NULL DEFAULT 0",
             [],
         );
+    }
+
+    fn group_key(name: &str) -> String {
+        crate::slash::group_name(name)
+    }
+
+    /// Fold names longer than the packed dest (`compatriots` → `compatri`) so
+    /// membership matches what actually goes on the air.
+    pub(crate) fn pack_group_names(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let names: Vec<String> = {
+            let mut stmt = conn.prepare("SELECT name FROM groups")?;
+            let rows = stmt.query_map([], |r| r.get(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        for old in names {
+            let new = Self::group_key(&old);
+            if new.is_empty() || new == old {
+                continue;
+            }
+            let now = Self::now() as i64;
+            conn.execute(
+                "INSERT OR IGNORE INTO groups(name, closed, created, default_prio) VALUES(?1, 1, ?2, 0)",
+                params![new, now],
+            )?;
+            let prio: i64 = conn
+                .query_row(
+                    "SELECT COALESCE(MAX(default_prio), 0) FROM groups WHERE name IN (?1, ?2)",
+                    params![new, old],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            conn.execute(
+                "UPDATE groups SET default_prio = ?1 WHERE name = ?2",
+                params![prio, new],
+            )?;
+            conn.execute(
+                "INSERT OR IGNORE INTO group_members(group_name, callsign)
+                 SELECT ?1, callsign FROM group_members WHERE group_name = ?2",
+                params![new, old],
+            )?;
+            conn.execute(
+                "INSERT OR IGNORE INTO group_receipts(group_name, msg_id, callsign, seen_at)
+                 SELECT ?1, msg_id, callsign, seen_at FROM group_receipts WHERE group_name = ?2",
+                params![new, old],
+            )?;
+            conn.execute(
+                "DELETE FROM group_receipts WHERE group_name = ?1",
+                params![old],
+            )?;
+            conn.execute(
+                "DELETE FROM group_members WHERE group_name = ?1",
+                params![old],
+            )?;
+            conn.execute("DELETE FROM groups WHERE name = ?1", params![old])?;
+            conn.execute(
+                "UPDATE messages SET dest = ?1 WHERE is_group = 1 AND upper(dest) = upper(?2)",
+                params![new.to_ascii_uppercase(), old],
+            )?;
+        }
+        let dests: Vec<String> = {
+            let mut stmt = conn.prepare("SELECT DISTINCT dest FROM messages WHERE is_group = 1")?;
+            let rows = stmt.query_map([], |r| r.get(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        for dest in dests {
+            let packed = crate::slash::channel_dest(&dest);
+            if packed.is_empty() || packed.eq_ignore_ascii_case(&dest) {
+                continue;
+            }
+            conn.execute(
+                "UPDATE messages SET dest = ?1 WHERE is_group = 1 AND dest = ?2",
+                params![packed, dest],
+            )?;
+        }
+        Ok(())
     }
 
     fn now() -> u32 {
@@ -354,11 +439,14 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let mut out = Vec::new();
         if let Some(t) = target {
-            let key = t
-                .trim()
-                .trim_start_matches('#')
-                .trim_start_matches('&')
-                .to_ascii_uppercase();
+            let key = if t.starts_with('#') || t.starts_with('&') {
+                crate::slash::channel_dest(t)
+            } else {
+                t.trim()
+                    .trim_start_matches('#')
+                    .trim_start_matches('&')
+                    .to_ascii_uppercase()
+            };
             let mut stmt = conn.prepare(
                 "SELECT msg_id, kind, origin, dest, flags, hops_left, ts, seq, body, signature, rx_time, delivery
                  FROM messages WHERE upper(dest) = ?1 OR upper(origin) = ?1
@@ -407,9 +495,10 @@ impl Store {
         }
         let conn = self.conn.lock().unwrap();
         let n = if group || key == "BULLETIN" || key == "BEACON" {
+            let dest = crate::slash::channel_dest(trimmed);
             conn.execute(
                 "DELETE FROM messages WHERE is_group = 1 AND upper(dest) = ?1",
-                params![key],
+                params![dest],
             )?
         } else if let Some(us) = our_call.filter(|s| !s.is_empty()) {
             let us = us.to_ascii_uppercase();
@@ -427,6 +516,36 @@ impl Store {
             )?
         };
         Ok(n as u64)
+    }
+
+    /// Soonest future (or already-due) relay / ARQ hold.
+    pub fn next_hold(&self, origin: &str, max_retries: u32) -> Result<Option<NextHold>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT hold_until, origin FROM messages
+             WHERE hold_until > 0 AND suppressed = 0
+               AND (
+                    (upper(origin) != upper(?1) AND hops_left > 0)
+                 OR (upper(origin) = upper(?1) AND delivery = 'sent' AND retries < ?2)
+               )
+             ORDER BY hold_until ASC
+             LIMIT 1",
+        )?;
+        let row = stmt
+            .query_row(params![origin, max_retries as i64], |r| {
+                let due: i64 = r.get(0)?;
+                let from: String = r.get(1)?;
+                Ok((due as u32, from))
+            })
+            .optional()?;
+        Ok(row.map(|(due, from)| NextHold {
+            due,
+            kind: if from.eq_ignore_ascii_case(origin) {
+                "retry"
+            } else {
+                "relay"
+            },
+        }))
     }
 
     pub fn hold_due(&self, now: u32) -> Result<Vec<StoredMsg>> {
@@ -733,6 +852,10 @@ impl Store {
     }
 
     pub fn group_create(&self, name: &str, members: &[String]) -> Result<()> {
+        let name = Self::group_key(name);
+        if name.is_empty() {
+            return Ok(());
+        }
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT OR IGNORE INTO groups(name, closed, created, default_prio) VALUES(?1, 1, ?2, 0)",
@@ -748,6 +871,7 @@ impl Store {
     }
 
     pub fn group_members(&self, name: &str) -> Result<Vec<String>> {
+        let name = Self::group_key(name);
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT callsign FROM group_members WHERE group_name = ?1")?;
         let rows = stmt.query_map(params![name], |r| r.get(0))?;
@@ -763,6 +887,7 @@ impl Store {
     }
 
     pub fn group_remove_member(&self, name: &str, callsign: &str) -> Result<()> {
+        let name = Self::group_key(name);
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "DELETE FROM group_members WHERE group_name = ?1 AND upper(callsign) = upper(?2)",
@@ -773,6 +898,7 @@ impl Store {
 
     /// Drop this computer's copy of a group. Other stations keep theirs.
     pub fn group_forget(&self, name: &str) -> Result<()> {
+        let name = Self::group_key(name);
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "DELETE FROM group_receipts WHERE group_name = ?1",
@@ -795,6 +921,10 @@ impl Store {
 
     /// Ensure a group row exists so channel defaults can be stored.
     pub fn group_ensure(&self, name: &str) -> Result<()> {
+        let name = Self::group_key(name);
+        if name.is_empty() {
+            return Ok(());
+        }
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT OR IGNORE INTO groups(name, closed, created, default_prio) VALUES(?1, 1, ?2, 0)",
@@ -804,7 +934,8 @@ impl Store {
     }
 
     pub fn group_set_prio(&self, name: &str, prio: u8) -> Result<()> {
-        self.group_ensure(name)?;
+        let name = Self::group_key(name);
+        self.group_ensure(&name)?;
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE groups SET default_prio = ?1 WHERE name = ?2",
@@ -814,6 +945,7 @@ impl Store {
     }
 
     pub fn group_prio(&self, name: &str) -> Result<u8> {
+        let name = Self::group_key(name);
         let conn = self.conn.lock().unwrap();
         let p: Option<i64> = conn
             .query_row(
@@ -839,6 +971,7 @@ impl Store {
     }
 
     pub fn receipt(&self, group: &str, msg_id: &MsgId, callsign: &str) -> Result<()> {
+        let group = Self::group_key(group);
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT OR IGNORE INTO group_receipts(group_name, msg_id, callsign, seen_at)
@@ -849,6 +982,7 @@ impl Store {
     }
 
     pub fn receipts_for(&self, group: &str, msg_id: &MsgId) -> Result<Vec<String>> {
+        let group = Self::group_key(group);
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare("SELECT callsign FROM group_receipts WHERE group_name = ?1 AND msg_id = ?2")?;
@@ -1214,6 +1348,50 @@ mod tests {
     }
 
     #[test]
+    fn next_hold_picks_soonest_relay_or_retry() {
+        let s = Store::open_memory().unwrap();
+        let retry = Envelope::new_msg(
+            Callsign::parse("G4ABC").unwrap(),
+            Callsign::parse("M0XYZ").unwrap(),
+            1,
+            b"hi".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        let relay = Envelope::new_msg(
+            Callsign::parse("M0XYZ").unwrap(),
+            Callsign::parse("G4ABC").unwrap(),
+            2,
+            b"ho".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        s.insert(&retry, Delivery::Sent).unwrap();
+        s.insert(&relay, Delivery::Queued).unwrap();
+        s.set_hold(&retry.msg_id, 400, 3).unwrap();
+        s.set_hold(&relay.msg_id, 250, 3).unwrap();
+        assert_eq!(
+            s.next_hold("G4ABC", 3).unwrap(),
+            Some(NextHold {
+                due: 250,
+                kind: "relay"
+            })
+        );
+        s.set_hold(&relay.msg_id, 0, 3).unwrap();
+        assert_eq!(
+            s.next_hold("G4ABC", 3).unwrap(),
+            Some(NextHold {
+                due: 400,
+                kind: "retry"
+            })
+        );
+        s.set_hold(&retry.msg_id, 0, 3).unwrap();
+        assert!(s.next_hold("G4ABC", 3).unwrap().is_none());
+    }
+
+    #[test]
     fn retry_due_lists_unacked_sent() {
         let s = Store::open_memory().unwrap();
         let env = Envelope::new_msg(
@@ -1262,6 +1440,50 @@ mod tests {
         s.group_forget("net").unwrap();
         assert!(s.group_members("net").unwrap().is_empty());
         assert!(!s.group_list().unwrap().iter().any(|n| n == "net"));
+    }
+
+    #[test]
+    fn long_group_name_matches_packed_dest() {
+        let s = Store::open_memory().unwrap();
+        {
+            let conn = s.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO groups(name, closed, created, default_prio) VALUES('compatriots', 1, 1, 0)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO group_members(group_name, callsign) VALUES('compatriots', 'M7TJF')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO group_members(group_name, callsign) VALUES('compatriots', 'TF101')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO messages(msg_id, kind, origin, dest, flags, hops_left, ts, seq, body, rx_time, delivery, is_group)
+                 VALUES('deadbeef', 'msg', 'M7TJF', 'COMPATRIOTS', 0, 3, 1, 1, x'6869', 1, 'sent', 1)",
+                [],
+            )
+            .unwrap();
+        }
+        assert!(!s.is_group_member("compatri", "M7TJF").unwrap());
+        s.pack_group_names().unwrap();
+        assert!(s.is_group_member("compatri", "M7TJF").unwrap());
+        assert!(s.is_group_member("compatriots", "TF101").unwrap());
+        assert_eq!(s.group_list().unwrap(), vec!["compatri".to_string()]);
+        let dest: String = {
+            let conn = s.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT dest FROM messages WHERE msg_id = 'deadbeef'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(dest, "COMPATRI");
     }
 
     #[test]

@@ -763,7 +763,7 @@ fn draw(f: &mut Frame, app: &App) {
 
     let left = Layout::vertical([
         Constraint::Length(8),
-        Constraint::Length(13),
+        Constraint::Length(15),
         Constraint::Min(4),
     ])
     .split(body[0]);
@@ -850,6 +850,16 @@ fn draw(f: &mut Frame, app: &App) {
         (
             "queue",
             snap.map(|s| format!("{} air {}", s.queue_out, s.queue_air))
+                .unwrap_or_else(|| "—".into()),
+        ),
+        (
+            "beacon",
+            snap.map(|s| s.beacon_lane(crate::status::unix_now_f64()).label)
+                .unwrap_or_else(|| "—".into()),
+        ),
+        (
+            "hold",
+            snap.map(|s| s.hold_lane(crate::status::unix_now_f64()).label)
                 .unwrap_or_else(|| "—".into()),
         ),
     ];
