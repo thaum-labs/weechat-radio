@@ -332,6 +332,14 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     s.queue_out = o;
                     s.queue_hold = h;
                 }
+                let max = rt_h.cfg.lock().rf.max_retries;
+                if let Ok(next) = rt_h.store.next_hold(&our, max) {
+                    let mut s = rt_h.snap.lock();
+                    match next {
+                        Some(h) => s.set_hold_due(h.due, h.kind, now),
+                        None => s.set_hold_due(0, "", now),
+                    }
+                }
             }
         });
     }
@@ -430,18 +438,45 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         let rt_b = rt.clone();
         tokio::spawn(async move {
             loop {
-                let (jitter_s, congested) = {
+                let (jitter_s, congested, uses_rf, vox) = {
                     let cfg = rt_b.cfg.lock();
-                    (cfg.rf.beacon_jitter_s, cfg.rf.congested_pct)
+                    (
+                        cfg.rf.beacon_jitter_s,
+                        cfg.rf.congested_pct,
+                        cfg.mode.uses_radio(),
+                        cfg.modem.is_vox(),
+                    )
                 };
-                let j = jitter_s as i64;
-                let wait = (60i64 + rand::thread_rng().gen_range(-j..=j)).clamp(15, 120) as u64;
+                {
+                    let mut s = rt_b.snap.lock();
+                    if !uses_rf {
+                        s.beacon_due = 0;
+                        s.beacon_span = 0;
+                        s.beacon_note = "off".into();
+                    } else if vox {
+                        s.beacon_due = 0;
+                        s.beacon_span = 0;
+                        s.beacon_note = "vox".into();
+                    }
+                }
+                // VOX beacons are a 1400 ms tone on the air; they walk on inbound frames.
+                if !uses_rf || vox {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    continue;
+                }
+                let wait = relay::beacon_interval_secs(jitter_s);
+                let due_at = crate::proto::now_ts().saturating_add(wait as u32);
+                {
+                    let mut s = rt_b.snap.lock();
+                    s.beacon_due = due_at;
+                    s.beacon_span = wait as u32;
+                    s.beacon_note.clear();
+                }
                 tokio::time::sleep(Duration::from_secs(wait)).await;
                 let (uses_rf, vox) = {
                     let cfg = rt_b.cfg.lock();
                     (cfg.mode.uses_radio(), cfg.modem.is_vox())
                 };
-                // VOX beacons are a 1400 ms tone on the air; they walk on inbound frames.
                 if !uses_rf || vox {
                     continue;
                 }
@@ -1444,8 +1479,8 @@ fn refresh_group_prios(rt: &Runtime) {
 /// Remember a closed channel when another station invites us over the air.
 fn record_remote_invite(store: &Store, our_call: &str, from: &str, body: &str) -> Option<String> {
     let ch = crate::slash::parse_invite_text(body)?;
-    let name = ch.trim_start_matches('#');
-    let _ = store.group_create(name, &[our_call.to_string(), from.to_ascii_uppercase()]);
+    let name = crate::slash::group_name(&ch);
+    let _ = store.group_create(&name, &[our_call.to_string(), from.to_ascii_uppercase()]);
     Some(ch)
 }
 
@@ -1486,7 +1521,7 @@ fn parse_chan_meta_leave(body: &str) -> Option<String> {
 async fn send_group_status(rt: &Runtime, name: &str, body: String, force_inet: bool) -> Result<()> {
     let cfg_g = rt.cfg.lock().clone();
     let origin = Callsign::parse(&cfg_g.callsign)?;
-    let dest = Callsign::from_raw(name.to_ascii_uppercase());
+    let dest = Callsign::from_raw(crate::slash::channel_dest(name));
     let seq = rt.store.next_seq(origin.as_str())?;
     let mut flags = Flags::new().with(FLAG_GROUP);
     apply_mode_flags(&mut flags, cfg_g.mode, origin.is_guest());
@@ -1513,10 +1548,7 @@ async fn leave_channel(rt: &Runtime, channel: &str) -> String {
     if crate::slash::is_bulletin(channel) {
         return "#bulletin is public — you cannot leave it".into();
     }
-    let name = channel
-        .trim_start_matches('#')
-        .trim_start_matches('&')
-        .to_ascii_lowercase();
+    let name = crate::slash::group_name(channel);
     if name.is_empty() {
         return "usage: /part".into();
     }
@@ -1927,8 +1959,9 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
             } else {
                 format!(" | tnc {}", s.tnc)
             };
+            let now = crate::status::unix_now_f64();
             format!(
-                "{} | {} | {} {} | {} | SNR {:.1} | tx {} | retry {} | audio {} | q {}/{} | occ {}% air {} | hub {}{}",
+                "{} | {} | {} {} | {} | SNR {:.1} | tx {} | retry {} | audio {} | q {}/{} | occ {}% air {} | beacon {} | hold {} | hub {}{}",
                 s.mode.display_name(),
                 if s.deferred { "wait" } else { &s.channel },
                 if s.frequency.is_empty() { "—" } else { s.frequency.trim_end_matches(" MHz") },
@@ -1942,6 +1975,8 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                 s.queue_hold,
                 s.occupancy_pct,
                 s.queue_air,
+                s.beacon_lane(now).label,
+                s.hold_lane(now).label,
                 if s.hub_ok { "up" } else { "down" },
                 tnc
             )
@@ -1950,7 +1985,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
             let sub = sp.next().unwrap_or("");
             match sub {
                 "create" => {
-                    let name = sp.next().unwrap_or("").to_string();
+                    let name = crate::slash::group_name(sp.next().unwrap_or(""));
                     let members: Vec<String> = sp.map(|s| s.to_ascii_uppercase()).collect();
                     if name.is_empty() {
                         return "usage: /radio group create <name> <callsigns...>".into();
@@ -1959,7 +1994,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                     format!("group {name} created")
                 }
                 "invite" | "add" => {
-                    let name = sp.next().unwrap_or("").to_string();
+                    let name = crate::slash::group_name(sp.next().unwrap_or(""));
                     let members: Vec<String> = sp.map(|s| s.to_ascii_uppercase()).collect();
                     if name.is_empty() || members.is_empty() {
                         return "usage: /radio group invite <name> <callsigns...>".into();
@@ -2041,10 +2076,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
             if channel.is_empty() {
                 return "usage: /prio [routine|priority|emergency]  (on a channel)".into();
             }
-            let name = channel
-                .trim_start_matches('#')
-                .trim_start_matches('&')
-                .to_ascii_lowercase();
+            let name = crate::slash::group_name(channel);
             if name.is_empty() {
                 return "usage: /prio [routine|priority|emergency]".into();
             }
@@ -2072,7 +2104,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                     // Sync over RF / hub so other stations pick up the default.
                     let cfg_g = cfg.lock().clone();
                     if let Ok(origin) = Callsign::parse(&cfg_g.callsign) {
-                        let dest = Callsign::from_raw(name.to_ascii_uppercase());
+                        let dest = Callsign::from_raw(crate::slash::channel_dest(&name));
                         if let Ok(seq) = store.next_seq(origin.as_str()) {
                             let mut flags = Flags::new().with(FLAG_GROUP);
                             apply_mode_flags(&mut flags, cfg_g.mode, origin.is_guest());
@@ -2299,7 +2331,7 @@ mod tests {
             "You are invited to #compatriots on WeeChat Radio. Join that channel to talk.",
         )
         .unwrap();
-        assert_eq!(ch, "#compatriots");
+        assert_eq!(ch, "#compatri");
         let members = store.group_members("compatriots").unwrap();
         assert!(members.iter().any(|m| m == "TF101"));
         assert!(members.iter().any(|m| m == "M7TJF"));
@@ -2325,6 +2357,6 @@ mod tests {
             .group_list()
             .unwrap()
             .iter()
-            .any(|n| n == "compatriots"));
+            .any(|n| n == "compatriots" || n == "compatri"));
     }
 }
