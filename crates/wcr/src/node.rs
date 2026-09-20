@@ -14,8 +14,8 @@ use crate::net::peers::DirectPeers;
 use crate::presets::{self, Preset, Rung};
 use crate::proto::frag::{self, FragAssembler};
 use crate::proto::{
-    load_or_create, Callsign, Envelope, Flags, IdentityKeys, MsgId, MsgType, Priority, FLAG_GROUP,
-    FLAG_INET_OK, FLAG_NO_INET, FLAG_REQ_ACK, FLAG_THIRD_PARTY,
+    load_or_create, split_body_chunks, Callsign, Envelope, Flags, IdentityKeys, MsgId, MsgType,
+    Priority, FLAG_GROUP, FLAG_INET_OK, FLAG_NO_INET, FLAG_REQ_ACK, FLAG_THIRD_PARTY, MAX_BODY,
 };
 use crate::relay::{self, Action, Engine};
 use crate::status::{self, SharedStatus};
@@ -641,7 +641,10 @@ fn stamp_own_mode_flags(env: &mut Envelope, our_call: &str, mode: Mode) {
 async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
     match ev.kind {
         IrcEventKind::Privmsg { target, text, .. } => {
-            send_chat(rt, &target, &text).await?;
+            if let Err(e) = send_chat(rt, &target, &text).await {
+                rt.irc.notice_all(&e.to_string()).await;
+                return Ok(());
+            }
         }
         IrcEventKind::Radio { args } => {
             let reply = radio_cmd(rt, &args).await;
@@ -781,7 +784,6 @@ async fn send_chat(rt: &Runtime, target: &str, text: &str) -> Result<()> {
     } else {
         Priority::Routine
     };
-    let seq = rt.store.next_seq(origin.as_str())?;
     let mut flags = Flags::new().with(FLAG_REQ_ACK);
     apply_mode_flags(&mut flags, cfg_g.mode, origin.is_guest());
     flags.set_priority(prio);
@@ -793,44 +795,59 @@ async fn send_chat(rt: &Runtime, target: &str, text: &str) -> Result<()> {
     } else {
         prio.default_ttl()
     };
-    let mut env = Envelope::new_msg(origin, dest, seq, text.as_bytes().to_vec(), hops, flags)?;
-    if cfg_g.mode.uses_internet() {
-        rt.keys.sign_envelope(&mut env)?;
+    let max = MAX_BODY.min(cfg_g.relay.max_message_bytes.max(1));
+    let chunks = split_body_chunks(text, max);
+    if chunks.is_empty() {
+        return Ok(());
     }
-    rt.store.insert(&env, Delivery::Queued)?;
-    dispatch(rt, &env).await?;
-    rt.store.set_delivery(&env.msg_id, Delivery::Sent)?;
-    if env.flags.req_ack() && cfg_g.mode.uses_radio() {
-        let now = crate::proto::now_ts();
-        let jitter = cfg_g.rf.retry_jitter;
-        let hold = relay::next_retry_hold_jittered(0, now, prio, jitter);
-        let _ = rt.store.set_hold(&env.msg_id, hold, env.hops_left);
-    }
-    let tries = rt.store.rf_tx_of(&env.msg_id).ok().filter(|n| *n > 0);
-    rt.irc
-        .tagmsg_progress(&env.msg_id.hex(), "sent", tries)
-        .await;
-    let band = {
-        let s = rt.snap.lock();
-        if s.band.is_empty() {
-            None
-        } else {
-            Some(s.band.clone())
+    for chunk in chunks {
+        let seq = rt.store.next_seq(origin.as_str())?;
+        let mut env = Envelope::new_msg(
+            origin.clone(),
+            dest.clone(),
+            seq,
+            chunk.into_bytes(),
+            hops,
+            flags,
+        )?;
+        if cfg_g.mode.uses_internet() {
+            rt.keys.sign_envelope(&mut env)?;
         }
-    };
-    let _ = rt.tel.send(TelemetryEvent {
-        ts: env.ts as u64,
-        kind: "tx".into(),
-        origin: Some(env.origin.to_string()),
-        dest: Some(env.dest.to_string()),
-        hops: Some(env.hops_left),
-        snr: None,
-        msgid: Some(env.msg_id.hex()),
-        band,
-    });
-    if prio == Priority::Emergency && cfg_g.mode.uses_radio() {
-        let delay = Duration::from_millis(cfg_g.rf.emergency_dup_ms as u64);
-        let _ = dispatch_rf_at(rt, &env, 0, delay, 1).await;
+        rt.store.insert(&env, Delivery::Queued)?;
+        dispatch(rt, &env).await?;
+        rt.store.set_delivery(&env.msg_id, Delivery::Sent)?;
+        if env.flags.req_ack() && cfg_g.mode.uses_radio() {
+            let now = crate::proto::now_ts();
+            let jitter = cfg_g.rf.retry_jitter;
+            let hold = relay::next_retry_hold_jittered(0, now, prio, jitter);
+            let _ = rt.store.set_hold(&env.msg_id, hold, env.hops_left);
+        }
+        let tries = rt.store.rf_tx_of(&env.msg_id).ok().filter(|n| *n > 0);
+        rt.irc
+            .tagmsg_progress(&env.msg_id.hex(), "sent", tries)
+            .await;
+        let band = {
+            let s = rt.snap.lock();
+            if s.band.is_empty() {
+                None
+            } else {
+                Some(s.band.clone())
+            }
+        };
+        let _ = rt.tel.send(TelemetryEvent {
+            ts: env.ts as u64,
+            kind: "tx".into(),
+            origin: Some(env.origin.to_string()),
+            dest: Some(env.dest.to_string()),
+            hops: Some(env.hops_left),
+            snr: None,
+            msgid: Some(env.msg_id.hex()),
+            band,
+        });
+        if prio == Priority::Emergency && cfg_g.mode.uses_radio() {
+            let delay = Duration::from_millis(cfg_g.rf.emergency_dup_ms as u64);
+            let _ = dispatch_rf_at(rt, &env, 0, delay, 1).await;
+        }
     }
     Ok(())
 }

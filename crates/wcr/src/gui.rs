@@ -913,7 +913,13 @@ impl GuiApp {
             return;
         }
         self.draft.clear();
-        self.send_line(&text);
+        if text.starts_with('/') {
+            self.send_line(&text);
+            return;
+        }
+        for chunk in crate::proto::split_body_chunks(&text, crate::proto::MAX_BODY) {
+            self.send_line(&chunk);
+        }
     }
 
     fn send_cmd(&mut self, cmd: &str) {
