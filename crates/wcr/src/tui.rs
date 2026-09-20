@@ -174,6 +174,24 @@ impl App {
         &mut self.buffers[self.current]
     }
 
+    fn open_channel(&mut self, name: &str) {
+        let name = crate::slash::normalize_channel(name);
+        if let Some(i) = self
+            .buffers
+            .iter()
+            .position(|b| b.name.eq_ignore_ascii_case(&name))
+        {
+            self.current = i;
+            return;
+        }
+        self.buffers.push(Buffer {
+            name,
+            lines: VecDeque::new(),
+            nicks: vec![self.nick.clone()],
+        });
+        self.current = self.buffers.len() - 1;
+    }
+
     fn airtime(&self) -> String {
         let n = self.input.len();
         let secs = presets::airtime_secs(self.preset, n, 0);
@@ -428,6 +446,20 @@ fn handle_irc(app: &mut App, line: &str) {
         return;
     }
     app.status = line.chars().take(80).collect();
+    if let Some((from, ch)) = crate::slash::parse_irc_invite(line) {
+        app.open_channel(&ch);
+        app.cur_mut().lines.push_back(ChatLine {
+            from: from.clone(),
+            text: format!("invited you to {ch}"),
+            ticks: String::new(),
+            via: String::new(),
+            tries: 0,
+            when: crate::store::chat_stamp(None),
+            emergency: false,
+        });
+        notify("WeeChat Radio", &format!("{from} invited you to {ch}"));
+        return;
+    }
     if line.contains("PRIVMSG") {
         if let Some((head, text)) = line.split_once(" :") {
             let from = head

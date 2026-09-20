@@ -356,6 +356,55 @@ pub fn is_bulletin(channel: &str) -> bool {
     channel.eq_ignore_ascii_case("#bulletin") || channel.eq_ignore_ascii_case("bulletin")
 }
 
+/// Human + wire body for a channel invite (also sent as a 1:1 PRIVMSG).
+pub fn invite_notice(channel: &str, nick: &str) -> String {
+    let ch = normalize_channel(channel);
+    let nick = nick.trim();
+    if nick.is_empty() {
+        format!("You are invited to {ch} on WeeChat Radio. Join that channel to talk.")
+    } else {
+        format!("You are invited to {ch} ({nick}) on WeeChat Radio. Join that channel to talk.")
+    }
+}
+
+/// `:from INVITE nick #channel` (optional `@tags`).
+pub fn parse_irc_invite(line: &str) -> Option<(String, String)> {
+    let rest = if let Some(tagged) = line.strip_prefix('@') {
+        tagged.find(" :").map(|i| &tagged[i + 1..]).unwrap_or(line)
+    } else {
+        line
+    };
+    let rest = rest.strip_prefix(':')?;
+    let (prefix, cmd) = rest.split_once(' ')?;
+    let rest = cmd.strip_prefix("INVITE ")?;
+    let mut bits = rest.split_whitespace();
+    bits.next()?;
+    let ch = normalize_channel(bits.next()?);
+    if ch.len() < 3 || is_bulletin(&ch) {
+        return None;
+    }
+    let from = prefix.split('!').next().unwrap_or(prefix).to_string();
+    Some((from, ch))
+}
+
+/// Pull `#channel` out of [`invite_notice`] (and the older wording without a nick).
+pub fn parse_invite_text(text: &str) -> Option<String> {
+    let mut t = text.trim();
+    for prefix in ["[rf] ", "[lan] ", "[inet] ", "[net] "] {
+        if let Some(rest) = t.strip_prefix(prefix) {
+            t = rest;
+            break;
+        }
+    }
+    let rest = t.strip_prefix("You are invited to ")?;
+    let raw = rest.split_whitespace().next()?;
+    let ch = normalize_channel(raw);
+    if ch.len() < 3 || is_bulletin(&ch) {
+        return None;
+    }
+    Some(ch)
+}
+
 /// Turn a GUI line into one or more IRC commands (no trailing CRLF).
 pub fn to_wire(raw: &str, channel: &str) -> Vec<String> {
     let t = raw.trim();
@@ -412,9 +461,7 @@ pub fn to_wire(raw: &str, channel: &str) -> Vec<String> {
             vec![
                 format!("RADIO group invite {g} {nick}"),
                 format!("INVITE {nick} {channel}"),
-                format!(
-                    "PRIVMSG {nick} :You are invited to {channel} on WeeChat Radio. Join that channel to talk."
-                ),
+                format!("PRIVMSG {nick} :{}", invite_notice(channel, &nick)),
             ]
         }
         "prio" | "priority" => {
@@ -552,6 +599,40 @@ mod tests {
             vec!["JOIN #ops".to_string()]
         );
         assert!(to_wire("hello", "#ops")[0].starts_with("PRIVMSG #ops"));
+    }
+
+    #[test]
+    fn invite_sends_group_and_privmsg() {
+        let wires = to_wire("/invite TF101", "#compatriots");
+        assert_eq!(wires[0], "RADIO group invite compatriots TF101");
+        assert_eq!(wires[1], "INVITE TF101 #compatriots");
+        assert_eq!(
+            wires[2],
+            format!("PRIVMSG TF101 :{}", invite_notice("#compatriots", "TF101"))
+        );
+        assert_eq!(
+            parse_invite_text(&invite_notice("#compatriots", "TF101")).as_deref(),
+            Some("#compatriots")
+        );
+        assert_eq!(
+            parse_invite_text(
+                "You are invited to #compatriots on WeeChat Radio. Join that channel to talk."
+            )
+            .as_deref(),
+            Some("#compatriots")
+        );
+        assert_eq!(
+            parse_invite_text(
+                "[rf] You are invited to #ops on WeeChat Radio. Join that channel to talk."
+            )
+            .as_deref(),
+            Some("#ops")
+        );
+        assert!(parse_invite_text("hello there").is_none());
+        assert!(parse_invite_text("You are invited to #bulletin on WeeChat Radio.").is_none());
+        let (from, ch) = parse_irc_invite(":M7TJF INVITE TF101 #compatriots").unwrap();
+        assert_eq!(from, "M7TJF");
+        assert_eq!(ch, "#compatriots");
     }
 
     #[test]
