@@ -228,17 +228,18 @@ fn reconstruct(g: &Group) -> Result<Vec<u8>> {
 }
 
 /// True when this envelope should go out as erasure-coded fragments on RF.
-pub fn should_fragment(env: &Envelope, group_on_hf: bool, encoded_len: usize, mtu: u32) -> bool {
+///
+/// Only split when the encoded frame does not fit. A short group line on
+/// vox-safe used to be forced into k+m shots even when it fit; chat then
+/// stayed empty unless two of those three arrived.
+pub fn should_fragment(env: &Envelope, encoded_len: usize, mtu: u32) -> bool {
     if matches!(
         env.kind,
         MsgType::Ack | MsgType::Beacon | MsgType::Frag | MsgType::Ping
     ) {
         return false;
     }
-    if encoded_len > mtu as usize {
-        return true;
-    }
-    group_on_hf && env.flags.group() && !env.body.is_empty()
+    encoded_len > mtu as usize
 }
 
 #[cfg(test)]
@@ -256,6 +257,16 @@ mod tests {
             Flags::new().with(FLAG_GROUP),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn short_group_that_fits_is_one_shot() {
+        let env = sample();
+        assert!(!should_fragment(&env, 40, 55));
+        assert!(should_fragment(&env, 80, 55));
+        let mut beacon = sample();
+        beacon.kind = MsgType::Beacon;
+        assert!(!should_fragment(&beacon, 80, 55));
     }
 
     #[test]
