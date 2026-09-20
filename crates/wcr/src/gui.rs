@@ -1238,7 +1238,17 @@ impl eframe::App for GuiApp {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_theme(egui::ThemePreference::Dark);
-        ctx.request_repaint_after(Duration::from_millis(250));
+        let tick = if self
+            .status
+            .as_ref()
+            .map(|s| s.has_live_countdown())
+            .unwrap_or(false)
+        {
+            Duration::from_millis(50)
+        } else {
+            Duration::from_millis(250)
+        };
+        ctx.request_repaint_after(tick);
         self.poll_grid_detect();
         self.poll_find_radio();
         self.poll_tray(ctx);
@@ -1708,6 +1718,32 @@ impl eframe::App for GuiApp {
                                 Some(
                                     "Radio frames waiting to leave this station’s TNC right now. Grows when the frequency is busy (PTT shows WAIT) or the modem is pacing. 0 means nothing is keyed or about to key.",
                                 ),
+                            );
+                            let now = crate::status::unix_now_f64();
+                            let beacon = s.beacon_lane(now);
+                            schedule_row(
+                                ui,
+                                "BEACN",
+                                &beacon,
+                                if beacon.live { ACCENT } else { DIM },
+                                "Next automatic identity beacon. Counts down to the scheduled key-up. Off on VOX so the tone does not walk on inbound chat.",
+                            );
+                            let hold = s.hold_lane(now);
+                            let hold_color = if !hold.live {
+                                DIM
+                            } else if hold.frac < 0.08 {
+                                ORANGE
+                            } else if s.hold_kind == "retry" {
+                                ORANGE
+                            } else {
+                                PURPLE
+                            };
+                            schedule_row(
+                                ui,
+                                "HOLD",
+                                &hold,
+                                hold_color,
+                                "Next store-and-forward relay or your own unacked retry. The ring empties as the hold timer runs out.",
                             );
                             kv(
                                 ui,
@@ -2230,6 +2266,74 @@ fn kv_tip(ui: &mut egui::Ui, k: &str, v: &str, color: Color32, tip: Option<&str>
             egui::Sense::hover(),
         );
         hover_tip(&resp, tip);
+    }
+}
+
+fn schedule_row(
+    ui: &mut egui::Ui,
+    k: &str,
+    lane: &crate::status::DueLane,
+    color: Color32,
+    tip: &str,
+) {
+    let inner = ui.horizontal(|ui| {
+        station_key(ui, k);
+        let h = ui.spacing().interact_size.y;
+        let pie = 18.0;
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(pie, h), egui::Sense::hover());
+        paint_due_ring(ui.painter(), rect.center(), 6.5, lane, color);
+        let w = ui.available_width();
+        ui.add_sized(
+            [w, h],
+            egui::Label::new(RichText::new(&lane.label).color(color).monospace()).truncate(),
+        );
+    });
+    let resp = ui.interact(
+        inner.response.rect,
+        ui.id().with(("schedule", k)),
+        egui::Sense::hover(),
+    );
+    hover_tip(&resp, tip);
+}
+
+fn paint_due_ring(
+    painter: &egui::Painter,
+    c: egui::Pos2,
+    r: f32,
+    lane: &crate::status::DueLane,
+    color: Color32,
+) {
+    painter.circle_stroke(c, r, Stroke::new(1.6_f32, LINE));
+    if !lane.live {
+        return;
+    }
+    let pulse = if lane.frac < 0.08 {
+        0.55 + 0.45 * (crate::status::unix_now_f64() * 5.0).sin().abs() as f32
+    } else {
+        1.0
+    };
+    let stroke = Stroke::new(2.2_f32, with_opacity(color, pulse));
+    paint_remaining_arc(painter, c, r, lane.frac, stroke);
+    if lane.frac < 0.08 {
+        painter.circle_filled(c, 2.2, with_opacity(color, pulse));
+    }
+}
+
+fn paint_remaining_arc(painter: &egui::Painter, c: egui::Pos2, r: f32, frac: f32, stroke: Stroke) {
+    let frac = frac.clamp(0.0, 1.0);
+    if frac < 0.02 {
+        return;
+    }
+    let n = 48;
+    let sweep = frac * std::f32::consts::TAU;
+    let mut pts = Vec::with_capacity(n + 1);
+    for i in 0..=n {
+        let t = i as f32 / n as f32;
+        let ang = -std::f32::consts::FRAC_PI_2 - t * sweep;
+        pts.push(egui::pos2(c.x + r * ang.cos(), c.y + r * ang.sin()));
+    }
+    for w in pts.windows(2) {
+        painter.line_segment([w[0], w[1]], stroke);
     }
 }
 
@@ -4020,7 +4124,7 @@ mod tests {
     fn parse_irc_invite_line() {
         let (from, ch) = parse_invite(":M7TJF INVITE TF101 #compatriots").unwrap();
         assert_eq!(from, "M7TJF");
-        assert_eq!(ch, "#compatriots");
+        assert_eq!(ch, "#compatri");
         assert!(parse_invite(":M7TJF PRIVMSG TF101 :hello").is_none());
     }
 
@@ -4028,7 +4132,7 @@ mod tests {
     fn parse_irc_part_line() {
         let (nick, ch) = parse_part(":M7TJF PART #compatriots").unwrap();
         assert_eq!(nick, "M7TJF");
-        assert_eq!(ch, "#compatriots");
+        assert_eq!(ch, "#compatri");
         let (nick, ch) = parse_part(":M7TJF PART #ops :goodbye").unwrap();
         assert_eq!(nick, "M7TJF");
         assert_eq!(ch, "#ops");

@@ -375,6 +375,11 @@ pub fn channel_dest(raw: &str) -> String {
         .to_ascii_uppercase()
 }
 
+/// Store / membership key: packed dest, lowercase, no `#`.
+pub fn group_name(raw: &str) -> String {
+    channel_dest(raw).to_ascii_lowercase()
+}
+
 pub fn is_bulletin(channel: &str) -> bool {
     channel.eq_ignore_ascii_case("#bulletin") || channel.eq_ignore_ascii_case("bulletin")
 }
@@ -470,7 +475,12 @@ pub fn to_wire(raw: &str, channel: &str) -> Vec<String> {
         return Vec::new();
     }
     if !t.starts_with('/') {
-        return vec![format!("PRIVMSG {channel} :{t}")];
+        let target = if channel.starts_with('#') || channel.starts_with('&') {
+            normalize_channel(channel)
+        } else {
+            channel.to_string()
+        };
+        return vec![format!("PRIVMSG {target} :{t}")];
     }
     let rest = t[1..].trim();
     let rest = rest
@@ -509,7 +519,7 @@ pub fn to_wire(raw: &str, channel: &str) -> Vec<String> {
             if is_bulletin(channel) {
                 return Vec::new();
             }
-            vec![format!("PART {channel}")]
+            vec![format!("PART {}", normalize_channel(channel))]
         }
         "invite" => {
             let nick = tail
@@ -520,19 +530,21 @@ pub fn to_wire(raw: &str, channel: &str) -> Vec<String> {
             if nick.is_empty() {
                 return Vec::new();
             }
-            let g = channel.trim_start_matches('#');
+            let ch = normalize_channel(channel);
+            let g = group_name(&ch);
             vec![
                 format!("RADIO group invite {g} {nick}"),
-                format!("INVITE {nick} {channel}"),
-                format!("PRIVMSG {nick} :{}", invite_notice(channel, &nick)),
+                format!("INVITE {nick} {ch}"),
+                format!("PRIVMSG {nick} :{}", invite_notice(&ch, &nick)),
             ]
         }
         "prio" | "priority" => {
             if channel.starts_with('#') || channel.starts_with('&') {
+                let ch = normalize_channel(channel);
                 if tail.is_empty() {
-                    vec![format!("RADIO prio {channel}")]
+                    vec![format!("RADIO prio {ch}")]
                 } else {
-                    vec![format!("RADIO prio {channel} {tail}")]
+                    vec![format!("RADIO prio {ch} {tail}")]
                 }
             } else {
                 Vec::new()
@@ -659,6 +671,7 @@ mod tests {
         assert_eq!(normalize_channel("#compatriots"), "#compatri");
         assert_eq!(normalize_channel("friends"), "#friends");
         assert_eq!(channel_dest("#compatriots"), "COMPATRI");
+        assert_eq!(group_name("#compatriots"), "compatri");
         assert_eq!(CHANNEL_NAME_MAX, 8);
     }
 
@@ -670,27 +683,31 @@ mod tests {
             vec!["JOIN #ops".to_string()]
         );
         assert!(to_wire("hello", "#ops")[0].starts_with("PRIVMSG #ops"));
+        assert_eq!(
+            to_wire("hello", "#compatriots")[0],
+            "PRIVMSG #compatri :hello"
+        );
     }
 
     #[test]
     fn invite_sends_group_and_privmsg() {
         let wires = to_wire("/invite TF101", "#compatriots");
-        assert_eq!(wires[0], "RADIO group invite compatriots TF101");
-        assert_eq!(wires[1], "INVITE TF101 #compatriots");
+        assert_eq!(wires[0], "RADIO group invite compatri TF101");
+        assert_eq!(wires[1], "INVITE TF101 #compatri");
         assert_eq!(
             wires[2],
             format!("PRIVMSG TF101 :{}", invite_notice("#compatriots", "TF101"))
         );
         assert_eq!(
             parse_invite_text(&invite_notice("#compatriots", "TF101")).as_deref(),
-            Some("#compatriots")
+            Some("#compatri")
         );
         assert_eq!(
             parse_invite_text(
                 "You are invited to #compatriots on WeeChat Radio. Join that channel to talk."
             )
             .as_deref(),
-            Some("#compatriots")
+            Some("#compatri")
         );
         assert_eq!(
             parse_invite_text(
@@ -703,24 +720,24 @@ mod tests {
         assert!(parse_invite_text("You are invited to #bulletin on WeeChat Radio.").is_none());
         let (from, ch) = parse_irc_invite(":M7TJF INVITE TF101 #compatriots").unwrap();
         assert_eq!(from, "M7TJF");
-        assert_eq!(ch, "#compatriots");
+        assert_eq!(ch, "#compatri");
     }
 
     #[test]
     fn part_and_leave_are_irc_part() {
-        assert_eq!(to_wire("/part", "#compatriots"), vec!["PART #compatriots"]);
+        assert_eq!(to_wire("/part", "#compatriots"), vec!["PART #compatri"]);
         assert_eq!(to_wire("/leave", "#ops"), vec!["PART #ops"]);
         assert!(to_wire("/part", "#bulletin").is_empty());
         assert_eq!(
             parse_leave_text("left #compatriots").as_deref(),
-            Some("#compatriots")
+            Some("#compatri")
         );
         assert_eq!(parse_leave_text("[rf] left #ops").as_deref(), Some("#ops"));
         assert!(parse_leave_text("hello").is_none());
         assert!(parse_leave_text("left #bulletin").is_none());
         let (nick, ch) = parse_peer_left_notice("M7TJF left #compatriots").unwrap();
         assert_eq!(nick, "M7TJF");
-        assert_eq!(ch, "#compatriots");
+        assert_eq!(ch, "#compatri");
         assert!(parse_peer_left_notice("channel default left alone").is_none());
     }
 
