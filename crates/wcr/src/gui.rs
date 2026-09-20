@@ -1082,38 +1082,7 @@ impl GuiApp {
     }
 
     fn apply_delivery(&mut self, msgid: &str, state: &str, tries: u32) {
-        let Some(ticks) = delivery_ticks(state) else {
-            return;
-        };
-        if !msgid.is_empty() {
-            if let Some(line) = self
-                .chat
-                .iter_mut()
-                .rev()
-                .find(|l| !l.msgid.is_empty() && l.msgid.eq_ignore_ascii_case(msgid))
-            {
-                line.ticks = ticks.into();
-                if tries > 0 {
-                    line.tries = tries;
-                }
-                return;
-            }
-        }
-        let me = self.callsign.clone();
-        if let Some(line) = self
-            .chat
-            .iter_mut()
-            .rev()
-            .find(|l| !l.sys && l.nick.eq_ignore_ascii_case(&me))
-        {
-            if line.msgid.is_empty() {
-                line.msgid = msgid.to_string();
-            }
-            line.ticks = ticks.into();
-            if tries > 0 {
-                line.tries = tries;
-            }
-        }
+        apply_delivery_to(&mut self.chat, &self.callsign, msgid, state, tries);
     }
 }
 
@@ -3580,6 +3549,59 @@ fn via_color(via: &str) -> Color32 {
     }
 }
 
+fn apply_delivery_to(chat: &mut [ChatLine], me: &str, msgid: &str, state: &str, tries: u32) {
+    let Some(ticks) = delivery_ticks(state) else {
+        return;
+    };
+    let next = crate::store::Delivery::parse(state);
+    if !msgid.is_empty() {
+        if let Some(line) = chat
+            .iter_mut()
+            .rev()
+            .find(|l| !l.msgid.is_empty() && l.msgid.eq_ignore_ascii_case(msgid))
+        {
+            apply_line_delivery(line, ticks, next, tries);
+            return;
+        }
+    }
+    if let Some(line) = chat
+        .iter_mut()
+        .rev()
+        .find(|l| !l.sys && l.nick.eq_ignore_ascii_case(me))
+    {
+        if !line.msgid.is_empty() && !msgid.is_empty() && !line.msgid.eq_ignore_ascii_case(msgid) {
+            return;
+        }
+        if line.msgid.is_empty() {
+            line.msgid = msgid.to_string();
+        }
+        apply_line_delivery(line, ticks, next, tries);
+    }
+}
+
+fn apply_line_delivery(line: &mut ChatLine, ticks: &str, next: crate::store::Delivery, tries: u32) {
+    if let Some(cur) = ticks_delivery(&line.ticks) {
+        if !cur.can_advance(next) {
+            return;
+        }
+    }
+    line.ticks = ticks.into();
+    if tries > 0 {
+        line.tries = tries;
+    }
+}
+
+fn ticks_delivery(ticks: &str) -> Option<crate::store::Delivery> {
+    match ticks {
+        "[..]" => Some(crate::store::Delivery::Queued),
+        "[tx]" => Some(crate::store::Delivery::Sent),
+        "[rl]" => Some(crate::store::Delivery::Relayed),
+        "[ok]" => Some(crate::store::Delivery::Delivered),
+        "[all]" => Some(crate::store::Delivery::All),
+        _ => None,
+    }
+}
+
 fn delivery_ticks(state: &str) -> Option<&'static str> {
     let d = crate::store::Delivery::parse(state);
     match state {
@@ -3815,5 +3837,20 @@ mod tests {
         assert_eq!(parse_privmsg(net).unwrap().via, "inet");
         let lan = "@+radio/via=lan :M0XYZ PRIVMSG #bulletin :mesh";
         assert_eq!(parse_privmsg(lan).unwrap().via, "lan");
+    }
+
+    #[test]
+    fn delivery_does_not_paint_ack_echo_over_ok() {
+        let mut mine = ChatLine::user("M7TJF", "hello", "#bulletin");
+        mine.msgid = "cafe1234".into();
+        mine.ticks = "[ok]".into();
+        let mut chat = vec![mine];
+        apply_delivery_to(&mut chat, "M7TJF", "ackmsgid99", "relayed", 0);
+        assert_eq!(chat[0].ticks, "[ok]");
+        assert_eq!(chat[0].msgid, "cafe1234");
+        apply_delivery_to(&mut chat, "M7TJF", "cafe1234", "relayed", 0);
+        assert_eq!(chat[0].ticks, "[ok]");
+        apply_delivery_to(&mut chat, "M7TJF", "cafe1234", "delivered", 0);
+        assert_eq!(chat[0].ticks, "[ok]");
     }
 }

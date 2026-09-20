@@ -43,11 +43,11 @@ MODE_COLOR = {
 }
 
 TICKS = {
-    "queued": "·",
-    "sent": "✓",
-    "relayed": "✓✓",
-    "delivered": "✓✓",
-    "all": "✓✓✓",
+    "queued": "[..]",
+    "sent": "[tx]",
+    "relayed": "[rl]",
+    "delivered": "[ok]",
+    "all": "[all]",
 }
 
 ACCENT = "111"
