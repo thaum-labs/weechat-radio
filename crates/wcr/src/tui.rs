@@ -192,6 +192,33 @@ impl App {
         self.current = self.buffers.len() - 1;
     }
 
+    fn close_channel(&mut self, name: &str) {
+        let name = crate::slash::normalize_channel(name);
+        if crate::slash::is_bulletin(&name) {
+            return;
+        }
+        let was_current = self
+            .buffers
+            .get(self.current)
+            .map(|b| b.name.eq_ignore_ascii_case(&name))
+            .unwrap_or(false);
+        self.buffers.retain(|b| !b.name.eq_ignore_ascii_case(&name));
+        if self.buffers.is_empty() {
+            self.buffers.push(Buffer {
+                name: "#bulletin".into(),
+                lines: VecDeque::new(),
+                nicks: vec![self.nick.clone()],
+            });
+        }
+        if was_current || self.current >= self.buffers.len() {
+            self.current = self
+                .buffers
+                .iter()
+                .position(|b| crate::slash::is_bulletin(&b.name))
+                .unwrap_or(0);
+        }
+    }
+
     fn airtime(&self) -> String {
         let n = self.input.len();
         let secs = presets::airtime_secs(self.preset, n, 0);
@@ -337,6 +364,32 @@ pub async fn run(cfg: &Config) -> Result<()> {
                                     app.cur_mut().lines.clear();
                                     out.write_all(format!("RADIO clear {target}\r\n").as_bytes())
                                         .await?;
+                                } else if cmd.eq_ignore_ascii_case("part")
+                                    || cmd.eq_ignore_ascii_case("leave")
+                                    || cmd.to_ascii_lowercase().starts_with("part ")
+                                    || cmd.to_ascii_lowercase().starts_with("leave ")
+                                {
+                                    let target = cmd
+                                        .split_once(char::is_whitespace)
+                                        .map(|(_, t)| t.trim().to_string())
+                                        .filter(|t| !t.is_empty())
+                                        .unwrap_or_else(|| app.cur().name.clone());
+                                    if crate::slash::is_bulletin(&target) {
+                                        app.cur_mut().lines.push_back(ChatLine {
+                                            from: "*".into(),
+                                            text: "#bulletin is public — you cannot leave it"
+                                                .into(),
+                                            ticks: String::new(),
+                                            via: String::new(),
+                                            tries: 0,
+                                            when: crate::store::chat_stamp(None),
+                                            emergency: false,
+                                        });
+                                    } else {
+                                        out.write_all(format!("PART {target}\r\n").as_bytes())
+                                            .await?;
+                                        app.close_channel(&target);
+                                    }
                                 } else {
                                     out.write_all(format!("{cmd}\r\n").as_bytes()).await?;
                                 }
@@ -432,6 +485,23 @@ fn irc_time(line: &str) -> String {
     crate::store::chat_stamp(raw)
 }
 
+fn parse_tui_part(line: &str) -> Option<(String, String)> {
+    let rest = if let Some(tagged) = line.strip_prefix('@') {
+        tagged.find(" :").map(|i| &tagged[i + 1..]).unwrap_or(line)
+    } else {
+        line
+    };
+    let rest = rest.strip_prefix(':')?;
+    let (prefix, cmd) = rest.split_once(' ')?;
+    let rest = cmd.strip_prefix("PART ")?;
+    let ch = crate::slash::normalize_channel(rest.split_whitespace().next()?);
+    if ch.len() < 3 {
+        return None;
+    }
+    let nick = prefix.split('!').next().unwrap_or(prefix).to_string();
+    Some((nick, ch))
+}
+
 fn irc_via(line: &str) -> String {
     line.split("radio/via=")
         .nth(1)
@@ -458,6 +528,50 @@ fn handle_irc(app: &mut App, line: &str) {
             emergency: false,
         });
         notify("WeeChat Radio", &format!("{from} invited you to {ch}"));
+        return;
+    }
+    if let Some((nick, ch)) =
+        crate::slash::parse_peer_left_notice(line.split(" :").nth(1).unwrap_or(""))
+    {
+        if line.contains(" NOTICE ") {
+            if nick.eq_ignore_ascii_case(&app.nick) {
+                app.close_channel(&ch);
+            } else if let Some(buf) = app
+                .buffers
+                .iter_mut()
+                .find(|b| b.name.eq_ignore_ascii_case(&ch))
+            {
+                buf.lines.push_back(ChatLine {
+                    from: nick,
+                    text: format!("left {ch}"),
+                    ticks: String::new(),
+                    via: String::new(),
+                    tries: 0,
+                    when: crate::store::chat_stamp(None),
+                    emergency: false,
+                });
+            }
+            return;
+        }
+    }
+    if let Some((nick, ch)) = parse_tui_part(line) {
+        if nick.eq_ignore_ascii_case(&app.nick) {
+            app.close_channel(&ch);
+        } else if let Some(buf) = app
+            .buffers
+            .iter_mut()
+            .find(|b| b.name.eq_ignore_ascii_case(&ch))
+        {
+            buf.lines.push_back(ChatLine {
+                from: nick,
+                text: format!("left {ch}"),
+                ticks: String::new(),
+                via: String::new(),
+                tries: 0,
+                when: crate::store::chat_stamp(None),
+                emergency: false,
+            });
+        }
         return;
     }
     if line.contains("PRIVMSG") {

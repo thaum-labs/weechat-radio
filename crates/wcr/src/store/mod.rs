@@ -754,6 +754,38 @@ impl Store {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
+    pub fn is_group_member(&self, name: &str, callsign: &str) -> Result<bool> {
+        let want = callsign.to_ascii_uppercase();
+        Ok(self
+            .group_members(name)?
+            .iter()
+            .any(|m| m.eq_ignore_ascii_case(&want)))
+    }
+
+    pub fn group_remove_member(&self, name: &str, callsign: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM group_members WHERE group_name = ?1 AND upper(callsign) = upper(?2)",
+            params![name, callsign],
+        )?;
+        Ok(())
+    }
+
+    /// Drop this computer's copy of a group. Other stations keep theirs.
+    pub fn group_forget(&self, name: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM group_receipts WHERE group_name = ?1",
+            params![name],
+        )?;
+        conn.execute(
+            "DELETE FROM group_members WHERE group_name = ?1",
+            params![name],
+        )?;
+        conn.execute("DELETE FROM groups WHERE name = ?1", params![name])?;
+        Ok(())
+    }
+
     pub fn group_list(&self) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT name FROM groups ORDER BY name")?;
@@ -1223,6 +1255,13 @@ mod tests {
         assert!(!s.group_all_received("net", &env.msg_id).unwrap());
         s.receipt("net", &env.msg_id, "M0XYZ").unwrap();
         assert!(s.group_all_received("net", &env.msg_id).unwrap());
+        assert!(s.is_group_member("net", "G4ABC").unwrap());
+        s.group_remove_member("net", "G4ABC").unwrap();
+        assert!(!s.is_group_member("net", "G4ABC").unwrap());
+        assert!(s.is_group_member("net", "M0XYZ").unwrap());
+        s.group_forget("net").unwrap();
+        assert!(s.group_members("net").unwrap().is_empty());
+        assert!(!s.group_list().unwrap().iter().any(|n| n == "net"));
     }
 
     #[test]

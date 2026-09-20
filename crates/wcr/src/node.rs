@@ -612,6 +612,9 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
             let reply = radio_cmd(rt, &args).await;
             rt.irc.send_radio_reply(ev.client_id, &reply).await;
         }
+        IrcEventKind::Part { channel } => {
+            let _ = leave_channel(rt, &channel).await;
+        }
         IrcEventKind::Join { channel } => {
             let hist = rt.store.history(Some(&channel), 500)?;
             let irc_target = if channel.starts_with('#') || channel.starts_with('&') {
@@ -679,12 +682,7 @@ async fn send_form(rt: &Runtime, target: &str, form: Form) -> Result<String> {
     let origin = Callsign::parse(&cfg_g.callsign)?;
     let is_group = target.starts_with('#') || target.starts_with('&');
     let dest = if is_group {
-        Callsign::from_raw(
-            target
-                .trim_start_matches('#')
-                .trim_start_matches('&')
-                .to_ascii_uppercase(),
-        )
+        Callsign::from_raw(crate::slash::channel_dest(target))
     } else {
         Callsign::parse(target)?
     };
@@ -728,12 +726,7 @@ async fn send_chat(rt: &Runtime, target: &str, text: &str) -> Result<()> {
     let origin = Callsign::parse(&cfg_g.callsign)?;
     let is_group = target.starts_with('#') || target.starts_with('&');
     let dest = if is_group {
-        Callsign::from_raw(
-            target
-                .trim_start_matches('#')
-                .trim_start_matches('&')
-                .to_ascii_uppercase(),
-        )
+        Callsign::from_raw(crate::slash::channel_dest(target))
     } else {
         Callsign::parse(target)?
     };
@@ -940,14 +933,33 @@ async fn send_rf(
 }
 
 async fn dispatch(rt: &Runtime, env: &Envelope) -> Result<()> {
+    dispatch_with(rt, env, false).await
+}
+
+async fn dispatch_with(rt: &Runtime, env: &Envelope, force_inet: bool) -> Result<()> {
     let cfg = rt.cfg.lock().clone();
     let mut env = env.clone();
     stamp_own_mode_flags(&mut env, &rt.engine.our_call, cfg.mode);
+    if force_inet {
+        env.flags.set(FLAG_NO_INET, false);
+        env.flags.set(FLAG_INET_OK, true);
+    }
     if cfg.mode.uses_radio() {
         let _ = dispatch_rf_rung(rt, &env, 0).await;
     }
-    if cfg.mode.uses_internet() && env.flags.inet_ok() && inet_gap_for(rt, &env) {
-        offer_hub(rt, &env).await;
+    let via_inet =
+        force_inet || (cfg.mode.uses_internet() && env.flags.inet_ok() && inet_gap_for(rt, &env));
+    if via_inet {
+        if force_inet && !cfg.mode.uses_internet() {
+            if let Some(h) = rt.hub() {
+                let _ = h.send(&env).await;
+            }
+            if let Some(p) = rt.peers_tx() {
+                let _ = p.send(env.clone()).await;
+            }
+        } else {
+            offer_hub(rt, &env).await;
+        }
         if let Some(l) = &rt.lan {
             let _ = l.send(env.clone()).await;
         }
@@ -1073,8 +1085,24 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
             } else {
                 env.body_text()
             };
-            // Synced channel defaults travel as Status frames with a WCRMETA body.
-            if env.kind == MsgType::Status {
+            let name = env.dest.to_string().to_ascii_lowercase();
+            let leave_meta = env.kind == MsgType::Status
+                && env.flags.group()
+                && parse_chan_meta_leave(&text).is_some();
+            let closed = env.flags.group() && !dest_is_bulletin(env.dest.as_str());
+            let member = rt
+                .store
+                .is_group_member(&name, &rt.engine.our_call)
+                .unwrap_or(false);
+            let mute_closed = closed && !member && !leave_meta;
+            if leave_meta {
+                apply_remote_leave(&rt.store, &name, env.origin.as_str());
+                rt.irc
+                    .notice_all(&format!("{} left #{name}", env.origin))
+                    .await;
+            } else if mute_closed {
+                // Closed room we already left: relay only, do not show or ACK.
+            } else if env.kind == MsgType::Status {
                 if let Some(prio) = parse_chan_meta_prio(&text) {
                     if env.flags.group() {
                         let name = env.dest.to_string().to_ascii_lowercase();
@@ -1136,7 +1164,9 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                     .store
                     .checkin(env.origin.as_str(), &env.body_text(), None, None);
             }
-            if env.flags.req_ack() && (env.dest.as_str() == rt.engine.our_call || env.flags.group())
+            if !mute_closed
+                && env.flags.req_ack()
+                && (env.dest.as_str() == rt.engine.our_call || env.flags.group())
             {
                 let seq = rt.store.next_seq(&rt.engine.our_call)?;
                 let mut ack = Envelope::ack_for(
@@ -1171,7 +1201,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                     let _ = dispatch_rf_at(rt, &ack, 0, dither, 0).await;
                 }
             }
-            if env.flags.group() {
+            if !mute_closed && env.flags.group() {
                 let _ = rt.store.receipt(
                     &env.dest.to_string().to_ascii_lowercase(),
                     &env.msg_id,
@@ -1417,6 +1447,83 @@ fn record_remote_invite(store: &Store, our_call: &str, from: &str, body: &str) -
     let name = ch.trim_start_matches('#');
     let _ = store.group_create(name, &[our_call.to_string(), from.to_ascii_uppercase()]);
     Some(ch)
+}
+
+fn apply_remote_leave(store: &Store, name: &str, who: &str) {
+    let _ = store.group_remove_member(name, who);
+    if store
+        .group_members(name)
+        .ok()
+        .map(|m| m.is_empty())
+        .unwrap_or(true)
+    {
+        let _ = store.group_forget(name);
+    }
+}
+
+fn forget_channel_locally(store: &Store, name: &str, our_call: &str) {
+    let _ = store.purge_channel(&format!("#{name}"), Some(our_call));
+    let _ = store.group_forget(name);
+}
+
+fn chan_meta_leave_body(callsign: &str) -> String {
+    format!("WCRMETA leave={}", callsign.trim().to_ascii_uppercase())
+}
+
+fn parse_chan_meta_leave(body: &str) -> Option<String> {
+    let rest = body.strip_prefix("WCRMETA ")?;
+    for part in rest.split_whitespace() {
+        if let Some(v) = part.strip_prefix("leave=") {
+            let c = v.trim().to_ascii_uppercase();
+            if !c.is_empty() {
+                return Some(c);
+            }
+        }
+    }
+    None
+}
+
+async fn send_group_status(rt: &Runtime, name: &str, body: String, force_inet: bool) -> Result<()> {
+    let cfg_g = rt.cfg.lock().clone();
+    let origin = Callsign::parse(&cfg_g.callsign)?;
+    let dest = Callsign::from_raw(name.to_ascii_uppercase());
+    let seq = rt.store.next_seq(origin.as_str())?;
+    let mut flags = Flags::new().with(FLAG_GROUP);
+    apply_mode_flags(&mut flags, cfg_g.mode, origin.is_guest());
+    flags.set_priority(Priority::Priority);
+    let mut env = Envelope::new_msg(
+        origin,
+        dest,
+        seq,
+        body.into_bytes(),
+        Priority::Priority.default_ttl(),
+        flags,
+    )?;
+    env.kind = MsgType::Status;
+    if cfg_g.mode.uses_internet() || force_inet {
+        let _ = rt.keys.sign_envelope(&mut env);
+    }
+    rt.store.insert(&env, Delivery::Queued)?;
+    dispatch_with(rt, &env, force_inet).await?;
+    rt.store.set_delivery(&env.msg_id, Delivery::Sent)?;
+    Ok(())
+}
+
+async fn leave_channel(rt: &Runtime, channel: &str) -> String {
+    if crate::slash::is_bulletin(channel) {
+        return "#bulletin is public — you cannot leave it".into();
+    }
+    let name = channel
+        .trim_start_matches('#')
+        .trim_start_matches('&')
+        .to_ascii_lowercase();
+    if name.is_empty() {
+        return "usage: /part".into();
+    }
+    let us = rt.cfg.lock().callsign.clone();
+    let _ = send_group_status(rt, &name, chan_meta_leave_body(&us), true).await;
+    forget_channel_locally(&rt.store, &name, &us);
+    format!("left #{name}")
 }
 
 /// Channel-default priority control frame body (`WCRMETA prio=priority`).
@@ -1865,7 +1972,14 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                     let name = sp.next().unwrap_or("");
                     store.group_members(name).unwrap_or_default().join(", ")
                 }
-                _ => "usage: /radio group create|list|members|invite".into(),
+                "leave" | "part" => {
+                    let name = sp.next().unwrap_or("").to_string();
+                    if name.is_empty() {
+                        return "usage: /radio group leave <name>".into();
+                    }
+                    leave_channel(rt, &name).await
+                }
+                _ => "usage: /radio group create|list|members|invite|leave".into(),
             }
         }
         "queue" => {
@@ -1897,6 +2011,10 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
             let us = cfg.lock().callsign.clone();
             let n = store.purge_channel(t, Some(&us)).unwrap_or(0);
             format!("cleared {n} local messages in {t}")
+        }
+        "part" | "leave" => {
+            let ch = sp.next().unwrap_or("");
+            leave_channel(rt, ch).await
         }
         "history" => {
             if sp.next() == Some("purge") {
@@ -2117,7 +2235,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
             }
         }
         "" | "help" => {
-            "RADIO commands: mode preset status form group queue trace history freq qsy prio ptt checkin net mute theme activity update. Channels: /join #name  /invite CALL /prio"
+            "RADIO commands: mode preset status form group queue trace history freq qsy prio ptt checkin net mute theme activity update. Channels: /join #name  /invite CALL /part /prio"
                 .into()
         }
         other => format!("unknown RADIO subcommand '{other}'. Try /radio help"),
@@ -2186,5 +2304,27 @@ mod tests {
         assert!(members.iter().any(|m| m == "TF101"));
         assert!(members.iter().any(|m| m == "M7TJF"));
         assert!(record_remote_invite(&store, "TF101", "M7TJF", "hello").is_none());
+    }
+
+    #[test]
+    fn remote_leave_keeps_group_when_others_remain() {
+        let store = Store::open_memory().unwrap();
+        store
+            .group_create("compatriots", &["M7TJF".into(), "TF101".into()])
+            .unwrap();
+        assert_eq!(
+            parse_chan_meta_leave("WCRMETA leave=M7TJF").as_deref(),
+            Some("M7TJF")
+        );
+        apply_remote_leave(&store, "compatriots", "M7TJF");
+        assert!(!store.is_group_member("compatriots", "M7TJF").unwrap());
+        assert!(store.is_group_member("compatriots", "TF101").unwrap());
+        apply_remote_leave(&store, "compatriots", "TF101");
+        assert!(store.group_members("compatriots").unwrap().is_empty());
+        assert!(!store
+            .group_list()
+            .unwrap()
+            .iter()
+            .any(|n| n == "compatriots"));
     }
 }

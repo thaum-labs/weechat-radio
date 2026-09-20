@@ -430,6 +430,10 @@ enum IrcEvent {
         from: String,
         channel: String,
     },
+    Parted {
+        nick: String,
+        channel: String,
+    },
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -488,6 +492,12 @@ fn load_session() -> GuiSession {
         .collect();
     s.joined.sort();
     s.joined.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    let mut members = HashMap::new();
+    for (k, v) in s.members {
+        let key = crate::slash::normalize_channel(&k);
+        members.entry(key).or_insert_with(Vec::new).extend(v);
+    }
+    s.members = members;
     if !s
         .joined
         .iter()
@@ -961,6 +971,20 @@ impl GuiApp {
 
     fn create_channel(&mut self) {
         self.error.clear();
+        let filtered: String = self
+            .chan_new
+            .trim()
+            .trim_start_matches('#')
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect();
+        if filtered.len() > crate::slash::CHANNEL_NAME_MAX {
+            self.error = format!(
+                "channel names are {} letters on the radio — try a shorter name",
+                crate::slash::CHANNEL_NAME_MAX
+            );
+            return;
+        }
         let ch = crate::slash::normalize_channel(&self.chan_new);
         if ch.len() < 3 {
             self.error = "channel name is too short".into();
@@ -1086,9 +1110,18 @@ impl GuiApp {
                     state,
                     tries,
                 } => self.apply_delivery(&msgid, &state, tries),
-                IrcEvent::Status(s) => self
-                    .chat
-                    .push(ChatLine::sys(s, self.active_channel.clone())),
+                IrcEvent::Status(s) => {
+                    if let Some((nick, ch)) = crate::slash::parse_peer_left_notice(&s) {
+                        if nick.eq_ignore_ascii_case(&me) {
+                            self.apply_left_local(&ch);
+                        } else {
+                            self.apply_peer_left(&nick, &ch);
+                        }
+                    } else {
+                        self.chat
+                            .push(ChatLine::sys(s, self.active_channel.clone()));
+                    }
+                }
                 IrcEvent::Joined(ch) => {
                     let ch = crate::slash::normalize_channel(&ch);
                     // Fresh history replay follows JOIN — drop stale lines for this room.
@@ -1100,6 +1133,13 @@ impl GuiApp {
                 }
                 IrcEvent::Invited { from, channel } => {
                     self.apply_invited(&from, &channel, viewport_focused);
+                }
+                IrcEvent::Parted { nick, channel } => {
+                    if nick.eq_ignore_ascii_case(&me) {
+                        self.apply_left_local(&channel);
+                    } else {
+                        self.apply_peer_left(&nick, &channel);
+                    }
                 }
             }
         }
@@ -1139,6 +1179,49 @@ impl GuiApp {
             self.irc_joined.push(ch.clone());
             self.send_line(&format!("/join {ch}"));
         }
+    }
+
+    fn leave_current(&mut self) {
+        self.error.clear();
+        if crate::slash::is_bulletin(&self.active_channel) {
+            self.error = "#bulletin is public — you cannot leave it".into();
+            return;
+        }
+        let ch = self.active_channel.clone();
+        self.send_line("/part");
+        self.apply_left_local(&ch);
+    }
+
+    fn apply_left_local(&mut self, channel: &str) {
+        let ch = crate::slash::normalize_channel(channel);
+        if crate::slash::is_bulletin(&ch) {
+            return;
+        }
+        self.joined.retain(|c| !c.eq_ignore_ascii_case(&ch));
+        self.irc_joined.retain(|c| !c.eq_ignore_ascii_case(&ch));
+        self.members.remove(&ch);
+        self.chat.retain(|l| !l.channel.eq_ignore_ascii_case(&ch));
+        if !self
+            .joined
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case("#bulletin"))
+        {
+            self.joined.insert(0, "#bulletin".into());
+        }
+        if self.active_channel.eq_ignore_ascii_case(&ch) {
+            self.active_channel = "#bulletin".into();
+        }
+        self.persist_session();
+    }
+
+    fn apply_peer_left(&mut self, nick: &str, channel: &str) {
+        let ch = crate::slash::normalize_channel(channel);
+        if let Some(list) = self.members.get_mut(&ch) {
+            list.retain(|n| !n.eq_ignore_ascii_case(nick));
+        }
+        self.chat
+            .push(ChatLine::sys(format!("{nick} left {ch}"), ch));
+        self.persist_session();
     }
 }
 
@@ -1785,7 +1868,7 @@ impl eframe::App for GuiApp {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.chan_new)
                             .desired_width(110.0)
-                            .hint_text("new name")
+                            .hint_text("8 letters")
                             .font(FontId::monospace(13.0)),
                     );
                     if ui
@@ -1809,6 +1892,22 @@ impl eframe::App for GuiApp {
                         );
                     if clear.clicked() {
                         self.clear_active_chat();
+                    }
+                    if !crate::slash::is_bulletin(&self.active_channel) {
+                        let leave = ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("leave room").color(ORANGE).monospace(),
+                                )
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(hairline(ORANGE)),
+                            )
+                            .on_hover_text(
+                                "Remove this room on this computer and tell the others you left. The room stays for anyone still in it.",
+                            );
+                        if leave.clicked() {
+                            self.leave_current();
+                        }
                     }
                 });
                 if let Some(ch) = switch_to {
@@ -1951,7 +2050,7 @@ impl eframe::App for GuiApp {
                         let resp = ui.add(
                             egui::TextEdit::singleline(&mut self.draft)
                                 .desired_width(ui.available_width() - 90.0)
-                                .hint_text("message in this channel, or /join /invite")
+                                .hint_text("message in this channel, or /join /invite /part")
                                 .font(FontId::monospace(14.0)),
                         );
                         if enter {
@@ -2262,6 +2361,7 @@ fn cheat_sheet(ui: &mut egui::Ui) {
     cheat_line(ui, "type", "send on this channel");
     cheat_line(ui, "/join #x", "open or create a room");
     cheat_line(ui, "/invite C", "add a callsign to room");
+    cheat_line(ui, "/part", "leave this room on this computer");
     cheat_line(ui, "/prio", "channel default priority");
     cheat_line(ui, "! / !!", "priority / emergency line");
     cheat_line(ui, "CALL", "1:1 — type their callsign");
@@ -3550,6 +3650,8 @@ fn irc_session(
                         });
                     } else if let Some((from, ch)) = parse_invite(&line) {
                         let _ = events.send(IrcEvent::Invited { from, channel: ch });
+                    } else if let Some((nick, ch)) = parse_part(&line) {
+                        let _ = events.send(IrcEvent::Parted { nick, channel: ch });
                     } else if let Some(ch) = parse_join(&line) {
                         let _ = events.send(IrcEvent::Joined(ch));
                     } else if let Some(chat) = parse_privmsg(&line) {
@@ -3783,6 +3885,15 @@ fn parse_join(line: &str) -> Option<String> {
     Some(ch.split_whitespace().next()?.to_string())
 }
 
+fn parse_part(line: &str) -> Option<(String, String)> {
+    let rest = irc_payload(line).strip_prefix(':')?;
+    let (prefix, cmd) = rest.split_once(' ')?;
+    let rest = cmd.strip_prefix("PART ")?;
+    let ch = rest.split_whitespace().next()?;
+    let nick = prefix.split('!').next().unwrap_or(prefix).to_string();
+    Some((nick, crate::slash::normalize_channel(ch)))
+}
+
 fn parse_invite(line: &str) -> Option<(String, String)> {
     crate::slash::parse_irc_invite(line)
 }
@@ -3911,6 +4022,16 @@ mod tests {
         assert_eq!(from, "M7TJF");
         assert_eq!(ch, "#compatriots");
         assert!(parse_invite(":M7TJF PRIVMSG TF101 :hello").is_none());
+    }
+
+    #[test]
+    fn parse_irc_part_line() {
+        let (nick, ch) = parse_part(":M7TJF PART #compatriots").unwrap();
+        assert_eq!(nick, "M7TJF");
+        assert_eq!(ch, "#compatriots");
+        let (nick, ch) = parse_part(":M7TJF PART #ops :goodbye").unwrap();
+        assert_eq!(nick, "M7TJF");
+        assert_eq!(ch, "#ops");
     }
 
     #[test]
