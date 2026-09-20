@@ -488,6 +488,18 @@ impl IrcServer {
         }
     }
 
+    /// Tell every local IRC client they were invited (remote RF invite).
+    pub async fn send_invite(&self, from: &str, channel: &str) {
+        let clients: Vec<(u64, String)> = {
+            let g = self.inner.lock();
+            g.clients.values().map(|c| (c.id, c.nick.clone())).collect()
+        };
+        for (id, nick) in clients {
+            self.send_raw(id, &format!(":{from} INVITE {nick} {channel}"))
+                .await;
+        }
+    }
+
     pub async fn notice_all(&self, text: &str) {
         let srv = self.inner.lock().server_name.clone();
         let ids: Vec<u64> = self.inner.lock().clients.keys().copied().collect();
