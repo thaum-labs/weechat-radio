@@ -948,8 +948,6 @@ async fn dispatch(rt: &Runtime, env: &Envelope) -> Result<()> {
     }
     if cfg.mode.uses_internet() && env.flags.inet_ok() && inet_gap_for(rt, &env) {
         offer_hub(rt, &env).await;
-    }
-    if cfg.mode.uses_internet() {
         if let Some(l) = &rt.lan {
             let _ = l.send(env.clone()).await;
         }
@@ -1142,8 +1140,6 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                     let cfg_g = rt.cfg.lock().clone();
                     if cfg_g.mode.uses_internet() && ack.flags.inet_ok() && inet_gap_for(rt, &ack) {
                         offer_hub(rt, &ack).await;
-                    }
-                    if cfg_g.mode.uses_internet() {
                         if let Some(l) = &rt.lan {
                             let _ = l.send(ack.clone()).await;
                         }
@@ -1746,7 +1742,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                         if mode == Mode::Radio {
                             // confirmation is a TUI concern; IRC users pass `mode radio confirm`
                             if sp.next() != Some("confirm") {
-                                return "Switching to Radio drops the internet. Type: /radio mode radio confirm".into();
+                                return "Switching to Radio drops hub chat. Messages stay on RF. Type: /radio mode radio confirm".into();
                             }
                         }
                         let old = cfg.lock().mode;

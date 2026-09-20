@@ -74,7 +74,7 @@ Heard means **on RF on this frequency**, not a map pin or a LAN/hub sighting. A 
 
 What the program never does
 - It never changes your radio frequency by itself. `/radio qsy` (or the FREQ list) is always your action.
-- A radio-only station is never put on the hub.
+- A radio-only station never puts chat frames on the hub. Map metadata still POSTs if `[telemetry] url` is set.
 - Internet traffic is not put on the air unless this node is a gateway, `rf_egress = true`, and the dest was recently heard on this frequency (or it is a group with members heard here).
 
 Beacons carry `B|<mode>|<khz>` so peers and the map know your dial. Tell the app the dial if you have no CAT: `/radio freq 144.950`.

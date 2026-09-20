@@ -448,35 +448,29 @@ pub async fn reporter_loop(
             _ = interval.tick() => {
                 let report = {
                     let s = snap.lock();
-                    if !s.mode.uses_internet() {
-                        None
-                    } else {
-                        Some(NodeReport {
-                            callsign: callsign.clone(),
-                            ts: now(),
-                            grid: s.grid.clone(),
-                            mode: s.mode.as_str().into(),
-                            ptt: s.ptt.clone(),
-                            preset: s.preset.clone(),
-                            snr: s.snr,
-                            ber: s.ber,
-                            queue: s.queue_out,
-                            hub_ok: s.hub_ok,
-                            settings: serde_json::json!({
-                                "frequency": s.frequency,
-                                "audio": s.audio_label,
-                                "band": s.band,
-                            }),
-                            events: std::mem::take(&mut pending),
-                            freq_khz: s.freq_khz,
-                            band: s.band.clone(),
-                        })
+                    NodeReport {
+                        callsign: callsign.clone(),
+                        ts: now(),
+                        grid: s.grid.clone(),
+                        mode: s.mode.as_str().into(),
+                        ptt: s.ptt.clone(),
+                        preset: s.preset.clone(),
+                        snr: s.snr,
+                        ber: s.ber,
+                        queue: s.queue_out,
+                        hub_ok: s.hub_ok,
+                        settings: serde_json::json!({
+                            "frequency": s.frequency,
+                            "audio": s.audio_label,
+                            "band": s.band,
+                        }),
+                        events: std::mem::take(&mut pending),
+                        freq_khz: s.freq_khz,
+                        band: s.band.clone(),
                     }
                 };
-                if let Some(report) = report {
-                    if let Err(e) = post_report(&client, &url, &keys, &callsign, &report).await {
-                        tracing::debug!("telemetry: {e}");
-                    }
+                if let Err(e) = post_report(&client, &url, &keys, &callsign, &report).await {
+                    tracing::debug!("telemetry: {e}");
                 }
             }
             Ok(ev) = events.recv() => {
