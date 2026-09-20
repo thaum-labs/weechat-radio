@@ -17,6 +17,48 @@ pub const CRC_LEN: usize = 2;
 pub const SIG_LEN: usize = 64;
 pub const MAX_BODY: usize = 300;
 
+/// Split chat so each piece fits [`MAX_BODY`] (and the radio MTU).
+/// Prefers whitespace; a single over-long token is hard-cut on a char boundary.
+pub fn split_body_chunks(text: &str, max: usize) -> Vec<String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let max = max.max(1);
+    if text.len() <= max {
+        return vec![text.to_string()];
+    }
+    let mut out = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        if rest.len() <= max {
+            out.push(rest.to_string());
+            break;
+        }
+        let mut take = max;
+        while take > 0 && !rest.is_char_boundary(take) {
+            take -= 1;
+        }
+        if take == 0 {
+            take = rest.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+        }
+        let slice = &rest[..take];
+        let cut = slice
+            .rfind(char::is_whitespace)
+            .filter(|&i| i > 0)
+            .unwrap_or(take);
+        let chunk = slice[..cut].trim_end();
+        if chunk.is_empty() {
+            out.push(slice.to_string());
+            rest = rest[take..].trim_start();
+        } else {
+            out.push(chunk.to_string());
+            rest = rest[cut..].trim_start();
+        }
+    }
+    out
+}
+
 const CRC: crc::Crc<u16> = crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740);
 
 /// Well-known group destinations packed as a single index byte on v2.
@@ -545,6 +587,24 @@ pub fn clock_warn_after(prev: bool, kind: MsgType, ts: u32, now: u32) -> bool {
 mod tests {
     use super::*;
     use crate::proto::flags::{FLAG_INET_OK, FLAG_REQ_ACK};
+
+    #[test]
+    fn long_chat_splits_on_words() {
+        let text = "lorem ipsum dolor sit amet consectetur adipiscing elit dignissimos rerum nobis dignissimos ullamco nisi id cillum atque elit omnis vero lorem est quibusdam aut rerum rerum nam est sunt quod vel laborum laborum irure fugiat at provident ullamco id atque dolorum lorem ut laborum aliquip consequatur dolor anim facere incididunt";
+        assert!(text.len() > MAX_BODY);
+        let parts = split_body_chunks(text, MAX_BODY);
+        assert!(parts.len() >= 2);
+        assert!(parts.iter().all(|p| p.len() <= MAX_BODY));
+        assert_eq!(parts.join(" "), text);
+        assert_eq!(
+            split_body_chunks("hello radio", MAX_BODY),
+            vec!["hello radio"]
+        );
+        let word = "a".repeat(MAX_BODY + 8);
+        let hard = split_body_chunks(&word, MAX_BODY);
+        assert_eq!(hard.len(), 2);
+        assert!(hard.iter().all(|p| p.len() <= MAX_BODY));
+    }
 
     #[test]
     fn roundtrip_msg() {
