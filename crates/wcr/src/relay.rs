@@ -210,8 +210,13 @@ impl Engine {
                 if stored.kind == MsgType::Msg && stored.dest.as_str() == self.our_call {
                     // local delivery; ACK is produced by the node runtime
                 }
+                let ack_for_us =
+                    stored.kind == MsgType::Ack && stored.dest.as_str() == self.our_call;
+                if ack_for_us {
+                    self.store.set_delivery(&stored.msg_id, Delivery::Relayed)?;
+                }
                 let now = crate::proto::now_ts();
-                if stored.hops_left > 0 && stored.origin.as_str() != self.our_call {
+                if stored.hops_left > 0 && stored.origin.as_str() != self.our_call && !ack_for_us {
                     self.store.set_hold(
                         &stored.msg_id,
                         now + (decision.delay_ms / 1000) as u32,
@@ -330,6 +335,35 @@ mod tests {
         assert!(!may_inet_forward(true, true, true));
         assert!(may_inet_forward(true, true, false));
         assert!(!may_inet_forward(false, true, false));
+    }
+
+    #[test]
+    fn ack_addressed_to_us_is_not_put_on_relay_hold() {
+        let store = Store::open_memory().unwrap();
+        let engine = Engine::new(std::sync::Arc::new(store), "M7TJF".into());
+        let original = Envelope::new_msg(
+            Callsign::parse("M7TJF").unwrap(),
+            Callsign::from_raw("BULLETIN"),
+            1,
+            b"hello".to_vec(),
+            6,
+            Flags::new(),
+        )
+        .unwrap();
+        engine.store.insert(&original, Delivery::Sent).unwrap();
+        let ack = Envelope::ack_for(&original, Callsign::parse("TF101").unwrap(), 2, Some(1.0));
+        let d = engine.on_rx(&ack, "rf", Some(1.0), None).unwrap();
+        assert_eq!(d.action, Action::Accept);
+        assert_eq!(
+            engine.store.delivery_of(&original.msg_id).unwrap(),
+            Some(Delivery::Delivered)
+        );
+        assert_eq!(
+            engine.store.delivery_of(&ack.msg_id).unwrap(),
+            Some(Delivery::Relayed)
+        );
+        let due = engine.store.hold_due(u32::MAX).unwrap();
+        assert!(due.iter().all(|m| m.env.msg_id != ack.msg_id));
     }
 
     #[test]
