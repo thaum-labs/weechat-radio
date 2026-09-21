@@ -327,15 +327,14 @@ impl AirItem {
         self
     }
 
-    pub fn with_restore_modem_csma(mut self) -> Self {
-        self.restore_modem_csma = true;
-        self
-    }
-
     pub fn with_vox_mail_burst(mut self) -> Self {
         self.skip_csma = true;
         self.restore_modem_csma = true;
         self
+    }
+
+    fn is_vox_mail_burst(&self) -> bool {
+        self.skip_csma && self.restore_modem_csma
     }
 
     #[cfg(test)]
@@ -505,10 +504,7 @@ pub async fn run_air_queue(
         if cancel.is_cancelled() {
             return;
         }
-        let (rf, modem) = {
-            let cfg = cfg.lock();
-            (cfg.rf.clone(), cfg.modem.clone())
-        };
+        let rf = cfg.lock().rf.clone();
         let occ = sense.occupancy_pct();
         if rf.csma {
             queue.apply_congestion(occ, rf.congested_pct);
@@ -522,9 +518,17 @@ pub async fn run_air_queue(
 
         if let Some(item) = queue.pop_ready() {
             queue.set_in_flight_item(&item);
-            tokio::select! {
-                _ = cancel.cancelled() => return,
-                _ = pace_and_send(&queue, &tx, sense.as_ref(), &control, &rf, &modem, &snap, item) => {}
+            if item.is_vox_mail_burst() {
+                let modem = cfg.lock().modem.clone();
+                tokio::select! {
+                    _ = cancel.cancelled() => return,
+                    _ = pace_and_send_vox_mail(&queue, &tx, &control, &rf, &modem, &snap, item) => {}
+                }
+            } else {
+                tokio::select! {
+                    _ = cancel.cancelled() => return,
+                    _ = pace_and_send_v056(&queue, &tx, sense.as_ref(), &control, &rf, &snap, item) => {}
+                }
             }
             queue.set_in_flight(None);
             continue;
@@ -548,13 +552,13 @@ pub async fn run_air_queue(
     }
 }
 
-async fn pace_and_send(
+/// Frozen Live Chat/non-VOX air path copied from the confirmed v0.1.56 baseline.
+async fn pace_and_send_v056(
     queue: &AirQueue,
     tx: &mpsc::Sender<Vec<u8>>,
     sense: &dyn ChannelSense,
     control: &Option<ControlClient>,
     rf: &crate::config::RfConfig,
-    modem: &crate::config::ModemConfig,
     snap: &Arc<SharedStatus>,
     item: AirItem,
 ) {
@@ -565,7 +569,7 @@ async fn pace_and_send(
     };
     let started = Instant::now();
 
-    if rf.csma && !item.skip_csma {
+    if rf.csma {
         loop {
             let idle = sense.state() == ChannelState::Idle
                 && sense.since_last_rx() >= Duration::from_millis(rf.quiet_ms as u64);
@@ -590,12 +594,10 @@ async fn pace_and_send(
 
     snap.lock().deferred = false;
 
-    if let Some(config) = item_control_config(&item) {
-        if let Some(c) = control {
-            let _ = c.set_config(config).await;
-        }
-    }
     if let Some(rung) = item.rung {
+        if let Some(c) = control {
+            let _ = c.set_config(rung.control_config()).await;
+        }
         snap.lock().tx_rung = rung.as_str().into();
     }
 
@@ -605,36 +607,54 @@ async fn pace_and_send(
         }
     }
 
-    let hold = item_hold_secs(&item, rf, modem);
+    let hold = airtime_secs(item.preset, item.payload_len(), 0) + rf.turnaround_ms as f64 / 1000.0;
     if hold > 0.0 {
         tokio::time::sleep(Duration::from_secs_f64(hold)).await;
-    }
-
-    if item.restore_modem_csma {
-        if let Some(c) = control {
-            let _ = c.set_config(item.preset.control_config()).await;
-        }
     }
 
     snap.lock().queue_air = queue.depth();
 }
 
-fn item_control_config(item: &AirItem) -> Option<serde_json::Value> {
+async fn pace_and_send_vox_mail(
+    queue: &AirQueue,
+    tx: &mpsc::Sender<Vec<u8>>,
+    control: &Option<ControlClient>,
+    rf: &crate::config::RfConfig,
+    modem: &crate::config::ModemConfig,
+    snap: &Arc<SharedStatus>,
+    item: AirItem,
+) {
+    snap.lock().deferred = false;
     if let Some(rung) = item.rung {
-        return Some(rung.control_config_with_csma(!item.skip_csma));
+        if let Some(c) = control {
+            let _ = c.set_config(rung.control_config_with_csma(false)).await;
+        }
+        snap.lock().tx_rung = rung.as_str().into();
+    } else if let Some(c) = control {
+        let _ = c
+            .set_config(serde_json::json!({ "csma_enabled": false }))
+            .await;
     }
-    item.skip_csma
-        .then(|| serde_json::json!({ "csma_enabled": false }))
+    for frame in &item.frames {
+        if tx.send(frame.clone()).await.is_err() {
+            break;
+        }
+    }
+    let hold = vox_mail_hold_secs(&item, rf, modem);
+    if hold > 0.0 {
+        tokio::time::sleep(Duration::from_secs_f64(hold)).await;
+    }
+    if let Some(c) = control {
+        let _ = c.set_config(item.preset.control_config()).await;
+    }
+    snap.lock().queue_air = queue.depth();
 }
 
-fn item_hold_secs(
+fn vox_mail_hold_secs(
     item: &AirItem,
     rf: &crate::config::RfConfig,
     modem: &crate::config::ModemConfig,
 ) -> f64 {
-    if !item.restore_modem_csma {
-        return airtime_secs(item.preset, item.payload_len(), 0) + rf.turnaround_ms as f64 / 1000.0;
-    }
     let bitrate = item
         .rung
         .map(Rung::bitrate_bps)
@@ -906,13 +926,12 @@ mod tests {
         cfg.modem.vox_lead_ms = 900;
         cfg.modem.vox_tail_ms = 300;
         let expected = airtime_secs(Preset::HfPoor, 200, 0) + cfg.rf.turnaround_ms as f64 / 1000.0;
-        assert_eq!(item_hold_secs(&chat, &cfg.rf, &cfg.modem), expected);
 
         let mut mail = chat.clone();
         mail.skip_csma = true;
         mail.restore_modem_csma = true;
         assert!(
-            item_hold_secs(&mail, &cfg.rf, &cfg.modem) > expected,
+            vox_mail_hold_secs(&mail, &cfg.rf, &cfg.modem) > expected,
             "only Email waits for every queued VOX lead/tail"
         );
     }
@@ -962,7 +981,7 @@ mod tests {
             CancellationToken::new(),
         ));
         let mut mail = item(AirClass::Own, 7);
-        mail.skip_csma = true;
+        mail = mail.with_vox_mail_burst();
         q.enqueue(mail);
         tokio::time::advance(Duration::from_millis(20)).await;
         tokio::task::yield_now().await;
