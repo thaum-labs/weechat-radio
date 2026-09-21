@@ -60,8 +60,6 @@ impl Default for Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MailConfig {
-    /// Verified subdomain for WCR addresses (`mail.weechatradio.com`).
-    pub domain: String,
     /// RF mail dest: callsign of an `internet-radio` gateway on your dial (required for Email).
     pub gateway: String,
 }
@@ -69,7 +67,6 @@ pub struct MailConfig {
 impl Default for MailConfig {
     fn default() -> Self {
         Self {
-            domain: "mail.weechatradio.com".into(),
             gateway: String::new(),
         }
     }
