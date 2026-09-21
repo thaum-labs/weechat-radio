@@ -368,17 +368,27 @@ pub async fn serve(bind: String, snap: Arc<SharedStatus>) {
 }
 
 pub async fn serve_listener(listener: tokio::net::TcpListener, snap: Arc<SharedStatus>) {
+    serve_listener_with(listener, snap, axum::Router::new()).await;
+}
+
+pub async fn serve_listener_with(
+    listener: tokio::net::TcpListener,
+    snap: Arc<SharedStatus>,
+    extra: axum::Router,
+) {
     use axum::{routing::get, Json, Router};
-    let app = Router::new().route(
-        "/status",
-        get({
-            let snap = snap.clone();
-            move || {
+    let app = Router::new()
+        .route(
+            "/status",
+            get({
                 let snap = snap.clone();
-                async move { Json(snap.lock().clone()) }
-            }
-        }),
-    );
+                move || {
+                    let snap = snap.clone();
+                    async move { Json(snap.lock().clone()) }
+                }
+            }),
+        )
+        .merge(extra);
     let _ = axum::serve(listener, app).await;
 }
 

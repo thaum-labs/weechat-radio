@@ -37,6 +37,7 @@ pub struct HubState {
     pub report_by_call: Arc<KeyedLimiter>,
     pub report_by_ip: Arc<KeyedLimiter>,
     pub hello_by_call: Arc<KeyedLimiter>,
+    pub mail: Arc<crate::net::hub_mail::MailHubDb>,
 }
 
 pub struct Session {
@@ -82,6 +83,12 @@ pub async fn run_hub(
         report_by_call: rate_limit::per_minute(120),
         report_by_ip: rate_limit::per_minute(240),
         hello_by_call: rate_limit::per_minute(30),
+        mail: Arc::new(
+            crate::net::hub_mail::MailHubDb::open(
+                &crate::config::default_data_dir().join("hub-mail.sqlite"),
+            )
+            .unwrap_or_else(|_| crate::net::hub_mail::MailHubDb::open_memory().expect("mail db")),
+        ),
     };
     let app = Router::new()
         .route("/", get(ws_upgrade))
@@ -93,6 +100,18 @@ pub async fn run_hub(
         .route("/api/v1/hubs", get(get_hubs))
         .route("/api/v1/bands", get(get_bands))
         .route("/api/v1/stats", get(get_stats))
+        .route("/api/v1/mail/send", post(crate::net::hub_mail::post_send))
+        .route("/api/v1/mail/inbox", post(crate::net::hub_mail::post_inbox))
+        .route("/api/v1/mail/fetch", post(crate::net::hub_mail::post_fetch))
+        .route("/api/v1/mail/copy", post(crate::net::hub_mail::post_copy))
+        .route(
+            "/api/v1/mail/copy/confirm",
+            post(crate::net::hub_mail::post_copy_confirm),
+        )
+        .route(
+            "/api/v1/mail/webhook/resend",
+            post(crate::net::hub_mail::resend_webhook),
+        )
         .route("/healthz", get(|| async { "ok" }))
         .layer(CorsLayer::permissive())
         .with_state(state);
@@ -564,6 +583,7 @@ pub fn test_hub_state() -> HubState {
         report_by_call: rate_limit::per_minute(120),
         report_by_ip: rate_limit::per_minute(240),
         hello_by_call: rate_limit::per_minute(30),
+        mail: Arc::new(crate::net::hub_mail::MailHubDb::open_memory().unwrap()),
     }
 }
 

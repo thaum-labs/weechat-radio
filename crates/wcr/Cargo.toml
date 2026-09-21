@@ -53,6 +53,7 @@ crossterm.workspace = true
 mdns-sd.workspace = true
 governor.workspace = true
 sha2.workspace = true
+hmac.workspace = true
 zeroize.workspace = true
 hostname.workspace = true
 notify-rust = "4.11"

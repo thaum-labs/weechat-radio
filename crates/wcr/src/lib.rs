@@ -15,6 +15,7 @@ pub mod grid;
 pub mod gui;
 pub mod help;
 pub mod ircd;
+pub mod mail;
 pub mod modem;
 pub mod modes;
 pub mod net;
