@@ -69,8 +69,11 @@ async fn real_main() -> Result<()> {
                 50_000,
             )?);
             let tel = std::sync::Arc::new(wcr::telemetry::TelemetryDb::open(&data_telemetry())?);
+            let mail = std::sync::Arc::new(wcr::net::hub_mail::MailHubDb::open(
+                &wcr::config::default_data_dir().join("hub_mail.db"),
+            )?);
             let keys = wcr::proto::load_or_create(&Config::key_path())?;
-            wcr::net::run_hub(&bind, store, tel, keys).await?;
+            wcr::net::run_hub(&bind, store, tel, keys, mail).await?;
         }
         Command::Service { action } => {
             wcr::ui_style::panel("WEECHAT RADIO", "SERVICE");

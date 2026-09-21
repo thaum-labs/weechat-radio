@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: WeeChat Radio Hub API
-  version: 0.1.56
+  version: 0.1.58
   description: |
     Public read endpoints and signed telemetry write for the live map and integrations.
     Message text is never accepted on the write path.
@@ -28,7 +28,7 @@ paths:
           description: JSON `{ "nodes": [ … ] }` with band, freq_khz, grid, mode
   /api/v1/events:
     get:
-      summary: Recent TX/RX/relay events
+      summary: Recent TX/RX/relay/mail events (callsigns only on mail)
       parameters:
         - in: query
           name: since

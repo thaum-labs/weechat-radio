@@ -11,6 +11,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const SCHEMA: &str = include_str!("schema.sql");
 
+mod mail;
+pub use mail::{MailRow, MailSettings};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Delivery {
     Queued,
@@ -1182,6 +1185,7 @@ fn tuple_to_env(
         "form" => MsgType::Form,
         "file" => MsgType::File,
         "frag" => MsgType::Frag,
+        "mail" => MsgType::Mail,
         _ => MsgType::Msg,
     };
     let mut signature = None;

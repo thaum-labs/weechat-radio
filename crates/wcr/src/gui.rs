@@ -3,8 +3,10 @@
 
 use crate::config::{self, Config};
 use crate::error::{Error, Result};
+use crate::mail::{validate_internet_addr, MAIL_MAX_BYTES};
+use crate::mail_api::{mail_send_will_rf, third_party_blocked};
 use crate::modes::Mode;
-use crate::presets::Preset;
+use crate::presets::{format_airtime_hint, mail_airtime_secs, Preset};
 use crate::proto::Callsign;
 use crate::status::StatusSnapshot;
 use eframe::egui::{self, Color32, FontId, IconData, RichText, Stroke, ViewportCommand};
@@ -508,6 +510,78 @@ fn load_session() -> GuiSession {
     s
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CenterView {
+    Chat,
+    Email,
+}
+
+#[derive(Clone)]
+enum MailConfirm {
+    Send {
+        rf: bool,
+    },
+    CheckGet {
+        ids: Vec<String>,
+        bytes: usize,
+        bursts: usize,
+        secs: f64,
+    },
+}
+
+#[derive(Clone, Default, serde::Deserialize)]
+struct MailSummary {
+    unread: u64,
+    hub_waiting: u64,
+    wcr_address: String,
+    mail_enabled: bool,
+}
+
+#[derive(Clone, Default, serde::Deserialize)]
+struct MailListRow {
+    id: String,
+    folder: String,
+    from_addr: String,
+    to_addr: String,
+    subject: String,
+    body: String,
+    read: bool,
+    delivery: String,
+    byte_len: usize,
+}
+
+fn status_http(method: &str, path: &str, body: Option<&str>) -> Option<String> {
+    let mut stream =
+        TcpStream::connect_timeout(&"127.0.0.1:8074".parse().ok()?, Duration::from_millis(400))
+            .ok()?;
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(800)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(400)));
+    let req = if let Some(b) = body {
+        format!(
+            "{method} {path} HTTP/1.0\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            b.len(),
+            b
+        )
+    } else {
+        format!("{method} {path} HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+    };
+    stream.write_all(req.as_bytes()).ok()?;
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).ok()? == 0 {
+            break;
+        }
+        if line == "\r\n" || line == "\n" {
+            break;
+        }
+    }
+    let mut resp = String::new();
+    reader.read_to_string(&mut resp).ok()?;
+    Some(resp.trim().to_string())
+}
+
 fn save_session(active: &str, joined: &[String], members: &HashMap<String, Vec<String>>) {
     let _ = config::ensure_dirs();
     let s = GuiSession {
@@ -574,6 +648,22 @@ struct GuiApp {
     irc_joined: Vec<String>,
     /// Skip OS notifications while IRC history is replaying after connect.
     irc_connected_at: Option<Instant>,
+    center: CenterView,
+    mail_folder: String,
+    mail_rows: Vec<MailListRow>,
+    mail_to: String,
+    mail_subject: String,
+    mail_body: String,
+    mail_unread: u64,
+    mail_waiting: u64,
+    mail_wcr_addr: String,
+    mail_hint: String,
+    mail_confirm: Option<MailConfirm>,
+    mail_copy_to: String,
+    mail_copy_code: String,
+    mail_check_ids: Vec<String>,
+    last_mail_poll: Instant,
+    mail_notify_unread: u64,
 }
 
 impl GuiApp {
@@ -647,6 +737,22 @@ impl GuiApp {
             freq_pick_last: None,
             irc_joined: Vec::new(),
             irc_connected_at: None,
+            center: CenterView::Chat,
+            mail_folder: "inbox".into(),
+            mail_rows: Vec::new(),
+            mail_to: String::new(),
+            mail_subject: String::new(),
+            mail_body: String::new(),
+            mail_unread: 0,
+            mail_waiting: 0,
+            mail_wcr_addr: String::new(),
+            mail_hint: String::new(),
+            mail_confirm: None,
+            mail_copy_to: String::new(),
+            mail_copy_code: String::new(),
+            mail_check_ids: Vec::new(),
+            last_mail_poll: Instant::now() - Duration::from_secs(3),
+            mail_notify_unread: 0,
         };
         app.install_tray();
         crate::service::soften_keep_alive();
@@ -659,6 +765,228 @@ impl GuiApp {
 
     fn configured(&self) -> bool {
         Config::default_path().is_file() && Callsign::parse(&self.callsign).is_ok()
+    }
+
+    fn mail_tab_enabled(&self) -> bool {
+        Callsign::parse(&self.callsign)
+            .map(|c| !c.is_guest())
+            .unwrap_or(false)
+    }
+
+    fn poll_mail(&mut self) {
+        if !self.mail_tab_enabled() || self.user_stopped {
+            return;
+        }
+        if self.last_mail_poll.elapsed() < Duration::from_secs(2) {
+            return;
+        }
+        self.last_mail_poll = Instant::now();
+        if let Some(raw) = status_http("GET", "/mail/summary", None) {
+            if let Ok(s) = serde_json::from_str::<MailSummary>(&raw) {
+                if s.unread > self.mail_notify_unread && self.center != CenterView::Email {
+                    let _ = notify_rust::Notification::new()
+                        .summary("WeeChat Radio")
+                        .body("New email waiting")
+                        .show();
+                }
+                self.mail_notify_unread = s.unread;
+                self.mail_unread = s.unread;
+                self.mail_waiting = s.hub_waiting;
+                self.mail_wcr_addr = s.wcr_address;
+            }
+        }
+        if self.center == CenterView::Email {
+            self.refresh_mail_list();
+            self.refresh_mail_hint();
+        }
+    }
+
+    fn refresh_mail_list(&mut self) {
+        let path = format!("/mail/list/{}", self.mail_folder);
+        if let Some(raw) = status_http("GET", &path, None) {
+            if let Ok(rows) = serde_json::from_str::<Vec<MailListRow>>(&raw) {
+                self.mail_rows = rows;
+            }
+        }
+    }
+
+    fn refresh_mail_hint(&mut self) {
+        let cfg = Config::load(&Config::default_path()).unwrap_or_default();
+        let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::VhfFm);
+        let hub_ok = self.status.as_ref().map(|s| s.hub_ok).unwrap_or(false);
+        let rf = mail_send_will_rf(&cfg, hub_ok, false);
+        let len = self.mail_body.len().min(MAIL_MAX_BYTES);
+        if !rf && cfg.mode.uses_internet() {
+            self.mail_hint = format!("{} B · hub only", len);
+            return;
+        }
+        let (bursts, secs) = mail_airtime_secs(
+            preset,
+            len,
+            cfg.rf.frag_k,
+            cfg.rf.frag_m,
+            cfg.mode.uses_internet(),
+            cfg.rf.turnaround_ms,
+        );
+        self.mail_hint = format!(
+            "{} B · {} ({} bursts @ {})",
+            len,
+            format_airtime_hint(secs),
+            bursts,
+            preset.as_str()
+        );
+    }
+
+    fn mail_sync(&mut self) {
+        let _ = status_http("POST", "/mail/sync", Some("{}"));
+        self.refresh_mail_list();
+    }
+
+    fn mail_send_confirmed(&mut self, rf: bool) {
+        let body = serde_json::json!({
+            "to": self.mail_to,
+            "subject": self.mail_subject,
+            "body": self.mail_body,
+            "rf": rf,
+        });
+        let _ = status_http("POST", "/mail/send", Some(&body.to_string()));
+        self.mail_body.clear();
+        self.refresh_mail_list();
+    }
+
+    fn draw_email_center(&mut self, ui: &mut egui::Ui) {
+        let addr = if self.mail_wcr_addr.is_empty() {
+            "callsign@mail.weechatradio.com"
+        } else {
+            self.mail_wcr_addr.as_str()
+        };
+        module_title(ui, "EMAIL", addr);
+        if self.mail_waiting > 0 {
+            ui.label(
+                RichText::new(format!("{} waiting at hub (pull only)", self.mail_waiting))
+                    .color(ORANGE)
+                    .small()
+                    .monospace(),
+            );
+        }
+        ui.horizontal(|ui| {
+            for f in ["inbox", "outbox", "sent"] {
+                let on = self.mail_folder == f;
+                if ui
+                    .selectable_label(on, RichText::new(f).color(if on { ACCENT } else { DIM }))
+                    .clicked()
+                {
+                    self.mail_folder = f.to_string();
+                    self.refresh_mail_list();
+                }
+            }
+            if ui
+                .button(RichText::new("sync").color(PURPLE).monospace())
+                .clicked()
+            {
+                self.mail_sync();
+            }
+            if ui
+                .button(RichText::new("check mail").color(PURPLE).monospace())
+                .clicked()
+            {
+                let _ = status_http("POST", "/mail/check/list", Some("{\"rf\":true}"));
+            }
+        });
+        egui::ScrollArea::vertical()
+            .max_height(180.0)
+            .show(ui, |ui| {
+                for row in &self.mail_rows {
+                    let subj = if row.subject.is_empty() {
+                        "(no subject)"
+                    } else {
+                        &row.subject
+                    };
+                    ui.label(
+                        RichText::new(format!("{} — {}", row.from_addr, subj))
+                            .color(if row.read { DIM } else { FG })
+                            .monospace(),
+                    );
+                }
+            });
+        ui.add_space(8.0);
+        ui.label(RichText::new("To (internet)").color(DIM).monospace());
+        ui.add(egui::TextEdit::singleline(&mut self.mail_to).hint_text("mary@gmail.com"));
+        ui.label(RichText::new("Subject").color(DIM).monospace());
+        ui.add(egui::TextEdit::singleline(&mut self.mail_subject));
+        ui.label(
+            RichText::new("Body (plain text, 4 KB max)")
+                .color(DIM)
+                .monospace(),
+        );
+        let changed = ui
+            .add(
+                egui::TextEdit::multiline(&mut self.mail_body)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(6),
+            )
+            .changed();
+        if changed {
+            self.refresh_mail_hint();
+        }
+        ui.label(
+            RichText::new(&self.mail_hint)
+                .color(PURPLE)
+                .small()
+                .monospace(),
+        );
+        let cfg = Config::load(&Config::default_path()).unwrap_or_default();
+        let hub_ok = self.status.as_ref().map(|s| s.hub_ok).unwrap_or(false);
+        let can_send = cfg.mode != Mode::Radio;
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(
+                    can_send,
+                    egui::Button::new(RichText::new("Send").color(ORANGE).monospace())
+                        .stroke(hairline(ORANGE)),
+                )
+                .clicked()
+            {
+                self.error.clear();
+                if let Err(e) = validate_internet_addr(&self.mail_to) {
+                    self.error = e.to_string();
+                } else if third_party_blocked(&cfg, &self.mail_to) {
+                    self.error =
+                        "third-party mail blocked — set gateway.third_party = allow in wcr.toml"
+                            .into();
+                } else if self.mail_body.len() > MAIL_MAX_BYTES {
+                    self.error = format!("body over {} bytes", MAIL_MAX_BYTES);
+                } else {
+                    let rf = mail_send_will_rf(&cfg, hub_ok, false);
+                    self.mail_confirm = Some(MailConfirm::Send { rf });
+                }
+            }
+        });
+        ui.add_space(8.0);
+        ui.collapsing("Copy to personal address", |ui| {
+            ui.label(
+                RichText::new("Off by default. Hub emails a confirm code before enabling.")
+                    .color(DIM)
+                    .small(),
+            );
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.mail_copy_to).hint_text("you@gmail.com"),
+                );
+                if ui.button("request confirm").clicked() {
+                    let b = serde_json::json!({ "address": self.mail_copy_to });
+                    let _ = status_http("POST", "/mail/settings/copy", Some(&b.to_string()));
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut self.mail_copy_code).hint_text("code"));
+                if ui.button("confirm").clicked() {
+                    let b = serde_json::json!({ "code": self.mail_copy_code });
+                    let _ =
+                        status_http("POST", "/mail/settings/copy/confirm", Some(&b.to_string()));
+                }
+            });
+        });
     }
 
     fn save_setup(&mut self) {
@@ -1258,6 +1586,7 @@ impl eframe::App for GuiApp {
         self.poll_grid_detect();
         self.poll_find_radio();
         self.poll_tray(ctx);
+        self.poll_mail();
         if self.last_poll.elapsed() > Duration::from_millis(250) {
             self.last_poll = Instant::now();
             if self.user_stopped {
@@ -1371,6 +1700,22 @@ impl eframe::App for GuiApp {
                     }
                     if nav_link(ui, "map").clicked() {
                         let _ = open::that("https://weechatradio.com/");
+                    }
+                    if self.mail_tab_enabled() {
+                        let label = if self.mail_unread > 0 {
+                            format!("email ({})", self.mail_unread)
+                        } else {
+                            "email".into()
+                        };
+                        if nav_link(ui, &label).clicked() {
+                            self.show_setup = false;
+                            self.center = CenterView::Email;
+                            self.refresh_mail_list();
+                            self.refresh_mail_hint();
+                        }
+                    }
+                    if nav_link(ui, "live chat").clicked() {
+                        self.center = CenterView::Chat;
                     }
                     if self.configured() && nav_link(ui, "setup").clicked() {
                         self.show_setup = !self.show_setup;
@@ -1823,6 +2168,110 @@ impl eframe::App for GuiApp {
                 });
             });
 
+        if let Some(confirm) = self.mail_confirm.clone() {
+            let cfg = Config::load(&Config::default_path()).unwrap_or_default();
+            let preset = cfg.modem.preset.clone();
+            let freq = self
+                .status
+                .as_ref()
+                .map(|s| s.frequency.clone())
+                .unwrap_or_else(|| "—".into());
+            let mode = cfg.mode.display_name();
+            let (title, body) = match &confirm {
+                MailConfirm::Send { rf } => {
+                    if *rf {
+                        let preset_p = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::VhfFm);
+                        let (bursts, secs) = mail_airtime_secs(
+                            preset_p,
+                            self.mail_body.len(),
+                            cfg.rf.frag_k,
+                            cfg.rf.frag_m,
+                            cfg.mode.uses_internet(),
+                            cfg.rf.turnaround_ms,
+                        );
+                        (
+                            "Send email on the air?",
+                            format!(
+                                "To: {}\nSubject: {}\nSize: {} B\nMode: {} · preset: {} · {}\nThird-party traffic may apply.\nAbout {} ({} bursts @ {}). Retries can take longer.",
+                                self.mail_to,
+                                self.mail_subject,
+                                self.mail_body.len(),
+                                mode,
+                                preset,
+                                freq,
+                                format_airtime_hint(secs),
+                                bursts,
+                                preset_p.as_str()
+                            ),
+                        )
+                    } else {
+                        (
+                            "Send via hub?",
+                            format!(
+                                "To: {}\nSubject: {}\nSize: {} B\nThis goes via the hub. No radio. Usually a few seconds.",
+                                self.mail_to,
+                                self.mail_subject,
+                                self.mail_body.len()
+                            ),
+                        )
+                    }
+                }
+                MailConfirm::CheckGet {
+                    bytes,
+                    bursts,
+                    secs,
+                    ..
+                } => (
+                    "Fetch mail on the air?",
+                    format!(
+                        "About {} B over RF.\nAbout {} ({} bursts @ {}). Retries can take longer.",
+                        bytes,
+                        format_airtime_hint(*secs),
+                        bursts,
+                        preset
+                    ),
+                ),
+            };
+            egui::Window::new(title)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .frame(chrome(TOPBAR))
+                .show(ctx, |ui| {
+                    ui.label(RichText::new(body).color(FG).monospace());
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(RichText::new("Send").color(ORANGE).monospace())
+                                    .stroke(hairline(ORANGE)),
+                            )
+                            .clicked()
+                        {
+                            match confirm {
+                                MailConfirm::Send { rf } => self.mail_send_confirmed(rf),
+                                MailConfirm::CheckGet { ids, .. } => {
+                                    let b = serde_json::json!({ "ids": ids, "rf": true });
+                                    let _ = status_http(
+                                        "POST",
+                                        "/mail/check/get",
+                                        Some(&b.to_string()),
+                                    );
+                                    self.mail_sync();
+                                }
+                            }
+                            self.mail_confirm = None;
+                        }
+                        if ui
+                            .button(RichText::new("Cancel").color(PURPLE).monospace())
+                            .clicked()
+                        {
+                            self.mail_confirm = None;
+                        }
+                    });
+                });
+        }
+
         if self.confirm_radio {
             egui::Window::new("Switch to radio?")
                 .collapsible(false)
@@ -1885,6 +2334,10 @@ impl eframe::App for GuiApp {
                     .rounding(0.0),
             )
             .show(ctx, |ui| {
+                if self.center == CenterView::Email {
+                    self.draw_email_center(ui);
+                    return;
+                }
                 module_title(ui, "LIVE CHAT", &self.active_channel);
                 ui.add_space(6.0);
                 let mut switch_to = None;
