@@ -9,11 +9,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::Instant;
 
-/// Order of a mail burst. The worker follows this list so a drain gate cannot be skipped.
+/// Order of a mail burst. Pause first so queued chat cannot take the modem
+/// while Email is waiting for the current transmission to finish.
 pub fn lease_sequence() -> &'static [&'static str] {
     &[
-        "wait_idle",
         "pause",
+        "wait_idle",
         "drain_before",
         "snapshot",
         "set_mail_config",
@@ -64,13 +65,12 @@ pub fn restore_config(preset: Preset) -> Value {
 pub async fn wait_idle(ports: &RadioPorts, cap: Duration) -> bool {
     let start = Instant::now();
     loop {
-        let depth = ports.air.as_ref().map(|a| a.depth()).unwrap_or(0);
         let tx = ports
             .sense
             .as_ref()
             .map(|s| s.state() == ChannelState::Tx)
             .unwrap_or(false);
-        if depth == 0 && !tx {
+        if !tx {
             return true;
         }
         if start.elapsed() >= cap {

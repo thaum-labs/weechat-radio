@@ -635,7 +635,7 @@ async fn answer_get(ctx: &TxCtx, req: &MailMeta, auth: &str) -> Result<()> {
             ..MailMeta::default()
         };
         let id = proto::compute_mail_id(&meta.from, &meta.to, &meta.subject, &body, false);
-        let _ = reply_chunks(ctx, MailOp::Data, &id, &meta, &body).await;
+        reply_chunks(ctx, MailOp::Data, &id, &meta, &body).await?;
     }
     Ok(())
 }
@@ -795,7 +795,7 @@ async fn reply_chunks(
         &frames,
         preset,
         rung,
-        false,
+        cfg.modem.is_vox(),
         cfg.modem.vox_lead_ms,
         cfg.modem.vox_tail_ms,
     )
