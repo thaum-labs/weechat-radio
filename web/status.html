@@ -36,6 +36,9 @@
   <div class="page-wrap">
     <main class="page-panel">
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> hub</h1>
+      <p class="lead">The public meeting point on the internet. Stations that are not on the same radio still find each other here.</p>
+      <p>It lives at <code>hub.weechatradio.com</code>, on the same DigitalOcean droplet as this website. Caddy takes HTTPS on that machine and passes hub traffic to the <code>wcr hub</code> program. A station in <strong>Internet</strong> or <strong>Internet+Radio</strong> connects to <code>wss://hub.weechatradio.com/ws</code>. <strong>Radio</strong> and <strong>Radio+</strong> keep working on the air if this machine is down. Radio+ still needs a gateway that can reach the hub when the message has to leave the radio.</p>
+      <p>What it holds is presence: callsign, mode, grid, and band, which is what the <a href="/">map</a> draws. Chat text stays on the stations. Mail for <code>callsign@mail.weechatradio.com</code> also passes through here on its way to and from the internet. The figures below are read live from that machine. How the droplet is built is on <a href="/docs/deploy.html">deploy the hub</a>.</p>
       <div class="status-grid">
         <article class="mod activated">
           <h3 class="title"><p>health</p><p>http</p></h3>
