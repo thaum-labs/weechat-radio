@@ -986,12 +986,7 @@ fn rf_encode_frames(
 ) -> Result<Vec<Vec<u8>>> {
     let mtu = preset.payload_bytes();
     if frag::should_fragment(rf_env, bytes.len(), mtu) {
-        let frags = frag::split(rf_env, cfg.rf.frag_k, cfg.rf.frag_m)?;
-        let mut out = Vec::with_capacity(frags.len());
-        for f in frags {
-            out.push(f.encode()?);
-        }
-        Ok(out)
+        frag::split_encoded_to_fit(rf_env, cfg.rf.frag_k, cfg.rf.frag_m, mtu)
     } else {
         Ok(vec![bytes.to_vec()])
     }
@@ -2425,16 +2420,6 @@ async fn mail_check_get_rf(rt: &Runtime, ids: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Email only: turn off modem73 CSMA for one mail burst, then restore the preset.
-/// Chat keeps CSMA on.
-async fn mail_pause_modem_csma(rt: &Runtime) {
-    if let Some(c) = rt.control() {
-        let _ = c
-            .set_config(serde_json::json!({ "csma_enabled": false }))
-            .await;
-    }
-}
-
 async fn mail_restore_modem_csma(rt: &Runtime) {
     let cfg = rt.cfg.lock().clone();
     let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::VhfFm);
@@ -2480,12 +2465,7 @@ async fn mail_tx_chunks(
         rt.store.insert(&env, Delivery::Queued)?;
         envs.push(env);
     }
-    mail_pause_modem_csma(rt).await;
-    let out = mail_dispatch_burst(rt, &envs).await;
-    if out.is_err() {
-        mail_restore_modem_csma(rt).await;
-        out?;
-    }
+    mail_dispatch_burst(rt, &envs).await?;
     let mut ids = Vec::with_capacity(envs.len());
     for env in &envs {
         mail_note_tx(rt, env);
@@ -2611,13 +2591,11 @@ async fn enqueue_mail_burst(rt: &Runtime, envs: &[Envelope]) -> Result<()> {
     let mut all_frames = Vec::new();
     let mut ids = Vec::with_capacity(envs.len());
     let mut first_rf: Option<Envelope> = None;
-    let mut total_len = 0usize;
     for env in envs {
         let mut env = env.clone();
         stamp_own_mode_flags(&mut env, &rt.engine.our_call, cfg.mode);
         let rf_env = rf_copy(&env, preset);
         let bytes = rf_env.encode()?;
-        total_len += bytes.len();
         all_frames.extend(rf_encode_frames(&rf_env, &bytes, preset, &cfg)?);
         ids.push(env.msg_id);
         if first_rf.is_none() {
@@ -2631,7 +2609,18 @@ async fn enqueue_mail_burst(rt: &Runtime, envs: &[Envelope]) -> Result<()> {
         .get(first.dest.as_str())
         .copied()
         .unwrap_or(preset.ladder_start());
-    let rung = presets::rung_for(preset, stored, 0, total_len);
+    let max_frame_len = all_frames.iter().map(Vec::len).max().unwrap_or(0);
+    let rung = presets::rung_for(preset, stored, 0, max_frame_len);
+    if all_frames
+        .iter()
+        .any(|frame| frame.len() > rung.payload_bytes() as usize)
+    {
+        return Err(crate::error::Error::protocol(format!(
+            "mail frame exceeds {}-byte {} payload",
+            rung.payload_bytes(),
+            rung.as_str()
+        )));
+    }
     let apply = first.origin.as_str() == rt.engine.our_call;
 
     if let Some(air) = rt.air() {
@@ -2653,9 +2642,23 @@ async fn enqueue_mail_burst(rt: &Runtime, envs: &[Envelope]) -> Result<()> {
         return Ok(());
     }
     if let Some(k) = rt.kiss() {
+        if let Some(c) = rt.control() {
+            c.set_config(rung.control_config_with_csma(false)).await?;
+        }
         for frame in &all_frames {
             k.send(frame).await?;
         }
+        let vox_ms = if cfg.modem.ptt == "vox" {
+            u64::from(cfg.modem.vox_lead_ms.max(1400) + cfg.modem.vox_tail_ms)
+                * all_frames.len() as u64
+        } else {
+            0
+        };
+        let data_ms = all_frames
+            .iter()
+            .map(|frame| (frame.len() as f64 * 8_000.0 / rung.bitrate_bps() as f64) as u64)
+            .sum::<u64>();
+        tokio::time::sleep(Duration::from_millis(vox_ms + data_ms)).await;
         for env in envs {
             note_own_rf_tx(rt, env);
         }
@@ -2862,6 +2865,7 @@ async fn handle_mail_envelope(rt: &Runtime, env: &Envelope, _via: &str) -> Resul
     Ok(())
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -2954,6 +2958,10 @@ mod tests {
         cfg.callsign = "M7TJF".into();
         cfg.mode = Mode::RadioPlus;
         cfg.mail.gateway = "TF101".into();
+        cfg.modem.preset = "hf-poor".into();
+        cfg.modem.ptt = "vox".into();
+        cfg.modem.vox_lead_ms = 900;
+        cfg.modem.vox_tail_ms = 300;
         cfg.rf.csma = true;
         cfg.rf.slot_ms = 50;
         cfg.rf.quiet_ms = 50;
@@ -3030,9 +3038,20 @@ mod tests {
             "modem CSMA must come back after the email burst"
         );
         assert_eq!(item.extra_ids().len(), ids.len() - 1);
+        assert_eq!(
+            item.rung,
+            Some(Rung::Rdm600S),
+            "M7TJF hf-poor email must stay on RDM-600S"
+        );
         assert!(
             item.frames.len() >= ids.len(),
             "all chunk frames belong on the same burst"
+        );
+        assert!(
+            item.frames
+                .iter()
+                .all(|frame| frame.len() <= Rung::Rdm600S.payload_bytes() as usize),
+            "no encoded KISS frame may exceed modem73's 170-byte RDM capacity"
         );
     }
 
@@ -3084,6 +3103,12 @@ mod tests {
             frames.len() >= 2,
             "email frames must dump in one burst even while the channel is Rx; got {}",
             frames.len()
+        );
+        assert!(
+            frames
+                .iter()
+                .all(|frame| frame.len() <= Rung::Rdm600S.payload_bytes() as usize),
+            "the real KISS output must fit RDM-600S"
         );
         send.await.unwrap().expect("mail_send_rf");
         let row = rt.store.mail_get("mail1").unwrap().unwrap();
