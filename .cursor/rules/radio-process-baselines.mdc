@@ -1,0 +1,41 @@
+---
+description: Preserve independently confirmed Live Chat and Email RF baselines
+alwaysApply: true
+---
+
+# RF Process Baselines
+
+Live Chat and Email are separate RF products. Never generalize an Email fix into
+shared chat framing, pacing, CSMA, modem-rung, retry, or delivery behavior.
+
+## Baseline ledger
+
+- Live Chat over RF: **confirmed working by the user** at `v0.1.56`,
+  commit `d3f32cdb11faeba7009cdc1c8113c49b6dec4c1b`. This is the first locked
+  Live Chat baseline. `v0.1.70` is the rollback test candidate; do not replace
+  the baseline unless the user confirms it live.
+- VOX Email → gateway → hub: **awaiting user live confirmation**. `v0.1.69`
+  is only a candidate, not a proven baseline.
+- Non-VOX Email: **awaiting user live confirmation**. Keep the standard batch
+  path unless the user reports a failure there.
+
+Only the user's successful two-station live test can change “awaiting” to
+“confirmed.” Unit tests, logs from one station, queue completion, and a Sent
+toast are not proof of over-air delivery.
+
+When confirmed, record the first working tag and commit here. Do not silently
+move a baseline to a newer release.
+
+## Isolation requirements
+
+- Live Chat keeps `rf_encode_frames`, normal `AirItem` CSMA, and normal queue
+  timing.
+- VOX Email owns `mail_send_vox_reliable`, `rf_encode_mail_frames`, protocol
+  chunk/final ACKs, retries, and `with_vox_mail_burst`.
+- Non-VOX Email keeps the standard `mail_rf_burst_and_wait` path.
+- A VOX Email change must add or retain tests proving chat and non-VOX behavior
+  are unchanged.
+- Never mark Email Sent until the applicable path's success condition is met.
+
+For a regression, diff against the locked process baseline first and keep the
+other confirmed process unchanged.
