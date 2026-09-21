@@ -2,7 +2,10 @@
 //! Local HTTP mail API for wcr-gui (mounted on the status listener).
 
 use crate::config::Config;
-use crate::mail::{validate_internet_addr, wcr_address, CHECK_MAIL_MAX_MSGS, MAIL_MAX_BYTES};
+use crate::mail::{
+    chunk_payloads, chunks_fit_max_body, validate_internet_addr, wcr_address, MailMeta,
+    CHECK_MAIL_MAX_MSGS, MAIL_MAX_BYTES,
+};
 use crate::modes::Mode;
 use crate::net::hub_mail::{hub_api_base_from_telemetry, signed_post};
 use crate::presets::{format_airtime_hint, mail_airtime_secs, Preset};
@@ -155,6 +158,20 @@ async fn send_mail(
     .to_string();
 
     let from = wcr_address(call.as_str());
+    let meta = MailMeta {
+        from: from.clone(),
+        to: body.to.clone(),
+        subject: body.subject.clone(),
+        ids: vec![],
+    };
+    let probe = chunk_payloads(&id, &meta, &body.body);
+    if !chunks_fit_max_body(&probe) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "mail too large for radio frames — shorten subject or body".into(),
+        ));
+    }
+
     st.store
         .mail_insert(
             &id,
