@@ -2,9 +2,7 @@
 //! Local HTTP mail API for wcr-gui (mounted on the status listener).
 
 use crate::config::Config;
-use crate::mail::{
-    is_third_party_to, validate_internet_addr, wcr_address, CHECK_MAIL_MAX_MSGS, MAIL_MAX_BYTES,
-};
+use crate::mail::{validate_internet_addr, wcr_address, CHECK_MAIL_MAX_MSGS, MAIL_MAX_BYTES};
 use crate::modes::Mode;
 use crate::net::hub_mail::{hub_api_base_from_telemetry, signed_post};
 use crate::presets::{format_airtime_hint, mail_airtime_secs, Preset};
@@ -454,8 +452,4 @@ pub fn mail_send_will_rf(cfg: &Config, hub_ok: bool, explicit_rf: bool) -> bool 
         Mode::InternetRadio => explicit_rf,
         Mode::RadioPlus => explicit_rf || !hub_ok,
     }
-}
-
-pub fn third_party_blocked(cfg: &Config, to: &str) -> bool {
-    is_third_party_to(to) && !cfg.gateway.third_party_allow()
 }
