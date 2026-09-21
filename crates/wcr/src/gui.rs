@@ -664,6 +664,8 @@ struct GuiApp {
     mail_check_ids: Vec<String>,
     last_mail_poll: Instant,
     mail_notify_unread: u64,
+    /// RF mail gateway callsign (`[mail] gateway` in wcr.toml).
+    mail_gateway: String,
 }
 
 impl GuiApp {
@@ -753,6 +755,7 @@ impl GuiApp {
             mail_check_ids: Vec::new(),
             last_mail_poll: Instant::now() - Duration::from_secs(3),
             mail_notify_unread: 0,
+            mail_gateway: form.mail_gateway,
         };
         app.install_tray();
         crate::service::soften_keep_alive();
@@ -768,8 +771,14 @@ impl GuiApp {
     }
 
     fn mail_tab_enabled(&self) -> bool {
-        Callsign::parse(&self.callsign)
-            .map(|c| !c.is_guest())
+        let Ok(c) = Callsign::parse(&self.callsign) else {
+            return false;
+        };
+        if c.is_guest() {
+            return false;
+        }
+        Callsign::parse(self.mail_gateway.trim())
+            .map(|g| !g.is_guest())
             .unwrap_or(false)
     }
 
@@ -1004,6 +1013,29 @@ impl GuiApp {
         };
         cfg.callsign = self.callsign.trim().to_ascii_uppercase();
         cfg.grid = self.grid.trim().to_ascii_uppercase();
+        let gw = self.mail_gateway.trim().to_ascii_uppercase();
+        if gw.is_empty() {
+            cfg.mail.gateway.clear();
+            self.mail_gateway.clear();
+        } else {
+            match Callsign::parse(&gw) {
+                Ok(c) if c.is_guest() => {
+                    self.error = "Email gateway must be a licensed callsign, not a ~guest".into();
+                    return;
+                }
+                Err(e) => {
+                    self.error = format!("Email gateway: {e}");
+                    return;
+                }
+                Ok(_) => {}
+            }
+            if gw == cfg.callsign {
+                self.error = "Email gateway must be another station on your dial, not you".into();
+                return;
+            }
+            cfg.mail.gateway = gw;
+            self.mail_gateway = cfg.mail.gateway.clone();
+        }
         match self.path {
             0 => {
                 cfg.mode = Mode::Internet;
@@ -1583,6 +1615,9 @@ impl eframe::App for GuiApp {
         self.poll_find_radio();
         self.poll_tray(ctx);
         self.poll_mail();
+        if self.center == CenterView::Email && !self.mail_tab_enabled() {
+            self.center = CenterView::Chat;
+        }
         if self.last_poll.elapsed() > Duration::from_millis(250) {
             self.last_poll = Instant::now();
             if self.user_stopped {
@@ -1718,6 +1753,9 @@ impl eframe::App for GuiApp {
                         if self.show_setup {
                             self.hw = None;
                             self.hw_rx = None;
+                            if let Ok(cfg) = Config::load(&Config::default_path()) {
+                                self.mail_gateway = cfg.mail.gateway;
+                            }
                         }
                         self.error.clear();
                     }
@@ -1810,6 +1848,26 @@ impl eframe::App for GuiApp {
                             ui.radio_value(&mut self.path, 3, "HF rig (CAT)");
                             ui.radio_value(&mut self.path, 5, "KISS TNC on a serial port");
                         });
+                    });
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(20.0);
+                        ui.label(RichText::new("Email gateway").color(DIM));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.mail_gateway)
+                                .desired_width(160.0)
+                                .hint_text("G0ABC"),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.add_space(20.0);
+                        ui.label(
+                            RichText::new(
+                                "Required to open Email. internet-radio callsign on your dial that reaches the hub.",
+                            )
+                            .color(DIM)
+                            .font(FontId::monospace(11.0)),
+                        );
                     });
                     if self.path == 1 {
                         ui.horizontal(|ui| {
@@ -3828,6 +3886,7 @@ struct Form {
     audio_input: String,
     audio_output: String,
     freq_mhz: String,
+    mail_gateway: String,
 }
 
 fn load_form() -> Form {
@@ -3862,6 +3921,7 @@ fn load_form() -> Form {
             } else {
                 String::new()
             },
+            mail_gateway: cfg.mail.gateway,
         };
     }
     Form {
