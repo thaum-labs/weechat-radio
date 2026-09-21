@@ -30,6 +30,12 @@ pub enum MailOp {
     GetReq = 3,
     /// Hub→node sync push (internet modes only).
     HubSync = 4,
+    /// VOX-only data: receiver ACKs every chunk and final assembly.
+    VoxData = 5,
+    /// VOX receiver accepted this chunk index.
+    ChunkAck = 6,
+    /// VOX receiver assembled and accepted the complete mail.
+    CompleteAck = 7,
 }
 
 impl MailOp {
@@ -40,6 +46,9 @@ impl MailOp {
             2 => Some(Self::ListHdr),
             3 => Some(Self::GetReq),
             4 => Some(Self::HubSync),
+            5 => Some(Self::VoxData),
+            6 => Some(Self::ChunkAck),
+            7 => Some(Self::CompleteAck),
             _ => None,
         }
     }
@@ -412,6 +421,25 @@ mod tests {
         };
         let back = decode_chunk(&encode_chunk(&w)).unwrap();
         assert_eq!(back.payload, "hello");
+    }
+
+    #[test]
+    fn vox_reliability_ops_roundtrip() {
+        for op in [MailOp::VoxData, MailOp::ChunkAck, MailOp::CompleteAck] {
+            let wire = MailWire {
+                op,
+                mail_id: "reliable-1".into(),
+                idx: 2,
+                count: 4,
+                meta: MailMeta::default(),
+                payload: String::new(),
+            };
+            let decoded = decode_chunk(&encode_chunk(&wire)).unwrap();
+            assert_eq!(decoded.op, op);
+            assert_eq!(decoded.mail_id, "reliable-1");
+            assert_eq!(decoded.idx, 2);
+            assert_eq!(decoded.count, 4);
+        }
     }
 
     #[test]

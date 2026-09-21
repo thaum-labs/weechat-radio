@@ -27,7 +27,7 @@ use crate::store::{Delivery, Store};
 use crate::telemetry::{self, TelemetryEvent};
 use parking_lot::Mutex;
 use rand::Rng;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
@@ -54,6 +54,12 @@ struct IoSwap {
     drop_peer: bool,
 }
 
+#[derive(Default)]
+struct MailAckState {
+    chunks: HashSet<(String, u16)>,
+    complete: HashSet<String>,
+}
+
 #[derive(Clone)]
 struct Runtime {
     cfg: Arc<Mutex<Config>>,
@@ -74,6 +80,7 @@ struct Runtime {
     last_rx_snr: Arc<Mutex<Option<f32>>>,
     radio_lock: Arc<tokio::sync::Mutex<()>>,
     mail_parts: Arc<Mutex<HashMap<String, Vec<MailWire>>>>,
+    mail_acks: Arc<Mutex<MailAckState>>,
     mail_last_gateway: Arc<Mutex<String>>,
 }
 
@@ -273,6 +280,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         last_rx_snr,
         radio_lock: Arc::new(tokio::sync::Mutex::new(())),
         mail_parts: Arc::new(Mutex::new(HashMap::new())),
+        mail_acks: Arc::new(Mutex::new(MailAckState::default())),
         mail_last_gateway: Arc::new(Mutex::new(String::new())),
     };
     refresh_group_prios(&rt);
@@ -979,6 +987,26 @@ async fn enqueue_rf(
 }
 
 fn rf_encode_frames(
+    rf_env: &Envelope,
+    bytes: &[u8],
+    preset: Preset,
+    cfg: &Config,
+) -> Result<Vec<Vec<u8>>> {
+    let mtu = preset.payload_bytes();
+    if frag::should_fragment(rf_env, bytes.len(), mtu) {
+        let frags = frag::split(rf_env, cfg.rf.frag_k, cfg.rf.frag_m)?;
+        let mut out = Vec::with_capacity(frags.len());
+        for f in frags {
+            out.push(f.encode()?);
+        }
+        Ok(out)
+    } else {
+        Ok(vec![bytes.to_vec()])
+    }
+}
+
+/// Email-only frame sizing. Chat keeps its established k+m fragmentation path.
+fn rf_encode_mail_frames(
     rf_env: &Envelope,
     bytes: &[u8],
     preset: Preset,
@@ -2364,7 +2392,11 @@ async fn mail_send_rf(rt: &Runtime, mail_id: &str) -> Result<()> {
     };
     let third = crate::mail::is_third_party_to(&row.to_addr);
     let chunks = chunk_payloads(mail_id, &meta, &row.body);
-    mail_rf_burst_and_wait(rt, origin, dest, chunks, cfg.mode, third).await?;
+    if cfg.modem.is_vox() {
+        mail_send_vox_reliable(rt, origin, dest, chunks, cfg.mode, third).await?;
+    } else {
+        mail_rf_burst_and_wait(rt, origin, dest, chunks, cfg.mode, third).await?;
+    }
     rt.store.mail_set_delivery(mail_id, Delivery::Sent)?;
     rt.store.mail_move_folder(mail_id, "sent")?;
     Ok(())
@@ -2441,6 +2473,118 @@ async fn mail_rf_burst_and_wait(
     Ok(ids)
 }
 
+const VOX_MAIL_ACK_TIMEOUT: Duration = Duration::from_secs(60);
+const VOX_MAIL_COMPLETE_TIMEOUT: Duration = Duration::from_secs(45);
+
+async fn mail_send_vox_reliable(
+    rt: &Runtime,
+    origin: Callsign,
+    dest: Callsign,
+    chunks: Vec<MailWire>,
+    mode: Mode,
+    third_party: bool,
+) -> Result<()> {
+    let Some(mail_id) = chunks.first().map(|chunk| chunk.mail_id.clone()) else {
+        return Ok(());
+    };
+    let mut final_chunk = chunks.last().cloned().expect("VOX mail has a first chunk");
+    final_chunk.op = MailOp::VoxData;
+    {
+        let mut acks = rt.mail_acks.lock();
+        acks.chunks.retain(|(id, _)| id != &mail_id);
+        acks.complete.remove(&mail_id);
+    }
+    let attempts = rt.cfg.lock().rf.max_retries.saturating_add(1);
+    for mut chunk in chunks {
+        chunk.op = MailOp::VoxData;
+        let mut acknowledged = false;
+        for _ in 0..attempts {
+            let ids = mail_tx_chunks_inner(
+                rt,
+                origin.clone(),
+                dest.clone(),
+                vec![chunk.clone()],
+                mode,
+                third_party,
+                false,
+            )
+            .await?;
+            wait_mail_air(rt, &ids).await?;
+            if wait_mail_chunk_ack(rt, &mail_id, chunk.idx, VOX_MAIL_ACK_TIMEOUT).await {
+                acknowledged = true;
+                break;
+            }
+        }
+        if !acknowledged {
+            return Err(crate::error::Error::Msg(format!(
+                "Email gateway did not ACK chunk {}/{} — left in outbox",
+                chunk.idx + 1,
+                chunk.count
+            )));
+        }
+    }
+    let mut complete = false;
+    for attempt in 0..attempts {
+        if wait_mail_complete_ack(rt, &mail_id, VOX_MAIL_COMPLETE_TIMEOUT).await {
+            complete = true;
+            break;
+        }
+        if attempt + 1 < attempts {
+            let ids = mail_tx_chunks_inner(
+                rt,
+                origin.clone(),
+                dest.clone(),
+                vec![final_chunk.clone()],
+                mode,
+                third_party,
+                false,
+            )
+            .await?;
+            wait_mail_air(rt, &ids).await?;
+        }
+    }
+    if !complete {
+        return Err(crate::error::Error::Msg(
+            "Email gateway did not confirm the complete message — left in outbox".into(),
+        ));
+    }
+    let mut acks = rt.mail_acks.lock();
+    acks.chunks.retain(|(id, _)| id != &mail_id);
+    acks.complete.remove(&mail_id);
+    Ok(())
+}
+
+async fn wait_mail_chunk_ack(rt: &Runtime, mail_id: &str, idx: u16, timeout: Duration) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if rt
+            .mail_acks
+            .lock()
+            .chunks
+            .contains(&(mail_id.to_string(), idx))
+        {
+            return true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+}
+
+async fn wait_mail_complete_ack(rt: &Runtime, mail_id: &str, timeout: Duration) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if rt.mail_acks.lock().complete.contains(mail_id) {
+            return true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+}
+
 async fn mail_tx_chunks(
     rt: &Runtime,
     origin: Callsign,
@@ -2448,6 +2592,18 @@ async fn mail_tx_chunks(
     chunks: Vec<MailWire>,
     mode: Mode,
     third_party: bool,
+) -> Result<Vec<MsgId>> {
+    mail_tx_chunks_inner(rt, origin, dest, chunks, mode, third_party, true).await
+}
+
+async fn mail_tx_chunks_inner(
+    rt: &Runtime,
+    origin: Callsign,
+    dest: Callsign,
+    chunks: Vec<MailWire>,
+    mode: Mode,
+    third_party: bool,
+    request_ack: bool,
 ) -> Result<Vec<MsgId>> {
     if chunks.is_empty() {
         return Ok(Vec::new());
@@ -2461,8 +2617,11 @@ async fn mail_tx_chunks(
             encode_chunk(&ch),
             mode,
             third_party,
+            request_ack,
         )?;
-        rt.store.insert(&env, Delivery::Queued)?;
+        if request_ack {
+            rt.store.insert(&env, Delivery::Queued)?;
+        }
         envs.push(env);
     }
     mail_dispatch_burst(rt, &envs).await?;
@@ -2512,8 +2671,10 @@ fn mail_build_env(
     body: Vec<u8>,
     mode: Mode,
     third_party: bool,
+    request_ack: bool,
 ) -> Result<Envelope> {
-    let mut flags = Flags::new().with(FLAG_REQ_ACK);
+    let mut flags = Flags::new();
+    flags.set(FLAG_REQ_ACK, request_ack);
     apply_mode_flags(&mut flags, mode, origin.is_guest());
     flags.set(FLAG_THIRD_PARTY, third_party);
     let seq = rt.store.next_seq(origin.as_str())?;
@@ -2557,6 +2718,37 @@ fn mail_note_tx(rt: &Runtime, env: &Envelope) {
     });
 }
 
+async fn mail_send_control(
+    rt: &Runtime,
+    dest: Callsign,
+    op: MailOp,
+    mail_id: &str,
+    idx: u16,
+    count: u16,
+) -> Result<()> {
+    let cfg = rt.cfg.lock().clone();
+    let origin = Callsign::parse(&cfg.callsign)?;
+    let wire = MailWire {
+        op,
+        mail_id: mail_id.to_string(),
+        idx,
+        count,
+        meta: MailMeta::default(),
+        payload: String::new(),
+    };
+    let mut env = mail_build_env(
+        rt,
+        origin,
+        dest,
+        encode_chunk(&wire),
+        cfg.mode,
+        false,
+        false,
+    )?;
+    env.flags.set_priority(Priority::Priority);
+    dispatch(rt, &env).await
+}
+
 async fn mail_offer_inet(rt: &Runtime, env: &Envelope) {
     let cfg = rt.cfg.lock().clone();
     let mut env = env.clone();
@@ -2596,7 +2788,7 @@ async fn enqueue_mail_burst(rt: &Runtime, envs: &[Envelope]) -> Result<()> {
         stamp_own_mode_flags(&mut env, &rt.engine.our_call, cfg.mode);
         let rf_env = rf_copy(&env, preset);
         let bytes = rf_env.encode()?;
-        all_frames.extend(rf_encode_frames(&rf_env, &bytes, preset, &cfg)?);
+        all_frames.extend(rf_encode_mail_frames(&rf_env, &bytes, preset, &cfg)?);
         ids.push(env.msg_id);
         if first_rf.is_none() {
             first_rf = Some(rf_env);
@@ -2625,9 +2817,11 @@ async fn enqueue_mail_burst(rt: &Runtime, envs: &[Envelope]) -> Result<()> {
 
     if let Some(air) = rt.air() {
         let extra = ids.iter().skip(1).copied().collect();
-        let mut item = AirItem::new(&first, &rt.engine.our_call, all_frames, preset)
-            .with_extra_ids(extra)
-            .with_restore_modem_csma();
+        let mut item =
+            AirItem::new(&first, &rt.engine.our_call, all_frames, preset).with_extra_ids(extra);
+        if cfg.modem.is_vox() {
+            item = item.with_vox_mail_burst();
+        }
         if apply {
             item = item.with_rung(rung);
         }
@@ -2642,13 +2836,16 @@ async fn enqueue_mail_burst(rt: &Runtime, envs: &[Envelope]) -> Result<()> {
         return Ok(());
     }
     if let Some(k) = rt.kiss() {
-        if let Some(c) = rt.control() {
-            c.set_config(rung.control_config_with_csma(false)).await?;
+        let vox = cfg.modem.is_vox();
+        if vox {
+            if let Some(c) = rt.control() {
+                c.set_config(rung.control_config_with_csma(false)).await?;
+            }
         }
         for frame in &all_frames {
             k.send(frame).await?;
         }
-        let vox_ms = if cfg.modem.ptt == "vox" {
+        let vox_ms = if vox {
             u64::from(cfg.modem.vox_lead_ms.max(1400) + cfg.modem.vox_tail_ms)
                 * all_frames.len() as u64
         } else {
@@ -2662,7 +2859,9 @@ async fn enqueue_mail_burst(rt: &Runtime, envs: &[Envelope]) -> Result<()> {
         for env in envs {
             note_own_rf_tx(rt, env);
         }
-        mail_restore_modem_csma(rt).await;
+        if vox {
+            mail_restore_modem_csma(rt).await;
+        }
         return Ok(());
     }
     Err(crate::error::Error::Msg(
@@ -2678,7 +2877,7 @@ async fn mail_tx_one(
     mode: Mode,
     third_party: bool,
 ) -> Result<MsgId> {
-    let env = mail_build_env(rt, origin, dest, body, mode, third_party)?;
+    let env = mail_build_env(rt, origin, dest, body, mode, third_party, true)?;
     rt.store.insert(&env, Delivery::Queued)?;
     dispatch(rt, &env).await?;
     mail_note_tx(rt, &env);
@@ -2689,6 +2888,23 @@ async fn handle_mail_envelope(rt: &Runtime, env: &Envelope, _via: &str) -> Resul
     let chunk = decode_chunk(&env.body)?;
     let cfg = rt.cfg.lock().clone();
     let our = cfg.callsign.clone();
+
+    if env.dest.as_str() == our {
+        match chunk.op {
+            MailOp::ChunkAck => {
+                rt.mail_acks
+                    .lock()
+                    .chunks
+                    .insert((chunk.mail_id, chunk.idx));
+                return Ok(());
+            }
+            MailOp::CompleteAck => {
+                rt.mail_acks.lock().complete.insert(chunk.mail_id);
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
 
     if chunk.op == MailOp::ListReq && cfg.mode.is_gateway() && cfg.mode.uses_internet() {
         let headers = if rt.snap.lock().hub_ok {
@@ -2773,7 +2989,34 @@ async fn handle_mail_envelope(rt: &Runtime, env: &Envelope, _via: &str) -> Resul
         return Ok(());
     }
 
-    if chunk.op == MailOp::Data && env.dest.as_str() == our {
+    if matches!(chunk.op, MailOp::Data | MailOp::VoxData) && env.dest.as_str() == our {
+        let vox_reliable = chunk.op == MailOp::VoxData;
+        if chunk.count == 0 || chunk.idx >= chunk.count {
+            return Err(crate::error::Error::protocol("bad mail chunk index"));
+        }
+        if vox_reliable {
+            mail_send_control(
+                rt,
+                env.origin.clone(),
+                MailOp::ChunkAck,
+                &chunk.mail_id,
+                chunk.idx,
+                chunk.count,
+            )
+            .await?;
+            if rt.store.mail_get(&chunk.mail_id)?.is_some() {
+                mail_send_control(
+                    rt,
+                    env.origin.clone(),
+                    MailOp::CompleteAck,
+                    &chunk.mail_id,
+                    chunk.idx,
+                    chunk.count,
+                )
+                .await?;
+                return Ok(());
+            }
+        }
         let assembled = {
             let mut parts = rt.mail_parts.lock();
             let entry = parts.entry(chunk.mail_id.clone()).or_default();
@@ -2783,9 +3026,7 @@ async fn handle_mail_envelope(rt: &Runtime, env: &Envelope, _via: &str) -> Resul
             if !chunks_complete(entry) {
                 return Ok(());
             }
-            let assembled = entry.clone();
-            parts.remove(&chunk.mail_id);
-            assembled
+            entry.clone()
         };
         let (meta, body) = crate::mail::assemble_chunks(assembled)?;
         let id = chunk.mail_id.clone();
@@ -2795,6 +3036,7 @@ async fn handle_mail_envelope(rt: &Runtime, env: &Envelope, _via: &str) -> Resul
             && rt.snap.lock().hub_ok
             && crate::mail::validate_internet_addr(&meta.to).is_ok()
             && env.origin.as_str() != our;
+        let mut accepted = !relay;
         if relay {
             let base = crate::net::hub_mail::hub_api_base_from_telemetry(&cfg.telemetry.url);
             let url = format!("{}/api/v1/mail/send", base);
@@ -2809,6 +3051,7 @@ async fn handle_mail_envelope(rt: &Runtime, env: &Envelope, _via: &str) -> Resul
             if let Ok(raw) = serde_json::to_vec(&req) {
                 match crate::net::hub_mail::signed_post(&url, &rt.keys, &our, &raw).await {
                     Ok(_) => {
+                        accepted = true;
                         tracing::info!(
                             "mail relay {} -> hub as {} to {}",
                             id,
@@ -2820,6 +3063,10 @@ async fn handle_mail_envelope(rt: &Runtime, env: &Envelope, _via: &str) -> Resul
                 }
             }
         }
+        if !accepted && vox_reliable {
+            // Keep all chunks. A VOX retry of the last chunk will retry hub delivery.
+            return Ok(());
+        }
         rt.store.mail_insert(
             &id,
             "inbox",
@@ -2830,6 +3077,7 @@ async fn handle_mail_envelope(rt: &Runtime, env: &Envelope, _via: &str) -> Resul
             Delivery::Delivered,
             Some(&id),
         )?;
+        rt.mail_parts.lock().remove(&id);
         let band = {
             let s = rt.snap.lock();
             if s.band.is_empty() {
@@ -2848,6 +3096,17 @@ async fn handle_mail_envelope(rt: &Runtime, env: &Envelope, _via: &str) -> Resul
             msgid: Some(env.msg_id.hex()),
             band,
         });
+        if vox_reliable {
+            mail_send_control(
+                rt,
+                env.origin.clone(),
+                MailOp::CompleteAck,
+                &id,
+                chunk.idx,
+                chunk.count,
+            )
+            .await?;
+        }
         return Ok(());
     }
 
@@ -2992,6 +3251,7 @@ mod tests {
             last_rx_snr: Arc::new(Mutex::new(None)),
             radio_lock: Arc::new(tokio::sync::Mutex::new(())),
             mail_parts: Arc::new(Mutex::new(HashMap::new())),
+            mail_acks: Arc::new(Mutex::new(MailAckState::default())),
             mail_last_gateway: Arc::new(Mutex::new(String::new())),
         };
         (rt, air)
@@ -3005,6 +3265,198 @@ mod tests {
             ids: vec![],
         };
         chunk_payloads("mail1", &meta, body)
+    }
+
+    #[test]
+    fn email_frame_sizing_does_not_change_chat_fragmentation() {
+        let mut cfg = Config::default();
+        cfg.rf.frag_k = 2;
+        cfg.rf.frag_m = 1;
+        let env = Envelope::new_msg(
+            Callsign::parse("M7TJF").unwrap(),
+            Callsign::parse("TF101").unwrap(),
+            1,
+            vec![b'x'; 300],
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        let bytes = env.encode().unwrap();
+        let chat = rf_encode_frames(&env, &bytes, Preset::HfPoor, &cfg).unwrap();
+        assert_eq!(
+            chat.len(),
+            3,
+            "chat must keep its established configured 2+1 fragmentation"
+        );
+
+        let email = rf_encode_mail_frames(&env, &bytes, Preset::HfPoor, &cfg).unwrap();
+        assert!(
+            email.len() > chat.len(),
+            "only Email may increase shard count to fit modem73"
+        );
+        assert!(
+            email.iter().all(|frame| frame.len() <= 170),
+            "Email frames must still fit RDM"
+        );
+    }
+
+    #[tokio::test]
+    async fn vox_receiver_acks_chunk_and_complete_mail() {
+        let (sender, _sender_air) = test_mail_runtime();
+        let (receiver, receiver_air) = test_mail_runtime();
+        receiver.cfg.lock().callsign = "TF101".into();
+        receiver.cfg.lock().mode = Mode::Radio;
+
+        let wire = MailWire {
+            op: MailOp::VoxData,
+            mail_id: "vox-mail-1".into(),
+            idx: 0,
+            count: 1,
+            meta: MailMeta {
+                from: "m7tjf@mail.weechatradio.com".into(),
+                to: "tf101@mail.weechatradio.com".into(),
+                subject: "robust".into(),
+                ids: vec![],
+            },
+            payload: "copy".into(),
+        };
+        let env = mail_build_env(
+            &sender,
+            Callsign::parse("M7TJF").unwrap(),
+            Callsign::parse("TF101").unwrap(),
+            encode_chunk(&wire),
+            Mode::RadioPlus,
+            false,
+            false,
+        )
+        .unwrap();
+        handle_mail_envelope(&receiver, &env, "rf").await.unwrap();
+        assert_eq!(
+            receiver.store.mail_get("vox-mail-1").unwrap().unwrap().body,
+            "copy"
+        );
+
+        let mut ops = Vec::new();
+        while let Some(item) = receiver_air.pop_ready() {
+            let ack = Envelope::decode(&item.frames[0]).unwrap();
+            assert!(!ack.flags.req_ack(), "protocol ACKs must not start ARQ");
+            ops.push(decode_chunk(&ack.body).unwrap().op);
+            handle_mail_envelope(&sender, &ack, "rf").await.unwrap();
+        }
+        assert_eq!(ops, vec![MailOp::ChunkAck, MailOp::CompleteAck]);
+        let acks = sender.mail_acks.lock();
+        assert!(
+            acks.chunks.contains(&("vox-mail-1".into(), 0)),
+            "sender must observe the chunk ACK"
+        );
+        assert!(
+            acks.complete.contains("vox-mail-1"),
+            "sender must observe final assembly confirmation"
+        );
+    }
+
+    #[tokio::test]
+    async fn non_vox_mail_keeps_standard_air_settings() {
+        let (rt, air) = test_mail_runtime();
+        rt.cfg.lock().modem.ptt = "none".into();
+        let chunks = mail_chunks_for_test("short");
+        mail_tx_chunks(
+            &rt,
+            Callsign::parse("M7TJF").unwrap(),
+            Callsign::parse("TF101").unwrap(),
+            chunks,
+            Mode::RadioPlus,
+            false,
+        )
+        .await
+        .unwrap();
+        let item = air.pop_ready().unwrap();
+        assert!(!item.skip_csma());
+        assert!(!item.restore_modem_csma());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn vox_mail_retries_missing_chunk_and_waits_for_complete_ack() {
+        let (rt, air) = test_mail_runtime();
+        rt.store
+            .mail_insert(
+                "mail1",
+                "outbox",
+                "m7tjf@mail.weechatradio.com",
+                "friend@example.com",
+                "robust",
+                "short body",
+                Delivery::Queued,
+                None,
+            )
+            .unwrap();
+        let sense = crate::air::FakeSense::new();
+        let (tx, mut rx) = mpsc::channel(256);
+        let h = tokio::spawn(air::run_air_queue(
+            air,
+            tx,
+            sense,
+            None,
+            rt.cfg.clone(),
+            rt.snap.clone(),
+            CancellationToken::new(),
+        ));
+        let rt_send = rt.clone();
+        let send = tokio::spawn(async move { mail_send_rf(&rt_send, "mail1").await });
+
+        let mut first_attempt = 0usize;
+        for _ in 0..150 {
+            tokio::time::advance(Duration::from_millis(100)).await;
+            tokio::task::yield_now().await;
+            while rx.try_recv().is_ok() {
+                first_attempt += 1;
+            }
+            if first_attempt > 0 && !rt.mail_acks.lock().chunks.is_empty() {
+                break;
+            }
+        }
+        assert!(first_attempt > 0, "first VOX chunk attempt must reach KISS");
+        assert!(!send.is_finished(), "no ACK means the mail stays pending");
+
+        let mut retry_frames = 0usize;
+        for _ in 0..700 {
+            tokio::time::advance(Duration::from_millis(100)).await;
+            tokio::task::yield_now().await;
+            while rx.try_recv().is_ok() {
+                retry_frames += 1;
+            }
+            if retry_frames > 0 {
+                break;
+            }
+        }
+        assert!(retry_frames > 0, "missing chunk ACK must trigger a retry");
+
+        rt.mail_acks.lock().chunks.insert(("mail1".into(), 0));
+        for _ in 0..150 {
+            tokio::time::advance(Duration::from_millis(100)).await;
+            tokio::task::yield_now().await;
+            if rt.store.mail_get("mail1").unwrap().unwrap().folder == "sent" {
+                break;
+            }
+        }
+        assert_eq!(
+            rt.store.mail_get("mail1").unwrap().unwrap().folder,
+            "outbox",
+            "chunk ACK alone must not produce the Sent toast/state"
+        );
+        assert!(!send.is_finished());
+
+        rt.mail_acks.lock().complete.insert("mail1".into());
+        for _ in 0..20 {
+            tokio::time::advance(Duration::from_millis(150)).await;
+            tokio::task::yield_now().await;
+            if send.is_finished() {
+                break;
+            }
+        }
+        send.await.unwrap().expect("reliable VOX mail send");
+        assert_eq!(rt.store.mail_get("mail1").unwrap().unwrap().folder, "sent");
+        h.abort();
     }
 
     #[tokio::test]
@@ -3056,8 +3508,9 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn mail_send_rf_dumps_burst_on_busy_channel_then_marks_sent() {
+    async fn non_vox_mail_marks_sent_after_standard_air_queue() {
         let (rt, air) = test_mail_runtime();
+        rt.cfg.lock().modem.ptt = "none".into();
         let body = "hello radio email\n".repeat(40);
         rt.store
             .mail_insert(
@@ -3073,7 +3526,6 @@ mod tests {
             .unwrap();
 
         let sense = crate::air::FakeSense::new();
-        sense.set_state(ChannelState::Rx);
         let (tx, mut rx) = mpsc::channel(64);
         let h = tokio::spawn(air::run_air_queue(
             air.clone(),
@@ -3101,7 +3553,7 @@ mod tests {
         }
         assert!(
             frames.len() >= 2,
-            "email frames must dump in one burst even while the channel is Rx; got {}",
+            "standard non-VOX email frames must reach KISS; got {}",
             frames.len()
         );
         assert!(
