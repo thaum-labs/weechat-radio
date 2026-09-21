@@ -333,6 +333,17 @@ impl Rung {
         }
     }
 
+    /// Approximate payload bitrate used to wait for modem73's queued frames.
+    pub fn bitrate_bps(self) -> u32 {
+        match self {
+            Self::OfdmQpskHalf => 1577,
+            Self::Rdm1200S => 756,
+            Self::Rdm600S => 378,
+            Self::Rdm300S => 194,
+            Self::Mfsk32R => 99,
+        }
+    }
+
     /// Highest (most robust) rung whose PHY MTU can carry `frame_len` bytes.
     pub fn max_for_size(frame_len: usize) -> usize {
         if frame_len <= 55 {
@@ -378,6 +389,14 @@ impl Rung {
                 "csma_enabled": true
             }),
         }
+    }
+
+    pub fn control_config_with_csma(self, enabled: bool) -> serde_json::Value {
+        let mut v = self.control_config();
+        if let Some(obj) = v.as_object_mut() {
+            obj.insert("csma_enabled".into(), serde_json::json!(enabled));
+        }
+        v
     }
 }
 

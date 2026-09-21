@@ -898,6 +898,20 @@ impl GuiApp {
         }
     }
 
+    fn delete_mail(&mut self, id: &str) {
+        let b = serde_json::json!({ "id": id });
+        let _ = status_http("POST", "/mail/delete", Some(&b.to_string()));
+        if self.mail_open_id.as_deref() == Some(id) {
+            self.mail_open_id = None;
+        }
+        if self.mail_pending_id.as_deref() == Some(id) {
+            self.mail_pending_id = None;
+            self.mail_pending_since = None;
+            self.refresh_mail_hint();
+        }
+        self.refresh_mail_list();
+    }
+
     fn refresh_mail_hint(&mut self) {
         if self.mail_pending_id.is_some() {
             self.mail_hint = "On the air — To, subject and body stay until TX finishes".into();
@@ -1024,6 +1038,7 @@ impl GuiApp {
             .max_height(180.0)
             .show(ui, |ui| {
                 let mut clicked: Option<MailListRow> = None;
+                let mut delete_id: Option<String> = None;
                 for row in &self.mail_rows {
                     let subj = if row.subject.is_empty() {
                         "(no subject)"
@@ -1031,25 +1046,34 @@ impl GuiApp {
                         row.subject.as_str()
                     };
                     let open = self.mail_open_id.as_deref() == Some(row.id.as_str());
-                    let r = ui.add(
-                        egui::Label::new(
-                            RichText::new(format!("{} — {}", row.from_addr, subj))
-                                .color(if open {
-                                    ACCENT
-                                } else if row.read {
-                                    DIM
-                                } else {
-                                    FG
-                                })
-                                .monospace(),
-                        )
-                        .sense(egui::Sense::click()),
-                    );
-                    if r.clicked() {
-                        clicked = Some(row.clone());
-                    }
+                    ui.horizontal(|ui| {
+                        let r = ui.add(
+                            egui::Label::new(
+                                RichText::new(format!("{} — {}", row.from_addr, subj))
+                                    .color(if open {
+                                        ACCENT
+                                    } else if row.read {
+                                        DIM
+                                    } else {
+                                        FG
+                                    })
+                                    .monospace(),
+                            )
+                            .sense(egui::Sense::click()),
+                        );
+                        if r.clicked() {
+                            clicked = Some(row.clone());
+                        }
+                        let del = ui.button(RichText::new("del").color(DIM).small().monospace());
+                        hover_tip(&del, "Remove this message from this station");
+                        if del.clicked() {
+                            delete_id = Some(row.id.clone());
+                        }
+                    });
                 }
-                if let Some(row) = clicked {
+                if let Some(id) = delete_id {
+                    self.delete_mail(&id);
+                } else if let Some(row) = clicked {
                     self.mail_open_id = Some(row.id.clone());
                     if !row.read {
                         let b = serde_json::json!({ "id": row.id });
@@ -1110,6 +1134,12 @@ impl GuiApp {
                         .show(ui, |ui| {
                             ui.label(RichText::new(&row.body).color(FG).monospace());
                         });
+                }
+                ui.add_space(4.0);
+                let del = ui.button(RichText::new("delete").color(ORANGE).monospace());
+                hover_tip(&del, "Remove this message from this station");
+                if del.clicked() {
+                    self.delete_mail(&row.id);
                 }
             }
         }
