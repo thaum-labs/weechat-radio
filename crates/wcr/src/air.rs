@@ -507,6 +507,11 @@ async fn pace_and_send(
         snap.lock().tx_rung = rung.as_str().into();
     }
 
+    let pushed_at = match control {
+        Some(c) => c.get_status().await.ok().map(|s| s.tx_frame_count),
+        None => None,
+    };
+
     for frame in &item.frames {
         if tx.send(frame.clone()).await.is_err() {
             break;
@@ -518,7 +523,38 @@ async fn pace_and_send(
         tokio::time::sleep(Duration::from_secs_f64(hold)).await;
     }
 
+    // modem73 has one global TX mode and its own CSMA, so its queue can outlive
+    // the estimate above. Returning early lets the next item switch the mode and
+    // the modem then drops any queued frame wider than the new capacity.
+    if let (Some(c), Some(before)) = (control, pushed_at) {
+        wait_for_tx_drain(
+            c,
+            before + item.frames.len() as u64,
+            Duration::from_secs_f64(hold * 3.0 + DRAIN_GRACE_S),
+        )
+        .await;
+    }
+
     snap.lock().queue_air = queue.depth();
+}
+
+/// Extra patience on top of the airtime estimate while modem73 clears its queue.
+const DRAIN_GRACE_S: f64 = 15.0;
+
+/// Wait until the modem reports `target` transmitted frames, or `cap` elapses.
+async fn wait_for_tx_drain(control: &ControlClient, target: u64, cap: Duration) {
+    let start = Instant::now();
+    loop {
+        match control.get_status().await {
+            Ok(st) if st.tx_frame_count >= target => return,
+            Err(_) => return,
+            _ => {}
+        }
+        if start.elapsed() >= cap {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
 }
 
 #[cfg(test)]
