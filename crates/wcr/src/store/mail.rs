@@ -169,6 +169,13 @@ impl Store {
         Ok(())
     }
 
+    /// Remove one local folder row. Returns false if that id was not stored.
+    pub fn mail_delete(&self, id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute("DELETE FROM mail_messages WHERE id = ?1", params![id])?;
+        Ok(n > 0)
+    }
+
     pub fn mail_unfetched_count(&self) -> Result<u64> {
         let conn = self.conn.lock().unwrap();
         let n: i64 = conn.query_row(
@@ -243,5 +250,43 @@ impl Store {
             )));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::Store;
+
+    #[test]
+    fn delete_removes_only_that_id() {
+        let s = Store::open_memory().unwrap();
+        s.ensure_mail_schema().unwrap();
+        s.mail_insert(
+            "a",
+            "inbox",
+            "from@x.test",
+            "to@y.test",
+            "one",
+            "body a",
+            Delivery::Queued,
+            None,
+        )
+        .unwrap();
+        s.mail_insert(
+            "b",
+            "sent",
+            "from@x.test",
+            "to@y.test",
+            "two",
+            "body b",
+            Delivery::Sent,
+            None,
+        )
+        .unwrap();
+        assert!(s.mail_delete("a").unwrap());
+        assert!(s.mail_get("a").unwrap().is_none());
+        assert_eq!(s.mail_get("b").unwrap().unwrap().id, "b");
+        assert!(!s.mail_delete("a").unwrap());
     }
 }

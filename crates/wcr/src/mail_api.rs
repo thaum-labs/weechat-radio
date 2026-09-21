@@ -94,6 +94,7 @@ pub fn router(st: MailApiState) -> Router {
         .route("/mail/list/{folder}", get(list_folder))
         .route("/mail/send", post(send_mail))
         .route("/mail/read", post(mark_read))
+        .route("/mail/delete", post(delete_mail))
         .route("/mail/sync", post(sync_hub))
         .route("/mail/check/list", post(check_list))
         .route("/mail/check/get", post(check_get))
@@ -239,6 +240,17 @@ async fn mark_read(
     Json(body): Json<ReadBody>,
 ) -> HttpResult<Json<serde_json::Value>> {
     st.store.mail_set_read(&body.id, true).map_err(map_err)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+async fn delete_mail(
+    State(st): State<MailApiState>,
+    Json(body): Json<ReadBody>,
+) -> HttpResult<Json<serde_json::Value>> {
+    let gone = st.store.mail_delete(&body.id).map_err(map_err)?;
+    if !gone {
+        return Err((StatusCode::NOT_FOUND, "mail not found".into()));
+    }
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
