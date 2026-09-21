@@ -3,7 +3,7 @@
 
 use crate::config::Config;
 use crate::modem::control::{ControlClient, ModemStatus};
-use crate::presets::{Preset, Rung};
+use crate::presets::{airtime_secs, Preset, Rung};
 use crate::proto::{Envelope, MsgId, MsgType, Priority};
 use crate::status::SharedStatus;
 use parking_lot::Mutex;
@@ -296,7 +296,7 @@ impl AirItem {
             rung: None,
             preset,
             extra_ids: Vec::new(),
-            skip_csma: env.kind == MsgType::Mail,
+            skip_csma: false,
             restore_modem_csma: false,
             congest_deferred: false,
         }
@@ -328,6 +328,12 @@ impl AirItem {
     }
 
     pub fn with_restore_modem_csma(mut self) -> Self {
+        self.restore_modem_csma = true;
+        self
+    }
+
+    pub fn with_vox_mail_burst(mut self) -> Self {
+        self.skip_csma = true;
         self.restore_modem_csma = true;
         self
     }
@@ -626,6 +632,9 @@ fn item_hold_secs(
     rf: &crate::config::RfConfig,
     modem: &crate::config::ModemConfig,
 ) -> f64 {
+    if !item.restore_modem_csma {
+        return airtime_secs(item.preset, item.payload_len(), 0) + rf.turnaround_ms as f64 / 1000.0;
+    }
     let bitrate = item
         .rung
         .map(Rung::bitrate_bps)
@@ -886,6 +895,29 @@ mod tests {
     }
 
     #[test]
+    fn chat_keeps_pre_email_airtime_hold() {
+        let mut chat = item(AirClass::Own, 1);
+        chat.frames = vec![vec![0u8; 100], vec![0u8; 100]];
+        chat.preset = Preset::HfPoor;
+        chat.rung = Some(Rung::Rdm600S);
+        let mut cfg = Config::default();
+        cfg.rf.turnaround_ms = 250;
+        cfg.modem.ptt = "vox".into();
+        cfg.modem.vox_lead_ms = 900;
+        cfg.modem.vox_tail_ms = 300;
+        let expected = airtime_secs(Preset::HfPoor, 200, 0) + cfg.rf.turnaround_ms as f64 / 1000.0;
+        assert_eq!(item_hold_secs(&chat, &cfg.rf, &cfg.modem), expected);
+
+        let mut mail = chat.clone();
+        mail.skip_csma = true;
+        mail.restore_modem_csma = true;
+        assert!(
+            item_hold_secs(&mail, &cfg.rf, &cfg.modem) > expected,
+            "only Email waits for every queued VOX lead/tail"
+        );
+    }
+
+    #[test]
     fn extra_ids_pending_until_in_flight_clears() {
         let q = AirQueue::new();
         let mut burst = item(AirClass::Own, 1);
@@ -1055,9 +1087,14 @@ mod tests {
         assert_eq!(AirClass::classify(&em, us), AirClass::Emergency);
         let mut mail = msg.clone();
         mail.kind = MsgType::Mail;
-        let mail_item = AirItem::new(&mail, us, vec![vec![1]], Preset::VhfFm);
-        assert!(mail_item.skip_csma(), "email must not wait WCR CSMA");
-        assert!(!mail_item.restore_modem_csma());
+        let standard_mail = AirItem::new(&mail, us, vec![vec![1]], Preset::VhfFm);
+        assert!(
+            !standard_mail.skip_csma(),
+            "non-VOX mail must keep standard CSMA"
+        );
+        let vox_mail = standard_mail.with_vox_mail_burst();
+        assert!(vox_mail.skip_csma(), "VOX mail must not wait WCR CSMA");
+        assert!(vox_mail.restore_modem_csma());
         let chat_item = AirItem::new(&msg, us, vec![vec![1]], Preset::VhfFm);
         assert!(!chat_item.skip_csma(), "chat must still run WCR CSMA");
     }
