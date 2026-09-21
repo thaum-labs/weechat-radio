@@ -782,11 +782,9 @@ async fn spawn_hub(
         50_000,
     )?);
     let keys = crate::proto::load_or_create(&Config::key_path())?;
-    let mail =
-        std::sync::Arc::new(crate::net::hub_mail::MailHubDb::open_memory().expect("hub mail db"));
     let bind = bind.to_string();
     Ok(tokio::spawn(async move {
-        crate::net::run_hub(&bind, store, tel, keys, mail).await
+        crate::net::run_hub(&bind, store, tel, keys).await
     }))
 }
 

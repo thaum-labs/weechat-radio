@@ -9,7 +9,6 @@ services:
       - wcr-data:/data
     environment:
       HOME: /data
-      RESEND_API_KEY: ${RESEND_API_KEY}
     restart: unless-stopped
     expose:
       - "7373"

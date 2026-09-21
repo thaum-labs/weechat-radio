@@ -8,7 +8,6 @@ use crate::proto::{Envelope, MsgId, MsgType, Priority};
 use crate::status::SharedStatus;
 use parking_lot::Mutex;
 use rand::Rng;
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Notify};
@@ -274,12 +273,6 @@ pub struct AirItem {
     pub not_before: Instant,
     pub rung: Option<Rung>,
     pub preset: Preset,
-    /// Extra msg ids packed into this item (email chunk burst).
-    extra_ids: Vec<MsgId>,
-    /// Email only: do not run WCR CSMA before this item. Chat is unchanged.
-    skip_csma: bool,
-    /// Email burst: restore modem73 CSMA after this item is on the air.
-    restore_modem_csma: bool,
     congest_deferred: bool,
 }
 
@@ -295,9 +288,6 @@ impl AirItem {
             not_before: now,
             rung: None,
             preset,
-            extra_ids: Vec::new(),
-            skip_csma: false,
-            restore_modem_csma: false,
             congest_deferred: false,
         }
     }
@@ -322,40 +312,6 @@ impl AirItem {
         self
     }
 
-    pub fn with_extra_ids(mut self, ids: Vec<MsgId>) -> Self {
-        self.extra_ids = ids;
-        self
-    }
-
-    pub fn with_vox_mail_burst(mut self) -> Self {
-        self.skip_csma = true;
-        self.restore_modem_csma = true;
-        self
-    }
-
-    fn is_vox_mail_burst(&self) -> bool {
-        self.skip_csma && self.restore_modem_csma
-    }
-
-    #[cfg(test)]
-    pub(crate) fn skip_csma(&self) -> bool {
-        self.skip_csma
-    }
-
-    #[cfg(test)]
-    pub(crate) fn restore_modem_csma(&self) -> bool {
-        self.restore_modem_csma
-    }
-
-    #[cfg(test)]
-    pub(crate) fn extra_ids(&self) -> &[MsgId] {
-        &self.extra_ids
-    }
-
-    fn covers(&self, id: MsgId) -> bool {
-        self.msg_id == id || self.extra_ids.iter().any(|x| *x == id)
-    }
-
     fn payload_len(&self) -> usize {
         self.frames.iter().map(|f| f.len()).sum()
     }
@@ -363,9 +319,6 @@ impl AirItem {
 
 struct QueueInner {
     items: Vec<AirItem>,
-    in_flight: Option<MsgId>,
-    in_flight_extra: HashSet<MsgId>,
-    accepted: HashSet<MsgId>,
 }
 
 #[derive(Clone)]
@@ -377,41 +330,9 @@ pub struct AirQueue {
 impl AirQueue {
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Mutex::new(QueueInner {
-                items: Vec::new(),
-                in_flight: None,
-                in_flight_extra: HashSet::new(),
-                accepted: HashSet::new(),
-            })),
+            inner: Arc::new(Mutex::new(QueueInner { items: Vec::new() })),
             notify: Arc::new(Notify::new()),
         }
-    }
-
-    fn set_in_flight(&self, id: Option<MsgId>) {
-        let mut g = self.inner.lock();
-        g.in_flight = id;
-        if id.is_none() {
-            g.in_flight_extra.clear();
-        }
-    }
-
-    fn set_in_flight_item(&self, item: &AirItem) {
-        let mut g = self.inner.lock();
-        g.in_flight = Some(item.msg_id);
-        g.in_flight_extra = item.extra_ids.iter().copied().collect();
-    }
-
-    /// Queued or currently being handed to the modem (app-level TX).
-    pub fn is_pending(&self, id: MsgId) -> bool {
-        let g = self.inner.lock();
-        g.in_flight == Some(id)
-            || g.in_flight_extra.contains(&id)
-            || g.items.iter().any(|x| x.covers(id))
-    }
-
-    /// True if this id was accepted onto the air queue at least once.
-    pub fn was_accepted(&self, id: MsgId) -> bool {
-        self.inner.lock().accepted.contains(&id)
     }
 
     /// Insert by class then FIFO. Returns false if `(msg_id, copy)` is already queued.
@@ -428,10 +349,6 @@ impl AirQueue {
             .iter()
             .position(|x| x.class > item.class)
             .unwrap_or(g.items.len());
-        g.accepted.insert(item.msg_id);
-        for id in &item.extra_ids {
-            g.accepted.insert(*id);
-        }
         g.items.insert(pos, item);
         drop(g);
         self.notify.notify_waiters();
@@ -517,20 +434,10 @@ pub async fn run_air_queue(
         }
 
         if let Some(item) = queue.pop_ready() {
-            queue.set_in_flight_item(&item);
-            if item.is_vox_mail_burst() {
-                let modem = cfg.lock().modem.clone();
-                tokio::select! {
-                    _ = cancel.cancelled() => return,
-                    _ = pace_and_send_vox_mail(&queue, &tx, &control, &rf, &modem, &snap, item) => {}
-                }
-            } else {
-                tokio::select! {
-                    _ = cancel.cancelled() => return,
-                    _ = pace_and_send_v056(&queue, &tx, sense.as_ref(), &control, &rf, &snap, item) => {}
-                }
+            tokio::select! {
+                _ = cancel.cancelled() => return,
+                _ = pace_and_send(&queue, &tx, sense.as_ref(), &control, &rf, &snap, item) => {}
             }
-            queue.set_in_flight(None);
             continue;
         }
 
@@ -552,8 +459,7 @@ pub async fn run_air_queue(
     }
 }
 
-/// Frozen Live Chat/non-VOX air path copied from the confirmed v0.1.56 baseline.
-async fn pace_and_send_v056(
+async fn pace_and_send(
     queue: &AirQueue,
     tx: &mpsc::Sender<Vec<u8>>,
     sense: &dyn ChannelSense,
@@ -615,85 +521,14 @@ async fn pace_and_send_v056(
     snap.lock().queue_air = queue.depth();
 }
 
-async fn pace_and_send_vox_mail(
-    queue: &AirQueue,
-    tx: &mpsc::Sender<Vec<u8>>,
-    control: &Option<ControlClient>,
-    rf: &crate::config::RfConfig,
-    modem: &crate::config::ModemConfig,
-    snap: &Arc<SharedStatus>,
-    item: AirItem,
-) {
-    snap.lock().deferred = false;
-    if let Some(rung) = item.rung {
-        if let Some(c) = control {
-            let _ = c.set_config(rung.control_config_with_csma(false)).await;
-        }
-        snap.lock().tx_rung = rung.as_str().into();
-    } else if let Some(c) = control {
-        let _ = c
-            .set_config(serde_json::json!({ "csma_enabled": false }))
-            .await;
-    }
-    for frame in &item.frames {
-        if tx.send(frame.clone()).await.is_err() {
-            break;
-        }
-    }
-    let hold = vox_mail_hold_secs(&item, rf, modem);
-    if hold > 0.0 {
-        tokio::time::sleep(Duration::from_secs_f64(hold)).await;
-    }
-    if let Some(c) = control {
-        let _ = c.set_config(item.preset.control_config()).await;
-    }
-    snap.lock().queue_air = queue.depth();
-}
-
-fn vox_mail_hold_secs(
-    item: &AirItem,
-    rf: &crate::config::RfConfig,
-    modem: &crate::config::ModemConfig,
-) -> f64 {
-    let bitrate = item
-        .rung
-        .map(Rung::bitrate_bps)
-        .unwrap_or_else(|| item.preset.bitrate_bps()) as f64;
-    let data = item.payload_len() as f64 * 8.0 / bitrate;
-    let per_frame = if modem.ptt == "vox" {
-        // modem73 uses a 1400 ms signature lead on the first queued frame even
-        // when the configured normal lead is 900 ms.
-        (modem.vox_lead_ms.max(1400) + modem.vox_tail_ms) as f64 / 1000.0
-    } else {
-        item.preset.overhead_ms() as f64 / 1000.0
-    };
-    data + per_frame * item.frames.len() as f64 + rf.turnaround_ms as f64 / 1000.0
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modem::control::ControlCmd;
     use crate::proto::ids::MsgId;
     use crate::status;
 
     fn mid(n: u8) -> MsgId {
         MsgId::from_bytes([n, 0, 0, 0, 0, 0, 0, 0])
-    }
-
-    #[test]
-    fn is_pending_queued_and_in_flight() {
-        let q = AirQueue::new();
-        let id = mid(1);
-        assert!(!q.is_pending(id));
-        q.enqueue(item(AirClass::Own, 1));
-        assert!(q.is_pending(id));
-        let popped = q.pop_ready().unwrap();
-        assert!(!q.is_pending(id));
-        q.set_in_flight(Some(popped.msg_id));
-        assert!(q.is_pending(id));
-        q.set_in_flight(None);
-        assert!(!q.is_pending(id));
     }
 
     fn item(class: AirClass, n: u8) -> AirItem {
@@ -707,9 +542,6 @@ mod tests {
             not_before: now,
             rung: None,
             preset: Preset::VhfFm,
-            extra_ids: Vec::new(),
-            skip_csma: false,
-            restore_modem_csma: false,
             congest_deferred: false,
         }
     }
@@ -915,168 +747,6 @@ mod tests {
     }
 
     #[test]
-    fn chat_keeps_pre_email_airtime_hold() {
-        let mut chat = item(AirClass::Own, 1);
-        chat.frames = vec![vec![0u8; 100], vec![0u8; 100]];
-        chat.preset = Preset::HfPoor;
-        chat.rung = Some(Rung::Rdm600S);
-        let mut cfg = Config::default();
-        cfg.rf.turnaround_ms = 250;
-        cfg.modem.ptt = "vox".into();
-        cfg.modem.vox_lead_ms = 900;
-        cfg.modem.vox_tail_ms = 300;
-        let expected = airtime_secs(Preset::HfPoor, 200, 0) + cfg.rf.turnaround_ms as f64 / 1000.0;
-
-        let mut mail = chat.clone();
-        mail.skip_csma = true;
-        mail.restore_modem_csma = true;
-        assert!(
-            vox_mail_hold_secs(&mail, &cfg.rf, &cfg.modem) > expected,
-            "only Email waits for every queued VOX lead/tail"
-        );
-    }
-
-    #[test]
-    fn extra_ids_pending_until_in_flight_clears() {
-        let q = AirQueue::new();
-        let mut burst = item(AirClass::Own, 1);
-        burst.extra_ids = vec![mid(2), mid(3)];
-        q.enqueue(burst);
-        assert!(q.was_accepted(mid(1)));
-        assert!(q.was_accepted(mid(2)));
-        assert!(q.was_accepted(mid(3)));
-        assert!(q.is_pending(mid(2)));
-        let popped = q.pop_ready().unwrap();
-        assert!(!q.is_pending(mid(2)));
-        q.set_in_flight_item(&popped);
-        assert!(q.is_pending(mid(1)));
-        assert!(q.is_pending(mid(2)));
-        assert!(q.is_pending(mid(3)));
-        q.set_in_flight(None);
-        assert!(!q.is_pending(mid(2)));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn mail_skip_csma_sends_while_rx() {
-        let q = AirQueue::new();
-        let sense = FakeSense::new();
-        sense.set_state(ChannelState::Rx);
-        let (tx, mut rx) = mpsc::channel(8);
-        let mut c = Config::default();
-        c.rf.csma = true;
-        c.rf.slot_ms = 50;
-        c.rf.quiet_ms = 50;
-        c.rf.max_defer_ms = 15_000;
-        c.rf.emergency_max_defer_ms = 15_000;
-        c.rf.turnaround_ms = 0;
-        let cfg = Arc::new(Mutex::new(c));
-        let snap = status::new_shared();
-        let h = tokio::spawn(run_air_queue(
-            q.clone(),
-            tx,
-            sense.clone(),
-            None,
-            cfg,
-            snap,
-            CancellationToken::new(),
-        ));
-        let mut mail = item(AirClass::Own, 7);
-        mail = mail.with_vox_mail_burst();
-        q.enqueue(mail);
-        tokio::time::advance(Duration::from_millis(20)).await;
-        tokio::task::yield_now().await;
-        assert_eq!(
-            drain(&mut rx).await,
-            vec![vec![7]],
-            "email must not wait for a clear channel"
-        );
-        h.abort();
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn mail_rung_keeps_modem_csma_off_until_burst_finishes() {
-        let q = AirQueue::new();
-        let sense = FakeSense::new();
-        sense.set_state(ChannelState::Rx);
-        let (tx, mut rx) = mpsc::channel(8);
-        let (control_tx, mut control_rx) = mpsc::channel(8);
-        let control = ControlClient::from_sender(control_tx);
-        let configs = Arc::new(Mutex::new(Vec::new()));
-        let configs_out = configs.clone();
-        let responder = tokio::spawn(async move {
-            while let Some(ControlCmd::Request { json, reply }) = control_rx.recv().await {
-                configs_out.lock().push(json);
-                let _ = reply.send(Ok(serde_json::json!({ "ok": true })));
-            }
-        });
-        let mut c = Config::default();
-        c.modem.ptt = "vox".into();
-        c.modem.preset = "hf-poor".into();
-        c.modem.vox_lead_ms = 900;
-        c.modem.vox_tail_ms = 300;
-        c.rf.csma = true;
-        c.rf.turnaround_ms = 0;
-        let cfg = Arc::new(Mutex::new(c));
-        let snap = status::new_shared();
-        let h = tokio::spawn(run_air_queue(
-            q.clone(),
-            tx,
-            sense,
-            Some(control),
-            cfg,
-            snap,
-            CancellationToken::new(),
-        ));
-        let mut mail = item(AirClass::Own, 7);
-        mail.frames = vec![vec![7; 100], vec![8; 100]];
-        mail.preset = Preset::HfPoor;
-        mail.rung = Some(Rung::Rdm600S);
-        mail.skip_csma = true;
-        mail.restore_modem_csma = true;
-        q.enqueue(mail);
-
-        for _ in 0..20 {
-            tokio::time::advance(Duration::from_millis(100)).await;
-            tokio::task::yield_now().await;
-            if configs.lock().len() == 1 {
-                break;
-            }
-        }
-        assert_eq!(drain(&mut rx).await.len(), 2);
-        assert_eq!(configs.lock().len(), 1, "burst config must be applied");
-        tokio::time::advance(Duration::from_millis(6200)).await;
-        tokio::task::yield_now().await;
-        assert_eq!(
-            configs.lock().len(),
-            1,
-            "do not restore RDM/CSMA while modem73 can still have VOX frames queued"
-        );
-        for _ in 0..30 {
-            tokio::time::advance(Duration::from_millis(100)).await;
-            tokio::task::yield_now().await;
-            if configs.lock().len() >= 2 {
-                break;
-            }
-        }
-        let got = configs.lock();
-        assert_eq!(got.len(), 2, "configure burst, then restore preset");
-        assert_eq!(got[0].get("robust_mode").and_then(|v| v.as_i64()), Some(6));
-        assert_eq!(
-            got[0].get("csma_enabled").and_then(|v| v.as_bool()),
-            Some(false),
-            "applying the RDM rung must not turn modem CSMA back on for email"
-        );
-        assert_eq!(
-            got[1].get("csma_enabled").and_then(|v| v.as_bool()),
-            Some(true),
-            "chat CSMA must be restored after modem73 drains the email burst"
-        );
-        drop(got);
-        h.abort();
-        responder.abort();
-    }
-
-    #[test]
     fn classify_matches_plan() {
         use crate::proto::{Callsign, Envelope, Flags};
         let us = "G4ABC";
@@ -1104,51 +774,5 @@ mod tests {
         let mut em = Envelope::new_msg(origin, dest, 2, b"!!".to_vec(), 3, Flags::new()).unwrap();
         em.flags.set_priority(Priority::Emergency);
         assert_eq!(AirClass::classify(&em, us), AirClass::Emergency);
-        let mut mail = msg.clone();
-        mail.kind = MsgType::Mail;
-        let standard_mail = AirItem::new(&mail, us, vec![vec![1]], Preset::VhfFm);
-        assert!(
-            !standard_mail.skip_csma(),
-            "non-VOX mail must keep standard CSMA"
-        );
-        let vox_mail = standard_mail.with_vox_mail_burst();
-        assert!(vox_mail.skip_csma(), "VOX mail must not wait WCR CSMA");
-        assert!(vox_mail.restore_modem_csma());
-        let chat_item = AirItem::new(&msg, us, vec![vec![1]], Preset::VhfFm);
-        assert!(!chat_item.skip_csma(), "chat must still run WCR CSMA");
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn chat_still_defers_while_channel_is_rx() {
-        let q = AirQueue::new();
-        let sense = FakeSense::new();
-        sense.set_state(ChannelState::Rx);
-        let (tx, mut rx) = mpsc::channel(8);
-        let mut c = Config::default();
-        c.rf.csma = true;
-        c.rf.slot_ms = 50;
-        c.rf.quiet_ms = 50;
-        c.rf.max_defer_ms = 15_000;
-        c.rf.emergency_max_defer_ms = 15_000;
-        c.rf.turnaround_ms = 0;
-        let cfg = Arc::new(Mutex::new(c));
-        let snap = status::new_shared();
-        let h = tokio::spawn(run_air_queue(
-            q.clone(),
-            tx,
-            sense.clone(),
-            None,
-            cfg,
-            snap,
-            CancellationToken::new(),
-        ));
-        q.enqueue(item(AirClass::Own, 3));
-        tokio::time::advance(Duration::from_millis(400)).await;
-        tokio::task::yield_now().await;
-        assert!(
-            drain(&mut rx).await.is_empty(),
-            "chat must still wait for a clear channel"
-        );
-        h.abort();
     }
 }

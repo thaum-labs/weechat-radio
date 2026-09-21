@@ -131,11 +131,6 @@ pub struct ControlClient {
 }
 
 impl ControlClient {
-    #[cfg(test)]
-    pub(crate) fn from_sender(tx: mpsc::Sender<ControlCmd>) -> Self {
-        Self { tx }
-    }
-
     pub async fn connect(addr: &str) -> Result<(Self, mpsc::Receiver<RxFrameEvent>)> {
         let stream = TcpStream::connect(addr).await.map_err(|e| {
             Error::Modem(format!(
