@@ -29,6 +29,7 @@ pub struct Config {
     pub rig: RigConfig,
     pub rf: RfConfig,
     pub tnc: TncConfig,
+    pub mail: MailConfig,
 }
 
 impl Default for Config {
@@ -51,6 +52,7 @@ impl Default for Config {
             rig: RigConfig::default(),
             rf: RfConfig::default(),
             tnc: TncConfig::default(),
+            mail: MailConfig::default(),
         }
     }
 }
@@ -427,6 +429,14 @@ impl Default for RfConfig {
     }
 }
 
+/// Email gateway. The domain is fixed; there is no domain field.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MailConfig {
+    /// Radio-plus sends RF to this callsign. Empty until set in setup.
+    pub gateway: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RigConfig {
@@ -478,6 +488,7 @@ impl Config {
         if self.lan.service.trim().is_empty() {
             self.lan.service = DEFAULT_LAN_SERVICE.into();
         }
+        self.mail.gateway = self.mail.gateway.trim().to_ascii_uppercase();
         if self.modem.uses_tnc() {
             // The radio's TNC is fixed 1200 bd AFSK; modem73 is not involved.
             self.modem.manage = false;

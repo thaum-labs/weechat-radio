@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/wcr"]
 
 [workspace.package]
-version = "0.1.73"
+version = "0.1.74"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["Thaum Labs"]
@@ -45,6 +45,7 @@ mdns-sd = "0.13"
 governor = "0.8"
 nonzero_ext = "0.3"
 sha2 = "0.10"
+hmac = "0.12"
 zeroize = "1.8"
 hostname = "0.4"
 reed-solomon-erasure = "6.0"
