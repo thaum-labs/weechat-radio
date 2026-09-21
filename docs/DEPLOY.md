@@ -24,7 +24,7 @@ Create A records, all pointing at the droplet IP:
 
 2. Copy `deploy/` to the droplet (or clone this repo).
 
-3. Copy `deploy/.env.example` to `/opt/wcr/.env` and set `WCR_DOMAIN=weechatradio.com`.
+3. Copy `deploy/.env.example` to `/opt/wcr/.env` and set `WCR_DOMAIN=weechatradio.com`. For Email (Resend), add `RESEND_API_KEY` from your Resend dashboard (WeeChat Radio key). **Do not** put the key in git. Resend DNS (MX/SPF/DKIM) belongs on **`mail.weechatradio.com`** only — do not move apex `weechatradio.com` MX away from your existing mail/site setup. Webhook: `https://hub.weechatradio.com/api/v1/mail/webhook/resend` for `email.received`.
 
 4. Point cloud-init at `deploy/cloud-init.yaml` on first boot, **or** run:
 

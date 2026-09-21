@@ -361,13 +361,17 @@ pub async fn serve(bind: String, snap: Arc<SharedStatus>) {
     match tokio::net::TcpListener::bind(&bind).await {
         Ok(listener) => {
             tracing::info!("status HTTP on {bind}");
-            serve_listener(listener, snap).await;
+            serve_listener(listener, snap, None).await;
         }
         Err(e) => tracing::warn!("status HTTP {bind}: {e}"),
     }
 }
 
-pub async fn serve_listener(listener: tokio::net::TcpListener, snap: Arc<SharedStatus>) {
+pub async fn serve_listener(
+    listener: tokio::net::TcpListener,
+    snap: Arc<SharedStatus>,
+    mail: Option<crate::mail_api::MailApiState>,
+) {
     use axum::{routing::get, Json, Router};
     let app = Router::new().route(
         "/status",
@@ -379,6 +383,11 @@ pub async fn serve_listener(listener: tokio::net::TcpListener, snap: Arc<SharedS
             }
         }),
     );
+    let app = if let Some(m) = mail {
+        app.merge(crate::mail_api::router(m))
+    } else {
+        app
+    };
     let _ = axum::serve(listener, app).await;
 }
 

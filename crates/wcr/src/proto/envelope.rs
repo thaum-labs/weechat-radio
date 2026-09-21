@@ -79,6 +79,7 @@ pub enum MsgType {
     Form = 8,
     File = 9, // reserved
     Frag = 10,
+    Mail = 11,
 }
 
 impl MsgType {
@@ -95,6 +96,7 @@ impl MsgType {
             8 => Ok(Self::Form),
             9 => Ok(Self::File),
             10 => Ok(Self::Frag),
+            11 => Ok(Self::Mail),
             _ => Err(Error::protocol(format!("unknown message type {v}"))),
         }
     }
@@ -112,6 +114,7 @@ impl MsgType {
             Self::Form => "form",
             Self::File => "file",
             Self::Frag => "frag",
+            Self::Mail => "mail",
         }
     }
 }

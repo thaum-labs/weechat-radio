@@ -2,6 +2,7 @@
 //! Hub WebSocket server + telemetry HTTP API.
 
 use crate::error::Result;
+use crate::net::hub_mail::{self, MailHubDb, ResendHub};
 use crate::proto::frag::FragAssembler;
 use crate::proto::{verify_envelope, Callsign, Envelope, IdentityKeys, MsgType};
 use crate::rate_limit::{self, KeyedLimiter};
@@ -37,6 +38,8 @@ pub struct HubState {
     pub report_by_call: Arc<KeyedLimiter>,
     pub report_by_ip: Arc<KeyedLimiter>,
     pub hello_by_call: Arc<KeyedLimiter>,
+    pub mail: Arc<MailHubDb>,
+    pub mail_resend: Arc<ResendHub>,
 }
 
 pub struct Session {
@@ -67,6 +70,7 @@ pub async fn run_hub(
     store: Arc<Store>,
     telemetry: Arc<TelemetryDb>,
     keys: IdentityKeys,
+    mail: Arc<MailHubDb>,
 ) -> Result<()> {
     let (live, _) = broadcast::channel(256);
     let state = HubState {
@@ -82,6 +86,8 @@ pub async fn run_hub(
         report_by_call: rate_limit::per_minute(120),
         report_by_ip: rate_limit::per_minute(240),
         hello_by_call: rate_limit::per_minute(30),
+        mail,
+        mail_resend: Arc::new(ResendHub::from_env()),
     };
     let app = Router::new()
         .route("/", get(ws_upgrade))
@@ -93,6 +99,18 @@ pub async fn run_hub(
         .route("/api/v1/hubs", get(get_hubs))
         .route("/api/v1/bands", get(get_bands))
         .route("/api/v1/stats", get(get_stats))
+        .route("/api/v1/mail/send", post(hub_mail::post_send))
+        .route("/api/v1/mail/inbox", post(hub_mail::post_inbox))
+        .route("/api/v1/mail/fetch", post(hub_mail::post_fetch))
+        .route("/api/v1/mail/copy", post(hub_mail::post_copy))
+        .route(
+            "/api/v1/mail/copy/confirm",
+            post(hub_mail::post_copy_confirm),
+        )
+        .route(
+            "/api/v1/mail/webhook/resend",
+            post(hub_mail::resend_webhook),
+        )
         .route("/healthz", get(|| async { "ok" }))
         .layer(CorsLayer::permissive())
         .with_state(state);
@@ -564,6 +582,8 @@ pub fn test_hub_state() -> HubState {
         report_by_call: rate_limit::per_minute(120),
         report_by_ip: rate_limit::per_minute(240),
         hello_by_call: rate_limit::per_minute(30),
+        mail: Arc::new(MailHubDb::open_memory().unwrap()),
+        mail_resend: Arc::new(ResendHub::from_env()),
     }
 }
 

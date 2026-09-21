@@ -29,6 +29,7 @@ pub struct Config {
     pub rig: RigConfig,
     pub rf: RfConfig,
     pub tnc: TncConfig,
+    pub mail: MailConfig,
 }
 
 impl Default for Config {
@@ -51,6 +52,25 @@ impl Default for Config {
             rig: RigConfig::default(),
             rf: RfConfig::default(),
             tnc: TncConfig::default(),
+            mail: MailConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MailConfig {
+    /// Verified subdomain for WCR addresses (`mail.weechatradio.com`).
+    pub domain: String,
+    /// Optional gateway callsign for RF mail when the hub socket is down.
+    pub gateway: String,
+}
+
+impl Default for MailConfig {
+    fn default() -> Self {
+        Self {
+            domain: "mail.weechatradio.com".into(),
+            gateway: String::new(),
         }
     }
 }
