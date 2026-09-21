@@ -166,8 +166,9 @@
       <h2>Optional copy to your own mailbox</h2>
       <p>Off by default. In Email settings you can ask the hub to also copy mail to a personal address (for example your usual inbox on a phone).</p>
       <ul>
-        <li>The hub emails a confirm code to that address. The toggle stays pending until you enter the code.</li>
+        <li>The hub emails a confirm code to that address. The toggle stays pending until you enter the code. Your station and the hub both have to accept it, so confirm while the hub is up.</li>
         <li>When it is on: mail you send can be BCC'd there; mail that arrives at the hub is copied there. Their Reply still waits at the hub. Copy-to does not steal the Reply off the radio path.</li>
+        <li>The copy follows your callsign. On <code>radio-plus</code> the hub adds it when the gateway posts your mail, so the gateway operator's own copy-to is never used on your message.</li>
         <li>Do not auto-forward that mailbox back to <code>callsign@mail.weechatradio.com</code> or you will loop.</li>
         <li>The personal address never goes over RF.</li>
       </ul>

@@ -31,8 +31,8 @@ use tokio::sync::{broadcast, mpsc};
 
 pub use api::{router, MailSlot};
 pub use proto::{
-    callsign_from_wcr, trim_body, try_decode, validate_internet_addr, wcr_address, Incoming,
-    MAIL_DOMAIN, WCR_COPY_HEADER,
+    callsign_from_wcr, pull_token, trim_body, try_decode, validate_internet_addr, wcr_address,
+    Incoming, MAIL_DOMAIN, WCR_COPY_HEADER,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -226,6 +226,29 @@ impl MailHandle {
         .await?;
         Ok(())
     }
+
+    /// `(code_matched, hub_agreed)`. The hub copies mail that arrives, so a
+    /// local-only confirm leaves copy-to half on.
+    pub async fn confirm_copy(&self, code: &str) -> Result<(bool, bool)> {
+        let cfg = self.cfg.lock().clone();
+        let code = code.trim();
+        if !self.store.confirm_copy(&cfg.callsign, code)? {
+            return Ok((false, false));
+        }
+        let base = hub::http_base_from_hub(&cfg.hub.url);
+        let hub_ok = hub::signed_post(
+            &base,
+            "/api/v1/mail/copy/confirm",
+            &self.keys,
+            &cfg.callsign,
+            &json!({ "code": code }),
+        )
+        .await
+        .ok()
+        .and_then(|v| v.get("ok").and_then(|x| x.as_bool()))
+        .unwrap_or(false);
+        Ok((true, hub_ok))
+    }
 }
 
 #[cfg(test)]
@@ -239,7 +262,8 @@ mod tests {
     use sha2::{Digest, Sha256};
 
     fn hash_fn(src: &str, needle: &str) -> String {
-        let body = extract_fn(src, needle);
+        // Line endings follow the checkout, so hash the content alone.
+        let body = extract_fn(src, needle).replace("\r\n", "\n");
         hex::encode(Sha256::digest(body.as_bytes()))
     }
 
@@ -447,6 +471,22 @@ mod tests {
             email_block_reason("M7TJF", Mode::RadioPlus, "TF101", false, true),
             None
         );
+    }
+
+    #[test]
+    fn only_the_emailed_code_turns_copy_to_on() {
+        let store = store::MailStore::open_memory().expect("store");
+        store
+            .set_copy_pending("M7TJF", "tj@example.com", "123456")
+            .expect("pending");
+        assert!(!store.confirm_copy("M7TJF", "000000").expect("wrong code"));
+        let pending = store.copy("M7TJF").expect("copy");
+        assert!(!pending.confirmed && pending.address.is_empty());
+
+        assert!(store.confirm_copy("M7TJF", "123456").expect("right code"));
+        let live = store.copy("M7TJF").expect("copy");
+        assert!(live.confirmed && live.enabled);
+        assert_eq!(live.address, "tj@example.com");
     }
 
     #[test]
