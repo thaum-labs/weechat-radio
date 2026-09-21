@@ -1802,15 +1802,14 @@ impl eframe::App for GuiApp {
                     });
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
-                        ui.radio_value(&mut self.path, 0, "Internet only");
-                        ui.radio_value(&mut self.path, 4, "VR-N76 / UV-PRO (Bluetooth)");
-                        ui.radio_value(&mut self.path, 1, "Handheld + Digirig");
-                        ui.radio_value(&mut self.path, 2, "Audio cable (VOX)");
-                    });
-                    ui.horizontal(|ui| {
-                        ui.add_space(20.0);
-                        ui.radio_value(&mut self.path, 3, "HF rig (CAT)");
-                        ui.radio_value(&mut self.path, 5, "KISS TNC on a serial port");
+                        ui.vertical(|ui| {
+                            ui.radio_value(&mut self.path, 0, "Internet only");
+                            ui.radio_value(&mut self.path, 4, "VR-N76 / UV-PRO (Bluetooth)");
+                            ui.radio_value(&mut self.path, 1, "Handheld + Digirig");
+                            ui.radio_value(&mut self.path, 2, "Audio cable (VOX)");
+                            ui.radio_value(&mut self.path, 3, "HF rig (CAT)");
+                            ui.radio_value(&mut self.path, 5, "KISS TNC on a serial port");
+                        });
                     });
                     if self.path == 1 {
                         ui.horizontal(|ui| {
