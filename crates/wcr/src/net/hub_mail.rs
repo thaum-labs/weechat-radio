@@ -761,6 +761,17 @@ mod tests {
     }
 
     #[test]
+    fn fetch_body_keeps_the_message_id_and_the_signature() {
+        let body = r#"{"ids":["abc"],"for":"M7TJF","pk":"aa","sig":"bb","ts":1700000000}"#;
+        let req: FetchReq = serde_json::from_str(body).unwrap_or_default();
+        assert_eq!(req.ids, vec!["abc".to_string()]);
+        assert_eq!(req.auth.for_call, "M7TJF");
+        assert_eq!(req.auth.pk, "aa");
+        assert_eq!(req.auth.sig, "bb");
+        assert_eq!(req.auth.ts, 1_700_000_000);
+    }
+
+    #[test]
     fn a_gateway_pull_needs_the_owners_signature() {
         use crate::proto::IdentityKeys;
         let keys = IdentityKeys::generate();
