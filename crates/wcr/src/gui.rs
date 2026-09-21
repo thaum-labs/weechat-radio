@@ -3740,12 +3740,25 @@ impl GuiApp {
                     .font(FontId::monospace(13.0)),
             );
             if ui.add(hair_btn("confirm", ORANGE)).clicked() {
-                let _ = mail_http(
+                let reply = mail_http(
                     "POST",
                     "/mail/copy/confirm",
                     Some(&serde_json::json!({ "code": self.copy_code }).to_string()),
                 );
-                self.copy_note = "Copy-to updated.".into();
+                let flag = |k: &str| {
+                    reply
+                        .as_ref()
+                        .and_then(|v| v.get(k))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                };
+                self.copy_note = if !flag("ok") {
+                    "That code did not match.".into()
+                } else if flag("hub") {
+                    "Copy-to is on.".into()
+                } else {
+                    "Saved here. The hub did not confirm, so mail that arrives is not copied yet. Confirm again with the hub up.".into()
+                };
             }
         });
         if !self.copy_note.is_empty() {

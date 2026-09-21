@@ -287,14 +287,19 @@ async fn send_control(ctx: &TxCtx, op: MailOp, mut meta: MailMeta, payload: &str
     meta.dest = gateway_cs.clone();
     meta.via = gateway_cs;
     meta.from = cfg.callsign.clone();
-    let id = proto::compute_mail_id(&meta.from, &meta.to, &meta.subject, payload, false);
+    let payload = if matches!(op, MailOp::ListReq | MailOp::GetReq) {
+        pull_auth(ctx, &meta.ids)
+    } else {
+        payload.to_string()
+    };
+    let id = proto::compute_mail_id(&meta.from, &meta.to, &meta.subject, &payload, false);
     let wire = MailWire {
         op,
         mail_id: id,
         idx: 0,
         count: 1,
         meta,
-        payload: payload.to_string(),
+        payload,
     };
     let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor);
     let rung = mail_rung(preset, 0);
@@ -486,8 +491,8 @@ async fn apply_mail(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Re
             let rows: Vec<WaitHeader> = serde_json::from_str(&body).unwrap_or_default();
             ctx.store.replace_waiting(&rows)
         }
-        MailOp::ListReq if cfg.mode == Mode::InternetRadio => answer_list(ctx, &meta).await,
-        MailOp::GetReq if cfg.mode == Mode::InternetRadio => answer_get(ctx, &meta).await,
+        MailOp::ListReq if cfg.mode == Mode::InternetRadio => answer_list(ctx, &meta, &body).await,
+        MailOp::GetReq if cfg.mode == Mode::InternetRadio => answer_get(ctx, &meta, &body).await,
         MailOp::Data | MailOp::VoxData => deliver(ctx, meta, body, op).await,
         _ => Ok(()),
     }
@@ -502,13 +507,8 @@ async fn deliver(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Resul
         && from_call.as_deref() != Some(cfg.callsign.as_str());
     if gateway_hop && gateway::gateway_may_post(cfg.mode, cfg.gateway.third_party_allow()) {
         let base = hub::http_base_from_hub(&cfg.hub.url);
-        let copy = ctx.store.copy(&cfg.callsign)?;
-        let bcc = if copy.enabled && copy.confirmed {
-            Some(copy.address)
-        } else {
-            None
-        };
-        let payload = hub::send_body(&meta.from, &meta.to, &meta.subject, &body, bcc.as_deref());
+        // Relayed mail is not ours. The hub adds the sender's copy-to, if any.
+        let payload = hub::send_body(&meta.from, &meta.to, &meta.subject, &body, None);
         let v = hub::signed_post(
             &base,
             "/api/v1/mail/send",
@@ -574,42 +574,37 @@ async fn deliver(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Resul
     Ok(())
 }
 
-async fn answer_list(ctx: &TxCtx, req: &MailMeta) -> Result<()> {
-    let headers = fetch_headers(ctx).await.unwrap_or_default();
+async fn answer_list(ctx: &TxCtx, req: &MailMeta, auth: &str) -> Result<()> {
+    let who = requester(req);
+    let headers = fetch_for(ctx, &who, auth, &[]).await?;
     let payload = serde_json::to_string(&headers).unwrap_or_else(|_| "[]".into());
-    let dest = if req.from.contains('@') {
-        proto::callsign_from_wcr(&req.from).unwrap_or_else(|| req.from.clone())
-    } else {
-        req.from.clone()
-    };
     let meta = MailMeta {
-        dest,
+        dest: who,
         ..MailMeta::default()
     };
     reply_wire(ctx, MailOp::ListHdr, meta, &payload).await
 }
 
-async fn answer_get(ctx: &TxCtx, req: &MailMeta) -> Result<()> {
+async fn answer_get(ctx: &TxCtx, req: &MailMeta, auth: &str) -> Result<()> {
     let cfg = ctx.cfg.lock().clone();
     let base = hub::http_base_from_hub(&cfg.hub.url);
-    let v = hub::signed_post(
-        &base,
-        "/api/v1/mail/fetch",
-        &ctx.keys,
-        &cfg.callsign,
-        &serde_json::json!({ "ids": req.ids }),
-    )
-    .await?;
+    let who = requester(req);
+    let mut body = serde_json::json!({ "ids": req.ids, "for": who });
+    if let Ok(extra) = serde_json::from_str::<serde_json::Value>(auth) {
+        if let Some(obj) = body.as_object_mut() {
+            if let Some(more) = extra.as_object() {
+                for (k, v) in more {
+                    obj.insert(k.clone(), v.clone());
+                }
+            }
+        }
+    }
+    let v = hub::signed_post(&base, "/api/v1/mail/fetch", &ctx.keys, &cfg.callsign, &body).await?;
     let messages = v
         .get("messages")
         .and_then(|m| m.as_array())
         .cloned()
         .unwrap_or_default();
-    let dest = if req.from.contains('@') {
-        proto::callsign_from_wcr(&req.from).unwrap_or_else(|| req.from.clone())
-    } else {
-        req.from.clone()
-    };
     for msg in messages {
         let from = msg
             .get("from")
@@ -635,7 +630,7 @@ async fn answer_get(ctx: &TxCtx, req: &MailMeta) -> Result<()> {
             from,
             to,
             subject,
-            dest: dest.clone(),
+            dest: who.clone(),
             ack: false,
             ..MailMeta::default()
         };
@@ -643,6 +638,47 @@ async fn answer_get(ctx: &TxCtx, req: &MailMeta) -> Result<()> {
         let _ = reply_chunks(ctx, MailOp::Data, &id, &meta, &body).await;
     }
     Ok(())
+}
+
+fn requester(req: &MailMeta) -> String {
+    let from = req.from.trim();
+    if from.contains('@') {
+        proto::callsign_from_wcr(from).unwrap_or_else(|| from.to_ascii_uppercase())
+    } else {
+        from.to_ascii_uppercase()
+    }
+}
+
+/// Signed by the station whose inbox is being pulled. The gateway only forwards it.
+fn pull_auth(ctx: &TxCtx, ids: &[String]) -> String {
+    let call = ctx.cfg.lock().callsign.clone();
+    let ts = chrono::Utc::now().timestamp();
+    let sig = hex::encode(ctx.keys.sign_bytes(&proto::pull_token(&call, ts, ids)));
+    serde_json::json!({
+        "pk": ctx.keys.public_hex(),
+        "sig": sig,
+        "ts": ts,
+    })
+    .to_string()
+}
+
+async fn fetch_for(ctx: &TxCtx, who: &str, auth: &str, ids: &[String]) -> Result<Vec<WaitHeader>> {
+    let cfg = ctx.cfg.lock().clone();
+    let base = hub::http_base_from_hub(&cfg.hub.url);
+    let mut body = serde_json::json!({ "for": who, "ids": ids });
+    if let Ok(extra) = serde_json::from_str::<serde_json::Value>(auth) {
+        if let (Some(obj), Some(more)) = (body.as_object_mut(), extra.as_object()) {
+            for (k, v) in more {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    let v = hub::signed_post(&base, "/api/v1/mail/inbox", &ctx.keys, &cfg.callsign, &body).await?;
+    let rows = v
+        .get("headers")
+        .and_then(|h| serde_json::from_value::<Vec<WaitHeader>>(h.clone()).ok())
+        .unwrap_or_default();
+    Ok(rows)
 }
 
 async fn fetch_headers(ctx: &TxCtx) -> Result<Vec<WaitHeader>> {

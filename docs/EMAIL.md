@@ -39,11 +39,13 @@ The pin keeps its mode colour. An e beside that logo means mail moved in the las
 
 ## Check mail
 
-Internet and internet-radio pull waiting mail from the hub. Radio-plus asks the gateway over RF (list, then get). Nothing arrives on RF unless this station asked.
+Internet and internet-radio pull waiting mail from the hub as themselves. Radio-plus asks the gateway over RF (list, then get). The gateway pulls that station's inbox, and only when the station signed the request. Nothing arrives on RF unless this station asked.
 
 ## Copy-to
 
-Off by default. A personal address is confirmed with a code sent to that inbox. Outbound mail can BCC it. Inbound copies use `X-WCR-Copy`. Copy-to is never put on RF.
+Off by default. A personal address is confirmed with a code sent to that inbox. The code goes to the station store and to the hub, so a confirm needs the hub up; the hub is the side that copies mail that arrives. Outbound mail can BCC it. Inbound copies use `X-WCR-Copy`. Copy-to is never put on RF.
+
+The hub resolves copy-to from the callsign in `From`, so a relaying gateway cannot attach its own address to third-party mail or ask for one. A station's own `bcc` is honoured only when it signs for the author.
 
 ## Hub
 
