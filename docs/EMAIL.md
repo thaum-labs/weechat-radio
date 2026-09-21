@@ -33,6 +33,10 @@ The mail worker pauses the chat queue, waits until the modem's `tx_frame_count` 
 
 One VOX lead covers the whole burst.
 
+## On the map
+
+The pin keeps its mode colour. An e beside that logo means mail moved in the last few minutes. If it went through a gateway, an orange arc links the two callsigns. The ticker shows `MAIL` and callsigns only.
+
 ## Check mail
 
 Internet and internet-radio pull waiting mail from the hub. Radio-plus asks the gateway over RF (list, then get). Nothing arrives on RF unless this station asked.

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: WeeChat Radio Hub API
-  version: 0.1.74
+  version: 0.1.75
   description: |
     Public read endpoints and signed telemetry write for the live map and integrations.
     Message text is never accepted on the write path.
@@ -23,9 +23,18 @@ paths:
   /api/v1/nodes:
     get:
       summary: Live station metadata
+      parameters:
+        - in: query
+          name: since
+          schema: { type: integer, format: int64 }
+          description: Unix seconds. Returns `{ "trail": [ … ], "since" }` of mode and position samples for map replay.
+        - in: query
+          name: at
+          schema: { type: integer, format: int64 }
+          description: Unix seconds. Returns the stations heard in the prior 30 minutes, with the mode they had then.
       responses:
         "200":
-          description: JSON `{ "nodes": [ … ] }` with band, freq_khz, grid, mode
+          description: JSON `{ "nodes": [ … ] }` with band, freq_khz, grid, mode. With `since`, `{ "trail", "since" }` instead.
   /api/v1/events:
     get:
       summary: Recent TX/RX/relay events

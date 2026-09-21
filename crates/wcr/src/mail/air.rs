@@ -17,7 +17,7 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 /// Start at the preset ladder and only step more robust. Never a faster rung.
 pub fn mail_rung(preset: Preset, retries: u32) -> Rung {
@@ -74,6 +74,7 @@ struct TxCtx {
     keys: IdentityKeys,
     ports: Arc<dyn Fn() -> RadioPorts + Send + Sync>,
     cmd_tx: mpsc::Sender<MailCmd>,
+    tel: broadcast::Sender<crate::telemetry::TelemetryEvent>,
 }
 
 struct Assembler {
@@ -89,6 +90,7 @@ pub(super) fn spawn(
     ports: Arc<dyn Fn() -> RadioPorts + Send + Sync>,
     cmd_tx: mpsc::Sender<MailCmd>,
     rx: mpsc::Receiver<MailCmd>,
+    tel: broadcast::Sender<crate::telemetry::TelemetryEvent>,
 ) {
     let ctx = TxCtx {
         store,
@@ -97,6 +99,7 @@ pub(super) fn spawn(
         keys,
         ports,
         cmd_tx,
+        tel,
     };
     tokio::spawn(run(rx, ctx));
 }
@@ -158,6 +161,30 @@ async fn send_one(ctx: &TxCtx, id: &str) -> Result<()> {
     }
 }
 
+/// Map flag only. Callsigns, never the internet address.
+fn note_mail(ctx: &TxCtx, origin: &str, dest: &str) {
+    let origin = origin.trim().to_ascii_uppercase();
+    if !crate::proto::is_plausible_callsign(&origin) {
+        return;
+    }
+    let dest_cs = dest.trim().to_ascii_uppercase();
+    let dest = if crate::proto::is_plausible_callsign(&dest_cs) && dest_cs != origin {
+        Some(dest_cs)
+    } else {
+        None
+    };
+    let _ = ctx.tel.send(crate::telemetry::TelemetryEvent {
+        ts: chrono::Utc::now().timestamp().max(0) as u64,
+        kind: "mail".into(),
+        origin: Some(origin),
+        dest,
+        hops: None,
+        snr: None,
+        msgid: None,
+        band: None,
+    });
+}
+
 async fn hub_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
     let cfg = ctx.cfg.lock().clone();
     if !ctx.snap.lock().hub_ok {
@@ -180,6 +207,7 @@ async fn hub_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
     let v = hub::signed_post(&base, "/api/v1/mail/send", &ctx.keys, &cfg.callsign, &body).await?;
     if gateway::resend_accepted(v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false)) {
         ctx.store.set_state(&row.id, "sent", "sent")?;
+        note_mail(ctx, &cfg.callsign, "");
         Ok(())
     } else {
         Err(Error::Net("Hub did not accept the message.".into()))
@@ -201,7 +229,7 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
         to: row.to_addr.clone(),
         subject: row.subject.clone(),
         dest: gateway_cs.clone(),
-        via: gateway_cs,
+        via: gateway_cs.clone(),
         ack: vox,
         ..MailMeta::default()
     };
@@ -240,6 +268,7 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
         }
         return Err(e);
     }
+    note_mail(ctx, &cfg.callsign, &gateway_cs);
     if !vox {
         ctx.store.set_state(&row.id, "sent", "sent")?;
     }
@@ -488,6 +517,11 @@ async fn deliver(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Resul
             &payload,
         )
         .await?;
+        if gateway::resend_accepted(v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false)) {
+            if let Some(origin) = from_call.as_deref() {
+                note_mail(ctx, origin, &cfg.callsign);
+            }
+        }
         if meta.ack
             && gateway::resend_accepted(v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false))
         {
@@ -530,7 +564,14 @@ async fn deliver(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Resul
         ack: meta.ack,
         retries: 0,
     };
-    ctx.store.insert(&row)
+    ctx.store.insert(&row)?;
+    let us = cfg.callsign.to_ascii_uppercase();
+    if let Some(from_cs) = proto::callsign_from_wcr(&row.from_addr) {
+        note_mail(ctx, &from_cs, &us);
+    } else {
+        note_mail(ctx, &us, "");
+    }
+    Ok(())
 }
 
 async fn answer_list(ctx: &TxCtx, req: &MailMeta) -> Result<()> {

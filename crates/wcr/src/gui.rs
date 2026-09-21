@@ -1438,6 +1438,9 @@ impl eframe::App for GuiApp {
                     ui.add_space(14.0);
                     if nav_link(ui, "live chat").clicked() {
                         self.center = CenterView::Chat;
+                        if self.configured() {
+                            self.show_setup = false;
+                        }
                     }
                     self.paint_email_nav(ui);
                     let running = self.status.is_some();
@@ -1554,18 +1557,19 @@ impl eframe::App for GuiApp {
                         ui.add_space(20.0);
                         ui.label(RichText::new("How you get on the air").color(DIM));
                     });
-                    ui.horizontal(|ui| {
-                        ui.add_space(20.0);
-                        ui.radio_value(&mut self.path, 0, "Internet only");
-                        ui.radio_value(&mut self.path, 4, "VR-N76 / UV-PRO (Bluetooth)");
-                        ui.radio_value(&mut self.path, 1, "Handheld + Digirig");
-                        ui.radio_value(&mut self.path, 2, "Audio cable (VOX)");
-                    });
-                    ui.horizontal(|ui| {
-                        ui.add_space(20.0);
-                        ui.radio_value(&mut self.path, 3, "HF rig (CAT)");
-                        ui.radio_value(&mut self.path, 5, "KISS TNC on a serial port");
-                    });
+                    for (id, label) in [
+                        (0, "Internet only"),
+                        (4, "VR-N76 / UV-PRO (Bluetooth)"),
+                        (1, "Handheld + Digirig"),
+                        (2, "Audio cable (VOX)"),
+                        (3, "HF rig (CAT)"),
+                        (5, "KISS TNC on a serial port"),
+                    ] {
+                        ui.horizontal(|ui| {
+                            ui.add_space(20.0);
+                            ui.radio_value(&mut self.path, id, label);
+                        });
+                    }
                     if self.path == 1 {
                         ui.horizontal(|ui| {
                             ui.add_space(20.0);
@@ -3465,6 +3469,9 @@ impl GuiApp {
             hover_tip(&resp, reason);
         } else if nav_link(ui, &label).clicked() {
             self.center = CenterView::Email;
+            if self.configured() {
+                self.show_setup = false;
+            }
         }
     }
 

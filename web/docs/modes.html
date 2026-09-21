@@ -162,6 +162,9 @@
       <p>Changing mode starts or stops hub chat and the radio path immediately. In <code>internet-radio</code> every chat still goes on RF; the hub and LAN mesh are used only when the destination is not recently heard on this dial over radio (groups: no member heard here). <code>#bulletin</code> always offers the hub and LAN. The live map still gets signed metadata (not message text) whenever <code>[telemetry] url</code> is set, including in <code>radio</code>. Clear that URL to stay off the map.</p>
       <p>If you are in <code>internet-radio</code> and the hub goes away, radio keeps working. The status bar says <strong>Internet down, radio only</strong>. Traffic that still needed the hub waits in an internet hold and goes out when the hub returns. That is separate from the RF retry hold queue.</p>
 
+      <h2>Email</h2>
+      <p>Email is not another operating mode. The map pin keeps its mode colour, and an <strong>e</strong> beside that logo means mail moved recently. You can send from <code>internet</code>, <code>internet-radio</code>, or <code>radio-plus</code> with a gateway callsign in setup. <code>radio</code> has no path to the internet, so Email stays grey. <a href="/docs/email.html">Email</a>.</p>
+
       <h2>Weak-signal behaviour</h2>
       <p>On a faint or fading path the program retries your message and asks modem73 for a slower waveform. The status bar shows <strong>TX</strong> (current waveform) and <strong>RETRY</strong>. Presets: <code>hf-good</code>, <code>hf-poor</code>, <code>hf-weak</code>, <code>hf-deep</code>, <code>vox-safe</code> (always MFSK-32R).</p>
       <p>Operator steps: <a href="/docs/weak.html">weak signals</a>. Versus JS8 / FT8 / Olivia: <a href="/docs/compare.html">compare modes</a>. Packet layout: <a href="/docs/protocol.html">wire protocol</a>.</p>

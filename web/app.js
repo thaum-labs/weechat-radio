@@ -7,6 +7,8 @@ const MODE_COLOR = {
   radio: "#ffbf00",
   "radio-plus": "#ff4dff",
 };
+/** Email traffic overlay. Not an operating mode. */
+const MAIL_COLOR = "#ff7a3d";
 
 const CARTO_KEY = "cb1_3nxz_1_dba340f0a1c8450af09da179";
 const MAP_STYLE_KEY = "wcr-map-style-v2";
@@ -191,7 +193,7 @@ function arcTargets(from, to) {
   return out;
 }
 
-function rememberLink(from, to, inet, draw) {
+function rememberLink(from, to, inet, draw, mail) {
   const fromKey = nodeKey(from);
   if (!fromKey || !to) return;
   const now = Date.now();
@@ -200,6 +202,7 @@ function rememberLink(from, to, inet, draw) {
       a: fromKey,
       b: dest,
       inet: !!inet,
+      mail: !!mail,
       at: now,
     });
   }
@@ -242,21 +245,57 @@ function drawArcs() {
     const alpha = Math.max(0.35, 0.95 - age * 0.55);
     const s1 = map.project([p1.lon, p1.lat]);
     const s2 = map.project([p2.lon, p2.lat]);
-    const color = link.inet
-      ? `rgba(125,155,255,${alpha})`
-      : `rgba(57,255,20,${alpha})`;
-    const dash = link.inet ? [] : [6, 4];
+    const color = link.mail
+      ? `rgba(255,122,61,${alpha})`
+      : link.inet
+        ? `rgba(125,155,255,${alpha})`
+        : `rgba(57,255,20,${alpha})`;
+    const dash = link.mail ? [3, 3] : link.inet ? [] : [6, 4];
     strokePinLink(s1, s2, color, dash);
   }
+}
+
+function noteMailActivity(origin, dest) {
+  const now = Date.now();
+  const o = origin && String(origin).trim();
+  if (o) mailRecent.set(o.toUpperCase(), now);
+  const d = dest && String(dest).trim();
+  if (d && !d.includes("@")) mailRecent.set(d.toUpperCase(), now);
+}
+
+function updateMailOverlays() {
+  const now = Date.now();
+  mailRecent.forEach((t, k) => {
+    if (now - t > LINK_MS) mailRecent.delete(k);
+  });
+  markers.forEach((marker, call) => {
+    marker.getElement().classList.toggle("mail-overlay", mailRecent.has(String(call).toUpperCase()));
+  });
+}
+
+function mailOverlayCount() {
+  const now = Date.now();
+  let n = 0;
+  mailRecent.forEach((t) => {
+    if (now - t <= LINK_MS) n += 1;
+  });
+  return n;
 }
 
 function seedLinksFromEvents(events) {
   const cutoff = Date.now() / 1000 - LINK_MS / 1000;
   (events || []).forEach((x) => {
     if ((x.ts || 0) < cutoff) return;
-    if (!isTrafficKind(x.kind, x.type) || !x.origin || !x.dest) return;
-    rememberLink(x.origin, x.dest, String(x.kind || "").toLowerCase() !== "relay", false);
+    const kind = String(x.kind || x.type || "").toLowerCase();
+    if (kind === "mail") {
+      noteMailActivity(x.origin, x.dest);
+      if (x.origin && x.dest) rememberLink(x.origin, x.dest, false, false, true);
+      return;
+    }
+    if (!isTrafficKind(kind, x.type) || !x.origin || !x.dest) return;
+    rememberLink(x.origin, x.dest, kind !== "relay", false, false);
   });
+  updateMailOverlays();
   if (qsoLinks.size) {
     ensureArcLayer();
     drawArcs();
@@ -465,6 +504,9 @@ let playing = false;
 let playTimer = 0;
 let replayCache = [];
 let replayLoadedAt = 0;
+let nodeTrail = [];
+let trailLoadedAt = 0;
+const mailRecent = new Map();
 let lastMsgAt = 0;
 let wsLabel = "IDLE";
 
@@ -559,11 +601,13 @@ function renderModes(nodes) {
   const meta = document.getElementById("mode-meta");
   if (meta) meta.textContent = String(nodes.length);
   if (!grid) return;
-  grid.innerHTML = Object.keys(MODE_COLOR).map((mode) => {
+  const emailN = mailOverlayCount();
+  const modeRows = Object.keys(MODE_COLOR).map((mode) => {
     const n = counts[mode] || 0;
     const pct = Math.round((n / total) * 100);
     return `<div class="mode-row">${modeMark(mode)}<span class="mode-name">${escapeHtml(mode)}</span><div class="mode-bar"><i style="width:${pct}%;background:${MODE_COLOR[mode]}"></i></div>${n}</div>`;
   }).join("");
+  grid.innerHTML = modeRows + `<div class="mode-row mail-traffic-row"><span class="mail-logo">${WCR.markSvg(MAIL_COLOR, "mode-mark")}<span class="mail-e">e</span></span><span class="mode-name">email</span><div class="mode-bar"><i style="width:${emailN ? 100 : 0}%;background:${MAIL_COLOR}"></i></div>${emailN}</div>`;
 }
 
 function renderBands(bands) {
@@ -613,6 +657,7 @@ function renderStations(nodes) {
     upsertNode(n);
   });
   lastNodes.forEach((n) => upsertNode(n));
+  updateMailOverlays();
   document.getElementById("n-online").textContent = lastNodes.length;
   const sc = document.getElementById("station-count");
   if (sc) sc.textContent = String(lastNodes.length);
@@ -635,6 +680,10 @@ function eventLine(x) {
     : new Date().toISOString().slice(11, 19);
   const origin = x.origin || x.callsign || "?";
   const kind = (x.kind || x.type || "").toLowerCase();
+  if (kind === "mail") {
+    const dest = x.dest && !String(x.dest).includes("@") ? ` -> ${x.dest}` : "";
+    return `[${t}] MAIL ${origin}${dest}`;
+  }
   const from = x.from_band || x.band || "";
   const dest = x.dest || "";
   const to = Array.isArray(x.to_bands) && x.to_bands.length
@@ -723,19 +772,91 @@ function drawSpark(events) {
 }
 
 async function ensureReplay() {
-  if (Date.now() - replayLoadedAt < 20000 && replayCache.length) return;
+  if (!(Date.now() - replayLoadedAt < 20000 && replayCache.length)) {
+    const since = Math.floor(Date.now() / 1000) - SPAN * 60;
+    try {
+      const ev = await (await fetch(`${API}/api/v1/events?since=${since}&limit=500`, { signal: AbortSignal.timeout(4000) })).json();
+      replayCache = ev.events || [];
+      replayLoadedAt = Date.now();
+      drawSpark(replayCache);
+      if (isLive()) seedLinksFromEvents(replayCache);
+      if (liveMode && !liveLogSeeded) seedLiveLog();
+    } catch (_) {}
+  }
+  await ensureTrail();
+}
+
+function replayCutoff() {
+  const minutesAgo = SPAN - Number(scrub.value);
+  return Math.floor(Date.now() / 1000) - minutesAgo * 60;
+}
+
+function dropMarkersExcept(nodes) {
+  const keep = new Set((nodes || []).map((n) => String(n.callsign || "").toUpperCase()));
+  for (const [call, marker] of [...markers]) {
+    if (!keep.has(String(call).toUpperCase())) {
+      marker.remove();
+      markers.delete(call);
+      nodePos.delete(call);
+    }
+  }
+}
+
+function nodesFromTrail(cutoff) {
+  const start = cutoff - 1800;
+  const latest = new Map();
+  for (const row of nodeTrail) {
+    const ts = row.ts || 0;
+    if (ts < start || ts > cutoff) continue;
+    const key = String(row.callsign || "").toUpperCase();
+    const prev = latest.get(key);
+    if (!prev || (prev.ts || 0) <= ts) latest.set(key, row);
+  }
+  return [...latest.values()];
+}
+
+function paintHistory(cutoff) {
+  if (trailLoadedAt) {
+    const nodes = nodesFromTrail(cutoff);
+    dropMarkersExcept(nodes);
+    renderStations(nodes);
+  }
+  qsoLinks.clear();
+  mailRecent.clear();
+  const start = cutoff - LINK_MS / 1000;
+  (replayCache || []).forEach((x) => {
+    const ts = x.ts || 0;
+    if (ts < start || ts > cutoff) return;
+    const kind = String(x.kind || x.type || "").toLowerCase();
+    if (kind === "mail") {
+      noteMailActivity(x.origin, x.dest);
+      if (x.origin && x.dest) rememberLink(x.origin, x.dest, false, false, true);
+      return;
+    }
+    if (!isTrafficKind(kind, x.type) || !x.origin || !x.dest) return;
+    rememberLink(x.origin, x.dest, kind !== "relay", false, false);
+  });
+  ensureArcLayer();
+  drawArcs();
+  updateMailOverlays();
+}
+
+async function ensureTrail() {
+  if (Date.now() - trailLoadedAt < 20000 && trailLoadedAt) return;
   const since = Math.floor(Date.now() / 1000) - SPAN * 60;
   try {
-    const ev = await (await fetch(`${API}/api/v1/events?since=${since}&limit=500`, { signal: AbortSignal.timeout(4000) })).json();
-    replayCache = ev.events || [];
-    replayLoadedAt = Date.now();
-    drawSpark(replayCache);
-    seedLinksFromEvents(replayCache);
-    if (liveMode && !liveLogSeeded) seedLiveLog();
+    const body = await (await fetch(`${API}/api/v1/nodes?since=${since}`, { signal: AbortSignal.timeout(4000) })).json();
+    if (body.since == null) {
+      nodeTrail = [];
+      trailLoadedAt = 0;
+      return;
+    }
+    nodeTrail = body.trail || [];
+    trailLoadedAt = Date.now();
   } catch (_) {}
 }
 
-function renderReplay() {
+async function renderReplay() {
   syncTapeClock();
   updateDayNight();
   if (isLive()) {
@@ -744,15 +865,16 @@ function renderReplay() {
   }
   liveMode = false;
   liveLogSeeded = false;
-  const minutesAgo = SPAN - Number(scrub.value);
-  const cutoff = Math.floor(Date.now() / 1000) - minutesAgo * 60;
+  const cutoff = replayCutoff();
   const rows = replayCache.filter((x) => (x.ts || 0) <= cutoff).slice(0, 80);
   ticker.innerHTML = "";
   if (!rows.length) {
     tick("No traffic in this part of the last 24 hours.");
-    return;
+  } else {
+    rows.forEach((x) => tick(eventLine(x)));
   }
-  rows.forEach((x) => tick(eventLine(x)));
+  await ensureTrail();
+  paintHistory(cutoff);
 }
 
 function goLive() {
@@ -762,6 +884,7 @@ function goLive() {
   syncTapeClock();
   updateDayNight();
   seedLiveLog();
+  refresh();
 }
 
 function playStep() {
@@ -783,6 +906,7 @@ async function applyScrub() {
   if (isLive()) {
     liveMode = true;
     seedLiveLog();
+    refresh();
     return;
   }
   await ensureReplay();
@@ -830,7 +954,7 @@ scrub.addEventListener("input", () => {
 async function refresh() {
   try {
     const nodes = await (await fetch(`${API}/api/v1/nodes`)).json();
-    renderStations(nodes.nodes || []);
+    if (isLive()) renderStations(nodes.nodes || []);
     try {
       const bands = await (await fetch(`${API}/api/v1/bands`)).json();
       renderBands(bands.bands || []);
@@ -852,7 +976,13 @@ async function refresh() {
     const stats = await (await fetch(`${API}/api/v1/stats`)).json();
     document.getElementById("n-tx").textContent = stats.forwarded ?? "—";
     await ensureReplay();
-    seedLinksFromEvents(replayCache);
+    if (isLive()) {
+      qsoLinks.clear();
+      mailRecent.clear();
+      seedLinksFromEvents(replayCache);
+    } else {
+      paintHistory(replayCutoff());
+    }
   } catch (e) {
     hubPanel.textContent = "hub unreachable — showing last data";
   }
@@ -879,18 +1009,24 @@ function connectLive() {
     try {
       const m = JSON.parse(ev.data);
       lastMsgAt = Date.now();
+      if (!liveMode) return;
       if (m.type === "node") {
         scheduleRefresh();
         return;
       }
       const origin = m.origin || m.callsign || "?";
       const kind = (m.kind || m.type || "").toLowerCase();
+      if (kind === "mail") {
+        noteMailActivity(origin, m.dest);
+        if (m.dest && !String(m.dest).includes("@")) rememberLink(origin, m.dest, false, true, true);
+        tick(eventLine(m));
+        return;
+      }
       if (kind === "tx" || kind === "msg" || m.type === "hub_forward") pulseMarker(origin, "tx");
       if (kind === "rx" || kind === "relay") pulseMarker(origin, "rx");
       if (m.dest && isTrafficKind(kind, m.type)) {
         rememberLink(origin, m.dest, kind !== "relay");
       }
-      if (!liveMode) return;
       tick(eventLine(m));
     } catch (_) {}
   };

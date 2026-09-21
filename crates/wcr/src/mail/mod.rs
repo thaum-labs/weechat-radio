@@ -27,7 +27,7 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
 pub use store::{MailRow, WaitHeader};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 pub use api::{router, MailSlot};
 pub use proto::{
@@ -75,7 +75,7 @@ pub fn email_block_reason(
         return Some("Start the station to use Email");
     }
     match mode {
-        Mode::Radio => Some("Email needs an internet hop"),
+        Mode::Radio => Some("Use Internet, Internet+Radio, or Radio+ with a gateway"),
         Mode::RadioPlus if gateway.trim().is_empty() => {
             Some("Set a mail gateway callsign in setup")
         }
@@ -122,6 +122,7 @@ pub fn start(
     snap: Arc<SharedStatus>,
     keys: IdentityKeys,
     ports: Arc<dyn Fn() -> RadioPorts + Send + Sync>,
+    tel: broadcast::Sender<crate::telemetry::TelemetryEvent>,
 ) -> Result<MailHandle> {
     let path = db_path(&cfg.lock());
     let store = Arc::new(store::MailStore::open(&path)?);
@@ -133,7 +134,7 @@ pub fn start(
         snap: snap.clone(),
         keys: keys.clone(),
     };
-    air::spawn(store, cfg, snap, keys, ports, cmd, rx);
+    air::spawn(store, cfg, snap, keys, ports, cmd, rx, tel);
     Ok(handle)
 }
 
@@ -162,7 +163,7 @@ impl MailHandle {
         let cfg = self.cfg.lock().clone();
         if matches!(gateway::local_send_path(cfg.mode), SendPath::Blocked) {
             return Err(Error::config(
-                "Email needs an internet hop. Radio-only cannot reach Resend.",
+                "Use Internet, Internet+Radio, or Radio+ with a gateway.",
             ));
         }
         if matches!(gateway::local_send_path(cfg.mode), SendPath::Rf)
@@ -428,7 +429,7 @@ mod tests {
         );
         assert_eq!(
             email_block_reason("M7TJF", Mode::Radio, "TF101", true, true),
-            Some("Email needs an internet hop")
+            Some("Use Internet, Internet+Radio, or Radio+ with a gateway")
         );
         assert_eq!(
             email_block_reason("M7TJF", Mode::RadioPlus, "", true, true),

@@ -90,6 +90,22 @@ impl TelemetryDb {
             [],
         );
         let _ = conn.execute("ALTER TABLE nodes ADD COLUMN band TEXT", []);
+        let _ = conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS node_seen (
+                ts INTEGER NOT NULL,
+                callsign TEXT NOT NULL,
+                mode TEXT,
+                grid TEXT,
+                lat REAL,
+                lon REAL,
+                band TEXT,
+                freq_khz INTEGER,
+                ptt TEXT,
+                preset TEXT,
+                snr REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_node_seen ON node_seen(callsign, ts);",
+        );
     }
 
     pub fn bind_callsign(&self, call: &str, pk: &[u8; 32]) -> Result<()> {
@@ -186,7 +202,101 @@ impl TelemetryDb {
                 report.band,
             ],
         )?;
+        conn.execute(
+            "INSERT INTO node_seen(ts, callsign, mode, grid, lat, lon, band, freq_khz, ptt, preset, snr)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            params![
+                report.ts as i64,
+                report.callsign.to_ascii_uppercase(),
+                report.mode,
+                report.grid,
+                lat,
+                lon,
+                report.band,
+                report.freq_khz as i64,
+                report.ptt,
+                report.preset,
+                report.snr,
+            ],
+        )?;
+        conn.execute(
+            "DELETE FROM node_seen WHERE ts < ?1",
+            params![(now() - 7 * 86400) as i64],
+        )?;
         Ok(())
+    }
+
+    /// Latest report for each station at or before `at`, if they were heard in the prior 30 minutes.
+    pub fn nodes_at(&self, at: i64) -> Vec<serde_json::Value> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT n.callsign, n.grid, n.lat, n.lon, n.mode, n.ptt, n.preset, n.snr, n.band, n.freq_khz
+                 FROM node_seen n
+                 INNER JOIN (
+                    SELECT callsign, MAX(ts) AS ts
+                    FROM node_seen
+                    WHERE ts <= ?1 AND ts >= ?2
+                    GROUP BY callsign
+                 ) latest ON n.callsign = latest.callsign AND n.ts = latest.ts",
+            )
+            .unwrap();
+        let rows = stmt
+            .query_map(params![at, at - 1800], |r| {
+                let freq_khz = r.get::<_, i64>(9).unwrap_or(0) as u32;
+                let band: Option<String> = r.get(8)?;
+                let frequency = if freq_khz == 0 {
+                    serde_json::Value::Null
+                } else {
+                    serde_json::Value::String(crate::band::fmt_mhz(freq_khz))
+                };
+                Ok(serde_json::json!({
+                    "callsign": r.get::<_, String>(0)?,
+                    "grid": r.get::<_, Option<String>>(1)?,
+                    "lat": r.get::<_, Option<f64>>(2)?,
+                    "lon": r.get::<_, Option<f64>>(3)?,
+                    "mode": r.get::<_, Option<String>>(4)?,
+                    "ptt": r.get::<_, Option<String>>(5)?,
+                    "preset": r.get::<_, Option<String>>(6)?,
+                    "snr": r.get::<_, Option<f64>>(7)?,
+                    "band": band.unwrap_or_default(),
+                    "freq_khz": freq_khz,
+                    "frequency": frequency,
+                }))
+            })
+            .unwrap();
+        rows.filter_map(|r| r.ok()).collect()
+    }
+
+    /// Mode and position samples since `since`, oldest first. The map replays from this.
+    pub fn nodes_since(&self, since: i64) -> Vec<serde_json::Value> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT ts, callsign, grid, lat, lon, mode, ptt, preset, snr, band, freq_khz
+                 FROM node_seen WHERE ts >= ?1 ORDER BY ts ASC LIMIT 8000",
+            )
+            .unwrap();
+        let rows = stmt
+            .query_map(params![since], |r| {
+                let freq_khz = r.get::<_, i64>(10).unwrap_or(0) as u32;
+                let band: Option<String> = r.get(9)?;
+                Ok(serde_json::json!({
+                    "ts": r.get::<_, i64>(0)?,
+                    "callsign": r.get::<_, String>(1)?,
+                    "grid": r.get::<_, Option<String>>(2)?,
+                    "lat": r.get::<_, Option<f64>>(3)?,
+                    "lon": r.get::<_, Option<f64>>(4)?,
+                    "mode": r.get::<_, Option<String>>(5)?,
+                    "ptt": r.get::<_, Option<String>>(6)?,
+                    "preset": r.get::<_, Option<String>>(7)?,
+                    "snr": r.get::<_, Option<f64>>(8)?,
+                    "band": band.unwrap_or_default(),
+                    "freq_khz": freq_khz,
+                }))
+            })
+            .unwrap();
+        rows.filter_map(|r| r.ok()).collect()
     }
 
     pub fn add_event(&self, ev: &TelemetryEvent) -> Result<()> {
@@ -407,10 +517,26 @@ pub async fn ingest_report(
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
+#[derive(Deserialize)]
+pub struct NodesQuery {
+    pub at: Option<i64>,
+    pub since: Option<i64>,
+}
+
 pub async fn get_nodes(
     State(st): State<crate::net::hub_server::HubState>,
+    axum::extract::Query(q): axum::extract::Query<NodesQuery>,
 ) -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "nodes": st.telemetry.nodes() }))
+    if let Some(since) = q.since {
+        return Json(serde_json::json!({
+            "trail": st.telemetry.nodes_since(since),
+            "since": since,
+        }));
+    }
+    match q.at {
+        Some(at) => Json(serde_json::json!({ "nodes": st.telemetry.nodes_at(at), "at": at })),
+        None => Json(serde_json::json!({ "nodes": st.telemetry.nodes() })),
+    }
 }
 
 fn header<'a>(h: &'a HeaderMap, name: &str) -> Option<&'a str> {
@@ -543,6 +669,35 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["origin"], "G4ABC");
         assert_eq!(rows[0]["kind"], "tx");
+    }
+
+    #[test]
+    fn nodes_at_keeps_the_mode_from_that_time() {
+        let db = TelemetryDb::open_memory().unwrap();
+        let t = now();
+        let mut report = NodeReport {
+            callsign: "M7TJF".into(),
+            ts: t - 100,
+            grid: "IO91".into(),
+            mode: "internet".into(),
+            ptt: String::new(),
+            preset: "hf-poor".into(),
+            snr: 0.0,
+            ber: 0.0,
+            queue: 0,
+            hub_ok: true,
+            settings: serde_json::json!({}),
+            events: Vec::new(),
+            freq_khz: 144_950,
+            band: "2m".into(),
+        };
+        db.upsert_node(&report).unwrap();
+        report.ts = t - 10;
+        report.mode = "radio-plus".into();
+        db.upsert_node(&report).unwrap();
+        assert_eq!(db.nodes_at((t - 50) as i64)[0]["mode"], "internet");
+        assert_eq!(db.nodes_at(t as i64)[0]["mode"], "radio-plus");
+        assert!(db.nodes_at((t - 4000) as i64).is_empty());
     }
 
     #[test]
