@@ -168,12 +168,8 @@ async fn copy_confirm(
     Json(b): Json<CodeBody>,
 ) -> Result<Json<Value>, StatusCode> {
     let h = handle(&slot).await?;
-    let call = h.cfg.lock().callsign.clone();
-    let ok = h
-        .store
-        .confirm_copy(&call, b.code.trim())
-        .map_err(store_err)?;
-    Ok(Json(json!({ "ok": ok })))
+    let (ok, hub) = h.confirm_copy(&b.code).await.map_err(store_err)?;
+    Ok(Json(json!({ "ok": ok, "hub": hub })))
 }
 
 fn store_err(_: crate::error::Error) -> StatusCode {
