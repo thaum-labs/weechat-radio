@@ -106,7 +106,8 @@
         <li>
           <p>Point cloud-init at <code>deploy/cloud-init.yaml</code> on first boot, or run:</p>
           <pre>cd /opt/wcr
-docker compose -f deploy/docker-compose.yml up -d</pre>
+docker compose --env-file .env -f deploy/docker-compose.yml up -d</pre>
+          <p>Pass <code>--env-file .env</code> so <code>RESEND_API_KEY</code> from <code>/opt/wcr/.env</code> reaches the hub (Compose alone does not load that file when <code>-f deploy/…</code> is used).</p>
         </li>
         <li>
           <p>Caddy issues certificates for the three names. Wait a minute.</p>

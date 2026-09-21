@@ -30,8 +30,9 @@ Create A records, all pointing at the droplet IP:
 
    ```
    cd /opt/wcr
-   docker compose -f deploy/docker-compose.yml up -d
+   docker compose --env-file .env -f deploy/docker-compose.yml up -d
    ```
+   With `-f deploy/docker-compose.yml`, Compose does not load `/opt/wcr/.env` unless you pass `--env-file .env` (needed for `RESEND_API_KEY`).
 
 5. Caddy issues certificates for the three names. Wait a minute.
 
