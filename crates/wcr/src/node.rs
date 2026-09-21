@@ -6,6 +6,8 @@ use crate::config::Config;
 use crate::emcomm::{Form, FormKind, Welfare, BULLETIN_CHANNEL, BULLETIN_TTL};
 use crate::error::Result;
 use crate::ircd::{IrcEvent, IrcEventKind, IrcServer};
+use crate::mail::{chunk_payloads, decode_chunk, encode_chunk, MailMeta, MailOp, MailWire};
+use crate::mail_api::{MailApiState, MailNodeCmd};
 use crate::modem::{ControlClient, KissClient, ModemProcess};
 use crate::modes::Mode;
 use crate::net::hub_client::{ArcFlag, HubClient};
@@ -69,6 +71,8 @@ struct Runtime {
     assembler: Arc<Mutex<FragAssembler>>,
     last_rx_snr: Arc<Mutex<Option<f32>>>,
     radio_lock: Arc<tokio::sync::Mutex<()>>,
+    mail_parts: Arc<Mutex<HashMap<String, Vec<MailWire>>>>,
+    mail_last_gateway: Arc<Mutex<String>>,
 }
 
 impl Runtime {
@@ -176,14 +180,16 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     }
 
     let status_bind = cfg.status.bind.clone();
-    match tokio::net::TcpListener::bind(&status_bind).await {
+    let status_listener = match tokio::net::TcpListener::bind(&status_bind).await {
         Ok(listener) => {
             tracing::info!("status HTTP on {status_bind}");
-            let snap_s = snap.clone();
-            tokio::spawn(async move { status::serve_listener(listener, snap_s).await });
+            Some(listener)
         }
-        Err(e) => tracing::warn!("status HTTP {status_bind}: {e}"),
-    }
+        Err(e) => {
+            tracing::warn!("status HTTP {status_bind}: {e}");
+            None
+        }
+    };
 
     let keys = load_or_create(&Config::key_path())?;
     let store = Arc::new(Store::open(
@@ -207,6 +213,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     let last_rx_snr = Arc::new(Mutex::new(None::<f32>));
     let hub_flag = ArcFlag::new();
     let (hub_in_tx, mut hub_in_rx) = mpsc::channel::<Envelope>(64);
+    let (mail_cmd_tx, mut mail_cmd_rx) = mpsc::channel::<MailNodeCmd>(32);
     let txp = Arc::new(Mutex::new(Transports::default()));
     let io_swap = Arc::new(Mutex::new(IoSwap::default()));
     let mut kiss_rx: Option<mpsc::Receiver<Vec<u8>>> = None;
@@ -263,8 +270,26 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         assembler: Arc::new(Mutex::new(FragAssembler::new())),
         last_rx_snr,
         radio_lock: Arc::new(tokio::sync::Mutex::new(())),
+        mail_parts: Arc::new(Mutex::new(HashMap::new())),
+        mail_last_gateway: Arc::new(Mutex::new(String::new())),
     };
     refresh_group_prios(&rt);
+    let _ = store.ensure_mail_schema();
+
+    if let Some(listener) = status_listener {
+        let mail_api = MailApiState {
+            store: store.clone(),
+            cfg: rt.cfg.clone(),
+            keys: rt.keys.clone(),
+            snap: snap.clone(),
+            mail_cmd: mail_cmd_tx.clone(),
+            mail_last_gateway: rt.mail_last_gateway.clone(),
+        };
+        let snap_s = snap.clone();
+        tokio::spawn(async move {
+            status::serve_listener(listener, snap_s, Some(mail_api)).await;
+        });
+    }
 
     if want_radio {
         if let Err(e) = start_radio(&rt).await {
@@ -567,6 +592,13 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
 
     loop {
         tokio::select! {
+            cmd = mail_cmd_rx.recv() => {
+                if let Some(cmd) = cmd {
+                    if let Err(e) = handle_mail_cmd(&rt, cmd).await {
+                        tracing::warn!("mail: {e}");
+                    }
+                }
+            }
             ev = irc_rx.recv() => {
                 let Some(ev) = ev else { break };
                 if let Err(e) = handle_irc(&rt, ev).await {
@@ -1297,6 +1329,11 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
             handle_want(rt, &env).await?;
         }
         MsgType::Beacon => {}
+        MsgType::Mail => {
+            if let Err(e) = handle_mail_envelope(rt, &env, medium).await {
+                tracing::warn!("mail envelope: {e}");
+            }
+        }
         MsgType::Ping | MsgType::File => {}
         MsgType::Frag => {}
     }
@@ -2291,7 +2328,294 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
     }
 }
 
-#[cfg(test)]
+async fn handle_mail_cmd(rt: &Runtime, cmd: MailNodeCmd) -> Result<()> {
+    match cmd {
+        MailNodeCmd::SendRf { mail_id } => mail_send_rf(rt, &mail_id).await,
+        MailNodeCmd::CheckList => mail_check_list_rf(rt).await,
+        MailNodeCmd::CheckGet { ids } => mail_check_get_rf(rt, &ids).await,
+    }
+}
+
+async fn mail_send_rf(rt: &Runtime, mail_id: &str) -> Result<()> {
+    let row = rt
+        .store
+        .mail_get(mail_id)?
+        .ok_or_else(|| crate::error::Error::Msg("mail not found".into()))?;
+    let cfg = rt.cfg.lock().clone();
+    let gateway = if cfg.mail.gateway.is_empty() {
+        cfg.callsign.clone()
+    } else {
+        cfg.mail.gateway.clone()
+    };
+    let dest = Callsign::parse(&gateway)?;
+    let origin = Callsign::parse(&cfg.callsign)?;
+    let meta = MailMeta {
+        from: row.from_addr.clone(),
+        to: row.to_addr.clone(),
+        subject: row.subject.clone(),
+        ids: vec![],
+    };
+    let third = crate::mail::is_third_party_to(&row.to_addr);
+    let chunks = chunk_payloads(mail_id, &meta, &row.body);
+    mail_tx_chunks(rt, origin, dest, chunks, cfg.mode, third).await?;
+    rt.store.mail_set_delivery(mail_id, Delivery::Sent)?;
+    rt.store.mail_move_folder(mail_id, "sent")?;
+    Ok(())
+}
+
+async fn mail_check_list_rf(rt: &Runtime) -> Result<()> {
+    let cfg = rt.cfg.lock().clone();
+    if cfg.mode == Mode::Radio {
+        return Ok(());
+    }
+    let origin = Callsign::parse(&cfg.callsign)?;
+    let gateway = Callsign::parse(if cfg.mail.gateway.is_empty() {
+        &cfg.callsign
+    } else {
+        &cfg.mail.gateway
+    })?;
+    let wire = MailWire {
+        op: MailOp::ListReq,
+        mail_id: "list".into(),
+        idx: 0,
+        count: 1,
+        meta: MailMeta::default(),
+        payload: String::new(),
+    };
+    mail_tx_one(rt, origin, gateway, encode_chunk(&wire), cfg.mode, false).await?;
+    Ok(())
+}
+
+async fn mail_check_get_rf(rt: &Runtime, ids: &[String]) -> Result<()> {
+    let cfg = rt.cfg.lock().clone();
+    let origin = Callsign::parse(&cfg.callsign)?;
+    let gateway = Callsign::parse(if cfg.mail.gateway.is_empty() {
+        &cfg.callsign
+    } else {
+        &cfg.mail.gateway
+    })?;
+    let wire = MailWire {
+        op: MailOp::GetReq,
+        mail_id: "get".into(),
+        idx: 0,
+        count: 1,
+        meta: MailMeta {
+            from: String::new(),
+            to: String::new(),
+            subject: String::new(),
+            ids: ids.to_vec(),
+        },
+        payload: String::new(),
+    };
+    mail_tx_one(rt, origin, gateway, encode_chunk(&wire), cfg.mode, false).await?;
+    Ok(())
+}
+
+async fn mail_tx_chunks(
+    rt: &Runtime,
+    origin: Callsign,
+    dest: Callsign,
+    chunks: Vec<MailWire>,
+    mode: Mode,
+    third_party: bool,
+) -> Result<()> {
+    for ch in chunks {
+        mail_tx_one(
+            rt,
+            origin.clone(),
+            dest.clone(),
+            encode_chunk(&ch),
+            mode,
+            third_party,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn mail_tx_one(
+    rt: &Runtime,
+    origin: Callsign,
+    dest: Callsign,
+    body: Vec<u8>,
+    mode: Mode,
+    third_party: bool,
+) -> Result<()> {
+    let mut flags = Flags::new().with(FLAG_REQ_ACK);
+    apply_mode_flags(&mut flags, mode, origin.is_guest());
+    flags.set(FLAG_THIRD_PARTY, third_party);
+    let seq = rt.store.next_seq(origin.as_str())?;
+    let mut env = Envelope::new_msg(origin, dest, seq, body, 4, flags)?;
+    env.kind = MsgType::Mail;
+    if mode.uses_internet() {
+        rt.keys.sign_envelope(&mut env)?;
+    }
+    rt.store.insert(&env, Delivery::Queued)?;
+    dispatch(rt, &env).await?;
+    let our = rt.engine.our_call.clone();
+    if env.dest.as_str() != our {
+        *rt.mail_last_gateway.lock() = env.dest.as_str().to_string();
+    }
+    let band = {
+        let s = rt.snap.lock();
+        if s.band.is_empty() {
+            None
+        } else {
+            Some(s.band.clone())
+        }
+    };
+    let _ = rt.tel.send(TelemetryEvent {
+        ts: env.ts as u64,
+        kind: "mail".into(),
+        origin: Some(env.origin.to_string()),
+        dest: Some(env.dest.to_string()),
+        hops: Some(env.hops_left),
+        snr: None,
+        msgid: Some(env.msg_id.hex()),
+        band,
+    });
+    Ok(())
+}
+
+async fn handle_mail_envelope(rt: &Runtime, env: &Envelope, _via: &str) -> Result<()> {
+    let chunk = decode_chunk(&env.body)?;
+    let cfg = rt.cfg.lock().clone();
+    let our = cfg.callsign.clone();
+
+    if chunk.op == MailOp::ListReq && cfg.mode.is_gateway() && cfg.mode.uses_internet() {
+        let headers = if rt.snap.lock().hub_ok {
+            let base = crate::net::hub_mail::hub_api_base_from_telemetry(&cfg.telemetry.url);
+            let url = format!("{}/api/v1/mail/inbox", base);
+            if let Ok(v) = crate::net::hub_mail::signed_post(&url, &rt.keys, &our, b"{}").await {
+                v.get("headers").cloned().unwrap_or_default()
+            } else {
+                serde_json::json!([])
+            }
+        } else {
+            serde_json::json!([])
+        };
+        let origin = Callsign::parse(&our)?;
+        let dest = env.origin.clone();
+        if let Some(arr) = headers.as_array() {
+            for (i, h) in arr
+                .iter()
+                .take(crate::mail::CHECK_MAIL_MAX_MSGS)
+                .enumerate()
+            {
+                let wire = MailWire {
+                    op: MailOp::ListHdr,
+                    mail_id: h.get("id").and_then(|x| x.as_str()).unwrap_or("").into(),
+                    idx: i as u16,
+                    count: arr.len().min(crate::mail::CHECK_MAIL_MAX_MSGS) as u16,
+                    meta: MailMeta {
+                        from: h.get("from").and_then(|x| x.as_str()).unwrap_or("").into(),
+                        to: String::new(),
+                        subject: h
+                            .get("subject")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .into(),
+                        ids: vec![],
+                    },
+                    payload: h
+                        .get("bytes")
+                        .map(|b| b.to_string())
+                        .unwrap_or_else(|| "0".into()),
+                };
+                mail_tx_one(
+                    rt,
+                    origin.clone(),
+                    dest.clone(),
+                    encode_chunk(&wire),
+                    cfg.mode,
+                    false,
+                )
+                .await?;
+            }
+        }
+        return Ok(());
+    }
+
+    if chunk.op == MailOp::GetReq && cfg.mode.is_gateway() && cfg.mode.uses_internet() {
+        let ids = chunk.meta.ids.clone();
+        let base = crate::net::hub_mail::hub_api_base_from_telemetry(&cfg.telemetry.url);
+        let url = format!("{}/api/v1/mail/fetch", base);
+        let req = serde_json::json!({ "ids": ids });
+        let raw = serde_json::to_vec(&req)?;
+        if let Ok(v) = crate::net::hub_mail::signed_post(&url, &rt.keys, &our, &raw).await {
+            if let Some(arr) = v.get("messages").and_then(|m| m.as_array()) {
+                for m in arr {
+                    let meta = MailMeta {
+                        from: m.get("from").and_then(|x| x.as_str()).unwrap_or("").into(),
+                        to: m.get("to").and_then(|x| x.as_str()).unwrap_or("").into(),
+                        subject: m
+                            .get("subject")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .into(),
+                        ids: vec![],
+                    };
+                    let body = m.get("body").and_then(|x| x.as_str()).unwrap_or("");
+                    let id = m.get("id").and_then(|x| x.as_str()).unwrap_or("in");
+                    let parts = chunk_payloads(id, &meta, body);
+                    let origin = Callsign::parse(&our)?;
+                    let dest = env.origin.clone();
+                    mail_tx_chunks(rt, origin, dest, parts, cfg.mode, false).await?;
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    if chunk.op == MailOp::Data && env.dest.as_str() == our {
+        let mut parts = rt.mail_parts.lock();
+        let entry = parts.entry(chunk.mail_id.clone()).or_default();
+        entry.push(chunk.clone());
+        if entry.len() as u16 >= chunk.count {
+            let assembled = entry.clone();
+            parts.remove(&chunk.mail_id);
+            let (meta, body) = crate::mail::assemble_chunks(assembled)?;
+            let id = chunk.mail_id.clone();
+            rt.store.mail_insert(
+                &id,
+                "inbox",
+                &meta.from,
+                &meta.to,
+                &meta.subject,
+                &body,
+                Delivery::Delivered,
+                Some(&id),
+            )?;
+            let band = {
+                let s = rt.snap.lock();
+                if s.band.is_empty() {
+                    None
+                } else {
+                    Some(s.band.clone())
+                }
+            };
+            let _ = rt.tel.send(TelemetryEvent {
+                ts: crate::proto::now_ts() as u64,
+                kind: "mail".into(),
+                origin: Some(env.origin.to_string()),
+                dest: Some(our.clone()),
+                hops: Some(env.hops_left),
+                snr: None,
+                msgid: Some(env.msg_id.hex()),
+                band,
+            });
+        }
+        return Ok(());
+    }
+
+    if chunk.op == MailOp::ListHdr && env.dest.as_str() == our {
+        // GUI polls /mail/check/list over HTTP; RF headers are informational only.
+        return Ok(());
+    }
+
+    Ok(())
+}
+
 mod tests {
     use super::*;
 

@@ -101,7 +101,7 @@
           <p>Copy <code>deploy/</code> to the droplet (or clone this repo).</p>
         </li>
         <li>
-          <p>Copy <code>deploy/.env.example</code> to <code>/opt/wcr/.env</code> and set <code>WCR_DOMAIN=weechatradio.com</code>.</p>
+          <p>Copy <code>deploy/.env.example</code> to <code>/opt/wcr/.env</code> and set <code>WCR_DOMAIN=weechatradio.com</code>. For Email, add <code>RESEND_API_KEY</code> (never commit it). Resend DNS stays on <code>mail.weechatradio.com</code> only; webhook <code>/api/v1/mail/webhook/resend</code>.</p>
         </li>
         <li>
           <p>Point cloud-init at <code>deploy/cloud-init.yaml</code> on first boot, or run:</p>
