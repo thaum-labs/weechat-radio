@@ -80,6 +80,26 @@ pub fn split(env: &Envelope, k: u8, m: u8) -> Result<Vec<Envelope>> {
     Ok(out)
 }
 
+/// Split `env` into encoded frames that each fit `mtu`, starting at `min_k`
+/// data shards. A fixed shard count leaves fragments over the PHY capacity,
+/// and modem73 drops those instead of keying, so grow `k` until they fit.
+pub fn split_to_fit(env: &Envelope, min_k: u8, m: u8, mtu: u32) -> Result<Vec<Vec<u8>>> {
+    let m = m.max(1);
+    let max_k = 16u8.saturating_sub(m).max(1);
+    let mut k = min_k.max(1).min(max_k);
+    loop {
+        let mut frames = Vec::new();
+        for f in split(env, k, m)? {
+            frames.push(f.encode()?);
+        }
+        let worst = frames.iter().map(Vec::len).max().unwrap_or(0);
+        if worst <= mtu as usize || k >= max_k {
+            return Ok(frames);
+        }
+        k += 1;
+    }
+}
+
 struct Group {
     k: u8,
     m: u8,
@@ -267,6 +287,37 @@ mod tests {
         let mut beacon = sample();
         beacon.kind = MsgType::Beacon;
         assert!(!should_fragment(&beacon, 80, 55));
+    }
+
+    #[test]
+    fn split_to_fit_keeps_every_frame_inside_the_mtu() {
+        let mut env = sample();
+        env.body = vec![b'x'; 300];
+        for mtu in [55u32, 170, 512] {
+            let frames = split_to_fit(&env, 2, 1, mtu).unwrap();
+            let worst = frames.iter().map(Vec::len).max().unwrap();
+            assert!(
+                worst <= mtu as usize,
+                "mtu {mtu}: widest frame was {worst} bytes in {} frames",
+                frames.len()
+            );
+        }
+    }
+
+    #[test]
+    fn split_to_fit_frames_still_reconstruct() {
+        let mut env = sample();
+        env.body = vec![b'y'; 300];
+        let frames = split_to_fit(&env, 2, 1, 170).unwrap();
+        let mut a = FragAssembler::new();
+        let mut got = None;
+        for f in &frames {
+            if let Some(done) = a.push(&Envelope::decode(f).unwrap()).unwrap() {
+                got = Some(done);
+                break;
+            }
+        }
+        assert_eq!(got.expect("reconstructed").body, env.body);
     }
 
     #[test]

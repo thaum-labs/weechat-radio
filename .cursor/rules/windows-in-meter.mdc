@@ -1,0 +1,9 @@
+---
+description: Windows IN meter must decay in the UI; do not re-open capture.
+globs: crates/wcr/src/{audio_meter.rs,status.rs,gui.rs,presets.rs,node.rs}
+alwaysApply: false
+---
+
+# Windows IN meter
+
+`apply_modem_audio` decays `audio_in_db` toward `AUDIO_FLOOR_DB` on Windows when the modem does not send a live input level and the channel is not `rx`. Do not "fix" IN by opening WASAPI capture or `IAudioMeterInformation` on the capture endpoint — that glitched modem73 MFSK CRC (v0.1.46). Render-only peak for OUT is fine.
