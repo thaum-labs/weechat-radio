@@ -8,9 +8,6 @@ const MODE_COLOR = {
   "radio-plus": "#ff4dff",
 };
 
-/** Email traffic overlay (not an operating mode). */
-const MAIL_COLOR = "#ff7a3d";
-
 const CARTO_KEY = "cb1_3nxz_1_dba340f0a1c8450af09da179";
 const MAP_STYLE_KEY = "wcr-map-style-v2";
 const OSM_CARTO =
@@ -171,59 +168,10 @@ function isTrafficKind(kind, type) {
     k === "tx" ||
     k === "rx" ||
     k === "msg" ||
-    k === "mail" ||
     k === "relay" ||
     k === "hub_forward" ||
     k === "gateway_forward"
   );
-}
-
-const mailRecent = new Map();
-
-function noteMailActivity(origin, dest) {
-  const now = Date.now();
-  const o = nodeKey(origin);
-  if (o) mailRecent.set(o, now);
-  if (dest) {
-    const d = nodeKey(dest);
-    if (d) mailRecent.set(d, now);
-    rememberLink(origin, dest, false, true, true);
-  } else if (o) {
-    updateMailOverlays();
-  }
-}
-
-function mailGatewayFor(call) {
-  const key = nodeKey(call);
-  if (!key) return null;
-  const now = Date.now();
-  for (const link of qsoLinks.values()) {
-    if (!link.mail || now - link.at > LINK_MS) continue;
-    if (link.a === key) return link.b;
-    if (link.b === key) return link.a;
-  }
-  return null;
-}
-
-function updateMailOverlays() {
-  const now = Date.now();
-  mailRecent.forEach((t, k) => {
-    if (now - t > LINK_MS) mailRecent.delete(k);
-  });
-  markers.forEach((m, call) => {
-    const key = nodeKey(call) || call;
-    const el = m.getElement();
-    el.classList.toggle("mail-overlay", mailRecent.has(key));
-  });
-}
-
-function mailOverlayCount() {
-  const now = Date.now();
-  let n = 0;
-  mailRecent.forEach((t) => {
-    if (now - t <= LINK_MS) n += 1;
-  });
-  return n;
 }
 
 function linkPairKey(a, b) {
@@ -243,33 +191,18 @@ function arcTargets(from, to) {
   return out;
 }
 
-function rememberLink(from, to, inet, draw, mail) {
+function rememberLink(from, to, inet, draw) {
   const fromKey = nodeKey(from);
   if (!fromKey || !to) return;
   const now = Date.now();
-  if (mail) {
-    const toKey = nodeKey(to);
-    if (toKey && toKey !== fromKey) {
-      qsoLinks.set(linkPairKey(fromKey, toKey), {
-        a: fromKey,
-        b: toKey,
-        inet: false,
-        mail: true,
-        at: now,
-      });
-    }
-  } else {
-    for (const dest of arcTargets(fromKey, to)) {
-      qsoLinks.set(linkPairKey(fromKey, dest), {
-        a: fromKey,
-        b: dest,
-        inet: !!inet,
-        mail: false,
-        at: now,
-      });
-    }
+  for (const dest of arcTargets(fromKey, to)) {
+    qsoLinks.set(linkPairKey(fromKey, dest), {
+      a: fromKey,
+      b: dest,
+      inet: !!inet,
+      at: now,
+    });
   }
-  updateMailOverlays();
   if (draw === false) return;
   ensureArcLayer();
   drawArcs();
@@ -309,20 +242,12 @@ function drawArcs() {
     const alpha = Math.max(0.35, 0.95 - age * 0.55);
     const s1 = map.project([p1.lon, p1.lat]);
     const s2 = map.project([p2.lon, p2.lat]);
-    let color;
-    let dash;
-    if (link.mail) {
-      color = `rgba(255, 122, 61, ${alpha})`;
-      dash = [5, 4];
-    } else {
-      color = link.inet
-        ? `rgba(125,155,255,${alpha})`
-        : `rgba(57,255,20,${alpha})`;
-      dash = link.inet ? [] : [6, 4];
-    }
+    const color = link.inet
+      ? `rgba(125,155,255,${alpha})`
+      : `rgba(57,255,20,${alpha})`;
+    const dash = link.inet ? [] : [6, 4];
     strokePinLink(s1, s2, color, dash);
   }
-  updateMailOverlays();
 }
 
 function seedLinksFromEvents(events) {
@@ -330,12 +255,7 @@ function seedLinksFromEvents(events) {
   (events || []).forEach((x) => {
     if ((x.ts || 0) < cutoff) return;
     if (!isTrafficKind(x.kind, x.type) || !x.origin || !x.dest) return;
-    const kind = String(x.kind || "").toLowerCase();
-    if (kind === "mail") {
-      noteMailActivity(x.origin, x.dest);
-    } else {
-      rememberLink(x.origin, x.dest, kind !== "relay", false, false);
-    }
+    rememberLink(x.origin, x.dest, String(x.kind || "").toLowerCase() !== "relay", false);
   });
   if (qsoLinks.size) {
     ensureArcLayer();
@@ -611,7 +531,7 @@ function upsertNode(n) {
 function showCard(n) {
   if (!card) return;
   card.hidden = false;
-  const rows = [
+  card.innerHTML = kv([
     ["call", n.callsign || "—"],
     ["mode", n.mode || "—"],
     ["ptt", n.ptt || "—"],
@@ -620,10 +540,7 @@ function showCard(n) {
     ["freq", nodeFreq(n) || "—"],
     ["grid", n.grid || "—"],
     ["snr", n.snr ?? "—"],
-  ];
-  const mailVia = mailGatewayFor(n.callsign);
-  if (mailVia) rows.push(["email", `via ${mailVia}`]);
-  card.innerHTML = kv(rows);
+  ]);
   if (stationList) {
     stationList.querySelectorAll(".station").forEach((el) => {
       el.classList.toggle("on", el.dataset.call === (n.callsign || ""));
@@ -642,14 +559,11 @@ function renderModes(nodes) {
   const meta = document.getElementById("mode-meta");
   if (meta) meta.textContent = String(nodes.length);
   if (!grid) return;
-  const modeRows = Object.keys(MODE_COLOR).map((mode) => {
+  grid.innerHTML = Object.keys(MODE_COLOR).map((mode) => {
     const n = counts[mode] || 0;
     const pct = Math.round((n / total) * 100);
     return `<div class="mode-row">${modeMark(mode)}<span class="mode-name">${escapeHtml(mode)}</span><div class="mode-bar"><i style="width:${pct}%;background:${MODE_COLOR[mode]}"></i></div>${n}</div>`;
   }).join("");
-  const emailN = mailOverlayCount();
-  const emailRow = `<div class="mode-row mail-traffic-row"><span class="mode-mark mail-mark" aria-hidden="true"></span><span class="mode-name">email</span><div class="mode-bar"><i style="width:${emailN ? 100 : 0}%;background:${MAIL_COLOR}"></i></div>${emailN}</div>`;
-  grid.innerHTML = modeRows + emailRow;
 }
 
 function renderBands(bands) {
@@ -721,11 +635,8 @@ function eventLine(x) {
     : new Date().toISOString().slice(11, 19);
   const origin = x.origin || x.callsign || "?";
   const kind = (x.kind || x.type || "").toLowerCase();
-  const dest = x.dest || "";
-  if (kind === "mail") {
-    return `[${t}] MAIL ${origin}${dest ? " -> " + dest : ""}`;
-  }
   const from = x.from_band || x.band || "";
+  const dest = x.dest || "";
   const to = Array.isArray(x.to_bands) && x.to_bands.length
     ? ` -> ${x.to_bands.join(", ")}`
     : "";
@@ -974,17 +885,10 @@ function connectLive() {
       }
       const origin = m.origin || m.callsign || "?";
       const kind = (m.kind || m.type || "").toLowerCase();
-      const fwdKind = (m.kind || "").toLowerCase();
-      if (kind === "mail" || fwdKind === "mail") {
-        noteMailActivity(origin, m.dest);
-        pulseMarker(origin, "tx");
-        if (m.dest) pulseMarker(m.dest, "rx");
-      } else {
-        if (kind === "tx" || kind === "msg" || m.type === "hub_forward") pulseMarker(origin, "tx");
-        if (kind === "rx" || kind === "relay") pulseMarker(origin, "rx");
-        if (m.dest && isTrafficKind(kind, m.type)) {
-          rememberLink(origin, m.dest, kind !== "relay", true, false);
-        }
+      if (kind === "tx" || kind === "msg" || m.type === "hub_forward") pulseMarker(origin, "tx");
+      if (kind === "rx" || kind === "relay") pulseMarker(origin, "rx");
+      if (m.dest && isTrafficKind(kind, m.type)) {
+        rememberLink(origin, m.dest, kind !== "relay");
       }
       if (!liveMode) return;
       tick(eventLine(m));

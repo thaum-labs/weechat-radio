@@ -29,7 +29,6 @@ pub struct Config {
     pub rig: RigConfig,
     pub rf: RfConfig,
     pub tnc: TncConfig,
-    pub mail: MailConfig,
 }
 
 impl Default for Config {
@@ -52,22 +51,6 @@ impl Default for Config {
             rig: RigConfig::default(),
             rf: RfConfig::default(),
             tnc: TncConfig::default(),
-            mail: MailConfig::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct MailConfig {
-    /// RF mail dest: callsign of an `internet-radio` gateway on your dial (required for Email).
-    pub gateway: String,
-}
-
-impl Default for MailConfig {
-    fn default() -> Self {
-        Self {
-            gateway: String::new(),
         }
     }
 }
