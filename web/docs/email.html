@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Email — WeeChat Radio</title>
+  <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=23" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/why.html">why</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/docs.html">docs</a> / email</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> email</h1>
+      <p class="lead">Internet mail beside Live Chat. The two do not share a transmit queue.</p>
+
+      <h2>Address</h2>
+      <p>A licensed callsign gets <code>CALL@mail.weechatradio.com</code>. There is no domain box. Guest nicks do not see Email. Ham-to-ham stays in Live Chat; Email To is an internet address.</p>
+
+      <h2>How it leaves the station</h2>
+      <ul>
+        <li><strong>Internet</strong> posts to the hub when the hub is up. No radio.</li>
+        <li><strong>Internet+Radio</strong> is the gateway. Its own mail uses the hub. It also takes radio-plus mail off the air and posts that.</li>
+        <li><strong>Radio+</strong> always keys to the gateway callsign in setup. It does not call the hub itself.</li>
+        <li><strong>Radio</strong> stays grey. There is no path to the mail provider.</li>
+      </ul>
+      <p>Denying third-party chat relay does not stop the gateway from posting mail.</p>
+
+      <h2>When it says Sent</h2>
+      <p>Hub mail is Sent after the hub says the provider accepted it. On VOX, Sent waits for the gateway to confirm that. Other PTT methods mark Sent when this station has finished its own burst. Closing the window or a timer does not count.</p>
+
+      <h2>On the air</h2>
+      <p>Mail is its own frame, not a chat message. The speed starts at the preset's slowest starting rung and only gets more robust. On HF and VOX that stays off the fast modes that do not survive a speaker-to-microphone path. Chat is paused for the burst, then the modem is put back, including carrier sense.</p>
+      <p>Radio+ checks mail by asking. Mail does not arrive on the radio until you do.</p>
+
+      <h2>Copy-to</h2>
+      <p>Off until you add a personal address and confirm the code that inbox receives. Copies are not sent over the radio.</p>
+
+      <p>Wire and hub details are in the <a href="/docs/api.html">public API</a> under <code>/api/v1/mail</code>.</p>
+    </main>
+  </div>
+  <script src="/shell.js?v=9"></script>
+</body>
+</html>

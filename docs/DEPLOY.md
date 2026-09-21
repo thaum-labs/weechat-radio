@@ -24,7 +24,7 @@ Create A records, all pointing at the droplet IP:
 
 2. Copy `deploy/` to the droplet (or clone this repo).
 
-3. Copy `deploy/.env.example` to `/opt/wcr/.env` and set `WCR_DOMAIN=weechatradio.com`.
+3. Copy `deploy/.env.example` to `/opt/wcr/.env` and set `WCR_DOMAIN=weechatradio.com`. The hub also reads `RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET` from that file. The deploy workflow writes those two from GitHub Actions secrets when they are set.
 
 4. Point cloud-init at `deploy/cloud-init.yaml` on first boot, **or** run:
 
