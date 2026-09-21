@@ -146,7 +146,8 @@
       <p>Body is a comma-separated list of hex msg ids in a closed group window.</p>
 
       <h2>FRAG</h2>
-      <p>Type <code>FRAG</code> (10). Group messages on HF, or any payload larger than the PHY frame, are split into Reed–Solomon shards. Any <code>k</code> of <code>k+m</code> reconstruct the original (default 2 of 3). Gateways forward fragments as they hear them; the hub reassembles from shards received via different gateways.</p>
+      <p>Type <code>FRAG</code> (10). Group messages on HF, or any payload larger than the PHY frame, are split into Reed–Solomon shards. Any <code>k</code> of <code>k+m</code> reconstruct the original (default 2 of 3). <code>k</code> grows until every fragment fits the PHY frame, because a modem drops an oversized frame instead of keying it, and the TX mode is chosen from the largest fragment rather than the whole envelope. Gateways forward fragments as they hear them; the hub reassembles from shards received via different gateways.</p>
+      <p>Fragments carry the original flags with <code>SIGNED</code> cleared, since a signature covers the whole body rather than one shard. <code>REQ_ACK</code> is preserved so the reassembled message still asks for a single ACK; a fragment never acknowledges on its own.</p>
 
       <h2>Federation (reserved)</h2>
       <p>Hub-to-hub uses the same envelope and the same <code>msg_id</code> dedupe. Not enabled in v1.</p>
