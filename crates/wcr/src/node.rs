@@ -261,7 +261,13 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             sense: g.sense.clone(),
         }
     });
-    let mail = crate::mail::start(cfg.clone(), snap.clone(), keys.clone(), ports)?;
+    let mail = crate::mail::start(
+        cfg.clone(),
+        snap.clone(),
+        keys.clone(),
+        ports,
+        tel_tx.clone(),
+    )?;
     *mail_slot.lock() = Some(mail.clone());
     let rt = Runtime {
         cfg,
