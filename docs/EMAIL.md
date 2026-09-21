@@ -2,6 +2,7 @@
 
 Internet mail uses `callsign@mail.weechatradio.com` on the public hub (Resend). Ham-to-ham chat stays in Live Chat.
 
+- **Gateway:** set **Email gateway** in Setup to an `internet-radio` callsign on your dial. Without it the Email tab stays hidden.
 - **Pull only:** inbound mail waits at the hub until sync or RF **Check mail** (never auto-keyed onto RF).
 - **Plain text, 4 KB** max; no attachments.
 - **Send / Check mail** confirm modals list airtime when RF will key.
