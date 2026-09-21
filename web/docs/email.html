@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="mobile-web-app-capable" content="yes" />
-  <title>Email (coming soon) — WeeChat Radio</title>
+  <title>Email — WeeChat Radio</title>
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -36,34 +36,34 @@
     <main class="page-panel">
       <p class="crumb"><a href="/docs.html">docs</a> / email</p>
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> email</h1>
-      <p class="lead">A second tab next to live chat, with the same mode, frequency, and preset. Not in the app yet.</p>
+      <p class="lead">A second tab next to live chat, with the same mode, frequency, and preset. In <code>wcr gui</code> from <code>v0.1.57</code>.</p>
 
-      <div class="note">
-        <h2>coming soon</h2>
-        <p>This is the design. There is no Email tab in <code>wcr gui</code> today, and <code>callsign@mail.weechatradio.com</code> is not live. When it ships, the numbered changelog will say so and you will run <code>wcr update</code>.</p>
+      <div class="ok">
+        <h2>in the app</h2>
+        <p>Run <code>wcr update</code>, then open <code>wcr gui</code>. You get an <strong>email</strong> tab next to live chat and an address at <code>callsign@mail.weechatradio.com</code>. See <a href="/changelog.html">changelog</a> for the ship notes.</p>
       </div>
 
       <h2>What it is for</h2>
-      <p>Someone on the internet (grandma, a club secretary) can mail your <strong>callsign</strong>. You read and send that mail from the desktop app. On the hill you use radio. At home you use the hub. You do not create a Gmail account for WeeChat Radio, and you do not log the app into Gmail.</p>
-      <p>Your on-air identity stays your callsign. Your internet From/To on the wire will be <code>callsign@mail.weechatradio.com</code>. Replies stay on that address so they can come back to the hub, then to you.</p>
+      <p>Someone on the internet — a club secretary, an event organiser, anyone with normal email — can mail your <strong>callsign</strong>. You read and send that mail from the desktop app. On the hill you use radio. At home you use the hub. You do not create a Gmail account for WeeChat Radio, and you do not log the app into Gmail.</p>
+      <p>Your on-air identity stays your callsign. Your internet From/To on the wire is <code>callsign@mail.weechatradio.com</code>. Replies stay on that address so they come back to the hub, then to you.</p>
 
       <h2>The Email tab</h2>
       <p>In <code>wcr gui</code> only (not the TUI or WeeChat in the first version). The left <strong>STATION</strong> panel stays: mode, frequency, preset. The centre pane switches from live chat to email: inbox, outbox, sent, drafts, compose.</p>
       <p>New mail puts a badge on <strong>email</strong> in the top bar. The tray icon can ping, the same way chat does. Guest names that start with <code>~</code> do not get an address; Email stays hidden for them.</p>
 
       <h2>On the live map</h2>
-      <p>Email shows as <strong>traffic</strong>, not a fifth operating mode. Your pin keeps its normal mode colour; a short orange ring marks recent mail activity. When mail went through another station’s gateway, an orange arc links you and that gateway. The map ticker shows <code>MAIL M7TJF -&gt; G0ABC</code> (callsigns only — never grandma’s address). Hub-only send still lights your pin when mail leaves or arrives at the hub.</p>
+      <p>Email shows as <strong>traffic</strong>, not a fifth operating mode. Your pin keeps its normal mode colour; a short orange ring marks recent mail activity. When mail went through another station’s gateway, an orange arc links you and that gateway. The map ticker shows <code>MAIL M7TJF -&gt; G0ABC</code> (callsigns only — never the internet address). Hub-only send still lights your pin when mail leaves or arrives at the hub.</p>
 
       <h2>Your address</h2>
-      <p>The first time a licensed-looking callsign opens Email, the hub will register <code>M7TJF@mail.weechatradio.com</code> (your callsign). Tell that address to people on the internet once.</p>
-      <p>Compose <strong>To:</strong> is an internet mailbox only, such as <code>mary@gmail.com</code>. Mail to another ham is still live chat.</p>
+      <p>The first time a licensed-looking callsign opens Email, the hub registers <code>M7TJF@mail.weechatradio.com</code> (your callsign). Tell that address to people on the internet once.</p>
+      <p>Compose <strong>To:</strong> is an internet mailbox only, such as <code>alex@example.com</code>. Mail to another ham is still live chat.</p>
 
       <h2>Send</h2>
       <figure class="diagram">
         <div class="dgm-wrap">
           <svg class="dgm" viewBox="0 0 720 200" role="img" aria-labelledby="e1t e1d">
             <title id="e1t">Sending mail from the hill</title>
-            <desc id="e1d">You confirm the radio send. The envelope goes over RF to a gateway, then the hub, then internet mail. Grandma sees mail from your callsign at mail.weechatradio.com.</desc>
+            <desc id="e1d">You confirm the radio send. The envelope goes over RF to a gateway, then the hub, then internet mail. The contact sees mail from your callsign at mail.weechatradio.com.</desc>
             <defs>
               <marker id="mrfE" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
@@ -86,23 +86,23 @@
             <text class="on-hub" x="461" y="92" text-anchor="middle">hub</text>
             <text class="sub" x="461" y="110" text-anchor="middle">sends the mail</text>
             <rect class="box orange" x="576" y="70" width="128" height="54" />
-            <text class="on-orange" x="640" y="92" text-anchor="middle">grandma</text>
-            <text class="sub" x="640" y="110" text-anchor="middle">her inbox</text>
-            <text class="sub" x="16" y="164">From: M7TJF@mail.weechatradio.com · To: mary@gmail.com · Reply-To stays the WCR address</text>
+            <text class="on-orange" x="640" y="92" text-anchor="middle">contact</text>
+            <text class="sub" x="640" y="110" text-anchor="middle">their inbox</text>
+            <text class="sub" x="16" y="164">From: M7TJF@mail.weechatradio.com · To: alex@example.com · Reply-To stays the WCR address</text>
             <text class="sub" x="16" y="184">in internet mode the radio hop is skipped; the hub still sends</text>
           </svg>
         </div>
-        <figcaption>The radio carries a compact mail object addressed to the network, not grandma’s name on the air. The internet To: lives inside the object.</figcaption>
+        <figcaption>The radio carries a compact mail object addressed to the network, not the contact’s name on the air. The internet To: lives inside the object.</figcaption>
       </figure>
       <p>If the send will key the radio, a confirm lists the destination, that this is third-party traffic, your frequency, preset, and a rough airtime. Internet-only sends skip that modal.</p>
-      <p>Pure <code>radio</code> (not radio-plus) never lets a gateway put your frames on the internet. Send to grandma is disabled there. Switch to <code>radio-plus</code> or an internet mode. Same idea as chat.</p>
+      <p>Pure <code>radio</code> (not radio-plus) never lets a gateway put your frames on the internet. Internet send is disabled there. Switch to <code>radio-plus</code> or an internet mode. Same idea as chat.</p>
 
       <h2>Receive — pull, not push</h2>
       <figure class="diagram">
         <div class="dgm-wrap">
           <svg class="dgm" viewBox="0 0 720 200" role="img" aria-labelledby="e2t e2d">
             <title id="e2t">Inbound mail waits at the hub</title>
-            <desc id="e2d">Grandma replies to the callsign address. The hub stores the mail. It does not key a radio by itself. You sync on internet or tap Check mail on radio-plus.</desc>
+            <desc id="e2d">The contact replies to the callsign address. The hub stores the mail. It does not key a radio by itself. You sync on internet or tap Check mail on radio-plus.</desc>
             <defs>
               <marker id="mnetE2" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
@@ -118,7 +118,7 @@
             <line class="cross" x1="373" y1="88" x2="355" y2="104" />
             <line class="rf" marker-end="url(#mrfE2)" x1="542" y1="96" x2="574" y2="96" />
             <rect class="box orange" x="16" y="70" width="128" height="54" />
-            <text class="on-orange" x="80" y="92" text-anchor="middle">grandma</text>
+            <text class="on-orange" x="80" y="92" text-anchor="middle">contact</text>
             <text class="sub" x="80" y="110" text-anchor="middle">hits Reply</text>
             <rect class="box hub" x="188" y="70" width="158" height="54" />
             <text class="on-hub" x="267" y="92" text-anchor="middle">hub</text>
@@ -154,11 +154,11 @@
       <p>Frequency and preset stay station-wide, same as chat. A 4 KB mail on <code>hf-deep</code> takes a long time on the air. The confirm exists so you see that before you key.</p>
 
       <h2>Optional copy to your own mailbox</h2>
-      <p>Off by default. In Email settings you can ask the hub to also copy mail to a personal address (for example Gmail on the kitchen tablet).</p>
+      <p>Off by default. In Email settings you can ask the hub to also copy mail to a personal address (for example your usual inbox on a phone or tablet).</p>
       <ul>
-        <li>The hub emails a confirm link or code to that address. The toggle stays pending until you finish that step.</li>
-        <li>When it is on: mail you send is BCC’d there; mail that arrives at the hub is copied there. Grandma’s Reply still waits at the hub for you to sync or Check mail. Copy-to does not steal the Reply off the radio path.</li>
-        <li>Do not Gmail-forward that mailbox back to <code>callsign@mail.weechatradio.com</code> or you will loop.</li>
+        <li>The hub emails a confirm code to that address. The toggle stays pending until you finish that step.</li>
+        <li>When it is on: mail you send is BCC’d there; mail that arrives at the hub is copied there. Their Reply still waits at the hub for you to sync or Check mail. Copy-to does not steal the Reply off the radio path.</li>
+        <li>Do not auto-forward that mailbox back to <code>callsign@mail.weechatradio.com</code> or you will loop.</li>
         <li>The personal address never goes over RF. Change this setting while you can still reach the hub.</li>
       </ul>
 
@@ -172,19 +172,14 @@
       </ul>
 
       <h2>A Saturday on the hill</h2>
-      <p>You are M7TJF. Mode <code>radio-plus</code>, 144.950, preset <code>vhf-fm</code>. The club box G0ABC is <code>internet-radio</code> on the same dial. Grandma is <code>mary@gmail.com</code>.</p>
+      <p>You are M7TJF. Mode <code>radio-plus</code>, 144.950, preset <code>vhf-fm</code>. The club box G0ABC is <code>internet-radio</code> on the same dial. The club secretary is <code>alex@example.com</code>.</p>
       <ol class="steps">
-        <li>Email tab → To <code>mary@gmail.com</code> → Send → confirm the radio warning → the club box and hub send the mail.</li>
-        <li>Grandma sees From <code>M7TJF@mail.weechatradio.com</code>.</li>
-        <li>She hits Reply. The hub stores it. The club radio stays quiet.</li>
-        <li>You tap Check mail → confirm → open her reply from the list → confirm airtime → the body comes over 144.950.</li>
-        <li>If copy-to is on, step 3 also left a copy in your Gmail. That copy does not use the radio.</li>
+        <li>Email tab → To <code>alex@example.com</code> → Send → confirm the radio warning → the club box and hub send the mail.</li>
+        <li>Alex sees From <code>M7TJF@mail.weechatradio.com</code>.</li>
+        <li>They hit Reply. The hub stores it. The club radio stays quiet.</li>
+        <li>You tap Check mail → confirm → open the reply from the list → confirm airtime → the body comes over 144.950.</li>
+        <li>If copy-to is on, step 3 also left a copy in your personal inbox. That copy does not use the radio.</li>
       </ol>
-
-      <div class="ok">
-        <h2>How you will know it shipped</h2>
-        <p>The <a href="/changelog.html">changelog</a> will carry a <code>v0.1.x</code> app note, not only a site line. <code>wcr gui</code> will show <strong>email</strong> next to live chat. Until then, this page is the spec.</p>
-      </div>
 
       <p class="next">Modes: <a href="/docs/modes.html">modes</a>. How a gateway reaches another band: <a href="/docs/bridging.html">cross-frequency chat</a>. Live chat today: <a href="/guides/start.html">5-minute start</a>.</p>
     </main>
