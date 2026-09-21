@@ -187,6 +187,12 @@ async fn send_mail(
 
     let hub_ok = st.snap.lock().hub_ok;
     let use_rf = mail_send_will_rf(&cfg, hub_ok, body.rf);
+    if use_rf && cfg.mail.gateway.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "set Email gateway in Setup (internet-radio callsign on your dial)".into(),
+        ));
+    }
     if use_rf {
         let _ = st
             .mail_cmd
