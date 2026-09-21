@@ -274,6 +274,12 @@ pub struct AirItem {
     pub not_before: Instant,
     pub rung: Option<Rung>,
     pub preset: Preset,
+    /// Extra msg ids packed into this item (email chunk burst).
+    extra_ids: Vec<MsgId>,
+    /// Email only: do not run WCR CSMA before this item. Chat is unchanged.
+    skip_csma: bool,
+    /// Email burst: restore modem73 CSMA after this item is on the air.
+    restore_modem_csma: bool,
     congest_deferred: bool,
 }
 
@@ -289,6 +295,9 @@ impl AirItem {
             not_before: now,
             rung: None,
             preset,
+            extra_ids: Vec::new(),
+            skip_csma: env.kind == MsgType::Mail,
+            restore_modem_csma: false,
             congest_deferred: false,
         }
     }
@@ -313,6 +322,32 @@ impl AirItem {
         self
     }
 
+    pub fn with_extra_ids(mut self, ids: Vec<MsgId>) -> Self {
+        self.extra_ids = ids;
+        self
+    }
+
+    pub fn with_restore_modem_csma(mut self) -> Self {
+        self.restore_modem_csma = true;
+        self
+    }
+
+    pub(crate) fn skip_csma(&self) -> bool {
+        self.skip_csma
+    }
+
+    pub(crate) fn restore_modem_csma(&self) -> bool {
+        self.restore_modem_csma
+    }
+
+    pub(crate) fn extra_ids(&self) -> &[MsgId] {
+        &self.extra_ids
+    }
+
+    fn covers(&self, id: MsgId) -> bool {
+        self.msg_id == id || self.extra_ids.iter().any(|x| *x == id)
+    }
+
     fn payload_len(&self) -> usize {
         self.frames.iter().map(|f| f.len()).sum()
     }
@@ -321,6 +356,7 @@ impl AirItem {
 struct QueueInner {
     items: Vec<AirItem>,
     in_flight: Option<MsgId>,
+    in_flight_extra: HashSet<MsgId>,
     accepted: HashSet<MsgId>,
 }
 
@@ -336,6 +372,7 @@ impl AirQueue {
             inner: Arc::new(Mutex::new(QueueInner {
                 items: Vec::new(),
                 in_flight: None,
+                in_flight_extra: HashSet::new(),
                 accepted: HashSet::new(),
             })),
             notify: Arc::new(Notify::new()),
@@ -343,13 +380,25 @@ impl AirQueue {
     }
 
     fn set_in_flight(&self, id: Option<MsgId>) {
-        self.inner.lock().in_flight = id;
+        let mut g = self.inner.lock();
+        g.in_flight = id;
+        if id.is_none() {
+            g.in_flight_extra.clear();
+        }
+    }
+
+    fn set_in_flight_item(&self, item: &AirItem) {
+        let mut g = self.inner.lock();
+        g.in_flight = Some(item.msg_id);
+        g.in_flight_extra = item.extra_ids.iter().copied().collect();
     }
 
     /// Queued or currently being handed to the modem (app-level TX).
     pub fn is_pending(&self, id: MsgId) -> bool {
         let g = self.inner.lock();
-        g.in_flight == Some(id) || g.items.iter().any(|x| x.msg_id == id)
+        g.in_flight == Some(id)
+            || g.in_flight_extra.contains(&id)
+            || g.items.iter().any(|x| x.covers(id))
     }
 
     /// True if this id was accepted onto the air queue at least once.
@@ -372,6 +421,9 @@ impl AirQueue {
             .position(|x| x.class > item.class)
             .unwrap_or(g.items.len());
         g.accepted.insert(item.msg_id);
+        for id in &item.extra_ids {
+            g.accepted.insert(*id);
+        }
         g.items.insert(pos, item);
         drop(g);
         self.notify.notify_waiters();
@@ -457,7 +509,7 @@ pub async fn run_air_queue(
         }
 
         if let Some(item) = queue.pop_ready() {
-            queue.set_in_flight(Some(item.msg_id));
+            queue.set_in_flight_item(&item);
             tokio::select! {
                 _ = cancel.cancelled() => return,
                 _ = pace_and_send(&queue, &tx, sense.as_ref(), &control, &rf, &snap, item) => {}
@@ -500,7 +552,7 @@ async fn pace_and_send(
     };
     let started = Instant::now();
 
-    if rf.csma {
+    if rf.csma && !item.skip_csma {
         loop {
             let idle = sense.state() == ChannelState::Idle
                 && sense.since_last_rx() >= Duration::from_millis(rf.quiet_ms as u64);
@@ -538,9 +590,20 @@ async fn pace_and_send(
         }
     }
 
-    let hold = airtime_secs(item.preset, item.payload_len(), 0) + rf.turnaround_ms as f64 / 1000.0;
+    let mut hold =
+        airtime_secs(item.preset, item.payload_len(), 0) + rf.turnaround_ms as f64 / 1000.0;
+    // Email burst: cover VOX lead/tail so the radio stays keyed until the last frame ends.
+    if item.restore_modem_csma {
+        hold += 1.2;
+    }
     if hold > 0.0 {
         tokio::time::sleep(Duration::from_secs_f64(hold)).await;
+    }
+
+    if item.restore_modem_csma {
+        if let Some(c) = control {
+            let _ = c.set_config(item.preset.control_config()).await;
+        }
     }
 
     snap.lock().queue_air = queue.depth();
@@ -582,6 +645,9 @@ mod tests {
             not_before: now,
             rung: None,
             preset: Preset::VhfFm,
+            extra_ids: Vec::new(),
+            skip_csma: false,
+            restore_modem_csma: false,
             congest_deferred: false,
         }
     }
@@ -787,6 +853,63 @@ mod tests {
     }
 
     #[test]
+    fn extra_ids_pending_until_in_flight_clears() {
+        let q = AirQueue::new();
+        let mut burst = item(AirClass::Own, 1);
+        burst.extra_ids = vec![mid(2), mid(3)];
+        q.enqueue(burst);
+        assert!(q.was_accepted(mid(1)));
+        assert!(q.was_accepted(mid(2)));
+        assert!(q.was_accepted(mid(3)));
+        assert!(q.is_pending(mid(2)));
+        let popped = q.pop_ready().unwrap();
+        assert!(!q.is_pending(mid(2)));
+        q.set_in_flight_item(&popped);
+        assert!(q.is_pending(mid(1)));
+        assert!(q.is_pending(mid(2)));
+        assert!(q.is_pending(mid(3)));
+        q.set_in_flight(None);
+        assert!(!q.is_pending(mid(2)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn mail_skip_csma_sends_while_rx() {
+        let q = AirQueue::new();
+        let sense = FakeSense::new();
+        sense.set_state(ChannelState::Rx);
+        let (tx, mut rx) = mpsc::channel(8);
+        let mut c = Config::default();
+        c.rf.csma = true;
+        c.rf.slot_ms = 50;
+        c.rf.quiet_ms = 50;
+        c.rf.max_defer_ms = 15_000;
+        c.rf.emergency_max_defer_ms = 15_000;
+        c.rf.turnaround_ms = 0;
+        let cfg = Arc::new(Mutex::new(c));
+        let snap = status::new_shared();
+        let h = tokio::spawn(run_air_queue(
+            q.clone(),
+            tx,
+            sense.clone(),
+            None,
+            cfg,
+            snap,
+            CancellationToken::new(),
+        ));
+        let mut mail = item(AirClass::Own, 7);
+        mail.skip_csma = true;
+        q.enqueue(mail);
+        tokio::time::advance(Duration::from_millis(20)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(
+            drain(&mut rx).await,
+            vec![vec![7]],
+            "email must not wait for a clear channel"
+        );
+        h.abort();
+    }
+
+    #[test]
     fn classify_matches_plan() {
         use crate::proto::{Callsign, Envelope, Flags};
         let us = "G4ABC";
@@ -814,5 +937,46 @@ mod tests {
         let mut em = Envelope::new_msg(origin, dest, 2, b"!!".to_vec(), 3, Flags::new()).unwrap();
         em.flags.set_priority(Priority::Emergency);
         assert_eq!(AirClass::classify(&em, us), AirClass::Emergency);
+        let mut mail = msg.clone();
+        mail.kind = MsgType::Mail;
+        let mail_item = AirItem::new(&mail, us, vec![vec![1]], Preset::VhfFm);
+        assert!(mail_item.skip_csma(), "email must not wait WCR CSMA");
+        assert!(!mail_item.restore_modem_csma());
+        let chat_item = AirItem::new(&msg, us, vec![vec![1]], Preset::VhfFm);
+        assert!(!chat_item.skip_csma(), "chat must still run WCR CSMA");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn chat_still_defers_while_channel_is_rx() {
+        let q = AirQueue::new();
+        let sense = FakeSense::new();
+        sense.set_state(ChannelState::Rx);
+        let (tx, mut rx) = mpsc::channel(8);
+        let mut c = Config::default();
+        c.rf.csma = true;
+        c.rf.slot_ms = 50;
+        c.rf.quiet_ms = 50;
+        c.rf.max_defer_ms = 15_000;
+        c.rf.emergency_max_defer_ms = 15_000;
+        c.rf.turnaround_ms = 0;
+        let cfg = Arc::new(Mutex::new(c));
+        let snap = status::new_shared();
+        let h = tokio::spawn(run_air_queue(
+            q.clone(),
+            tx,
+            sense.clone(),
+            None,
+            cfg,
+            snap,
+            CancellationToken::new(),
+        ));
+        q.enqueue(item(AirClass::Own, 3));
+        tokio::time::advance(Duration::from_millis(400)).await;
+        tokio::task::yield_now().await;
+        assert!(
+            drain(&mut rx).await.is_empty(),
+            "chat must still wait for a clear channel"
+        );
+        h.abort();
     }
 }
