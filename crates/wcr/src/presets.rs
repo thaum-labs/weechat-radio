@@ -333,17 +333,6 @@ impl Rung {
         }
     }
 
-    /// Approximate payload bitrate used to wait for modem73's queued frames.
-    pub fn bitrate_bps(self) -> u32 {
-        match self {
-            Self::OfdmQpskHalf => 1577,
-            Self::Rdm1200S => 756,
-            Self::Rdm600S => 378,
-            Self::Rdm300S => 194,
-            Self::Mfsk32R => 99,
-        }
-    }
-
     /// Highest (most robust) rung whose PHY MTU can carry `frame_len` bytes.
     pub fn max_for_size(frame_len: usize) -> usize {
         if frame_len <= 55 {
@@ -390,14 +379,6 @@ impl Rung {
             }),
         }
     }
-
-    pub fn control_config_with_csma(self, enabled: bool) -> serde_json::Value {
-        let mut v = self.control_config();
-        if let Some(obj) = v.as_object_mut() {
-            obj.insert("csma_enabled".into(), serde_json::json!(enabled));
-        }
-        v
-    }
 }
 
 /// Pick a TX rung for this destination: start from the last ACK, then step down per retry.
@@ -422,76 +403,6 @@ pub fn airtime_secs(preset: Preset, bytes: usize, extra_overhead_ms: u32) -> f64
     let bits = (bytes as f64) * 8.0;
     let tx = bits / preset.bitrate_bps() as f64;
     tx + (preset.overhead_ms() + extra_overhead_ms) as f64 / 1000.0
-}
-
-/// Estimate on-air time for an internet-mail body (chunked `MsgType::Mail`, optional FRAG).
-pub fn mail_airtime_secs(
-    preset: Preset,
-    body_len: usize,
-    frag_k: u8,
-    frag_m: u8,
-    signed_on_rf: bool,
-    turnaround_ms: u32,
-) -> (usize, f64) {
-    use crate::mail::{chunk_payloads, encode_chunk, MailMeta, MAIL_CHUNK_META};
-    use crate::proto::callsign::Callsign;
-    use crate::proto::envelope::{Envelope, MsgType};
-    use crate::proto::flags::Flags;
-    use crate::proto::MAX_BODY;
-
-    let meta = MailMeta::default();
-    let chunks = chunk_payloads("estimate", &meta, &"x".repeat(body_len.min(4096)));
-    let mut bursts = 0usize;
-    let mut total = 0.0;
-    let origin = Callsign::from_raw("W1AW");
-    let dest = Callsign::from_raw("W1AW");
-    for ch in chunks {
-        let body = encode_chunk(&ch);
-        if body.len() > MAX_BODY {
-            continue;
-        }
-        let mut env = Envelope {
-            ver: crate::proto::envelope::VERSION,
-            kind: MsgType::Mail,
-            flags: Flags::new(),
-            msg_id: crate::proto::ids::MsgId::compute(&origin, &dest, 0, &body),
-            origin: origin.clone(),
-            dest: dest.clone(),
-            hops_left: 4,
-            ts: 0,
-            seq: 0,
-            body,
-            signature: if signed_on_rf { Some([0u8; 64]) } else { None },
-        };
-        let wire = env
-            .encode()
-            .map(|b| b.len())
-            .unwrap_or(MAIL_CHUNK_META + 300);
-        let mtu = preset.payload_bytes() as usize;
-        let frames = if wire > mtu {
-            (frag_k + frag_m) as usize
-        } else {
-            1
-        };
-        bursts += frames;
-        for i in 0..frames {
-            let extra = if i > 0 { turnaround_ms } else { 0 };
-            total += airtime_secs(preset, wire.min(mtu), extra);
-        }
-    }
-    (bursts.max(1), total)
-}
-
-/// Human-readable airtime for compose bar and confirm modals.
-pub fn format_airtime_hint(secs: f64) -> String {
-    if secs < 10.0 {
-        format!("~{:.1} s", secs)
-    } else if secs < 90.0 {
-        format!("~{:.0} s", secs)
-    } else {
-        let mins = (secs / 60.0).round() as u32;
-        format!("about {} min", mins.max(1))
-    }
 }
 
 pub fn audio_level_label(level_db: f32) -> &'static str {
