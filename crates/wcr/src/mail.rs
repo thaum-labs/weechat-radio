@@ -3,7 +3,6 @@
 
 use crate::error::{Error, Result};
 use crate::proto::callsign::is_plausible_callsign;
-use crate::proto::split_body_chunks;
 use crate::proto::MAX_BODY;
 use serde::{Deserialize, Serialize};
 
@@ -113,6 +112,43 @@ pub fn is_third_party_to(addr: &str) -> bool {
     !is_plausible_callsign(&local.to_ascii_uppercase())
 }
 
+fn wire_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+fn wire_unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '\\' {
+            match it.next() {
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('t') => out.push('\t'),
+                Some('\\') => out.push('\\'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 pub fn encode_chunk(w: &MailWire) -> Vec<u8> {
     let meta = serde_json::to_string(&w.meta).unwrap_or_else(|_| "{}".into());
     let line = format!(
@@ -121,8 +157,8 @@ pub fn encode_chunk(w: &MailWire) -> Vec<u8> {
         w.mail_id,
         w.idx,
         w.count,
-        meta.replace('\t', " "),
-        w.payload.replace('\n', " ")
+        wire_escape(&meta),
+        wire_escape(&w.payload)
     );
     line.into_bytes()
 }
@@ -144,8 +180,8 @@ pub fn decode_chunk(bytes: &[u8]) -> Result<MailWire> {
     let mail_id = parts[2].to_string();
     let idx = parts[3].parse().map_err(|_| Error::protocol("bad idx"))?;
     let count = parts[4].parse().map_err(|_| Error::protocol("bad count"))?;
-    let meta: MailMeta = serde_json::from_str(parts[5]).unwrap_or_default();
-    let payload = parts[6].to_string();
+    let meta: MailMeta = serde_json::from_str(&wire_unescape(parts[5])).unwrap_or_default();
+    let payload = wire_unescape(parts[6]);
     Ok(MailWire {
         op,
         mail_id,
@@ -183,10 +219,32 @@ pub fn chunk_payloads(mail_id: &str, meta: &MailMeta, body: &str) -> Vec<MailWir
     let max_rest = MAX_BODY.saturating_sub(oh_rest).max(24);
 
     let mut pieces: Vec<String> = Vec::new();
-    let (head, mut rest) = take_body_prefix(body, max_first);
+    let (head, mut rest) = take_fitting_payload(body, max_first, |p| {
+        encode_chunk(&MailWire {
+            op: MailOp::Data,
+            mail_id: mail_id.to_string(),
+            idx: 0,
+            count: probe,
+            meta: meta.clone(),
+            payload: p.to_string(),
+        })
+        .len()
+            <= MAX_BODY
+    });
     pieces.push(head);
     while !rest.is_empty() {
-        let (next, leftover) = take_body_prefix(rest, max_rest);
+        let (next, leftover) = take_fitting_payload(rest, max_rest, |p| {
+            encode_chunk(&MailWire {
+                op: MailOp::Data,
+                mail_id: mail_id.to_string(),
+                idx: probe,
+                count: probe,
+                meta: empty.clone(),
+                payload: p.to_string(),
+            })
+            .len()
+                <= MAX_BODY
+        });
         pieces.push(next);
         rest = leftover;
     }
@@ -211,6 +269,28 @@ pub fn chunks_fit_max_body(chunks: &[MailWire]) -> bool {
     chunks.iter().all(|c| encode_chunk(c).len() <= MAX_BODY)
 }
 
+fn take_fitting_payload<'a>(
+    text: &'a str,
+    mut max: usize,
+    fits: impl Fn(&str) -> bool,
+) -> (String, &'a str) {
+    if text.is_empty() {
+        return (String::new(), "");
+    }
+    max = max.min(text.len()).max(1);
+    loop {
+        let (head, tail) = take_body_prefix(text, max);
+        if fits(&head) || head.is_empty() {
+            return (head, tail);
+        }
+        let next = head.len().saturating_sub(1);
+        if next == 0 {
+            return (head, tail);
+        }
+        max = next;
+    }
+}
+
 fn take_body_prefix(text: &str, max: usize) -> (String, &str) {
     if text.is_empty() {
         return (String::new(), "");
@@ -233,21 +313,62 @@ fn take_body_prefix(text: &str, max: usize) -> (String, &str) {
     (text[..take].to_string(), &text[take..])
 }
 
-pub fn assemble_chunks(mut parts: Vec<MailWire>) -> Result<(MailMeta, String)> {
+pub fn assemble_chunks(parts: Vec<MailWire>) -> Result<(MailMeta, String)> {
     if parts.is_empty() {
         return Err(Error::protocol("no mail chunks"));
     }
     let mail_id = parts[0].mail_id.clone();
-    parts.sort_by_key(|p| p.idx);
-    let meta = parts[0].meta.clone();
-    let mut body = String::new();
+    let count = parts[0].count;
+    if count == 0 {
+        return Err(Error::protocol("bad mail chunk count"));
+    }
+    let mut by_idx: std::collections::BTreeMap<u16, MailWire> = std::collections::BTreeMap::new();
     for p in parts {
         if p.mail_id != mail_id {
             return Err(Error::protocol("mail_id mismatch"));
         }
-        body.push_str(&p.payload);
+        if p.count != count {
+            return Err(Error::protocol("mail chunk count mismatch"));
+        }
+        by_idx.entry(p.idx).or_insert(p);
+    }
+    if by_idx.len() != count as usize {
+        return Err(Error::protocol("incomplete mail chunks"));
+    }
+    for i in 0..count {
+        if !by_idx.contains_key(&i) {
+            return Err(Error::protocol("missing mail chunk"));
+        }
+    }
+    let meta = by_idx.get(&0).map(|p| p.meta.clone()).unwrap_or_default();
+    let mut body = String::new();
+    for i in 0..count {
+        body.push_str(&by_idx[&i].payload);
     }
     Ok((meta, body))
+}
+
+/// True when `parts` has every index `0..count` exactly once (duplicates ignored).
+pub fn chunks_complete(parts: &[MailWire]) -> bool {
+    if parts.is_empty() {
+        return false;
+    }
+    let count = parts[0].count;
+    if count == 0 {
+        return false;
+    }
+    let mut seen = vec![false; count as usize];
+    for p in parts {
+        if p.count != count || p.mail_id != parts[0].mail_id {
+            return false;
+        }
+        let i = p.idx as usize;
+        if i >= seen.len() {
+            return false;
+        }
+        seen[i] = true;
+    }
+    seen.iter().all(|v| *v)
 }
 
 /// Strip simple HTML tags for inbound hub processing.
@@ -312,11 +433,48 @@ mod tests {
             .collect();
         let (m, assembled) = assemble_chunks(round).unwrap();
         assert_eq!(m.from, meta.from);
-        // encode_chunk maps newlines to spaces on the wire
-        let expect: String = body
-            .chars()
-            .map(|c| if c == '\n' { ' ' } else { c })
-            .collect();
-        assert_eq!(assembled, expect);
+        assert_eq!(assembled, body);
+    }
+
+    #[test]
+    fn newlines_survive_the_wire() {
+        let w = MailWire {
+            op: MailOp::Data,
+            mail_id: "n1".into(),
+            idx: 0,
+            count: 1,
+            meta: MailMeta {
+                from: "a@b.c".into(),
+                to: "d@e.f".into(),
+                subject: "line\nbreak".into(),
+                ids: vec![],
+            },
+            payload: "hello\nworld\r\n\ttab\\slash".into(),
+        };
+        let back = decode_chunk(&encode_chunk(&w)).unwrap();
+        assert_eq!(back.payload, w.payload);
+        assert_eq!(back.meta.subject, "line\nbreak");
+    }
+
+    #[test]
+    fn assemble_ignores_duplicate_idx() {
+        let mk = |idx, payload: &str| MailWire {
+            op: MailOp::Data,
+            mail_id: "x".into(),
+            idx,
+            count: 2,
+            meta: MailMeta {
+                from: "a@b.c".into(),
+                ..MailMeta::default()
+            },
+            payload: payload.into(),
+        };
+        let dup = vec![mk(0, "A"), mk(0, "A"), mk(1, "B")];
+        assert!(chunks_complete(&dup));
+        let (_, body) = assemble_chunks(dup).unwrap();
+        assert_eq!(body, "AB");
+        let missing = vec![mk(0, "A"), mk(0, "A")];
+        assert!(!chunks_complete(&missing));
+        assert!(assemble_chunks(missing).is_err());
     }
 }

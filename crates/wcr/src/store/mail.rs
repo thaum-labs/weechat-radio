@@ -169,6 +169,35 @@ impl Store {
         Ok(())
     }
 
+    pub fn mail_unfetched_count(&self) -> Result<u64> {
+        let conn = self.conn.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mail_messages WHERE folder = 'inbox' AND delivery = 'queued' AND (body = '' OR body IS NULL)",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(n as u64)
+    }
+
+    /// Header-only row for RF check-mail; does not overwrite a body already stored.
+    pub fn mail_insert_header(
+        &self,
+        id: &str,
+        from_addr: &str,
+        to_addr: &str,
+        subject: &str,
+        byte_hint: usize,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO mail_messages(id, folder, from_addr, to_addr, subject, body, created, read_flag, delivery, remote_id, byte_len)
+             VALUES(?1,'inbox',?2,?3,?4,'',?5,0,'queued',?1,?6)",
+            params![id, from_addr, to_addr, subject, now, byte_hint as i64],
+        )?;
+        Ok(())
+    }
+
     pub fn mail_unread_count(&self) -> Result<u64> {
         let conn = self.conn.lock().unwrap();
         let n: i64 = conn.query_row(

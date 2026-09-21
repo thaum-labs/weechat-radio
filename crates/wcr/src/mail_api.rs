@@ -93,6 +93,7 @@ pub fn router(st: MailApiState) -> Router {
         .route("/mail/summary", get(summary))
         .route("/mail/list/{folder}", get(list_folder))
         .route("/mail/send", post(send_mail))
+        .route("/mail/read", post(mark_read))
         .route("/mail/sync", post(sync_hub))
         .route("/mail/check/list", post(check_list))
         .route("/mail/check/get", post(check_get))
@@ -107,7 +108,11 @@ async fn summary(State(st): State<MailApiState>) -> HttpResult<Json<Summary>> {
     let cfg = st.cfg.lock().clone();
     let call = Callsign::parse(&cfg.callsign).map_err(map_err)?;
     let unread = st.store.mail_unread_count().map_err(map_err)?;
-    let hub_waiting = hub_waiting_count(&st, &cfg).await;
+    let hub_waiting = if cfg.mode.uses_internet() && st.snap.lock().hub_ok {
+        hub_waiting_count(&st, &cfg).await
+    } else {
+        st.store.mail_unfetched_count().map_err(map_err)?
+    };
     Ok(Json(Summary {
         unread,
         hub_waiting,
@@ -144,18 +149,26 @@ async fn send_mail(
             "pure radio cannot send internet mail".into(),
         ));
     }
-    let id = blake3::hash(
-        format!(
-            "{}{}{}{}",
-            call.as_str(),
-            body.to,
-            body.subject,
-            chrono::Utc::now().timestamp()
+    let id = {
+        let nonce = rand::random::<u64>();
+        let nanos = chrono::Utc::now()
+            .timestamp_nanos_opt()
+            .unwrap_or_else(|| chrono::Utc::now().timestamp() * 1_000_000_000);
+        blake3::hash(
+            format!(
+                "{}{}{}{}{}{}",
+                call.as_str(),
+                body.to,
+                body.subject,
+                body.body,
+                nanos,
+                nonce
+            )
+            .as_bytes(),
         )
-        .as_bytes(),
-    )
-    .to_hex()
-    .to_string();
+        .to_hex()
+        .to_string()
+    };
 
     let from = wcr_address(call.as_str());
     let meta = MailMeta {
@@ -172,6 +185,21 @@ async fn send_mail(
         ));
     }
 
+    let hub_ok = st.snap.lock().hub_ok;
+    let use_rf = mail_send_will_rf(&cfg, hub_ok, body.rf);
+    if use_rf && cfg.mail.gateway.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "set Email gateway in Setup (internet-radio callsign on your dial)".into(),
+        ));
+    }
+    if !use_rf && !(mode.uses_internet() && hub_ok) {
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            "hub offline — set an Email gateway or wait for the hub".into(),
+        ));
+    }
+
     st.store
         .mail_insert(
             &id,
@@ -184,15 +212,6 @@ async fn send_mail(
             None,
         )
         .map_err(map_err)?;
-
-    let hub_ok = st.snap.lock().hub_ok;
-    let use_rf = mail_send_will_rf(&cfg, hub_ok, body.rf);
-    if use_rf && cfg.mail.gateway.trim().is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "set Email gateway in Setup (internet-radio callsign on your dial)".into(),
-        ));
-    }
     if use_rf {
         let _ = st
             .mail_cmd
@@ -208,6 +227,19 @@ async fn send_mail(
         st.store.mail_move_folder(&id, "sent").map_err(map_err)?;
     }
     Ok(Json(serde_json::json!({ "ok": true, "id": id })))
+}
+
+#[derive(Debug, Deserialize)]
+struct ReadBody {
+    id: String,
+}
+
+async fn mark_read(
+    State(st): State<MailApiState>,
+    Json(body): Json<ReadBody>,
+) -> HttpResult<Json<serde_json::Value>> {
+    st.store.mail_set_read(&body.id, true).map_err(map_err)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 async fn sync_hub(State(st): State<MailApiState>) -> HttpResult<Json<serde_json::Value>> {
@@ -345,12 +377,8 @@ async fn set_copy(
     signed_post(&url, &st.keys, &call, &raw)
         .await
         .map_err(map_err)?;
-    let code = format!("{:08x}", rand::random::<u32>());
     st.store
         .mail_set_kv("copy_pending_to", &body.address)
-        .map_err(map_err)?;
-    st.store
-        .mail_set_kv("copy_pending_code", &code)
         .map_err(map_err)?;
     st.store
         .mail_set_kv("copy_confirmed", "0")
