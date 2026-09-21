@@ -15,6 +15,19 @@ shared chat framing, pacing, CSMA, modem-rung, retry, or delivery behavior.
   Live Chat baseline.
 - `v0.1.71` is the full-repository rollback test candidate built from v0.1.56.
   Do not replace the baseline unless the user confirms it live.
+- The v0.1.56 baseline is confirmed for **short messages only**. Anything over
+  the preset PHY capacity (170 bytes on `hf-poor`) never arrived: the rung was
+  sized from the pre-fragment envelope, which forced OFDM/QPSK, and fixed
+  `frag_k` left fragments over capacity that modem73 dropped when a later item
+  switched the global TX mode. Both stations' logs (M7TJF and TF101, 21 Sep 2026)
+  show every successful RX is RDM-600S up to 169 bytes, and every QPSK frame
+  reaches the receiver only to end in `Decoder: CRC failed`. **QPSK/OFDM does not
+  survive an acoustic VOX path.** Fixed by sizing fragments to the MTU, choosing
+  the rung from the widest post-fragment frame, and waiting for the modem TX
+  queue to drain before the next mode change. This is a Live Chat fix, not Email
+  work, and is pending live confirmation.
+- Do not "optimise" long messages back onto a faster rung than the preset's
+  `ladder_start` on an HF/VOX preset. That is what broke long messages.
 - Email: removed in the v0.1.71 rollback. Rebuild from scratch only after Live
   Chat is reconfirmed.
 
