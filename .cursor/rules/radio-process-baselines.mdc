@@ -12,30 +12,26 @@ shared chat framing, pacing, CSMA, modem-rung, retry, or delivery behavior.
 
 - Live Chat over RF: **confirmed working by the user** at `v0.1.56`,
   commit `d3f32cdb11faeba7009cdc1c8113c49b6dec4c1b`. This is the first locked
-  Live Chat baseline. `v0.1.70` is the rollback test candidate; do not replace
-  the baseline unless the user confirms it live.
-- VOX Email → gateway → hub: **awaiting user live confirmation**. `v0.1.69`
-  is only a candidate, not a proven baseline.
-- Non-VOX Email: **awaiting user live confirmation**. Keep the standard batch
-  path unless the user reports a failure there.
+  Live Chat baseline.
+- `v0.1.71` is the full-repository rollback test candidate built from v0.1.56.
+  Do not replace the baseline unless the user confirms it live.
+- Email: removed in the v0.1.71 rollback. Rebuild from scratch only after Live
+  Chat is reconfirmed.
 
-Only the user's successful two-station live test can change “awaiting” to
-“confirmed.” Unit tests, logs from one station, queue completion, and a Sent
-toast are not proof of over-air delivery.
+Only the user's successful two-station live test can mark a process confirmed.
+Unit tests, one-station logs, queue completion, and a Sent toast are not proof
+of over-air delivery.
 
 When confirmed, record the first working tag and commit here. Do not silently
 move a baseline to a newer release.
 
 ## Isolation requirements
 
-- Live Chat keeps `rf_encode_frames`, normal `AirItem` CSMA, and normal queue
-  timing.
-- VOX Email owns `mail_send_vox_reliable`, `rf_encode_mail_frames`, protocol
-  chunk/final ACKs, retries, and `with_vox_mail_burst`.
-- Non-VOX Email keeps the standard `mail_rf_burst_and_wait` path.
-- A VOX Email change must add or retain tests proving chat and non-VOX behavior
-  are unchanged.
-- Never mark Email Sent until the applicable path's success condition is met.
+- Treat the confirmed Live Chat code as frozen.
+- Build future Email transport beside Live Chat; do not alter shared chat
+  framing, pacing, CSMA, modem-rung, retry, audio, or delivery behavior.
+- Email changes require regression tests proving Live Chat is unchanged.
+- Never mark Email Sent until the gateway confirms complete delivery.
 
 For a regression, diff against the locked process baseline first and keep the
 other confirmed process unchanged.

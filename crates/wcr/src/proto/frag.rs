@@ -242,33 +242,6 @@ pub fn should_fragment(env: &Envelope, encoded_len: usize, mtu: u32) -> bool {
     encoded_len > mtu as usize
 }
 
-/// Encode erasure fragments that actually fit the selected modem payload.
-///
-/// `split` sizes shards from the mail body. The surrounding WCR envelope also
-/// consumes bytes, so a fixed `k=2` can produce a 179-byte frame for a
-/// 170-byte RDM mode. Increase `k` until every encoded frame fits.
-pub fn split_encoded_to_fit(
-    env: &Envelope,
-    min_k: u8,
-    parity: u8,
-    mtu: u32,
-) -> Result<Vec<Vec<u8>>> {
-    let parity = parity.max(1).min(15);
-    let max_k = 16u8.saturating_sub(parity);
-    for k in min_k.max(1)..=max_k {
-        let encoded: Vec<Vec<u8>> = split(env, k, parity)?
-            .into_iter()
-            .map(|f| f.encode())
-            .collect::<Result<_>>()?;
-        if encoded.iter().all(|frame| frame.len() <= mtu as usize) {
-            return Ok(encoded);
-        }
-    }
-    Err(Error::protocol(format!(
-        "cannot fit fragments inside {mtu}-byte modem payload"
-    )))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,29 +267,6 @@ mod tests {
         let mut beacon = sample();
         beacon.kind = MsgType::Beacon;
         assert!(!should_fragment(&beacon, 80, 55));
-    }
-
-    #[test]
-    fn encoded_fragments_fit_rdm_payload() {
-        let mut env = sample();
-        env.body = vec![b'x'; 300];
-        let frames = split_encoded_to_fit(&env, 2, 1, 170).unwrap();
-        assert!(frames.len() > 3, "k must grow past the old fixed 2+1");
-        assert!(
-            frames.iter().all(|frame| frame.len() <= 170),
-            "encoded fragments, not just shards, must fit RDM"
-        );
-    }
-
-    #[test]
-    fn encoded_fragments_fit_mfsk_payload() {
-        let mut env = sample();
-        env.body = vec![b'x'; 300];
-        let frames = split_encoded_to_fit(&env, 2, 1, 55).unwrap();
-        assert!(
-            frames.iter().all(|frame| frame.len() <= 55),
-            "encoded fragments must also fit the smallest modem73 mode"
-        );
     }
 
     #[test]

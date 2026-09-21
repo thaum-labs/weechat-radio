@@ -3,10 +3,8 @@
 
 use crate::config::{self, Config};
 use crate::error::{Error, Result};
-use crate::mail::{validate_internet_addr, MAIL_MAX_BYTES};
-use crate::mail_api::mail_send_will_rf;
 use crate::modes::Mode;
-use crate::presets::{format_airtime_hint, mail_airtime_secs, Preset};
+use crate::presets::Preset;
 use crate::proto::Callsign;
 use crate::status::StatusSnapshot;
 use eframe::egui::{self, Color32, FontId, IconData, RichText, Stroke, ViewportCommand};
@@ -355,22 +353,11 @@ fn chrome(fill: Color32) -> egui::Frame {
 }
 
 fn nav_link(ui: &mut egui::Ui, label: &str) -> egui::Response {
-    nav_link_ex(ui, label, true)
-}
-
-fn nav_link_ex(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response {
     let font = FontId::monospace(13.0);
     let galley = ui.fonts(|f| f.layout_no_wrap(label.to_string(), font.clone(), FG));
     let size = galley.size() + egui::vec2(10.0, 6.0);
-    let sense = if enabled {
-        egui::Sense::click()
-    } else {
-        egui::Sense::hover()
-    };
-    let (rect, resp) = ui.allocate_exact_size(size, sense);
-    let color = if !enabled {
-        DIM
-    } else if resp.hovered() || resp.is_pointer_button_down_on() {
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    let color = if resp.hovered() || resp.is_pointer_button_down_on() {
         ORANGE
     } else {
         PURPLE
@@ -382,7 +369,7 @@ fn nav_link_ex(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response 
         font,
         color,
     );
-    if enabled && resp.hovered() {
+    if resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     resp
@@ -521,94 +508,6 @@ fn load_session() -> GuiSession {
     s
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CenterView {
-    Chat,
-    Email,
-}
-
-#[derive(Clone)]
-enum MailConfirm {
-    Send {
-        rf: bool,
-    },
-    CheckGet {
-        ids: Vec<String>,
-        bytes: usize,
-        bursts: usize,
-        secs: f64,
-    },
-}
-
-#[derive(Clone, Default, serde::Deserialize)]
-struct MailSummary {
-    unread: u64,
-    hub_waiting: u64,
-    wcr_address: String,
-    mail_enabled: bool,
-}
-
-#[derive(Clone, Default, serde::Deserialize)]
-struct MailListRow {
-    id: String,
-    folder: String,
-    from_addr: String,
-    to_addr: String,
-    subject: String,
-    body: String,
-    created: i64,
-    read: bool,
-    delivery: String,
-    byte_len: usize,
-}
-
-fn mail_timestamp(created: i64) -> String {
-    chrono::DateTime::from_timestamp(created, 0)
-        .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
-        .unwrap_or_else(|| "unknown date".into())
-}
-
-fn status_http(method: &str, path: &str, body: Option<&str>) -> Option<String> {
-    status_http_timeout(method, path, body, 800)
-}
-
-fn status_http_timeout(
-    method: &str,
-    path: &str,
-    body: Option<&str>,
-    read_ms: u64,
-) -> Option<String> {
-    let mut stream =
-        TcpStream::connect_timeout(&"127.0.0.1:8074".parse().ok()?, Duration::from_millis(400))
-            .ok()?;
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(read_ms.max(800))));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(400)));
-    let req = if let Some(b) = body {
-        format!(
-            "{method} {path} HTTP/1.0\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            b.len(),
-            b
-        )
-    } else {
-        format!("{method} {path} HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
-    };
-    stream.write_all(req.as_bytes()).ok()?;
-    let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    loop {
-        line.clear();
-        if reader.read_line(&mut line).ok()? == 0 {
-            break;
-        }
-        if line == "\r\n" || line == "\n" {
-            break;
-        }
-    }
-    let mut resp = String::new();
-    reader.read_to_string(&mut resp).ok()?;
-    Some(resp.trim().to_string())
-}
-
 fn save_session(active: &str, joined: &[String], members: &HashMap<String, Vec<String>>) {
     let _ = config::ensure_dirs();
     let s = GuiSession {
@@ -675,29 +574,6 @@ struct GuiApp {
     irc_joined: Vec<String>,
     /// Skip OS notifications while IRC history is replaying after connect.
     irc_connected_at: Option<Instant>,
-    center: CenterView,
-    mail_folder: String,
-    mail_rows: Vec<MailListRow>,
-    mail_to: String,
-    mail_subject: String,
-    mail_body: String,
-    mail_unread: u64,
-    mail_waiting: u64,
-    mail_wcr_addr: String,
-    mail_hint: String,
-    mail_confirm: Option<MailConfirm>,
-    mail_copy_to: String,
-    mail_copy_code: String,
-    mail_check_ids: Vec<String>,
-    last_mail_poll: Instant,
-    mail_notify_unread: u64,
-    /// RF mail gateway callsign (`[mail] gateway` in wcr.toml).
-    mail_gateway: String,
-    /// Compose stays filled until this id moves to sent (app-level TX done).
-    mail_pending_id: Option<String>,
-    mail_pending_since: Option<Instant>,
-    mail_toast_until: Option<Instant>,
-    mail_open_id: Option<String>,
 }
 
 impl GuiApp {
@@ -771,27 +647,6 @@ impl GuiApp {
             freq_pick_last: None,
             irc_joined: Vec::new(),
             irc_connected_at: None,
-            center: CenterView::Chat,
-            mail_folder: "inbox".into(),
-            mail_rows: Vec::new(),
-            mail_to: String::new(),
-            mail_subject: String::new(),
-            mail_body: String::new(),
-            mail_unread: 0,
-            mail_waiting: 0,
-            mail_wcr_addr: String::new(),
-            mail_hint: String::new(),
-            mail_confirm: None,
-            mail_copy_to: String::new(),
-            mail_copy_code: String::new(),
-            mail_check_ids: Vec::new(),
-            last_mail_poll: Instant::now() - Duration::from_secs(3),
-            mail_notify_unread: 0,
-            mail_gateway: form.mail_gateway,
-            mail_pending_id: None,
-            mail_pending_since: None,
-            mail_toast_until: None,
-            mail_open_id: None,
         };
         app.install_tray();
         crate::service::soften_keep_alive();
@@ -804,436 +659,6 @@ impl GuiApp {
 
     fn configured(&self) -> bool {
         Config::default_path().is_file() && Callsign::parse(&self.callsign).is_ok()
-    }
-
-    fn mail_tab_enabled(&self) -> bool {
-        let Ok(c) = Callsign::parse(&self.callsign) else {
-            return false;
-        };
-        if c.is_guest() {
-            return false;
-        }
-        if Callsign::parse(self.mail_gateway.trim())
-            .map(|g| !g.is_guest())
-            .unwrap_or(false)
-        {
-            return true;
-        }
-        Config::load(&Config::default_path())
-            .map(|cfg| cfg.mode.uses_internet())
-            .unwrap_or(false)
-    }
-
-    fn poll_mail(&mut self) {
-        if self.user_stopped {
-            return;
-        }
-        if !self.mail_tab_enabled() && self.mail_pending_id.is_none() {
-            return;
-        }
-        let interval = if self.mail_pending_id.is_some() {
-            Duration::from_millis(500)
-        } else {
-            Duration::from_secs(2)
-        };
-        if self.last_mail_poll.elapsed() < interval {
-            return;
-        }
-        self.last_mail_poll = Instant::now();
-        if self.mail_tab_enabled() {
-            if let Some(raw) = status_http("GET", "/mail/summary", None) {
-                if let Ok(s) = serde_json::from_str::<MailSummary>(&raw) {
-                    if s.unread > self.mail_notify_unread && self.center != CenterView::Email {
-                        let _ = notify_rust::Notification::new()
-                            .summary("WeeChat Radio")
-                            .body("New email waiting")
-                            .show();
-                    }
-                    self.mail_notify_unread = s.unread;
-                    self.mail_unread = s.unread;
-                    self.mail_waiting = s.hub_waiting;
-                    self.mail_wcr_addr = s.wcr_address;
-                }
-            }
-        }
-        self.poll_mail_pending();
-        if self.center == CenterView::Email {
-            self.refresh_mail_list();
-            self.refresh_mail_hint();
-        }
-    }
-
-    fn poll_mail_pending(&mut self) {
-        let Some(id) = self.mail_pending_id.clone() else {
-            return;
-        };
-        if let Some(since) = self.mail_pending_since {
-            if since.elapsed() > Duration::from_secs(20 * 60) {
-                self.mail_pending_id = None;
-                self.mail_pending_since = None;
-                self.error = "Email TX did not finish — still in outbox".into();
-                return;
-            }
-        }
-        if let Some(raw) = status_http("GET", "/mail/list/sent", None) {
-            if let Ok(rows) = serde_json::from_str::<Vec<MailListRow>>(&raw) {
-                if rows.iter().any(|r| r.id == id) {
-                    self.finish_mail_sent();
-                }
-            }
-        }
-    }
-
-    fn finish_mail_sent(&mut self) {
-        self.mail_to.clear();
-        self.mail_subject.clear();
-        self.mail_body.clear();
-        self.mail_pending_id = None;
-        self.mail_pending_since = None;
-        self.mail_toast_until = Some(Instant::now() + Duration::from_secs(4));
-        self.mail_folder = "sent".into();
-        self.refresh_mail_list();
-        self.refresh_mail_hint();
-    }
-
-    fn refresh_mail_list(&mut self) {
-        let path = format!("/mail/list/{}", self.mail_folder);
-        if let Some(raw) = status_http("GET", &path, None) {
-            if let Ok(rows) = serde_json::from_str::<Vec<MailListRow>>(&raw) {
-                self.mail_rows = rows;
-            }
-        }
-    }
-
-    fn delete_mail(&mut self, id: &str) {
-        let b = serde_json::json!({ "id": id });
-        let _ = status_http("POST", "/mail/delete", Some(&b.to_string()));
-        if self.mail_open_id.as_deref() == Some(id) {
-            self.mail_open_id = None;
-        }
-        if self.mail_pending_id.as_deref() == Some(id) {
-            self.mail_pending_id = None;
-            self.mail_pending_since = None;
-            self.refresh_mail_hint();
-        }
-        self.refresh_mail_list();
-    }
-
-    fn refresh_mail_hint(&mut self) {
-        if self.mail_pending_id.is_some() {
-            self.mail_hint = "On the air — To, subject and body stay until TX finishes".into();
-            return;
-        }
-        let cfg = Config::load(&Config::default_path()).unwrap_or_default();
-        let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::VhfFm);
-        let hub_ok = self.status.as_ref().map(|s| s.hub_ok).unwrap_or(false);
-        let rf = mail_send_will_rf(&cfg, hub_ok, false);
-        let len = self.mail_body.len().min(MAIL_MAX_BYTES);
-        if !rf && cfg.mode.uses_internet() {
-            self.mail_hint = format!("{} B · hub only", len);
-            return;
-        }
-        let (bursts, secs) = mail_airtime_secs(
-            preset,
-            len,
-            cfg.rf.frag_k,
-            cfg.rf.frag_m,
-            cfg.mode.uses_internet(),
-            cfg.rf.turnaround_ms,
-        );
-        self.mail_hint = format!(
-            "{} B · {} ({} bursts @ {})",
-            len,
-            format_airtime_hint(secs),
-            bursts,
-            preset.as_str()
-        );
-    }
-
-    fn mail_sync(&mut self) {
-        let _ = status_http("POST", "/mail/sync", Some("{}"));
-        self.refresh_mail_list();
-    }
-
-    fn mail_send_confirmed(&mut self, rf: bool) {
-        let body = serde_json::json!({
-            "to": self.mail_to,
-            "subject": self.mail_subject,
-            "body": self.mail_body,
-            "rf": rf,
-        });
-        let Some(raw) = status_http_timeout("POST", "/mail/send", Some(&body.to_string()), 15_000)
-        else {
-            self.error = "send failed".into();
-            return;
-        };
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
-            if v.get("ok").and_then(|x| x.as_bool()) == Some(true) {
-                if let Some(id) = v.get("id").and_then(|x| x.as_str()) {
-                    if rf {
-                        self.mail_pending_id = Some(id.to_string());
-                        self.mail_pending_since = Some(Instant::now());
-                        self.mail_folder = "outbox".into();
-                        self.refresh_mail_list();
-                        self.refresh_mail_hint();
-                        self.poll_mail_pending();
-                    } else {
-                        self.finish_mail_sent();
-                    }
-                    return;
-                }
-            }
-        }
-        self.error = raw;
-    }
-
-    fn draw_email_center(&mut self, ui: &mut egui::Ui) {
-        let addr = if self.mail_wcr_addr.is_empty() {
-            "callsign@mail.weechatradio.com"
-        } else {
-            self.mail_wcr_addr.as_str()
-        };
-        module_title(ui, "EMAIL", addr);
-        if self.mail_waiting > 0 {
-            ui.label(
-                RichText::new(format!(
-                    "{} waiting — Check mail pulls them over RF (or hub if online)",
-                    self.mail_waiting
-                ))
-                .color(ORANGE)
-                .small()
-                .monospace(),
-            );
-        }
-        ui.horizontal(|ui| {
-            for (f, tip) in [
-                ("inbox", "Mail received on this station"),
-                ("outbox", "Queued or still transmitting"),
-                ("sent", "This station finished transmitting"),
-            ] {
-                let on = self.mail_folder == f;
-                let r =
-                    ui.selectable_label(on, RichText::new(f).color(if on { ACCENT } else { DIM }));
-                hover_tip(&r, tip);
-                if r.clicked() {
-                    self.mail_folder = f.to_string();
-                    self.refresh_mail_list();
-                }
-            }
-            if ui
-                .button(RichText::new("sync").color(PURPLE).monospace())
-                .clicked()
-            {
-                self.mail_sync();
-            }
-            if ui
-                .button(RichText::new("check mail").color(PURPLE).monospace())
-                .clicked()
-            {
-                let _ = status_http("POST", "/mail/check/list", Some("{\"rf\":true}"));
-                self.mail_folder = "inbox".into();
-                self.refresh_mail_list();
-            }
-        });
-        ui.label(
-            RichText::new("outbox: still on the air · sent: this station finished TX")
-                .color(DIM)
-                .small()
-                .monospace(),
-        );
-        egui::ScrollArea::vertical()
-            .max_height(180.0)
-            .show(ui, |ui| {
-                let mut clicked: Option<MailListRow> = None;
-                let mut delete_id: Option<String> = None;
-                for row in &self.mail_rows {
-                    let subj = if row.subject.is_empty() {
-                        "(no subject)"
-                    } else {
-                        row.subject.as_str()
-                    };
-                    let stamp = mail_timestamp(row.created);
-                    let open = self.mail_open_id.as_deref() == Some(row.id.as_str());
-                    ui.horizontal(|ui| {
-                        let r = ui.add(
-                            egui::Label::new(
-                                RichText::new(format!("{stamp} · {} — {}", row.from_addr, subj))
-                                    .color(if open {
-                                        ACCENT
-                                    } else if row.read {
-                                        DIM
-                                    } else {
-                                        FG
-                                    })
-                                    .monospace(),
-                            )
-                            .sense(egui::Sense::click()),
-                        );
-                        if r.clicked() {
-                            clicked = Some(row.clone());
-                        }
-                        let del = ui.button(RichText::new("del").color(DIM).small().monospace());
-                        hover_tip(&del, "Remove this message from this station");
-                        if del.clicked() {
-                            delete_id = Some(row.id.clone());
-                        }
-                    });
-                }
-                if let Some(id) = delete_id {
-                    self.delete_mail(&id);
-                } else if let Some(row) = clicked {
-                    self.mail_open_id = Some(row.id.clone());
-                    if !row.read {
-                        let b = serde_json::json!({ "id": row.id });
-                        let _ = status_http("POST", "/mail/read", Some(&b.to_string()));
-                    }
-                    self.refresh_mail_list();
-                }
-            });
-        if let Some(id) = self.mail_open_id.clone() {
-            if let Some(row) = self.mail_rows.iter().find(|r| r.id == id).cloned() {
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new(format!("From {}", row.from_addr))
-                        .color(FG)
-                        .monospace(),
-                );
-                ui.label(
-                    RichText::new(format!("To {}", row.to_addr))
-                        .color(DIM)
-                        .small()
-                        .monospace(),
-                );
-                ui.label(
-                    RichText::new(mail_timestamp(row.created))
-                        .color(DIM)
-                        .small()
-                        .monospace(),
-                );
-                if !row.subject.is_empty() {
-                    ui.label(RichText::new(&row.subject).color(ACCENT).monospace());
-                }
-                if row.body.is_empty() && row.folder == "inbox" {
-                    ui.label(
-                        RichText::new("Body is still at the hub. Fetch it over RF.")
-                            .color(ORANGE)
-                            .small()
-                            .monospace(),
-                    );
-                    if ui
-                        .button(RichText::new("Fetch over RF").color(ORANGE).monospace())
-                        .clicked()
-                    {
-                        let cfg = Config::load(&Config::default_path()).unwrap_or_default();
-                        let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::VhfFm);
-                        let (bursts, secs) = mail_airtime_secs(
-                            preset,
-                            row.byte_len.max(1),
-                            cfg.rf.frag_k,
-                            cfg.rf.frag_m,
-                            cfg.mode.uses_internet(),
-                            cfg.rf.turnaround_ms,
-                        );
-                        self.mail_confirm = Some(MailConfirm::CheckGet {
-                            ids: vec![row.id.clone()],
-                            bytes: row.byte_len.max(1),
-                            bursts,
-                            secs,
-                        });
-                    }
-                } else {
-                    egui::ScrollArea::vertical()
-                        .max_height(140.0)
-                        .id_salt("mail_body_view")
-                        .show(ui, |ui| {
-                            ui.label(RichText::new(&row.body).color(FG).monospace());
-                        });
-                }
-                ui.add_space(4.0);
-                let del = ui.button(RichText::new("delete").color(ORANGE).monospace());
-                hover_tip(&del, "Remove this message from this station");
-                if del.clicked() {
-                    self.delete_mail(&row.id);
-                }
-            }
-        }
-        ui.add_space(8.0);
-        let compose_ok = self.mail_pending_id.is_none();
-        ui.add_enabled_ui(compose_ok, |ui| {
-            ui.label(RichText::new("To (internet)").color(DIM).monospace());
-            ui.add(egui::TextEdit::singleline(&mut self.mail_to));
-            ui.label(RichText::new("Subject").color(DIM).monospace());
-            ui.add(egui::TextEdit::singleline(&mut self.mail_subject));
-            ui.label(
-                RichText::new("Body (plain text, 4 KB max)")
-                    .color(DIM)
-                    .monospace(),
-            );
-            let changed = ui
-                .add(
-                    egui::TextEdit::multiline(&mut self.mail_body)
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(6),
-                )
-                .changed();
-            if changed {
-                self.refresh_mail_hint();
-            }
-        });
-        ui.label(
-            RichText::new(&self.mail_hint)
-                .color(PURPLE)
-                .small()
-                .monospace(),
-        );
-        let cfg = Config::load(&Config::default_path()).unwrap_or_default();
-        let hub_ok = self.status.as_ref().map(|s| s.hub_ok).unwrap_or(false);
-        let can_send = cfg.mode != Mode::Radio && self.mail_pending_id.is_none();
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(
-                    can_send,
-                    egui::Button::new(RichText::new("Send").color(ORANGE).monospace())
-                        .stroke(hairline(ORANGE)),
-                )
-                .clicked()
-            {
-                self.error.clear();
-                if let Err(e) = validate_internet_addr(&self.mail_to) {
-                    self.error = e.to_string();
-                } else if self.mail_body.len() > MAIL_MAX_BYTES {
-                    self.error = format!("body over {} bytes", MAIL_MAX_BYTES);
-                } else {
-                    let rf = mail_send_will_rf(&cfg, hub_ok, false);
-                    self.mail_confirm = Some(MailConfirm::Send { rf });
-                }
-            }
-        });
-        ui.add_space(8.0);
-        ui.collapsing("Copy to personal address", |ui| {
-            ui.label(
-                RichText::new("Off by default. Hub emails a confirm code before enabling.")
-                    .color(DIM)
-                    .small(),
-            );
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.mail_copy_to).hint_text("you@gmail.com"),
-                );
-                if ui.button("request confirm").clicked() {
-                    let b = serde_json::json!({ "address": self.mail_copy_to });
-                    let _ = status_http("POST", "/mail/settings/copy", Some(&b.to_string()));
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut self.mail_copy_code).hint_text("code"));
-                if ui.button("confirm").clicked() {
-                    let b = serde_json::json!({ "code": self.mail_copy_code });
-                    let _ =
-                        status_http("POST", "/mail/settings/copy/confirm", Some(&b.to_string()));
-                }
-            });
-        });
     }
 
     fn save_setup(&mut self) {
@@ -1255,29 +680,6 @@ impl GuiApp {
         };
         cfg.callsign = self.callsign.trim().to_ascii_uppercase();
         cfg.grid = self.grid.trim().to_ascii_uppercase();
-        let gw = self.mail_gateway.trim().to_ascii_uppercase();
-        if gw.is_empty() {
-            cfg.mail.gateway.clear();
-            self.mail_gateway.clear();
-        } else {
-            match Callsign::parse(&gw) {
-                Ok(c) if c.is_guest() => {
-                    self.error = "Email gateway must be a licensed callsign, not a ~guest".into();
-                    return;
-                }
-                Err(e) => {
-                    self.error = format!("Email gateway: {e}");
-                    return;
-                }
-                Ok(_) => {}
-            }
-            if gw == cfg.callsign {
-                self.error = "Email gateway must be another station on your dial, not you".into();
-                return;
-            }
-            cfg.mail.gateway = gw;
-            self.mail_gateway = cfg.mail.gateway.clone();
-        }
         match self.path {
             0 => {
                 cfg.mode = Mode::Internet;
@@ -1856,10 +1258,6 @@ impl eframe::App for GuiApp {
         self.poll_grid_detect();
         self.poll_find_radio();
         self.poll_tray(ctx);
-        self.poll_mail();
-        if self.center == CenterView::Email && !self.mail_tab_enabled() {
-            self.center = CenterView::Chat;
-        }
         if self.last_poll.elapsed() > Duration::from_millis(250) {
             self.last_poll = Instant::now();
             if self.user_stopped {
@@ -1974,39 +1372,11 @@ impl eframe::App for GuiApp {
                     if nav_link(ui, "map").clicked() {
                         let _ = open::that("https://weechatradio.com/");
                     }
-                    {
-                        let mail_ok = self.mail_tab_enabled();
-                        let label = if mail_ok && self.mail_unread > 0 {
-                            format!("email ({})", self.mail_unread)
-                        } else {
-                            "email".into()
-                        };
-                        let r = nav_link_ex(ui, &label, mail_ok);
-                        if mail_ok {
-                            if r.clicked() {
-                                self.show_setup = false;
-                                self.center = CenterView::Email;
-                                self.refresh_mail_list();
-                                self.refresh_mail_hint();
-                            }
-                        } else {
-                            hover_tip(
-                                &r,
-                                "Set the Email gateway callsign in Setup (the internet-radio station on your dial) to unlock Email. Internet-radio stations can send via the hub without a gateway.",
-                            );
-                        }
-                    }
-                    if nav_link(ui, "live chat").clicked() {
-                        self.center = CenterView::Chat;
-                    }
                     if self.configured() && nav_link(ui, "setup").clicked() {
                         self.show_setup = !self.show_setup;
                         if self.show_setup {
                             self.hw = None;
                             self.hw_rx = None;
-                            if let Ok(cfg) = Config::load(&Config::default_path()) {
-                                self.mail_gateway = cfg.mail.gateway;
-                            }
                         }
                         self.error.clear();
                     }
@@ -2091,34 +1461,15 @@ impl eframe::App for GuiApp {
                     });
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
-                        ui.vertical(|ui| {
-                            ui.radio_value(&mut self.path, 0, "Internet only");
-                            ui.radio_value(&mut self.path, 4, "VR-N76 / UV-PRO (Bluetooth)");
-                            ui.radio_value(&mut self.path, 1, "Handheld + Digirig");
-                            ui.radio_value(&mut self.path, 2, "Audio cable (VOX)");
-                            ui.radio_value(&mut self.path, 3, "HF rig (CAT)");
-                            ui.radio_value(&mut self.path, 5, "KISS TNC on a serial port");
-                        });
-                    });
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(20.0);
-                        ui.label(RichText::new("Email gateway").color(DIM));
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.mail_gateway)
-                                .desired_width(160.0)
-                                .hint_text("G0ABC"),
-                        );
+                        ui.radio_value(&mut self.path, 0, "Internet only");
+                        ui.radio_value(&mut self.path, 4, "VR-N76 / UV-PRO (Bluetooth)");
+                        ui.radio_value(&mut self.path, 1, "Handheld + Digirig");
+                        ui.radio_value(&mut self.path, 2, "Audio cable (VOX)");
                     });
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
-                        ui.label(
-                            RichText::new(
-                                "Required to open Email. internet-radio callsign on your dial that reaches the hub.",
-                            )
-                            .color(DIM)
-                            .font(FontId::monospace(11.0)),
-                        );
+                        ui.radio_value(&mut self.path, 3, "HF rig (CAT)");
+                        ui.radio_value(&mut self.path, 5, "KISS TNC on a serial port");
                     });
                     if self.path == 1 {
                         ui.horizontal(|ui| {
@@ -2472,138 +1823,6 @@ impl eframe::App for GuiApp {
                 });
             });
 
-        if let Some(until) = self.mail_toast_until {
-            if Instant::now() < until {
-                egui::Window::new("mail_sent_toast")
-                    .title_bar(false)
-                    .collapsible(false)
-                    .resizable(false)
-                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                    .frame(chrome(TOPBAR))
-                    .show(ctx, |ui| {
-                        ui.label(
-                            RichText::new("Sent")
-                                .color(GREEN)
-                                .strong()
-                                .font(FontId::monospace(18.0)),
-                        );
-                        ui.label(
-                            RichText::new("This station finished transmitting")
-                                .color(DIM)
-                                .small()
-                                .monospace(),
-                        );
-                    });
-            } else {
-                self.mail_toast_until = None;
-            }
-        }
-
-        if let Some(confirm) = self.mail_confirm.clone() {
-            let cfg = Config::load(&Config::default_path()).unwrap_or_default();
-            let preset = cfg.modem.preset.clone();
-            let freq = self
-                .status
-                .as_ref()
-                .map(|s| s.frequency.clone())
-                .unwrap_or_else(|| "—".into());
-            let mode = cfg.mode.display_name();
-            let (title, body) = match &confirm {
-                MailConfirm::Send { rf } => {
-                    if *rf {
-                        let preset_p = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::VhfFm);
-                        let (bursts, secs) = mail_airtime_secs(
-                            preset_p,
-                            self.mail_body.len(),
-                            cfg.rf.frag_k,
-                            cfg.rf.frag_m,
-                            cfg.mode.uses_internet(),
-                            cfg.rf.turnaround_ms,
-                        );
-                        (
-                            "Send email on the air?",
-                            format!(
-                                "To: {}\nSubject: {}\nSize: {} B\nMode: {} · preset: {} · {}\nThird-party traffic may apply.\nAbout {} ({} bursts @ {}). Retries can take longer.",
-                                self.mail_to,
-                                self.mail_subject,
-                                self.mail_body.len(),
-                                mode,
-                                preset,
-                                freq,
-                                format_airtime_hint(secs),
-                                bursts,
-                                preset_p.as_str()
-                            ),
-                        )
-                    } else {
-                        (
-                            "Send via hub?",
-                            format!(
-                                "To: {}\nSubject: {}\nSize: {} B\nThis goes via the hub. No radio. Usually a few seconds.",
-                                self.mail_to,
-                                self.mail_subject,
-                                self.mail_body.len()
-                            ),
-                        )
-                    }
-                }
-                MailConfirm::CheckGet {
-                    bytes,
-                    bursts,
-                    secs,
-                    ..
-                } => (
-                    "Fetch mail on the air?",
-                    format!(
-                        "About {} B over RF.\nAbout {} ({} bursts @ {}). Retries can take longer.",
-                        bytes,
-                        format_airtime_hint(*secs),
-                        bursts,
-                        preset
-                    ),
-                ),
-            };
-            egui::Window::new(title)
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .frame(chrome(TOPBAR))
-                .show(ctx, |ui| {
-                    ui.label(RichText::new(body).color(FG).monospace());
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add(
-                                egui::Button::new(RichText::new("Send").color(ORANGE).monospace())
-                                    .stroke(hairline(ORANGE)),
-                            )
-                            .clicked()
-                        {
-                            match confirm {
-                                MailConfirm::Send { rf } => self.mail_send_confirmed(rf),
-                                MailConfirm::CheckGet { ids, .. } => {
-                                    let b = serde_json::json!({ "ids": ids, "rf": true });
-                                    let _ = status_http(
-                                        "POST",
-                                        "/mail/check/get",
-                                        Some(&b.to_string()),
-                                    );
-                                    self.mail_folder = "inbox".into();
-                                    self.refresh_mail_list();
-                                }
-                            }
-                            self.mail_confirm = None;
-                        }
-                        if ui
-                            .button(RichText::new("Cancel").color(PURPLE).monospace())
-                            .clicked()
-                        {
-                            self.mail_confirm = None;
-                        }
-                    });
-                });
-        }
-
         if self.confirm_radio {
             egui::Window::new("Switch to radio?")
                 .collapsible(false)
@@ -2666,10 +1885,6 @@ impl eframe::App for GuiApp {
                     .rounding(0.0),
             )
             .show(ctx, |ui| {
-                if self.center == CenterView::Email {
-                    self.draw_email_center(ui);
-                    return;
-                }
                 module_title(ui, "LIVE CHAT", &self.active_channel);
                 ui.add_space(6.0);
                 let mut switch_to = None;
@@ -4165,7 +3380,6 @@ struct Form {
     audio_input: String,
     audio_output: String,
     freq_mhz: String,
-    mail_gateway: String,
 }
 
 fn load_form() -> Form {
@@ -4200,7 +3414,6 @@ fn load_form() -> Form {
             } else {
                 String::new()
             },
-            mail_gateway: cfg.mail.gateway,
         };
     }
     Form {
@@ -4826,12 +4039,6 @@ fn channel_security(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn mail_timestamp_is_explicit_utc() {
-        assert_eq!(mail_timestamp(0), "1970-01-01 00:00 UTC");
-        assert_eq!(mail_timestamp(i64::MAX), "unknown date");
-    }
 
     #[test]
     fn parse_tagmsg_delivery() {

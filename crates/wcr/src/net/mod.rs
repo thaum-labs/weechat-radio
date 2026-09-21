@@ -3,7 +3,6 @@
 
 pub mod frame;
 pub mod hub_client;
-pub mod hub_mail;
 pub mod hub_server;
 pub mod lan;
 pub mod peers;
