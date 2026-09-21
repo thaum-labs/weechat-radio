@@ -8,6 +8,7 @@ use crate::proto::{Envelope, MsgId, MsgType, Priority};
 use crate::status::SharedStatus;
 use parking_lot::Mutex;
 use rand::Rng;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Notify};
@@ -319,6 +320,8 @@ impl AirItem {
 
 struct QueueInner {
     items: Vec<AirItem>,
+    in_flight: Option<MsgId>,
+    accepted: HashSet<MsgId>,
 }
 
 #[derive(Clone)]
@@ -330,9 +333,28 @@ pub struct AirQueue {
 impl AirQueue {
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Mutex::new(QueueInner { items: Vec::new() })),
+            inner: Arc::new(Mutex::new(QueueInner {
+                items: Vec::new(),
+                in_flight: None,
+                accepted: HashSet::new(),
+            })),
             notify: Arc::new(Notify::new()),
         }
+    }
+
+    fn set_in_flight(&self, id: Option<MsgId>) {
+        self.inner.lock().in_flight = id;
+    }
+
+    /// Queued or currently being handed to the modem (app-level TX).
+    pub fn is_pending(&self, id: MsgId) -> bool {
+        let g = self.inner.lock();
+        g.in_flight == Some(id) || g.items.iter().any(|x| x.msg_id == id)
+    }
+
+    /// True if this id was accepted onto the air queue at least once.
+    pub fn was_accepted(&self, id: MsgId) -> bool {
+        self.inner.lock().accepted.contains(&id)
     }
 
     /// Insert by class then FIFO. Returns false if `(msg_id, copy)` is already queued.
@@ -349,6 +371,7 @@ impl AirQueue {
             .iter()
             .position(|x| x.class > item.class)
             .unwrap_or(g.items.len());
+        g.accepted.insert(item.msg_id);
         g.items.insert(pos, item);
         drop(g);
         self.notify.notify_waiters();
@@ -434,10 +457,12 @@ pub async fn run_air_queue(
         }
 
         if let Some(item) = queue.pop_ready() {
+            queue.set_in_flight(Some(item.msg_id));
             tokio::select! {
                 _ = cancel.cancelled() => return,
                 _ = pace_and_send(&queue, &tx, sense.as_ref(), &control, &rf, &snap, item) => {}
             }
+            queue.set_in_flight(None);
             continue;
         }
 
@@ -529,6 +554,21 @@ mod tests {
 
     fn mid(n: u8) -> MsgId {
         MsgId::from_bytes([n, 0, 0, 0, 0, 0, 0, 0])
+    }
+
+    #[test]
+    fn is_pending_queued_and_in_flight() {
+        let q = AirQueue::new();
+        let id = mid(1);
+        assert!(!q.is_pending(id));
+        q.enqueue(item(AirClass::Own, 1));
+        assert!(q.is_pending(id));
+        let popped = q.pop_ready().unwrap();
+        assert!(!q.is_pending(id));
+        q.set_in_flight(Some(popped.msg_id));
+        assert!(q.is_pending(id));
+        q.set_in_flight(None);
+        assert!(!q.is_pending(id));
     }
 
     fn item(class: AirClass, n: u8) -> AirItem {
