@@ -6,7 +6,7 @@
   "architecture": {
     "64bit": {
       "url": "https://github.com/thaum-labs/weechat-radio/releases/download/v0.1.14/wcr-windows-x86_64.zip",
-      "hash": "9412a17cd39da786929acfc7129b13a43fd29a73b34e094deda81816a3a32f93",
+      "hash": "e7876e8b8c909b0310f2696802bb67aed59444972dd27366968d48ea8bc0b9f9",
       "bin": [
         "wcr.exe",
         "wcr-gui.exe",
