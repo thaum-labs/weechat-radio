@@ -156,21 +156,42 @@ pub fn decode_chunk(bytes: &[u8]) -> Result<MailWire> {
     })
 }
 
-/// Split a full mail body into on-air chunk payloads.
+/// Split a full mail body into on-air chunk payloads that each fit [`MAX_BODY`].
+/// Full metadata goes on chunk 0 only; later chunks carry `{}` so more bytes stay for text.
 pub fn chunk_payloads(mail_id: &str, meta: &MailMeta, body: &str) -> Vec<MailWire> {
-    let max_payload = MAX_BODY.saturating_sub(MAIL_CHUNK_META).max(64);
-    let pieces = split_body_chunks(body, max_payload);
-    let n = pieces.len().max(1) as u16;
-    if pieces.is_empty() {
-        return vec![MailWire {
-            op: MailOp::Data,
-            mail_id: mail_id.to_string(),
-            idx: 0,
-            count: 1,
-            meta: meta.clone(),
-            payload: String::new(),
-        }];
+    let empty = MailMeta::default();
+    let probe = 999u16;
+    let oh_first = encode_chunk(&MailWire {
+        op: MailOp::Data,
+        mail_id: mail_id.to_string(),
+        idx: 0,
+        count: probe,
+        meta: meta.clone(),
+        payload: String::new(),
+    })
+    .len();
+    let oh_rest = encode_chunk(&MailWire {
+        op: MailOp::Data,
+        mail_id: mail_id.to_string(),
+        idx: probe,
+        count: probe,
+        meta: empty.clone(),
+        payload: String::new(),
+    })
+    .len();
+    let max_first = MAX_BODY.saturating_sub(oh_first).max(24);
+    let max_rest = MAX_BODY.saturating_sub(oh_rest).max(24);
+
+    let mut pieces: Vec<String> = Vec::new();
+    let (head, mut rest) = take_body_prefix(body, max_first);
+    pieces.push(head);
+    while !rest.is_empty() {
+        let (next, leftover) = take_body_prefix(rest, max_rest);
+        pieces.push(next);
+        rest = leftover;
     }
+
+    let n = pieces.len().max(1) as u16;
     pieces
         .into_iter()
         .enumerate()
@@ -179,10 +200,37 @@ pub fn chunk_payloads(mail_id: &str, meta: &MailMeta, body: &str) -> Vec<MailWir
             mail_id: mail_id.to_string(),
             idx: i as u16,
             count: n,
-            meta: meta.clone(),
+            meta: if i == 0 { meta.clone() } else { empty.clone() },
             payload: p,
         })
         .collect()
+}
+
+/// True when every encoded chunk fits the on-air body limit.
+pub fn chunks_fit_max_body(chunks: &[MailWire]) -> bool {
+    chunks.iter().all(|c| encode_chunk(c).len() <= MAX_BODY)
+}
+
+fn take_body_prefix(text: &str, max: usize) -> (String, &str) {
+    if text.is_empty() {
+        return (String::new(), "");
+    }
+    let max = max.max(1);
+    if text.len() <= max {
+        return (text.to_string(), "");
+    }
+    let mut take = max;
+    while take > 0 && !text.is_char_boundary(take) {
+        take -= 1;
+    }
+    if take == 0 {
+        take = text.chars().next().map(|c| c.len_utf8()).unwrap_or(0);
+    }
+    if let Some(i) = text[..take].rfind(char::is_whitespace).filter(|&i| i > 0) {
+        // Keep the whitespace with the remainder so reassembly stays lossless.
+        return (text[..i].to_string(), &text[i..]);
+    }
+    (text[..take].to_string(), &text[take..])
 }
 
 pub fn assemble_chunks(mut parts: Vec<MailWire>) -> Result<(MailMeta, String)> {
@@ -243,5 +291,32 @@ mod tests {
         };
         let back = decode_chunk(&encode_chunk(&w)).unwrap();
         assert_eq!(back.payload, "hello");
+    }
+
+    #[test]
+    fn two_kb_mail_chunks_fit_max_body() {
+        let body = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(40);
+        assert!(body.len() >= 2000);
+        let meta = MailMeta {
+            from: "m7tjf@mail.weechatradio.com".into(),
+            to: "alex@example.com".into(),
+            subject: "WCR mail test ~2KB".into(),
+            ids: vec![],
+        };
+        let id = "db341c98ecc41599dc78a730633bb6389e9fd8e9f0a3c593e965ed07634e2a71";
+        let chunks = chunk_payloads(id, &meta, &body);
+        assert!(chunks_fit_max_body(&chunks), "chunk over MAX_BODY");
+        let round: Vec<_> = chunks
+            .iter()
+            .map(|c| decode_chunk(&encode_chunk(c)).expect("decode"))
+            .collect();
+        let (m, assembled) = assemble_chunks(round).unwrap();
+        assert_eq!(m.from, meta.from);
+        // encode_chunk maps newlines to spaces on the wire
+        let expect: String = body
+            .chars()
+            .map(|c| if c == '\n' { ' ' } else { c })
+            .collect();
+        assert_eq!(assembled, expect);
     }
 }
