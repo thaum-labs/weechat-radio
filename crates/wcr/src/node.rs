@@ -2450,6 +2450,13 @@ async fn mail_tx_one(
     if mode.uses_internet() {
         rt.keys.sign_envelope(&mut env)?;
     }
+    if env.body.len() > crate::proto::MAX_BODY {
+        return Err(crate::error::Error::protocol(format!(
+            "mail chunk {} B over max {}",
+            env.body.len(),
+            crate::proto::MAX_BODY
+        )));
+    }
     rt.store.insert(&env, Delivery::Queued)?;
     dispatch(rt, &env).await?;
     let our = rt.engine.our_call.clone();
