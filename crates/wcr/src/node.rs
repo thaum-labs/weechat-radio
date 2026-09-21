@@ -2342,11 +2342,12 @@ async fn mail_send_rf(rt: &Runtime, mail_id: &str) -> Result<()> {
         .mail_get(mail_id)?
         .ok_or_else(|| crate::error::Error::Msg("mail not found".into()))?;
     let cfg = rt.cfg.lock().clone();
-    let gateway = if cfg.mail.gateway.is_empty() {
-        cfg.callsign.clone()
-    } else {
-        cfg.mail.gateway.clone()
-    };
+    if cfg.mail.gateway.trim().is_empty() {
+        return Err(crate::error::Error::config(
+            "set [mail] gateway to an internet-radio callsign (Setup → Email gateway)",
+        ));
+    }
+    let gateway = cfg.mail.gateway.clone();
     let dest = Callsign::parse(&gateway)?;
     let origin = Callsign::parse(&cfg.callsign)?;
     let meta = MailMeta {
@@ -2368,12 +2369,13 @@ async fn mail_check_list_rf(rt: &Runtime) -> Result<()> {
     if cfg.mode == Mode::Radio {
         return Ok(());
     }
+    if cfg.mail.gateway.trim().is_empty() {
+        return Err(crate::error::Error::config(
+            "set [mail] gateway to an internet-radio callsign (Setup → Email gateway)",
+        ));
+    }
     let origin = Callsign::parse(&cfg.callsign)?;
-    let gateway = Callsign::parse(if cfg.mail.gateway.is_empty() {
-        &cfg.callsign
-    } else {
-        &cfg.mail.gateway
-    })?;
+    let gateway = Callsign::parse(&cfg.mail.gateway)?;
     let wire = MailWire {
         op: MailOp::ListReq,
         mail_id: "list".into(),
@@ -2388,12 +2390,13 @@ async fn mail_check_list_rf(rt: &Runtime) -> Result<()> {
 
 async fn mail_check_get_rf(rt: &Runtime, ids: &[String]) -> Result<()> {
     let cfg = rt.cfg.lock().clone();
+    if cfg.mail.gateway.trim().is_empty() {
+        return Err(crate::error::Error::config(
+            "set [mail] gateway to an internet-radio callsign (Setup → Email gateway)",
+        ));
+    }
     let origin = Callsign::parse(&cfg.callsign)?;
-    let gateway = Callsign::parse(if cfg.mail.gateway.is_empty() {
-        &cfg.callsign
-    } else {
-        &cfg.mail.gateway
-    })?;
+    let gateway = Callsign::parse(&cfg.mail.gateway)?;
     let wire = MailWire {
         op: MailOp::GetReq,
         mail_id: "get".into(),

@@ -62,7 +62,7 @@ impl Default for Config {
 pub struct MailConfig {
     /// Verified subdomain for WCR addresses (`mail.weechatradio.com`).
     pub domain: String,
-    /// Optional gateway callsign for RF mail when the hub socket is down.
+    /// RF mail dest: callsign of an `internet-radio` gateway on your dial (required for Email).
     pub gateway: String,
 }
 
