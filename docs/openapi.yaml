@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: WeeChat Radio Hub API
-  version: 0.1.72
+  version: 0.1.73
   description: |
     Public read endpoints and signed telemetry write for the live map and integrations.
     Message text is never accepted on the write path.
