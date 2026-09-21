@@ -10,26 +10,38 @@ shared chat framing, pacing, CSMA, modem-rung, retry, or delivery behavior.
 
 ## Baseline ledger
 
-- Live Chat over RF: **confirmed working by the user** at `v0.1.56`,
-  commit `d3f32cdb11faeba7009cdc1c8113c49b6dec4c1b`. This is the first locked
-  Live Chat baseline.
-- `v0.1.71` is the full-repository rollback test candidate built from v0.1.56.
-  Do not replace the baseline unless the user confirms it live.
-- The v0.1.56 baseline is confirmed for **short messages only**. Anything over
-  the preset PHY capacity (170 bytes on `hf-poor`) never arrived: the rung was
-  sized from the pre-fragment envelope, which forced OFDM/QPSK, and fixed
-  `frag_k` left fragments over capacity that modem73 dropped when a later item
-  switched the global TX mode. Both stations' logs (M7TJF and TF101, 21 Sep 2026)
-  show every successful RX is RDM-600S up to 169 bytes, and every QPSK frame
-  reaches the receiver only to end in `Decoder: CRC failed`. **QPSK/OFDM does not
-  survive an acoustic VOX path.** Fixed by sizing fragments to the MTU, choosing
-  the rung from the widest post-fragment frame, and waiting for the modem TX
-  queue to drain before the next mode change. This is a Live Chat fix, not Email
-  work, and is pending live confirmation.
-- Do not "optimise" long messages back onto a faster rung than the preset's
-  `ladder_start` on an HF/VOX preset. That is what broke long messages.
-- Email: removed in the v0.1.71 rollback. Rebuild from scratch only after Live
-  Chat is reconfirmed.
+- Live Chat over RF: **confirmed working by the user** at `v0.1.73`,
+  commit `950accadd0b8452a6181abcbfc3cb34a21bfe50b`, 21 Sep 2026. Short **and**
+  long messages, both directions, with `[ok]` returning once per message. This
+  is the current locked Live Chat baseline. Diff against this, not v0.1.56.
+- Superseded: `v0.1.56` (`d3f32cdb11faeba7009cdc1c8113c49b6dec4c1b`) was the
+  first locked baseline and `v0.1.71` restored it, but both were only ever
+  confirmed for **short messages**. Do not roll back to them to "get a known
+  good state" — they cannot deliver a line over ~145 characters.
+- Email: removed in the v0.1.71 rollback. Rebuild from scratch beside the
+  v0.1.73 baseline.
+
+### What v0.1.72 and v0.1.73 fixed, and must not be undone
+
+1. Anything over the preset PHY capacity (170 bytes on `hf-poor`) never arrived.
+   The rung was sized from the **pre-fragment** envelope, so a long line was
+   forced onto OFDM/QPSK. Both stations' logs show every successful RX is
+   RDM-600S up to 169 bytes, while every QPSK frame reaches the receiver only to
+   end in `Decoder: CRC failed`. **QPSK/OFDM does not survive an acoustic VOX
+   path.** Never route anything onto a rung faster than the preset's
+   `ladder_start` on an HF/VOX preset, and never size the rung from a value the
+   code is about to transform.
+2. A fixed `frag_k` left fragments over capacity, which modem73 dropped with
+   `(!) ... exceeds ... capacity of current mode, dropped` instead of keying.
+   `frag::split_to_fit` grows the shard count until every frame fits.
+3. modem73 has **one global TX mode and its own CSMA**, so its queue outlives our
+   airtime estimate. `pace_and_send` confirms the burst drained via
+   `tx_frame_count` before returning, or the next item's `set_config` strands a
+   queued frame. Any new RF sender must respect the same gate.
+4. `frag::split` cleared `REQ_ACK`, and the assembler copies fragment flags onto
+   the reassembled envelope, so long messages arrived asking for no ACK and the
+   sender retried forever. Fragments keep `REQ_ACK` and clear only `SIGNED`. A
+   split/reassemble step must not drop delivery-critical metadata.
 
 Only the user's successful two-station live test can mark a process confirmed.
 Unit tests, one-station logs, queue completion, and a Sent toast are not proof

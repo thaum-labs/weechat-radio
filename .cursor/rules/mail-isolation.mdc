@@ -1,0 +1,55 @@
+---
+description: Email must not touch the frozen Live Chat radio path
+alwaysApply: true
+---
+
+# Mail isolation
+
+Live Chat over RF is confirmed working at `v0.1.73`, commit `950acca`, and is
+frozen. Email is being rebuilt beside it. Email code lives in
+`crates/wcr/src/mail/` and nowhere else.
+
+## Never edit these for Email
+
+- `air.rs`: `pace_and_send`, `wait_for_tx_drain`, the `run_air_queue` CSMA loop,
+  `airtime_secs` hold, `AirClass`
+- `presets.rs`: `control_config()`, `rung_for`, `airtime_secs`, the ladder
+- `node.rs`: `send_chat`, `dispatch_rf_at`, `rf_frames`, `enqueue_rf`,
+  `on_envelope`, `start_radio`
+- `proto/frag.rs`: `split`, `split_to_fit`, `FragAssembler`
+- `audio_meter.rs` and the Windows IN meter
+
+The **only** permitted `air.rs` change is additive `pause` / `resume` on
+`AirQueue` so `pop_ready` returns `None` while Email holds the radio lease.
+
+If a task appears to require one of these edits, stop and say so. Do not edit it,
+do not copy it into `mail/`, and do not extract a shared helper out of it —
+sharing a helper with chat is the same regression as sharing the worker.
+
+Email frames never enter `AirQueue`, `send_chat`, or `dispatch_rf_at`. Chat
+frames never enter the mail engine. Email never calls `enqueue_rf`.
+
+## Rules for mail RF code
+
+- Never select a rung faster than the preset's `ladder_start` on an HF/VOX
+  preset. QPSK/OFDM does not survive an acoustic path.
+- Size the rung from the widest frame actually keyed, after chunking, never from
+  a pre-transform length.
+- modem73 has one global TX mode. Wait for `tx_frame_count` to drain before
+  changing the mode and before releasing the lease, using the same gate as
+  `pace_and_send`. Restore the modem snapshot, including `csma_enabled`.
+- A split/reassemble step must preserve delivery-critical metadata and ids.
+- Mail keeps its own ladder; never write chat's `dest_rungs`.
+
+## Process
+
+- Do not modify or delete a chat test to make a change pass. If a chat test
+  changes, the change is wrong.
+- Do not bump the workspace version, the README badge, `openapi.yaml`, or create
+  a tag unless the user says **deploy**.
+- Do not run `git checkout`, `git reset --hard`, or offer a rollback as a fix.
+- One plan phase per session. Do not start another phase in the same turn.
+- Never claim over-air delivery from unit tests, a drained queue, or a Sent
+  toast. Only the user's two-station live test confirms a process.
+- Never invent `modem73.log` or `node.log` lines. Say the log is empty.
+- Never mark Email Sent before the gateway confirms Resend accepted the message.
