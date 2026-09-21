@@ -7,22 +7,22 @@ class Wcr < Formula
   on_macos do
     on_intel do
       url "https://github.com/thaum-labs/weechat-radio/releases/download/v0.1.14/wcr-macos-x86_64.tar.gz"
-      sha256 "35fb4b611f64f4795629b45ce8e1a3836c042c344f02b36cf924d858b89a6544"
+      sha256 "bf0291d7415f7d6c2da60a3f238fe653b406572dd5abecd049be649f3363a27e"
     end
     on_arm do
       url "https://github.com/thaum-labs/weechat-radio/releases/download/v0.1.14/wcr-macos-aarch64.tar.gz"
-      sha256 "595110387ffcec748b0dded5a56570125faf3b85f2acd85d7f07c7dec31d539d"
+      sha256 "615ad7563149eaf8428fa9dd0abe369bd153659d4c625fb6e234d3afd29717fc"
     end
   end
 
   on_linux do
     on_intel do
       url "https://github.com/thaum-labs/weechat-radio/releases/download/v0.1.14/wcr-linux-x86_64.tar.gz"
-      sha256 "451364064ee8fd2b8106cecb924ff0bd2d60b8c02d303d935744d508edb0fa88"
+      sha256 "72776df12a7370fa959f557856efe88de775d1d1fc5ee7edb7c5cec4ddda381f"
     end
     on_arm do
       url "https://github.com/thaum-labs/weechat-radio/releases/download/v0.1.14/wcr-linux-aarch64.tar.gz"
-      sha256 "72eebb990e335a2acd7ce19054a774a72ad53c647676f28b63552721b77100ff"
+      sha256 "783f6f4196cabf2de9301bb17563fa782d906d601b4216ffbe5244526ca74893"
     end
   end
 
