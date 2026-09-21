@@ -268,6 +268,9 @@ pub struct MailSendRequest {
     /// RF gateway callsign when hub send follows a radio path (map arc only).
     #[serde(default)]
     pub via: String,
+    /// When a gateway relays RF mail, the field operator’s callsign (From: address).
+    #[serde(default)]
+    pub origin: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -394,7 +397,20 @@ pub async fn post_send(
     if req.body.len() > MAIL_MAX_BYTES {
         return Err((StatusCode::BAD_REQUEST, "body too large".into()));
     }
-    let from = wcr_address(&call);
+    let origin = req.origin.trim().to_ascii_uppercase();
+    let from_call = if origin.is_empty() {
+        call.clone()
+    } else {
+        if origin == call {
+            call.clone()
+        } else if !crate::proto::is_plausible_callsign(&origin) || origin.starts_with('~') {
+            return Err((StatusCode::BAD_REQUEST, "bad origin callsign".into()));
+        } else {
+            // Gateway relay: signer is the internet-radio station; From: is the field op.
+            origin
+        }
+    };
+    let from = wcr_address(&from_call);
     let resend_id = st
         .mail_resend
         .send_email(
@@ -403,26 +419,28 @@ pub async fn post_send(
             &req.subject,
             &req.body,
             st.mail.as_ref(),
-            &call,
+            &from_call,
         )
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
     let _ = st.mail.insert_outbound_record(
-        &call,
+        &from_call,
         &from,
         &req.to,
         &req.subject,
         &req.body,
         resend_id.as_deref(),
     );
-    let via = if req.via.is_empty() {
-        None
-    } else {
+    let via = if !req.via.is_empty() {
         Some(req.via.as_str())
+    } else if from_call != call {
+        Some(call.as_str())
+    } else {
+        None
     };
     publish_mail_map(
         &st,
-        &call,
+        &from_call,
         via,
         Some(req.mail_id.as_str()).or(resend_id.as_deref()),
     );
