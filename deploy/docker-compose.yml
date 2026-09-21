@@ -7,6 +7,8 @@ services:
     command: ["hub", "--bind", "0.0.0.0:7373"]
     volumes:
       - wcr-data:/data
+    env_file:
+      - ../.env
     environment:
       HOME: /data
     restart: unless-stopped

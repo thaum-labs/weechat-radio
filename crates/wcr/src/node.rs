@@ -69,6 +69,7 @@ struct Runtime {
     assembler: Arc<Mutex<FragAssembler>>,
     last_rx_snr: Arc<Mutex<Option<f32>>>,
     radio_lock: Arc<tokio::sync::Mutex<()>>,
+    mail: crate::mail::MailHandle,
 }
 
 impl Runtime {
@@ -175,12 +176,16 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         Err(e) => tracing::error!("irc {irc_bind}: {e}"),
     }
 
+    let mail_slot: crate::mail::MailSlot = Arc::new(Mutex::new(None));
     let status_bind = cfg.status.bind.clone();
     match tokio::net::TcpListener::bind(&status_bind).await {
         Ok(listener) => {
             tracing::info!("status HTTP on {status_bind}");
             let snap_s = snap.clone();
-            tokio::spawn(async move { status::serve_listener(listener, snap_s).await });
+            let slot = mail_slot.clone();
+            tokio::spawn(async move {
+                status::serve_listener_with(listener, snap_s, crate::mail::router(slot)).await
+            });
         }
         Err(e) => tracing::warn!("status HTTP {status_bind}: {e}"),
     }
@@ -245,8 +250,21 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     let want_radio = cfg.mode.uses_radio();
     let want_hub = cfg.dials_hub();
     let want_peers = cfg.mode.uses_internet() && !cfg.hub.peers.is_empty();
+    let cfg = Arc::new(Mutex::new(cfg));
+    let txp_mail = txp.clone();
+    let ports = Arc::new(move || {
+        let g = txp_mail.lock();
+        crate::mail::RadioPorts {
+            kiss: g.kiss.clone(),
+            control: g.control.clone(),
+            air: g.air.clone(),
+            sense: g.sense.clone(),
+        }
+    });
+    let mail = crate::mail::start(cfg.clone(), snap.clone(), keys.clone(), ports)?;
+    *mail_slot.lock() = Some(mail.clone());
     let rt = Runtime {
-        cfg: Arc::new(Mutex::new(cfg)),
+        cfg,
         store: store.clone(),
         keys,
         engine,
@@ -263,6 +281,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         assembler: Arc::new(Mutex::new(FragAssembler::new())),
         last_rx_snr,
         radio_lock: Arc::new(tokio::sync::Mutex::new(())),
+        mail,
     };
     refresh_group_prios(&rt);
 
@@ -575,7 +594,9 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             }
             frame = recv_opt(&mut kiss_rx) => {
                 if let Some(payload) = frame {
-                    if let Ok(env) = Envelope::decode(&payload) {
+                    if let Some(incoming) = crate::mail::try_decode(&payload) {
+                        crate::mail::on_rf(&rt.mail, incoming).await;
+                    } else if let Ok(env) = Envelope::decode(&payload) {
                         let snr = rt.last_rx_snr.lock().take();
                         let _ = on_envelope(&rt, env, "rf", snr).await;
                     }
@@ -1070,6 +1091,11 @@ fn group_member_heard_rf(store: &Store, dest: &str, freq: u32) -> bool {
 }
 
 async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>) -> Result<()> {
+    // Safety net: mail frames are WCRM and demuxed before decode. A Mail
+    // envelope must not enter chat delivery, retry, or the air queue.
+    if env.kind == MsgType::Mail {
+        return Ok(());
+    }
     if env.origin.as_str() == rt.engine.our_call {
         // Acoustic echo or a relay of our own frame. Control frames (ACK,
         // beacon, …) must not paint [rl] onto the last chat line.
@@ -1301,6 +1327,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
         MsgType::Beacon => {}
         MsgType::Ping | MsgType::File => {}
         MsgType::Frag => {}
+        MsgType::Mail => {}
     }
     let band = {
         let s = rt.snap.lock();
