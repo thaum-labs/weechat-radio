@@ -59,8 +59,10 @@ pub fn split(env: &Envelope, k: u8, m: u8) -> Result<Vec<Envelope>> {
         body.push(env.kind as u8);
         body.extend_from_slice(&(orig.len() as u16).to_le_bytes());
         body.extend_from_slice(&shard);
+        // REQ_ACK rides along so the reassembled message still asks for one ACK.
+        // A fragment cannot trigger an ACK itself: `on_envelope` handles Frag
+        // before the ACK path. Signatures cover the whole body, not a shard.
         let mut flags = env.flags;
-        flags.set(crate::proto::flags::FLAG_REQ_ACK, false);
         flags.set(crate::proto::flags::FLAG_SIGNED, false);
         let frag = Envelope {
             ver: VERSION,
@@ -265,7 +267,7 @@ pub fn should_fragment(env: &Envelope, encoded_len: usize, mtu: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::{Callsign, Flags, FLAG_GROUP};
+    use crate::proto::{Callsign, Flags, FLAG_GROUP, FLAG_REQ_ACK};
 
     fn sample() -> Envelope {
         Envelope::new_msg(
@@ -302,6 +304,33 @@ mod tests {
                 frames.len()
             );
         }
+    }
+
+    #[test]
+    fn reassembled_message_still_asks_for_an_ack() {
+        let env = Envelope::new_msg(
+            Callsign::parse("M7TJF").unwrap(),
+            Callsign::parse("TF101").unwrap(),
+            9,
+            vec![b'z'; 300],
+            3,
+            Flags::new().with(FLAG_REQ_ACK),
+        )
+        .unwrap();
+        let frames = split_to_fit(&env, 2, 1, 170).unwrap();
+        let mut a = FragAssembler::new();
+        let mut got = None;
+        for f in &frames {
+            if let Some(done) = a.push(&Envelope::decode(f).unwrap()).unwrap() {
+                got = Some(done);
+                break;
+            }
+        }
+        let back = got.expect("reconstructed");
+        // Without this the receiver stays silent and the sender retries forever.
+        assert!(back.flags.req_ack());
+        assert!(!back.flags.signed());
+        assert_eq!(back.msg_id, env.msg_id);
     }
 
     #[test]
