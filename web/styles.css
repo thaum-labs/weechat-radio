@@ -211,6 +211,7 @@ h3.title {
 }
 h3.title p { margin: 0; }
 h3.title p:last-child { color: var(--orange); text-align: right; }
+.release h3.title p:first-child { color: var(--accent); }
 
 .mod-body {
   flex: 1;
@@ -260,9 +261,41 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
 }
 
 .map-mark-wrap {
+  position: relative;
   width: 28px;
   height: 26px;
   cursor: pointer;
+}
+.map-mark-wrap.mail-overlay::after {
+  content: "e";
+  position: absolute;
+  left: 100%;
+  top: 4px;
+  margin-left: 1px;
+  color: var(--orange);
+  font-family: "Fira Mono", ui-monospace, monospace;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+}
+.mail-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  flex: none;
+  margin-right: 4px;
+}
+.mail-logo .mode-mark {
+  width: 22px;
+  height: 21px;
+}
+.mail-e {
+  color: var(--orange);
+  font-family: "Fira Mono", ui-monospace, monospace;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
 }
 .map-mark-wrap.pulse-tx svg {
   animation: wcr-pulse-tx 1.2s ease-out 1;
