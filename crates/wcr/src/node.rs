@@ -963,17 +963,7 @@ async fn enqueue_rf(
         }
         return Ok(true);
     };
-    let mtu = preset.payload_bytes();
-    let frames = if frag::should_fragment(rf_env, bytes.len(), mtu) {
-        let frags = frag::split(rf_env, cfg.rf.frag_k, cfg.rf.frag_m)?;
-        let mut out = Vec::with_capacity(frags.len());
-        for f in frags {
-            out.push(f.encode()?);
-        }
-        out
-    } else {
-        vec![bytes.to_vec()]
-    };
+    let frames = rf_encode_frames(rf_env, bytes, preset, cfg)?;
     let mut item = AirItem::new(rf_env, &rt.engine.our_call, frames, preset).with_copy(opts.copy);
     if !opts.delay.is_zero() {
         item = item.with_delay(opts.delay);
@@ -986,6 +976,25 @@ async fn enqueue_rf(
         note_own_rf_tx(rt, rf_env);
     }
     Ok(queued)
+}
+
+fn rf_encode_frames(
+    rf_env: &Envelope,
+    bytes: &[u8],
+    preset: Preset,
+    cfg: &Config,
+) -> Result<Vec<Vec<u8>>> {
+    let mtu = preset.payload_bytes();
+    if frag::should_fragment(rf_env, bytes.len(), mtu) {
+        let frags = frag::split(rf_env, cfg.rf.frag_k, cfg.rf.frag_m)?;
+        let mut out = Vec::with_capacity(frags.len());
+        for f in frags {
+            out.push(f.encode()?);
+        }
+        Ok(out)
+    } else {
+        Ok(vec![bytes.to_vec()])
+    }
 }
 
 fn note_own_rf_tx(rt: &Runtime, env: &Envelope) {
@@ -2360,8 +2369,7 @@ async fn mail_send_rf(rt: &Runtime, mail_id: &str) -> Result<()> {
     };
     let third = crate::mail::is_third_party_to(&row.to_addr);
     let chunks = chunk_payloads(mail_id, &meta, &row.body);
-    let ids = mail_tx_chunks(rt, origin, dest, chunks, cfg.mode, third).await?;
-    wait_mail_air(rt, &ids).await?;
+    mail_rf_burst_and_wait(rt, origin, dest, chunks, cfg.mode, third).await?;
     rt.store.mail_set_delivery(mail_id, Delivery::Sent)?;
     rt.store.mail_move_folder(mail_id, "sent")?;
     Ok(())
@@ -2417,6 +2425,37 @@ async fn mail_check_get_rf(rt: &Runtime, ids: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Email only: turn off modem73 CSMA for one mail burst, then restore the preset.
+/// Chat keeps CSMA on.
+async fn mail_pause_modem_csma(rt: &Runtime) {
+    if let Some(c) = rt.control() {
+        let _ = c
+            .set_config(serde_json::json!({ "csma_enabled": false }))
+            .await;
+    }
+}
+
+async fn mail_restore_modem_csma(rt: &Runtime) {
+    let cfg = rt.cfg.lock().clone();
+    let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::VhfFm);
+    if let Some(c) = rt.control() {
+        let _ = c.set_config(preset.control_config()).await;
+    }
+}
+
+async fn mail_rf_burst_and_wait(
+    rt: &Runtime,
+    origin: Callsign,
+    dest: Callsign,
+    chunks: Vec<MailWire>,
+    mode: Mode,
+    third_party: bool,
+) -> Result<Vec<MsgId>> {
+    let ids = mail_tx_chunks(rt, origin, dest, chunks, mode, third_party).await?;
+    wait_mail_air(rt, &ids).await?;
+    Ok(ids)
+}
+
 async fn mail_tx_chunks(
     rt: &Runtime,
     origin: Callsign,
@@ -2425,19 +2464,32 @@ async fn mail_tx_chunks(
     mode: Mode,
     third_party: bool,
 ) -> Result<Vec<MsgId>> {
-    let mut ids = Vec::with_capacity(chunks.len());
+    if chunks.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut envs = Vec::with_capacity(chunks.len());
     for ch in chunks {
-        ids.push(
-            mail_tx_one(
-                rt,
-                origin.clone(),
-                dest.clone(),
-                encode_chunk(&ch),
-                mode,
-                third_party,
-            )
-            .await?,
-        );
+        let env = mail_build_env(
+            rt,
+            origin.clone(),
+            dest.clone(),
+            encode_chunk(&ch),
+            mode,
+            third_party,
+        )?;
+        rt.store.insert(&env, Delivery::Queued)?;
+        envs.push(env);
+    }
+    mail_pause_modem_csma(rt).await;
+    let out = mail_dispatch_burst(rt, &envs).await;
+    if out.is_err() {
+        mail_restore_modem_csma(rt).await;
+        out?;
+    }
+    let mut ids = Vec::with_capacity(envs.len());
+    for env in &envs {
+        mail_note_tx(rt, env);
+        ids.push(env.msg_id);
     }
     Ok(ids)
 }
@@ -2473,14 +2525,14 @@ async fn wait_mail_air(rt: &Runtime, ids: &[MsgId]) -> Result<()> {
     }
 }
 
-async fn mail_tx_one(
+fn mail_build_env(
     rt: &Runtime,
     origin: Callsign,
     dest: Callsign,
     body: Vec<u8>,
     mode: Mode,
     third_party: bool,
-) -> Result<MsgId> {
+) -> Result<Envelope> {
     let mut flags = Flags::new().with(FLAG_REQ_ACK);
     apply_mode_flags(&mut flags, mode, origin.is_guest());
     flags.set(FLAG_THIRD_PARTY, third_party);
@@ -2497,8 +2549,10 @@ async fn mail_tx_one(
             crate::proto::MAX_BODY
         )));
     }
-    rt.store.insert(&env, Delivery::Queued)?;
-    dispatch(rt, &env).await?;
+    Ok(env)
+}
+
+fn mail_note_tx(rt: &Runtime, env: &Envelope) {
     let our = rt.engine.our_call.clone();
     if env.dest.as_str() != our {
         *rt.mail_last_gateway.lock() = env.dest.as_str().to_string();
@@ -2521,6 +2575,110 @@ async fn mail_tx_one(
         msgid: Some(env.msg_id.hex()),
         band,
     });
+}
+
+async fn mail_offer_inet(rt: &Runtime, env: &Envelope) {
+    let cfg = rt.cfg.lock().clone();
+    let mut env = env.clone();
+    stamp_own_mode_flags(&mut env, &rt.engine.our_call, cfg.mode);
+    let via_inet = cfg.mode.uses_internet() && env.flags.inet_ok() && inet_gap_for(rt, &env);
+    if via_inet {
+        offer_hub(rt, &env).await;
+        if let Some(l) = &rt.lan {
+            let _ = l.send(env.clone()).await;
+        }
+    }
+}
+
+/// Pack every mail chunk into one AirItem so VOX keys once (email only).
+async fn mail_dispatch_burst(rt: &Runtime, envs: &[Envelope]) -> Result<()> {
+    if envs.is_empty() {
+        return Ok(());
+    }
+    let cfg = rt.cfg.lock().clone();
+    if cfg.mode.uses_radio() {
+        enqueue_mail_burst(rt, envs).await?;
+    }
+    for env in envs {
+        mail_offer_inet(rt, env).await;
+    }
+    Ok(())
+}
+
+async fn enqueue_mail_burst(rt: &Runtime, envs: &[Envelope]) -> Result<()> {
+    let cfg = rt.cfg.lock().clone();
+    let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::VhfFm);
+    let mut all_frames = Vec::new();
+    let mut ids = Vec::with_capacity(envs.len());
+    let mut first_rf: Option<Envelope> = None;
+    let mut total_len = 0usize;
+    for env in envs {
+        let mut env = env.clone();
+        stamp_own_mode_flags(&mut env, &rt.engine.our_call, cfg.mode);
+        let rf_env = rf_copy(&env, preset);
+        let bytes = rf_env.encode()?;
+        total_len += bytes.len();
+        all_frames.extend(rf_encode_frames(&rf_env, &bytes, preset, &cfg)?);
+        ids.push(env.msg_id);
+        if first_rf.is_none() {
+            first_rf = Some(rf_env);
+        }
+    }
+    let first = first_rf.expect("mail burst non-empty");
+    let stored = rt
+        .dest_rungs
+        .lock()
+        .get(first.dest.as_str())
+        .copied()
+        .unwrap_or(preset.ladder_start());
+    let rung = presets::rung_for(preset, stored, 0, total_len);
+    let apply = first.origin.as_str() == rt.engine.our_call;
+
+    if let Some(air) = rt.air() {
+        let extra = ids.iter().skip(1).copied().collect();
+        let mut item = AirItem::new(&first, &rt.engine.our_call, all_frames, preset)
+            .with_extra_ids(extra)
+            .with_restore_modem_csma();
+        if apply {
+            item = item.with_rung(rung);
+        }
+        if !air.enqueue(item) {
+            return Err(crate::error::Error::Msg(
+                "mail did not queue for TX — left in outbox".into(),
+            ));
+        }
+        for env in envs {
+            note_own_rf_tx(rt, env);
+        }
+        return Ok(());
+    }
+    if let Some(k) = rt.kiss() {
+        for frame in &all_frames {
+            k.send(frame).await?;
+        }
+        for env in envs {
+            note_own_rf_tx(rt, env);
+        }
+        mail_restore_modem_csma(rt).await;
+        return Ok(());
+    }
+    Err(crate::error::Error::Msg(
+        "mail did not reach the radio".into(),
+    ))
+}
+
+async fn mail_tx_one(
+    rt: &Runtime,
+    origin: Callsign,
+    dest: Callsign,
+    body: Vec<u8>,
+    mode: Mode,
+    third_party: bool,
+) -> Result<MsgId> {
+    let env = mail_build_env(rt, origin, dest, body, mode, third_party)?;
+    rt.store.insert(&env, Delivery::Queued)?;
+    dispatch(rt, &env).await?;
+    mail_note_tx(rt, &env);
     Ok(env.msg_id)
 }
 
@@ -2543,13 +2701,14 @@ async fn handle_mail_envelope(rt: &Runtime, env: &Envelope, _via: &str) -> Resul
         };
         let origin = Callsign::parse(&our)?;
         let dest = env.origin.clone();
+        let mut parts = Vec::new();
         if let Some(arr) = headers.as_array() {
             for (i, h) in arr
                 .iter()
                 .take(crate::mail::CHECK_MAIL_MAX_MSGS)
                 .enumerate()
             {
-                let wire = MailWire {
+                parts.push(MailWire {
                     op: MailOp::ListHdr,
                     mail_id: h.get("id").and_then(|x| x.as_str()).unwrap_or("").into(),
                     idx: i as u16,
@@ -2568,17 +2727,11 @@ async fn handle_mail_envelope(rt: &Runtime, env: &Envelope, _via: &str) -> Resul
                         .get("bytes")
                         .map(|b| b.to_string())
                         .unwrap_or_else(|| "0".into()),
-                };
-                mail_tx_one(
-                    rt,
-                    origin.clone(),
-                    dest.clone(),
-                    encode_chunk(&wire),
-                    cfg.mode,
-                    false,
-                )
-                .await?;
+                });
             }
+        }
+        if !parts.is_empty() {
+            mail_tx_chunks(rt, origin, dest, parts, cfg.mode, false).await?;
         }
         return Ok(());
     }
@@ -2591,6 +2744,9 @@ async fn handle_mail_envelope(rt: &Runtime, env: &Envelope, _via: &str) -> Resul
         let raw = serde_json::to_vec(&req)?;
         if let Ok(v) = crate::net::hub_mail::signed_post(&url, &rt.keys, &our, &raw).await {
             if let Some(arr) = v.get("messages").and_then(|m| m.as_array()) {
+                let origin = Callsign::parse(&our)?;
+                let dest = env.origin.clone();
+                let mut parts = Vec::new();
                 for m in arr {
                     let meta = MailMeta {
                         from: m.get("from").and_then(|x| x.as_str()).unwrap_or("").into(),
@@ -2604,9 +2760,9 @@ async fn handle_mail_envelope(rt: &Runtime, env: &Envelope, _via: &str) -> Resul
                     };
                     let body = m.get("body").and_then(|x| x.as_str()).unwrap_or("");
                     let id = m.get("id").and_then(|x| x.as_str()).unwrap_or("in");
-                    let parts = chunk_payloads(id, &meta, body);
-                    let origin = Callsign::parse(&our)?;
-                    let dest = env.origin.clone();
+                    parts.extend(chunk_payloads(id, &meta, body));
+                }
+                if !parts.is_empty() {
                     mail_tx_chunks(rt, origin, dest, parts, cfg.mode, false).await?;
                 }
             }
@@ -2789,5 +2945,185 @@ mod tests {
             .unwrap()
             .iter()
             .any(|n| n == "compatriots" || n == "compatri"));
+    }
+
+    fn test_mail_runtime() -> (Runtime, AirQueue) {
+        let store = Arc::new(Store::open_memory().unwrap());
+        store.ensure_mail_schema().unwrap();
+        let mut cfg = Config::default();
+        cfg.callsign = "M7TJF".into();
+        cfg.mode = Mode::RadioPlus;
+        cfg.mail.gateway = "TF101".into();
+        cfg.rf.csma = true;
+        cfg.rf.slot_ms = 50;
+        cfg.rf.quiet_ms = 50;
+        cfg.rf.max_defer_ms = 15_000;
+        cfg.rf.turnaround_ms = 0;
+        let air = AirQueue::new();
+        let mut txp = Transports::default();
+        txp.air = Some(air.clone());
+        let (tel_tx, _tel_rx) = broadcast::channel(16);
+        let (hub_in_tx, _hub_in_rx) = mpsc::channel(8);
+        let (irc_tx, _irc_rx) = mpsc::channel(8);
+        let rt = Runtime {
+            cfg: Arc::new(Mutex::new(cfg)),
+            store: store.clone(),
+            keys: IdentityKeys::generate(),
+            engine: Engine::new(store, "M7TJF".into()),
+            irc: IrcServer::new(irc_tx),
+            txp: Arc::new(Mutex::new(txp)),
+            io_swap: Arc::new(Mutex::new(IoSwap::default())),
+            hub_in_tx,
+            hub_flag: ArcFlag::new(),
+            pending_inet: Arc::new(Mutex::new(Vec::new())),
+            lan: None,
+            snap: status::new_shared(),
+            tel: tel_tx,
+            dest_rungs: Arc::new(Mutex::new(HashMap::new())),
+            assembler: Arc::new(Mutex::new(FragAssembler::new())),
+            last_rx_snr: Arc::new(Mutex::new(None)),
+            radio_lock: Arc::new(tokio::sync::Mutex::new(())),
+            mail_parts: Arc::new(Mutex::new(HashMap::new())),
+            mail_last_gateway: Arc::new(Mutex::new(String::new())),
+        };
+        (rt, air)
+    }
+
+    fn mail_chunks_for_test(body: &str) -> Vec<MailWire> {
+        let meta = MailMeta {
+            from: "m7tjf@mail.weechatradio.com".into(),
+            to: "friend@example.com".into(),
+            subject: "test".into(),
+            ids: vec![],
+        };
+        chunk_payloads("mail1", &meta, body)
+    }
+
+    #[tokio::test]
+    async fn mail_chunks_queue_as_one_air_burst() {
+        let (rt, air) = test_mail_runtime();
+        let chunks = mail_chunks_for_test(&"hello radio email\n".repeat(40));
+        assert!(
+            chunks.len() >= 2,
+            "need multiple chunks so a per-item queue would have been the old bug; got {}",
+            chunks.len()
+        );
+        let origin = Callsign::parse("M7TJF").unwrap();
+        let dest = Callsign::parse("TF101").unwrap();
+        let ids = mail_tx_chunks(&rt, origin, dest, chunks, Mode::RadioPlus, false)
+            .await
+            .unwrap();
+        assert!(ids.len() >= 2);
+        assert_eq!(
+            air.depth(),
+            1,
+            "email must be one VOX burst, not one air item per chunk (that re-keys and beeps)"
+        );
+        for id in &ids {
+            assert!(air.was_accepted(*id));
+            assert!(air.is_pending(*id));
+        }
+        let item = air.pop_ready().unwrap();
+        assert!(item.skip_csma(), "email must not wait WCR CSMA");
+        assert!(
+            item.restore_modem_csma(),
+            "modem CSMA must come back after the email burst"
+        );
+        assert_eq!(item.extra_ids().len(), ids.len() - 1);
+        assert!(
+            item.frames.len() >= ids.len(),
+            "all chunk frames belong on the same burst"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn mail_send_rf_dumps_burst_on_busy_channel_then_marks_sent() {
+        let (rt, air) = test_mail_runtime();
+        let body = "hello radio email\n".repeat(40);
+        rt.store
+            .mail_insert(
+                "mail1",
+                "outbox",
+                "m7tjf@mail.weechatradio.com",
+                "friend@example.com",
+                "test",
+                &body,
+                Delivery::Queued,
+                None,
+            )
+            .unwrap();
+
+        let sense = crate::air::FakeSense::new();
+        sense.set_state(ChannelState::Rx);
+        let (tx, mut rx) = mpsc::channel(64);
+        let h = tokio::spawn(air::run_air_queue(
+            air.clone(),
+            tx,
+            sense,
+            None,
+            rt.cfg.clone(),
+            rt.snap.clone(),
+            CancellationToken::new(),
+        ));
+
+        let rt_send = rt.clone();
+        let send = tokio::spawn(async move { mail_send_rf(&rt_send, "mail1").await });
+
+        let mut frames = Vec::new();
+        for _ in 0..80 {
+            tokio::time::advance(Duration::from_millis(100)).await;
+            tokio::task::yield_now().await;
+            while let Ok(f) = rx.try_recv() {
+                frames.push(f);
+            }
+            if send.is_finished() {
+                break;
+            }
+        }
+        assert!(
+            frames.len() >= 2,
+            "email frames must dump in one burst even while the channel is Rx; got {}",
+            frames.len()
+        );
+        send.await.unwrap().expect("mail_send_rf");
+        let row = rt.store.mail_get("mail1").unwrap().unwrap();
+        assert_eq!(row.folder, "sent");
+        assert_eq!(row.delivery, "sent");
+        h.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn chat_dispatch_still_waits_when_channel_is_rx() {
+        let (rt, air) = test_mail_runtime();
+        let sense = crate::air::FakeSense::new();
+        sense.set_state(ChannelState::Rx);
+        let (tx, mut rx) = mpsc::channel(8);
+        let h = tokio::spawn(air::run_air_queue(
+            air.clone(),
+            tx,
+            sense,
+            None,
+            rt.cfg.clone(),
+            rt.snap.clone(),
+            CancellationToken::new(),
+        ));
+        let env = Envelope::new_msg(
+            Callsign::parse("M7TJF").unwrap(),
+            Callsign::parse("TF101").unwrap(),
+            1,
+            b"chat".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        dispatch_rf_rung(&rt, &env, 0).await.unwrap();
+        assert_eq!(air.depth(), 1);
+        tokio::time::advance(Duration::from_millis(400)).await;
+        tokio::task::yield_now().await;
+        assert!(
+            rx.try_recv().is_err(),
+            "chat must still wait for a clear channel"
+        );
+        h.abort();
     }
 }
