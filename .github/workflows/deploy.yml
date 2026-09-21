@@ -40,5 +40,5 @@ jobs:
             cd /opt/wcr
             git fetch origin
             git reset --hard origin/main
-            docker compose -f deploy/docker-compose.yml pull
-            docker compose -f deploy/docker-compose.yml up -d --no-build
+            docker compose --env-file .env -f deploy/docker-compose.yml pull
+            docker compose --env-file .env -f deploy/docker-compose.yml up -d --no-build
