@@ -186,20 +186,20 @@ async fn send_mail(
         .map_err(map_err)?;
 
     let hub_ok = st.snap.lock().hub_ok;
-    let use_rf = body.rf || (mode == Mode::RadioPlus && !hub_ok);
-    if mode.uses_internet() && hub_ok && !body.rf {
-        hub_send(&st, &cfg, &id, &body.to, &body.subject, &body.body).await?;
-        st.store
-            .mail_set_delivery(&id, Delivery::Sent)
-            .map_err(map_err)?;
-        st.store.mail_move_folder(&id, "sent").map_err(map_err)?;
-    } else if use_rf {
+    let use_rf = mail_send_will_rf(&cfg, hub_ok, body.rf);
+    if use_rf {
         let _ = st
             .mail_cmd
             .send(MailNodeCmd::SendRf {
                 mail_id: id.clone(),
             })
             .await;
+    } else if mode.uses_internet() && hub_ok {
+        hub_send(&st, &cfg, &id, &body.to, &body.subject, &body.body).await?;
+        st.store
+            .mail_set_delivery(&id, Delivery::Sent)
+            .map_err(map_err)?;
+        st.store.mail_move_folder(&id, "sent").map_err(map_err)?;
     }
     Ok(Json(serde_json::json!({ "ok": true, "id": id })))
 }
@@ -466,7 +466,9 @@ pub fn mail_send_will_rf(cfg: &Config, hub_ok: bool, explicit_rf: bool) -> bool 
     match cfg.mode {
         Mode::Radio => false,
         Mode::Internet => false,
-        Mode::InternetRadio => explicit_rf,
-        Mode::RadioPlus => explicit_rf || !hub_ok,
+        // Hub when online; RF only if asked or the hub is down.
+        Mode::InternetRadio => explicit_rf || !hub_ok,
+        // Field path: always RF → gateway → hub (same as chat on the hill / VOX).
+        Mode::RadioPlus => true,
     }
 }
