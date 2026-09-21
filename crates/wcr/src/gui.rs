@@ -556,9 +556,16 @@ struct MailListRow {
     to_addr: String,
     subject: String,
     body: String,
+    created: i64,
     read: bool,
     delivery: String,
     byte_len: usize,
+}
+
+fn mail_timestamp(created: i64) -> String {
+    chrono::DateTime::from_timestamp(created, 0)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_else(|| "unknown date".into())
 }
 
 fn status_http(method: &str, path: &str, body: Option<&str>) -> Option<String> {
@@ -1045,11 +1052,12 @@ impl GuiApp {
                     } else {
                         row.subject.as_str()
                     };
+                    let stamp = mail_timestamp(row.created);
                     let open = self.mail_open_id.as_deref() == Some(row.id.as_str());
                     ui.horizontal(|ui| {
                         let r = ui.add(
                             egui::Label::new(
-                                RichText::new(format!("{} — {}", row.from_addr, subj))
+                                RichText::new(format!("{stamp} · {} — {}", row.from_addr, subj))
                                     .color(if open {
                                         ACCENT
                                     } else if row.read {
@@ -1092,6 +1100,12 @@ impl GuiApp {
                 );
                 ui.label(
                     RichText::new(format!("To {}", row.to_addr))
+                        .color(DIM)
+                        .small()
+                        .monospace(),
+                );
+                ui.label(
+                    RichText::new(mail_timestamp(row.created))
                         .color(DIM)
                         .small()
                         .monospace(),
@@ -1147,7 +1161,7 @@ impl GuiApp {
         let compose_ok = self.mail_pending_id.is_none();
         ui.add_enabled_ui(compose_ok, |ui| {
             ui.label(RichText::new("To (internet)").color(DIM).monospace());
-            ui.add(egui::TextEdit::singleline(&mut self.mail_to).hint_text("mary@gmail.com"));
+            ui.add(egui::TextEdit::singleline(&mut self.mail_to));
             ui.label(RichText::new("Subject").color(DIM).monospace());
             ui.add(egui::TextEdit::singleline(&mut self.mail_subject));
             ui.label(
@@ -4812,6 +4826,12 @@ fn channel_security(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mail_timestamp_is_explicit_utc() {
+        assert_eq!(mail_timestamp(0), "1970-01-01 00:00 UTC");
+        assert_eq!(mail_timestamp(i64::MAX), "unknown date");
+    }
 
     #[test]
     fn parse_tagmsg_delivery() {
