@@ -3,7 +3,8 @@
 
 use crate::error::{Error, Result};
 use crate::mail::{
-    callsign_from_wcr, trim_body, validate_internet_addr, wcr_address, MAIL_DOMAIN, WCR_COPY_HEADER,
+    callsign_from_wcr, pull_token, trim_body, validate_internet_addr, wcr_address, MAIL_DOMAIN,
+    WCR_COPY_HEADER,
 };
 use crate::net::hub_server::HubState;
 use axum::body::Bytes;
@@ -231,6 +232,112 @@ fn bad(status: StatusCode, msg: &str) -> (StatusCode, Json<Value>) {
     (status, Json(json!({ "ok": false, "error": msg })))
 }
 
+#[derive(Deserialize, Default)]
+struct PullAuth {
+    #[serde(default, rename = "for")]
+    for_call: String,
+    #[serde(default)]
+    pk: String,
+    #[serde(default)]
+    sig: String,
+    #[serde(default)]
+    ts: i64,
+}
+
+/// A station reads its own inbox. A gateway reads another station's inbox only
+/// when that station signed the request, and only with the key already on file.
+fn authorize_pull(
+    st: &HubState,
+    signer: &str,
+    auth: &PullAuth,
+    ids: &[String],
+) -> std::result::Result<String, (StatusCode, String)> {
+    let wanted = auth.for_call.trim();
+    if wanted.is_empty() || wanted.eq_ignore_ascii_case(signer) {
+        return Ok(signer.to_ascii_uppercase());
+    }
+    let bound = st.telemetry.get_pubkey(wanted);
+    let now = chrono::Utc::now().timestamp();
+    if !owner_pull_ok(
+        &auth.pk,
+        &auth.sig,
+        wanted,
+        auth.ts,
+        ids,
+        now,
+        bound.as_ref(),
+    ) {
+        return Err((StatusCode::UNAUTHORIZED, "mail pull".into()));
+    }
+    if bound.is_none() {
+        if let Ok(bytes) = hex::decode(auth.pk.trim()) {
+            if bytes.len() == 32 {
+                let mut pk = [0u8; 32];
+                pk.copy_from_slice(&bytes);
+                let _ = st.telemetry.bind_callsign(wanted, &pk);
+            }
+        }
+    }
+    Ok(wanted.to_ascii_uppercase())
+}
+
+/// `bound` is the pubkey this callsign already registered. A different key is refused.
+pub fn owner_pull_ok(
+    pk_hex: &str,
+    sig_hex: &str,
+    callsign: &str,
+    ts: i64,
+    ids: &[String],
+    now: i64,
+    bound: Option<&[u8; 32]>,
+) -> bool {
+    if (now - ts).unsigned_abs() > 10 * 60 {
+        return false;
+    }
+    let Ok(pk) = hex::decode(pk_hex.trim()) else {
+        return false;
+    };
+    let Ok(sig) = hex::decode(sig_hex.trim()) else {
+        return false;
+    };
+    if pk.len() != 32 || sig.len() != 64 {
+        return false;
+    }
+    if let Some(bound) = bound {
+        if pk.as_slice() != bound.as_slice() {
+            return false;
+        }
+    }
+    let mut pk_arr = [0u8; 32];
+    let mut sig_arr = [0u8; 64];
+    pk_arr.copy_from_slice(&pk);
+    sig_arr.copy_from_slice(&sig);
+    let Ok(key) = VerifyingKey::from_bytes(&pk_arr) else {
+        return false;
+    };
+    key.verify(
+        &pull_token(callsign, ts, ids),
+        &Signature::from_bytes(&sig_arr),
+    )
+    .is_ok()
+}
+
+/// Copy-to belongs to whoever wrote the mail. A relaying station cannot attach
+/// its own address to someone else's message, or ask for one.
+fn author_bcc(
+    poster: &str,
+    from: &str,
+    requested: Option<String>,
+    confirmed: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let author = callsign_from_wcr(from);
+    let own = author
+        .as_deref()
+        .is_some_and(|a| a.eq_ignore_ascii_case(poster));
+    let asked = if own { requested } else { None };
+    asked.or_else(|| author.as_deref().and_then(confirmed))
+}
+
 #[derive(Deserialize)]
 struct SendReq {
     from: String,
@@ -272,7 +379,7 @@ pub async fn post_send(
         )
         .into_response();
     }
-    let bcc = req.bcc.or_else(|| st.mail.copy_to(&call));
+    let bcc = author_bcc(&call, &from, req.bcc, |a| st.mail.copy_to(a));
     match resend_send(
         &from,
         &req.to,
@@ -302,13 +409,20 @@ pub async fn post_inbox(
         Ok(c) => c,
         Err((s, m)) => return bad(s, &m).into_response(),
     };
-    Json(json!({ "ok": true, "headers": st.mail.headers(&call) })).into_response()
+    let req: PullAuth = serde_json::from_slice(&body).unwrap_or_default();
+    let target = match authorize_pull(&st, &call, &req, &[]) {
+        Ok(c) => c,
+        Err((s, m)) => return bad(s, &m).into_response(),
+    };
+    Json(json!({ "ok": true, "headers": st.mail.headers(&target) })).into_response()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct FetchReq {
     #[serde(default)]
     ids: Vec<String>,
+    #[serde(flatten)]
+    auth: PullAuth,
 }
 
 pub async fn post_fetch(
@@ -320,8 +434,12 @@ pub async fn post_fetch(
         Ok(c) => c,
         Err((s, m)) => return bad(s, &m).into_response(),
     };
-    let req: FetchReq = serde_json::from_slice(&body).unwrap_or(FetchReq { ids: Vec::new() });
-    Json(json!({ "ok": true, "messages": st.mail.fetch(&call, &req.ids) })).into_response()
+    let req: FetchReq = serde_json::from_slice(&body).unwrap_or_default();
+    let target = match authorize_pull(&st, &call, &req.auth, &req.ids) {
+        Ok(c) => c,
+        Err((s, m)) => return bad(s, &m).into_response(),
+    };
+    Json(json!({ "ok": true, "messages": st.mail.fetch(&target, &req.ids) })).into_response()
 }
 
 #[derive(Deserialize)]
@@ -640,6 +758,77 @@ mod tests {
             "whsec_{}",
             base64::engine::general_purpose::STANDARD.encode(b"test-secret-that-is-long-enough")
         )
+    }
+
+    #[test]
+    fn a_gateway_pull_needs_the_owners_signature() {
+        use crate::proto::IdentityKeys;
+        let keys = IdentityKeys::generate();
+        let ts = 1_700_000_000i64;
+        let token = pull_token("M7TJF", ts, &[]);
+        let sig = hex::encode(keys.sign_bytes(&token));
+        let pk = keys.public_hex();
+        let bound = keys.verifying_key().to_bytes();
+        assert!(owner_pull_ok(&pk, &sig, "M7TJF", ts, &[], ts, Some(&bound)));
+        assert!(!owner_pull_ok(
+            &pk,
+            &sig,
+            "G0ABC",
+            ts,
+            &[],
+            ts,
+            Some(&bound)
+        ));
+        assert!(!owner_pull_ok(
+            &pk,
+            &sig,
+            "M7TJF",
+            ts,
+            &[],
+            ts + 3600,
+            Some(&bound)
+        ));
+        let other = [9u8; 32];
+        assert!(!owner_pull_ok(
+            &pk,
+            &sig,
+            "M7TJF",
+            ts,
+            &[],
+            ts,
+            Some(&other)
+        ));
+    }
+
+    #[test]
+    fn a_relay_never_attaches_its_own_copy_address() {
+        let confirmed = |call: &str| match call {
+            "M7TJF" => Some("tj@example.com".to_string()),
+            "G0ABC" => Some("club@example.com".to_string()),
+            _ => None,
+        };
+        let tj = "M7TJF@mail.weechatradio.com";
+
+        // A gateway posting M7TJF's mail uses M7TJF's address.
+        assert_eq!(
+            author_bcc("G0ABC", tj, None, confirmed),
+            Some("tj@example.com".into())
+        );
+        // Asking for its own copy on someone else's mail is ignored.
+        assert_eq!(
+            author_bcc("G0ABC", tj, Some("club@example.com".into()), confirmed),
+            Some("tj@example.com".into())
+        );
+        // Our own mail keeps the address this station sent.
+        assert_eq!(
+            author_bcc("M7TJF", tj, Some("phone@example.com".into()), confirmed),
+            Some("phone@example.com".into())
+        );
+        // Nobody confirmed a copy address, so nothing is attached.
+        assert_eq!(
+            author_bcc("G0ABC", "2E0XYZ@mail.weechatradio.com", None, confirmed),
+            None
+        );
     }
 
     #[test]

@@ -138,6 +138,19 @@ pub fn compute_mail_id(from: &str, to: &str, subject: &str, body: &str, ack: boo
         .to_string()
 }
 
+/// What a station signs so a gateway may pull that station's inbox.
+/// `ids` empty means "list". A timestamp stops a heard request being reused later.
+pub fn pull_token(callsign: &str, ts: i64, ids: &[String]) -> Vec<u8> {
+    let mut ids = ids.to_vec();
+    ids.sort();
+    format!(
+        "wcr-mail-pull\n{}\n{ts}\n{}",
+        callsign.trim().to_ascii_uppercase(),
+        ids.join("\n")
+    )
+    .into_bytes()
+}
+
 fn wire_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
