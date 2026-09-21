@@ -889,14 +889,18 @@ async fn dispatch_rf_at(
         .get(env.dest.as_str())
         .copied()
         .unwrap_or(preset.ladder_start());
-    let rung = presets::rung_for(preset, stored, retries, bytes.len());
+    let frames = rf_frames(&rf_env, &bytes, preset, &cfg)?;
+    // The rung must carry the largest frame we are about to key. Sizing it from
+    // the pre-fragment envelope forces a split message onto OFDM, which a weak
+    // or acoustic path never decodes.
+    let widest = frames.iter().map(Vec::len).max().unwrap_or(bytes.len());
+    let rung = presets::rung_for(preset, stored, retries, widest);
     let apply = env.origin.as_str() == rt.engine.our_call;
     enqueue_rf(
         rt,
         &rf_env,
-        &bytes,
+        frames,
         preset,
-        &cfg,
         EnqueueOpts {
             rung: if apply { Some(rung) } else { None },
             delay,
@@ -906,39 +910,37 @@ async fn dispatch_rf_at(
     .await
 }
 
-async fn enqueue_rf(
-    rt: &Runtime,
+/// Encode `rf_env` into the frames that will go on the air, fragmenting so each
+/// one fits the preset's PHY capacity.
+fn rf_frames(
     rf_env: &Envelope,
     bytes: &[u8],
     preset: Preset,
     cfg: &Config,
+) -> Result<Vec<Vec<u8>>> {
+    let mtu = preset.payload_bytes();
+    if frag::should_fragment(rf_env, bytes.len(), mtu) {
+        frag::split_to_fit(rf_env, cfg.rf.frag_k, cfg.rf.frag_m, mtu)
+    } else {
+        Ok(vec![bytes.to_vec()])
+    }
+}
+
+async fn enqueue_rf(
+    rt: &Runtime,
+    rf_env: &Envelope,
+    frames: Vec<Vec<u8>>,
+    preset: Preset,
     opts: EnqueueOpts,
 ) -> Result<bool> {
     let Some(air) = rt.air() else {
         if let Some(k) = rt.kiss() {
-            let mtu = preset.payload_bytes();
-            if frag::should_fragment(rf_env, bytes.len(), mtu) {
-                let frags = frag::split(rf_env, cfg.rf.frag_k, cfg.rf.frag_m)?;
-                for f in frags {
-                    k.send(&f.encode()?).await?;
-                }
-            } else {
-                k.send(bytes).await?;
+            for f in &frames {
+                k.send(f).await?;
             }
             note_own_rf_tx(rt, rf_env);
         }
         return Ok(true);
-    };
-    let mtu = preset.payload_bytes();
-    let frames = if frag::should_fragment(rf_env, bytes.len(), mtu) {
-        let frags = frag::split(rf_env, cfg.rf.frag_k, cfg.rf.frag_m)?;
-        let mut out = Vec::with_capacity(frags.len());
-        for f in frags {
-            out.push(f.encode()?);
-        }
-        out
-    } else {
-        vec![bytes.to_vec()]
     };
     let mut item = AirItem::new(rf_env, &rt.engine.our_call, frames, preset).with_copy(opts.copy);
     if !opts.delay.is_zero() {
@@ -968,12 +970,12 @@ async fn send_rf(
     preset: Preset,
     cfg: &Config,
 ) -> Result<()> {
+    let frames = rf_frames(rf_env, bytes, preset, cfg)?;
     enqueue_rf(
         rt,
         rf_env,
-        bytes,
+        frames,
         preset,
-        cfg,
         EnqueueOpts {
             rung: None,
             delay: Duration::ZERO,
@@ -2294,6 +2296,58 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_message_keys_a_robust_rung_not_ofdm() {
+        let cfg = Config::default();
+        let preset = Preset::HfPoor;
+        let env = Envelope::new_msg(
+            Callsign::parse("M7TJF").unwrap(),
+            Callsign::parse("G0ABC").unwrap(),
+            1,
+            vec![b'x'; 300],
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        let bytes = env.encode().unwrap();
+        assert!(bytes.len() > preset.payload_bytes() as usize);
+
+        let frames = rf_frames(&env, &bytes, preset, &cfg).unwrap();
+        let widest = frames.iter().map(Vec::len).max().unwrap();
+        assert!(
+            widest <= preset.payload_bytes() as usize,
+            "widest frame {widest} exceeds {} byte capacity",
+            preset.payload_bytes()
+        );
+        assert_eq!(
+            presets::rung_for(preset, preset.ladder_start(), 0, widest),
+            Rung::Rdm600S
+        );
+        // Sizing the rung from the unfragmented envelope is what forced OFDM.
+        assert_eq!(
+            presets::rung_for(preset, preset.ladder_start(), 0, bytes.len()),
+            Rung::OfdmQpskHalf
+        );
+    }
+
+    #[test]
+    fn short_message_is_one_frame_and_unchanged() {
+        let cfg = Config::default();
+        let preset = Preset::HfPoor;
+        let env = Envelope::new_msg(
+            Callsign::parse("M7TJF").unwrap(),
+            Callsign::parse("G0ABC").unwrap(),
+            1,
+            b"ETA 18:00".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        let bytes = env.encode().unwrap();
+        let frames = rf_frames(&env, &bytes, preset, &cfg).unwrap();
+        assert_eq!(frames, vec![bytes]);
+    }
 
     #[test]
     fn radio_tx_flags_forbid_internet() {
