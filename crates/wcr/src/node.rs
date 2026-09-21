@@ -2578,43 +2578,78 @@ async fn handle_mail_envelope(rt: &Runtime, env: &Envelope, _via: &str) -> Resul
     }
 
     if chunk.op == MailOp::Data && env.dest.as_str() == our {
-        let mut parts = rt.mail_parts.lock();
-        let entry = parts.entry(chunk.mail_id.clone()).or_default();
-        entry.push(chunk.clone());
-        if entry.len() as u16 >= chunk.count {
+        let assembled = {
+            let mut parts = rt.mail_parts.lock();
+            let entry = parts.entry(chunk.mail_id.clone()).or_default();
+            entry.push(chunk.clone());
+            if (entry.len() as u16) < chunk.count {
+                return Ok(());
+            }
             let assembled = entry.clone();
             parts.remove(&chunk.mail_id);
-            let (meta, body) = crate::mail::assemble_chunks(assembled)?;
-            let id = chunk.mail_id.clone();
-            rt.store.mail_insert(
-                &id,
-                "inbox",
-                &meta.from,
-                &meta.to,
-                &meta.subject,
-                &body,
-                Delivery::Delivered,
-                Some(&id),
-            )?;
-            let band = {
-                let s = rt.snap.lock();
-                if s.band.is_empty() {
-                    None
-                } else {
-                    Some(s.band.clone())
-                }
-            };
-            let _ = rt.tel.send(TelemetryEvent {
-                ts: crate::proto::now_ts() as u64,
-                kind: "mail".into(),
-                origin: Some(env.origin.to_string()),
-                dest: Some(our.clone()),
-                hops: Some(env.hops_left),
-                snr: None,
-                msgid: Some(env.msg_id.hex()),
-                band,
+            assembled
+        };
+        let (meta, body) = crate::mail::assemble_chunks(assembled)?;
+        let id = chunk.mail_id.clone();
+        // Gateway: RF mail with an internet To: → hub Resend as the field operator.
+        let relay = cfg.mode.is_gateway()
+            && cfg.mode.uses_internet()
+            && rt.snap.lock().hub_ok
+            && crate::mail::validate_internet_addr(&meta.to).is_ok()
+            && env.origin.as_str() != our;
+        if relay {
+            let base = crate::net::hub_mail::hub_api_base_from_telemetry(&cfg.telemetry.url);
+            let url = format!("{}/api/v1/mail/send", base);
+            let req = serde_json::json!({
+                "to": meta.to,
+                "subject": meta.subject,
+                "body": body,
+                "mail_id": id,
+                "via": our,
+                "origin": env.origin.as_str(),
             });
+            if let Ok(raw) = serde_json::to_vec(&req) {
+                match crate::net::hub_mail::signed_post(&url, &rt.keys, &our, &raw).await {
+                    Ok(_) => {
+                        tracing::info!(
+                            "mail relay {} -> hub as {} to {}",
+                            id,
+                            env.origin.as_str(),
+                            meta.to
+                        );
+                    }
+                    Err(e) => tracing::warn!("mail relay to hub: {e}"),
+                }
+            }
         }
+        rt.store.mail_insert(
+            &id,
+            "inbox",
+            &meta.from,
+            &meta.to,
+            &meta.subject,
+            &body,
+            Delivery::Delivered,
+            Some(&id),
+        )?;
+        let band = {
+            let s = rt.snap.lock();
+            if s.band.is_empty() {
+                None
+            } else {
+                Some(s.band.clone())
+            }
+        };
+        let _ = rt.tel.send(TelemetryEvent {
+            ts: crate::proto::now_ts() as u64,
+            kind: "mail".into(),
+            origin: Some(env.origin.to_string()),
+            dest: Some(our.clone()),
+            hops: Some(env.hops_left),
+            snr: None,
+            msgid: Some(env.msg_id.hex()),
+            band,
+        });
         return Ok(());
     }
 
