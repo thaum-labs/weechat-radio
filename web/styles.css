@@ -260,6 +260,7 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
 }
 
 .map-mark-wrap {
+  position: relative;
   width: 28px;
   height: 26px;
   cursor: pointer;
@@ -269,6 +270,26 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
 }
 .map-mark-wrap.pulse-rx svg {
   animation: wcr-pulse-rx 1.2s ease-out 1;
+}
+.map-mark-wrap.mail-overlay::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 2px solid #ff7a3d;
+  border-radius: 50%;
+  pointer-events: none;
+  box-shadow: 0 0 10px rgba(255, 122, 61, 0.55);
+}
+.mail-mark {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ff7a3d;
+  box-shadow: 0 0 8px rgba(255, 122, 61, 0.5);
+  flex: none;
+}
+.mail-traffic-row .mode-name {
+  color: #ff7a3d;
 }
 @keyframes wcr-pulse-tx {
   0% { filter: drop-shadow(0 0 0 rgba(57, 255, 20, 0)); transform: scale(1); }
