@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: WeeChat Radio Hub API
-  version: 0.1.73
+  version: 0.1.74
   description: |
     Public read endpoints and signed telemetry write for the live map and integrations.
     Message text is never accepted on the write path.
@@ -89,6 +89,59 @@ paths:
       responses:
         "101":
           description: Switching Protocols (WebSocket)
+  /api/v1/mail/send:
+    post:
+      summary: Send mail through Resend
+      description: |
+        Signed by the station key. From is `{callsign}@mail.weechatradio.com`.
+        The hub returns ok only after Resend accepts the message.
+        `[gateway] third_party` does not apply.
+      responses:
+        "200":
+          description: JSON `{ "ok": true, "id" }`
+        "401":
+          description: Bad signature
+        "502":
+          description: Resend did not accept the message
+  /api/v1/mail/inbox:
+    post:
+      summary: List mail waiting for this callsign
+      responses:
+        "200":
+          description: JSON `{ "ok": true, "headers": [ … ] }`
+  /api/v1/mail/fetch:
+    post:
+      summary: Fetch waiting mail bodies by id
+      responses:
+        "200":
+          description: JSON `{ "ok": true, "messages": [ … ] }`
+  /api/v1/mail/copy:
+    post:
+      summary: Start copy-to confirmation
+      description: Sends a code to the personal address. Default is off.
+      responses:
+        "200":
+          description: JSON `{ "ok": true }`
+  /api/v1/mail/copy/confirm:
+    post:
+      summary: Confirm copy-to with the code
+      responses:
+        "200":
+          description: JSON `{ "ok": true }` when the code matches
+  /api/v1/mail/webhook/resend:
+    post:
+      summary: Inbound mail from Resend
+      description: |
+        Resend `email.received`. The body is signed with Svix headers
+        `svix-id`, `svix-timestamp`, and `svix-signature`.
+        `RESEND_WEBHOOK_SECRET` is the Resend webhook signing secret.
+        The Resend API key is `RESEND_API_KEY` on the hub only.
+        The event has no message body; the hub fetches it from Resend.
+      responses:
+        "200":
+          description: JSON `{ "ok": true }`
+        "401":
+          description: Missing or wrong webhook secret
 components:
   schemas:
     NodeReport:

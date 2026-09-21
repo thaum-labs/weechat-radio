@@ -319,6 +319,8 @@ impl AirItem {
 
 struct QueueInner {
     items: Vec<AirItem>,
+    /// Email holds the radio lease. Chat may still enqueue; `pop_ready` waits.
+    paused: bool,
 }
 
 #[derive(Clone)]
@@ -330,7 +332,10 @@ pub struct AirQueue {
 impl AirQueue {
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Mutex::new(QueueInner { items: Vec::new() })),
+            inner: Arc::new(Mutex::new(QueueInner {
+                items: Vec::new(),
+                paused: false,
+            })),
             notify: Arc::new(Notify::new()),
         }
     }
@@ -369,8 +374,26 @@ impl AirQueue {
     pub fn pop_ready(&self) -> Option<AirItem> {
         let now = Instant::now();
         let mut g = self.inner.lock();
+        if g.paused {
+            return None;
+        }
         let idx = g.items.iter().position(|x| x.not_before <= now)?;
         Some(g.items.remove(idx))
+    }
+
+    /// Hold the queue while Email has the radio. Does not drop queued chat.
+    pub fn pause(&self) {
+        self.inner.lock().paused = true;
+    }
+
+    /// Let chat transmit again.
+    pub fn resume(&self) {
+        self.inner.lock().paused = false;
+        self.notify.notify_waiters();
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.inner.lock().paused
     }
 
     fn next_deadline(&self) -> Option<Instant> {
@@ -810,5 +833,30 @@ mod tests {
         let mut em = Envelope::new_msg(origin, dest, 2, b"!!".to_vec(), 3, Flags::new()).unwrap();
         em.flags.set_priority(Priority::Emergency);
         assert_eq!(AirClass::classify(&em, us), AirClass::Emergency);
+    }
+
+    #[test]
+    fn pause_blocks_pop_ready_until_resume() {
+        use crate::proto::{Callsign, Envelope, Flags};
+        let q = AirQueue::new();
+        let env = Envelope::new_msg(
+            Callsign::parse("G4ABC").unwrap(),
+            Callsign::parse("M0XYZ").unwrap(),
+            1,
+            b"hi".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        let item = AirItem::new(&env, "G4ABC", vec![b"frame".to_vec()], Preset::HfPoor);
+        assert!(q.enqueue(item));
+        q.pause();
+        assert!(q.is_paused());
+        assert!(q.pop_ready().is_none());
+        assert_eq!(q.depth(), 1);
+        q.resume();
+        assert!(!q.is_paused());
+        assert!(q.pop_ready().is_some());
+        assert_eq!(q.depth(), 0);
     }
 }
