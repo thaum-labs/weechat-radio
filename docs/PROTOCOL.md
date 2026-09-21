@@ -100,7 +100,11 @@ Each fragment body starts with:
 | orig_len | 2 | original body length |
 | shard | n | Reed–Solomon (GF(2^8)) shard |
 
-Any `k` of `k+m` shards reconstruct the original body. Default `k=2`, `m=1` (`[rf] frag_k` / `frag_m`). Gateways forward fragments as they hear them; the hub reassembles from shards received via different gateways, then fans out the whole message.
+Any `k` of `k+m` shards reconstruct the original body. `k` starts at `[rf] frag_k` (default 2, with `frag_m` 1 parity shard) and grows until every fragment fits the PHY MTU, because a modem drops an oversized frame instead of keying it. Gateways forward fragments as they hear them; the hub reassembles from shards received via different gateways, then fans out the whole message.
+
+Fragments carry the original flags with `SIGNED` cleared, since a signature covers the whole body rather than one shard. `REQ_ACK` is preserved so the reassembled message still asks for a single ACK; a fragment never acknowledges on its own. The reassembled `msg_id` recomputes to the original, so that ACK matches what the sender queued.
+
+The TX mode is chosen from the largest fragment, not the pre-fragment envelope. Picking it from the whole envelope forces the fastest rung, which a weak or VOX audio path cannot decode.
 
 ## Federation (reserved)
 
