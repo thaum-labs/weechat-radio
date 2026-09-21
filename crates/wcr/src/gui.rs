@@ -4,7 +4,7 @@
 use crate::config::{self, Config};
 use crate::error::{Error, Result};
 use crate::mail::{validate_internet_addr, MAIL_MAX_BYTES};
-use crate::mail_api::{mail_send_will_rf, third_party_blocked};
+use crate::mail_api::mail_send_will_rf;
 use crate::modes::Mode;
 use crate::presets::{format_airtime_hint, mail_airtime_secs, Preset};
 use crate::proto::Callsign;
@@ -950,10 +950,6 @@ impl GuiApp {
                 self.error.clear();
                 if let Err(e) = validate_internet_addr(&self.mail_to) {
                     self.error = e.to_string();
-                } else if third_party_blocked(&cfg, &self.mail_to) {
-                    self.error =
-                        "third-party mail blocked — set gateway.third_party = allow in wcr.toml"
-                            .into();
                 } else if self.mail_body.len() > MAIL_MAX_BYTES {
                     self.error = format!("body over {} bytes", MAIL_MAX_BYTES);
                 } else {
