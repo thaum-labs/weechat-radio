@@ -6,7 +6,9 @@ use crate::config::Config;
 use crate::emcomm::{Form, FormKind, Welfare, BULLETIN_CHANNEL, BULLETIN_TTL};
 use crate::error::Result;
 use crate::ircd::{IrcEvent, IrcEventKind, IrcServer};
-use crate::mail::{chunk_payloads, decode_chunk, encode_chunk, MailMeta, MailOp, MailWire};
+use crate::mail::{
+    chunk_payloads, chunks_complete, decode_chunk, encode_chunk, MailMeta, MailOp, MailWire,
+};
 use crate::mail_api::{MailApiState, MailNodeCmd};
 use crate::modem::{ControlClient, KissClient, ModemProcess};
 use crate::modes::Mode;
@@ -2358,7 +2360,8 @@ async fn mail_send_rf(rt: &Runtime, mail_id: &str) -> Result<()> {
     };
     let third = crate::mail::is_third_party_to(&row.to_addr);
     let chunks = chunk_payloads(mail_id, &meta, &row.body);
-    mail_tx_chunks(rt, origin, dest, chunks, cfg.mode, third).await?;
+    let ids = mail_tx_chunks(rt, origin, dest, chunks, cfg.mode, third).await?;
+    wait_mail_air(rt, &ids).await?;
     rt.store.mail_set_delivery(mail_id, Delivery::Sent)?;
     rt.store.mail_move_folder(mail_id, "sent")?;
     Ok(())
@@ -2421,19 +2424,53 @@ async fn mail_tx_chunks(
     chunks: Vec<MailWire>,
     mode: Mode,
     third_party: bool,
-) -> Result<()> {
+) -> Result<Vec<MsgId>> {
+    let mut ids = Vec::with_capacity(chunks.len());
     for ch in chunks {
-        mail_tx_one(
-            rt,
-            origin.clone(),
-            dest.clone(),
-            encode_chunk(&ch),
-            mode,
-            third_party,
-        )
-        .await?;
+        ids.push(
+            mail_tx_one(
+                rt,
+                origin.clone(),
+                dest.clone(),
+                encode_chunk(&ch),
+                mode,
+                third_party,
+            )
+            .await?,
+        );
     }
-    Ok(())
+    Ok(ids)
+}
+
+async fn wait_mail_air(rt: &Runtime, ids: &[MsgId]) -> Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let Some(air) = rt.air() else {
+        if rt.kiss().is_none() {
+            return Err(crate::error::Error::Msg(
+                "mail did not reach the radio".into(),
+            ));
+        }
+        return Ok(());
+    };
+    if !ids.iter().all(|id| air.was_accepted(*id)) {
+        return Err(crate::error::Error::Msg(
+            "mail did not queue for TX — left in outbox".into(),
+        ));
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15 * 60);
+    loop {
+        if ids.iter().all(|id| !air.is_pending(*id)) {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(crate::error::Error::Msg(
+                "mail TX did not finish — left in outbox".into(),
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
 }
 
 async fn mail_tx_one(
@@ -2443,7 +2480,7 @@ async fn mail_tx_one(
     body: Vec<u8>,
     mode: Mode,
     third_party: bool,
-) -> Result<()> {
+) -> Result<MsgId> {
     let mut flags = Flags::new().with(FLAG_REQ_ACK);
     apply_mode_flags(&mut flags, mode, origin.is_guest());
     flags.set(FLAG_THIRD_PARTY, third_party);
@@ -2484,7 +2521,7 @@ async fn mail_tx_one(
         msgid: Some(env.msg_id.hex()),
         band,
     });
-    Ok(())
+    Ok(env.msg_id)
 }
 
 async fn handle_mail_envelope(rt: &Runtime, env: &Envelope, _via: &str) -> Result<()> {
@@ -2581,8 +2618,10 @@ async fn handle_mail_envelope(rt: &Runtime, env: &Envelope, _via: &str) -> Resul
         let assembled = {
             let mut parts = rt.mail_parts.lock();
             let entry = parts.entry(chunk.mail_id.clone()).or_default();
-            entry.push(chunk.clone());
-            if (entry.len() as u16) < chunk.count {
+            if !entry.iter().any(|p| p.idx == chunk.idx) {
+                entry.push(chunk.clone());
+            }
+            if !chunks_complete(entry) {
                 return Ok(());
             }
             let assembled = entry.clone();
@@ -2654,7 +2693,13 @@ async fn handle_mail_envelope(rt: &Runtime, env: &Envelope, _via: &str) -> Resul
     }
 
     if chunk.op == MailOp::ListHdr && env.dest.as_str() == our {
-        // GUI polls /mail/check/list over HTTP; RF headers are informational only.
+        let id = chunk.mail_id.trim();
+        if !id.is_empty() {
+            let to = crate::mail::wcr_address(&our);
+            let bytes = chunk.payload.parse::<usize>().unwrap_or(0);
+            rt.store
+                .mail_insert_header(id, &chunk.meta.from, &to, &chunk.meta.subject, bytes)?;
+        }
         return Ok(());
     }
 
