@@ -3,7 +3,7 @@
 
 use crate::config::Config;
 use crate::modem::control::{ControlClient, ModemStatus};
-use crate::presets::{airtime_secs, Preset, Rung};
+use crate::presets::{Preset, Rung};
 use crate::proto::{Envelope, MsgId, MsgType, Priority};
 use crate::status::SharedStatus;
 use parking_lot::Mutex;
@@ -332,14 +332,17 @@ impl AirItem {
         self
     }
 
+    #[cfg(test)]
     pub(crate) fn skip_csma(&self) -> bool {
         self.skip_csma
     }
 
+    #[cfg(test)]
     pub(crate) fn restore_modem_csma(&self) -> bool {
         self.restore_modem_csma
     }
 
+    #[cfg(test)]
     pub(crate) fn extra_ids(&self) -> &[MsgId] {
         &self.extra_ids
     }
@@ -496,7 +499,10 @@ pub async fn run_air_queue(
         if cancel.is_cancelled() {
             return;
         }
-        let rf = cfg.lock().rf.clone();
+        let (rf, modem) = {
+            let cfg = cfg.lock();
+            (cfg.rf.clone(), cfg.modem.clone())
+        };
         let occ = sense.occupancy_pct();
         if rf.csma {
             queue.apply_congestion(occ, rf.congested_pct);
@@ -512,7 +518,7 @@ pub async fn run_air_queue(
             queue.set_in_flight_item(&item);
             tokio::select! {
                 _ = cancel.cancelled() => return,
-                _ = pace_and_send(&queue, &tx, sense.as_ref(), &control, &rf, &snap, item) => {}
+                _ = pace_and_send(&queue, &tx, sense.as_ref(), &control, &rf, &modem, &snap, item) => {}
             }
             queue.set_in_flight(None);
             continue;
@@ -542,6 +548,7 @@ async fn pace_and_send(
     sense: &dyn ChannelSense,
     control: &Option<ControlClient>,
     rf: &crate::config::RfConfig,
+    modem: &crate::config::ModemConfig,
     snap: &Arc<SharedStatus>,
     item: AirItem,
 ) {
@@ -577,10 +584,12 @@ async fn pace_and_send(
 
     snap.lock().deferred = false;
 
-    if let Some(rung) = item.rung {
+    if let Some(config) = item_control_config(&item) {
         if let Some(c) = control {
-            let _ = c.set_config(rung.control_config()).await;
+            let _ = c.set_config(config).await;
         }
+    }
+    if let Some(rung) = item.rung {
         snap.lock().tx_rung = rung.as_str().into();
     }
 
@@ -590,12 +599,7 @@ async fn pace_and_send(
         }
     }
 
-    let mut hold =
-        airtime_secs(item.preset, item.payload_len(), 0) + rf.turnaround_ms as f64 / 1000.0;
-    // Email burst: cover VOX lead/tail so the radio stays keyed until the last frame ends.
-    if item.restore_modem_csma {
-        hold += 1.2;
-    }
+    let hold = item_hold_secs(&item, rf, modem);
     if hold > 0.0 {
         tokio::time::sleep(Duration::from_secs_f64(hold)).await;
     }
@@ -609,9 +613,38 @@ async fn pace_and_send(
     snap.lock().queue_air = queue.depth();
 }
 
+fn item_control_config(item: &AirItem) -> Option<serde_json::Value> {
+    if let Some(rung) = item.rung {
+        return Some(rung.control_config_with_csma(!item.skip_csma));
+    }
+    item.skip_csma
+        .then(|| serde_json::json!({ "csma_enabled": false }))
+}
+
+fn item_hold_secs(
+    item: &AirItem,
+    rf: &crate::config::RfConfig,
+    modem: &crate::config::ModemConfig,
+) -> f64 {
+    let bitrate = item
+        .rung
+        .map(Rung::bitrate_bps)
+        .unwrap_or_else(|| item.preset.bitrate_bps()) as f64;
+    let data = item.payload_len() as f64 * 8.0 / bitrate;
+    let per_frame = if modem.ptt == "vox" {
+        // modem73 uses a 1400 ms signature lead on the first queued frame even
+        // when the configured normal lead is 900 ms.
+        (modem.vox_lead_ms.max(1400) + modem.vox_tail_ms) as f64 / 1000.0
+    } else {
+        item.preset.overhead_ms() as f64 / 1000.0
+    };
+    data + per_frame * item.frames.len() as f64 + rf.turnaround_ms as f64 / 1000.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modem::control::ControlCmd;
     use crate::proto::ids::MsgId;
     use crate::status;
 
@@ -907,6 +940,89 @@ mod tests {
             "email must not wait for a clear channel"
         );
         h.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn mail_rung_keeps_modem_csma_off_until_burst_finishes() {
+        let q = AirQueue::new();
+        let sense = FakeSense::new();
+        sense.set_state(ChannelState::Rx);
+        let (tx, mut rx) = mpsc::channel(8);
+        let (control_tx, mut control_rx) = mpsc::channel(8);
+        let control = ControlClient::from_sender(control_tx);
+        let configs = Arc::new(Mutex::new(Vec::new()));
+        let configs_out = configs.clone();
+        let responder = tokio::spawn(async move {
+            while let Some(ControlCmd::Request { json, reply }) = control_rx.recv().await {
+                configs_out.lock().push(json);
+                let _ = reply.send(Ok(serde_json::json!({ "ok": true })));
+            }
+        });
+        let mut c = Config::default();
+        c.modem.ptt = "vox".into();
+        c.modem.preset = "hf-poor".into();
+        c.modem.vox_lead_ms = 900;
+        c.modem.vox_tail_ms = 300;
+        c.rf.csma = true;
+        c.rf.turnaround_ms = 0;
+        let cfg = Arc::new(Mutex::new(c));
+        let snap = status::new_shared();
+        let h = tokio::spawn(run_air_queue(
+            q.clone(),
+            tx,
+            sense,
+            Some(control),
+            cfg,
+            snap,
+            CancellationToken::new(),
+        ));
+        let mut mail = item(AirClass::Own, 7);
+        mail.frames = vec![vec![7; 100], vec![8; 100]];
+        mail.preset = Preset::HfPoor;
+        mail.rung = Some(Rung::Rdm600S);
+        mail.skip_csma = true;
+        mail.restore_modem_csma = true;
+        q.enqueue(mail);
+
+        for _ in 0..20 {
+            tokio::time::advance(Duration::from_millis(100)).await;
+            tokio::task::yield_now().await;
+            if configs.lock().len() == 1 {
+                break;
+            }
+        }
+        assert_eq!(drain(&mut rx).await.len(), 2);
+        assert_eq!(configs.lock().len(), 1, "burst config must be applied");
+        tokio::time::advance(Duration::from_millis(6200)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(
+            configs.lock().len(),
+            1,
+            "do not restore RDM/CSMA while modem73 can still have VOX frames queued"
+        );
+        for _ in 0..30 {
+            tokio::time::advance(Duration::from_millis(100)).await;
+            tokio::task::yield_now().await;
+            if configs.lock().len() >= 2 {
+                break;
+            }
+        }
+        let got = configs.lock();
+        assert_eq!(got.len(), 2, "configure burst, then restore preset");
+        assert_eq!(got[0].get("robust_mode").and_then(|v| v.as_i64()), Some(6));
+        assert_eq!(
+            got[0].get("csma_enabled").and_then(|v| v.as_bool()),
+            Some(false),
+            "applying the RDM rung must not turn modem CSMA back on for email"
+        );
+        assert_eq!(
+            got[1].get("csma_enabled").and_then(|v| v.as_bool()),
+            Some(true),
+            "chat CSMA must be restored after modem73 drains the email burst"
+        );
+        drop(got);
+        h.abort();
+        responder.abort();
     }
 
     #[test]
