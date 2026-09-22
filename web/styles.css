@@ -260,8 +260,10 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   overflow: visible;
 }
 
-.map-mark-wrap {
-  position: relative;
+.maplibregl-marker.map-mark-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 28px;
   height: 26px;
   cursor: pointer;
