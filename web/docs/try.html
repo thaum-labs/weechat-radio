@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Try it with two computers — WeeChat Radio</title>
+  <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=28" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/why.html">why</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/docs.html">docs</a> / try it</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> try it with two computers</h1>
+      <p class="lead">You can try this with no radio at all, or with two cheap walkie-talkies from a shop. You do not need a special radio cable. The computers pass the message as sound.</p>
+
+      <div class="need">
+        <h2>What you need</h2>
+        <ul>
+          <li>Two computers. One person can sit them on the same desk. A friend on the second computer is fine too.</li>
+          <li>WeeChat Radio on both. The <a href="/guides/start.html">5-minute start</a> installs it. A guest name such as <code>~alex</code> is fine if you have no callsign.</li>
+          <li>Optional: two small walkie-talkies. Leave them on the channels printed in the box, and put both on the same channel.</li>
+        </ul>
+      </div>
+
+      <h2>With two walkie-talkies</h2>
+      <p>Each computer stays with its own radio. A plain headphone cable joins them. One lead carries the computer speaker into the radio microphone. The other lead carries the radio speaker into the computer microphone. Many small radios have one socket that does both jobs. The cable that came as a headset for that radio is the one to use.</p>
+
+      <figure class="diagram">
+        <div class="dgm-wrap">
+          <svg class="dgm" viewBox="0 0 720 340" role="img" aria-labelledby="tryT tryD">
+            <title id="tryT">A cable between each computer and its radio</title>
+            <desc id="tryD">On each side, a cable runs from the computer speaker to the radio microphone, and another from the radio speaker to the computer microphone. The two radios are on the same channel.</desc>
+            <defs>
+              <marker id="mWireTry" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
+              </marker>
+              <marker id="mAirTry" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
+              </marker>
+            </defs>
+            <text class="tag" x="16" y="18">PLAIN CABLE · SPEAKER AND MICROPHONE</text>
+
+            <rect class="box accent" x="16" y="36" width="210" height="92" />
+            <text class="on-accent" x="121" y="72" text-anchor="middle">computer A</text>
+            <text class="sub" x="121" y="92" text-anchor="middle">speaker and microphone</text>
+
+            <line class="wire" marker-end="url(#mWireTry)" x1="228" y1="62" x2="498" y2="62" />
+            <text class="sub" x="363" y="54" text-anchor="middle">cable: computer speaker → radio microphone</text>
+            <line class="wire" marker-end="url(#mWireTry)" x1="498" y1="102" x2="228" y2="102" />
+            <text class="sub" x="363" y="122" text-anchor="middle">cable: radio speaker → computer microphone</text>
+
+            <rect class="box orange" x="500" y="36" width="204" height="92" />
+            <text class="on-orange" x="602" y="72" text-anchor="middle">radio A</text>
+            <text class="sub" x="602" y="92" text-anchor="middle">talks when it hears sound</text>
+
+            <line class="rf" marker-start="url(#mAirTry)" marker-end="url(#mAirTry)" x1="602" y1="130" x2="602" y2="196" />
+            <text class="sub" x="590" y="168" text-anchor="end">same channel</text>
+
+            <rect class="box accent" x="16" y="198" width="210" height="92" />
+            <text class="on-accent" x="121" y="234" text-anchor="middle">computer B</text>
+            <text class="sub" x="121" y="254" text-anchor="middle">speaker and microphone</text>
+
+            <line class="wire" marker-end="url(#mWireTry)" x1="228" y1="224" x2="498" y2="224" />
+            <text class="sub" x="363" y="216" text-anchor="middle">cable: computer speaker → radio microphone</text>
+            <line class="wire" marker-end="url(#mWireTry)" x1="498" y1="264" x2="228" y2="264" />
+            <text class="sub" x="363" y="284" text-anchor="middle">cable: radio speaker → computer microphone</text>
+
+            <rect class="box orange" x="500" y="198" width="204" height="92" />
+            <text class="on-orange" x="602" y="234" text-anchor="middle">radio B</text>
+            <text class="sub" x="602" y="254" text-anchor="middle">talks when it hears sound</text>
+
+            <text class="sub" x="16" y="322">same cables on both computers · keep each radio with its own computer</text>
+          </svg>
+        </div>
+        <figcaption>The cable only carries sound. It does not program the radio. The radio sends when it hears the computer, so you never hold the talk button.</figcaption>
+      </figure>
+
+      <div class="note">
+        <h2>No cable</h2>
+        <p>Rest the radio microphone against the computer speaker, and rest the radio speaker against the computer microphone. That is the same path the picture shows, with air where the cable would be. Keep the room fairly quiet.</p>
+      </div>
+
+      <h2>With no radio at all</h2>
+      <p>Skip the radios. Point the speaker of each computer at the microphone of the other. A short gap, about an arm’s length, is enough. Both computers still use the same sound setting below.</p>
+
+      <figure class="diagram">
+        <div class="dgm-wrap">
+          <svg class="dgm" viewBox="0 0 720 168" role="img" aria-labelledby="airT airD">
+            <title id="airT">Two computers passing sound with no radio</title>
+            <desc id="airD">The speaker of each computer faces the microphone of the other, across a short gap.</desc>
+            <defs>
+              <marker id="mAirOnly" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
+              </marker>
+            </defs>
+            <text class="tag" x="16" y="18">NO RADIO · SPEAKER TO MICROPHONE</text>
+            <rect class="box accent" x="16" y="40" width="220" height="88" />
+            <text class="on-accent" x="126" y="76" text-anchor="middle">computer A</text>
+            <text class="sub" x="126" y="96" text-anchor="middle">speaker and microphone</text>
+            <line class="rf" marker-end="url(#mAirOnly)" x1="238" y1="68" x2="480" y2="68" />
+            <text class="sub" x="359" y="60" text-anchor="middle">A speaker → B microphone</text>
+            <line class="rf" marker-end="url(#mAirOnly)" x1="480" y1="100" x2="238" y2="100" />
+            <text class="sub" x="359" y="120" text-anchor="middle">B speaker → A microphone</text>
+            <rect class="box accent" x="482" y="40" width="222" height="88" />
+            <text class="on-accent" x="593" y="76" text-anchor="middle">computer B</text>
+            <text class="sub" x="593" y="96" text-anchor="middle">speaker and microphone</text>
+          </svg>
+        </div>
+        <figcaption>The message still has to cross as sound. If a line appears before you hear anything, it went over the internet. The steps below keep it on the sound path.</figcaption>
+      </figure>
+
+      <div class="ok">
+        <h2>Which sound setting</h2>
+        <p>On both computers, set <strong>PRESET</strong> to <code>hf-poor</code>. That is the slow, steady sound. In real tests with a speaker, a microphone, and a walkie-talkie, this is the one that gets through.</p>
+        <p>When a short message has arrived both ways, set both computers to <code>vhf-fm</code>. That is the faster sound made for handheld radios on a clear path. Send <code>hi</code> again. If the other computer stays quiet, set both back to <code>hf-poor</code> and carry on with that.</p>
+      </div>
+
+      <h2>Steps</h2>
+      <ol class="steps">
+        <li>
+          <p>Install on both computers and open the window with <code>wcr gui</code>. Follow the <a href="/guides/start.html">5-minute start</a> if this is the first time.</p>
+        </li>
+        <li>
+          <p>In setup, choose <strong>Any radio with a plain audio cable (VOX)</strong>. That is the choice that lets the radio talk when it hears the computer. When setup asks for the sound setting, choose <code>hf-poor</code>.</p>
+          <p>If it asks for a frequency and your radios only show channel numbers, type <code>446.006</code>. Then put both radios on the same channel. The number in the app is a label. The channel knob is what makes the radios hear each other.</p>
+        </li>
+        <li>
+          <p>In the app, on the left, set <strong>MODE</strong> to <code>radio</code>. Confirm if it asks. Do this on both computers. The words then travel as sound.</p>
+        </li>
+        <li>
+          <p>Pair them as in the picture. Each radio stays next to its own computer. Put the two radios about an arm’s length apart so they do not howl at each other.</p>
+          <p>On the radio, turn on the setting that transmits when it hears a sound. The booklet often calls this VOX. Start in the middle.</p>
+          <p>If the radios have a privacy code, set both to the same code, or turn that code off on both.</p>
+        </li>
+        <li>
+          <p>Set the computer volume to about halfway. In the computer’s sound settings, choose the microphone that is next to the radio. Allow the microphone if Windows or the Mac asks.</p>
+          <p>You want the radio’s light to come on when the computer makes a sound, and to stay off while the room is quiet. Closer to the speaker, or a little more volume, if the light stays off. A little less volume if the light comes on when people talk.</p>
+        </li>
+        <li>
+          <p>In the chat box, type <code>hi</code> and press Enter. Send one line, then wait. You should hear a tone, and the radio light should come on. A short line can take half a minute on <code>hf-poor</code>.</p>
+        </li>
+        <li>
+          <p>When that works both ways, switch both computers to <code>vhf-fm</code> and send <code>hi</code> once more.</p>
+        </li>
+      </ol>
+
+      <div class="ok">
+        <h2>How you know it worked</h2>
+        <p>The other computer shows your words, and yours shows <code>[ok]</code>. Then they send one back. Hearing the tone and seeing the radio light means your side is talking. The line on the other screen means it arrived.</p>
+      </div>
+
+      <h2>If it stays quiet</h2>
+      <ul>
+        <li>The radio light never comes on: move the speaker closer to the radio microphone, raise the computer volume a little, and turn on the hear-and-talk setting.</li>
+        <li>The light comes on, and the other computer stays quiet: same channel on both radios, same privacy code, both apps on <code>hf-poor</code>, both apps on <code>radio</code>. Turn the radio volume up so the computer microphone can hear it.</li>
+        <li>A howl or a squeal: turn the volume down and move the radios further apart.</li>
+        <li>Fresh batteries. A weak radio can light up and still be too quiet to hear.</li>
+        <li>One line at a time. Wait for <code>[ok]</code> before you send the next one.</li>
+      </ul>
+
+      <p>Keep the test short. Leave shop radios on the channels they came with.</p>
+
+      <p class="next">Install first: <a href="/guides/start.html">5-minute start</a>. A later page for a proper radio cable: <a href="/guides/vox.html">any radio with VOX</a>.</p>
+    </main>
+  </div>
+  <script src="/shell.js?v=9"></script>
+</body>
+</html>

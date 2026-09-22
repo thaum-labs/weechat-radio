@@ -605,6 +605,12 @@ a.guide-card:hover { border-color: var(--orange); color: var(--fg); }
   font-size: 11px;
   color: var(--orange);
 }
+a.guide-card.featured {
+  grid-column: 1 / -1;
+  border-color: var(--orange);
+  background: rgba(255, 122, 61, 0.08);
+}
+a.guide-card.featured h2 { color: var(--orange); }
 
 .steps {
   list-style: none;
