@@ -544,6 +544,11 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   margin: 16px 0 8px;
 }
 .page-panel p, .page-panel li { font-size: 14px; color: var(--fg); }
+.page-panel.story p {
+  margin: 0 0 1.35em;
+  line-height: 1.65;
+}
+.page-panel.story p:last-child { margin-bottom: 0; }
 .page-panel em { font-style: italic; color: var(--purple); }
 .page-panel ul { padding-left: 18px; margin: 8px 0 12px; }
 .page-panel a { color: var(--orange); }
