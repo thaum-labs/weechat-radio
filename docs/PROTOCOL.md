@@ -72,9 +72,17 @@ Type BEACON. Body is UTF-8 `B|<mode>|<khz>` (example `B|internet-radio|144950`).
 
 Guests: `~ALICE`. Amateur callsigns must look like a callsign (letter and digit).
 
+## Delivery marks
+
+Marks on your own live-chat line only move forward: `[..]` waiting, `[tx]` sent, `[rl]` you heard your own frame come back, `[ok]` delivered, `[all]` every member of a group acknowledged.
+
+`[tx]` is this station keying the message. `[rl]` is that same message heard again with your callsign still the origin: a speaker echo (common on VOX) or someone relaying your frame. It is not the other station confirming receipt, and it can be skipped. `[ok]` is their ACK: origin is their callsign, body names your `msg_id`. If that ACK arrives before any echo, the line goes from `[tx]` to `[ok]`.
+
+Diagram: https://weechatradio.com/docs/protocol.html#delivery-marks
+
 ## ACK
 
-Type ACK. Body is the 8-byte `msg_id` of the original, plus an optional 9th byte: receiver SNR in dB as a signed integer (`-32`…`31`). Relayed with TTL.
+Type ACK. This is what paints `[ok]` on the sender. Body is the 8-byte `msg_id` of the original, plus an optional 9th byte: receiver SNR in dB as a signed integer (`-32`…`31`). Relayed with TTL.
 
 Unacked messages originated by this station are retransmitted up to `rf.max_retries` times (default 3), stepping the modem73 mode down the robustness ladder each try. Retry hold times are jittered ±25% (`[rf] retry_jitter`) so stations that collided do not retry in lockstep.
 
