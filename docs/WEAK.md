@@ -16,14 +16,16 @@ You do not need to understand the radio maths. Upgrade every station to this bui
 
 Switch with `/radio preset <name>` or `/preset <name>` in the window.
 
-| Preset | Use when |
-|--------|----------|
-| `vhf-fm` | Local VHF/UHF FM, a clean signal |
-| `vox-safe` | Any radio keyed by VOX. Always MFSK-32R, with a long lead so the radio is keyed before data |
-| `hf-good` | Steady HF SSB |
-| `hf-poor` | Fading HF / NVIS (the usual HF calling preset) |
-| `hf-weak` | The other station is faint |
-| `hf-deep` | Last resort. Very slow. Short messages only |
+**First mode** is what the status bar **TX** field shows on the first key-up. A missed ACK steps down that list and stops at the last one.
+
+| Preset | First mode | If it retries | Use when |
+|--------|------------|---------------|----------|
+| `vhf-fm` | OFDM QPSK 1/2 | RDM-1200S, RDM-600S, RDM-300S | Local VHF/UHF FM, a clean signal |
+| `hf-good` | OFDM QPSK 1/2 | RDM-1200S, RDM-600S, RDM-300S | Steady HF SSB |
+| `hf-poor` | RDM-600S | RDM-300S, then MFSK-32R | Fading HF / NVIS (the usual HF calling preset) |
+| `hf-weak` | RDM-300S | MFSK-32R | The other station is faint |
+| `hf-deep` | MFSK-32R | Stays on MFSK-32R | Last resort. Very slow. Short messages only |
+| `vox-safe` | MFSK-32R | Stays on MFSK-32R | Any radio keyed by VOX. Long lead so the radio is keyed before data |
 
 The receiver hears all of these at once. You can send `hf-weak` while they are still set to `hf-poor`.
 
@@ -53,7 +55,7 @@ modem73 carrier-sense is on for every preset. On top of that, `wcr` keeps a sing
    ```
 
 3. Send a short test to a station you can already hear, or to `#bulletin`.
-4. Watch the status bar. If **RETRY** climbs and **TX** changes (QPSK → RDM-1200S → RDM-600S → RDM-300S → MFSK-32R), the program is already stepping down. Leave it.
+4. Watch the status bar. If **RETRY** climbs, **TX** steps down the list in the table above (on `hf-poor` that is RDM-600S → RDM-300S → MFSK-32R). Leave it.
 5. If nothing decodes after several tries, set `hf-weak` yourself, then `hf-deep` for a one-line check.
 
 ## Knobs in `wcr.toml`

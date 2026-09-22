@@ -87,19 +87,19 @@
       </div>
 
       <h2>Presets</h2>
-      <p>Switch with <code>/radio preset &lt;name&gt;</code> or <code>/preset &lt;name&gt;</code> in the window.</p>
+      <p>Switch with <code>/radio preset &lt;name&gt;</code> or <code>/preset &lt;name&gt;</code> in the window. <strong>First mode</strong> is what the status bar <strong>TX</strong> field shows on the first key-up. A missed ACK steps down that list and stops at the last one.</p>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Preset</th><th>Use when</th></tr>
+            <tr><th>Preset</th><th>First mode</th><th>If it retries</th><th>Use when</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>vhf-fm</code></td><td>Local VHF/UHF FM, a clean signal</td></tr>
-            <tr><td><code>vox-safe</code></td><td>Any radio keyed by VOX. Always MFSK-32R, with a long lead so the radio is keyed before data</td></tr>
-            <tr><td><code>hf-good</code></td><td>Steady HF SSB</td></tr>
-            <tr><td><code>hf-poor</code></td><td>Fading HF / NVIS (the usual HF calling preset)</td></tr>
-            <tr><td><code>hf-weak</code></td><td>The other station is faint</td></tr>
-            <tr><td><code>hf-deep</code></td><td>Last resort. Very slow. Short messages only</td></tr>
+            <tr><td><code>vhf-fm</code></td><td>OFDM QPSK 1/2</td><td>RDM-1200S, RDM-600S, RDM-300S</td><td>Local VHF/UHF FM, a clean signal</td></tr>
+            <tr><td><code>hf-good</code></td><td>OFDM QPSK 1/2</td><td>RDM-1200S, RDM-600S, RDM-300S</td><td>Steady HF SSB</td></tr>
+            <tr><td><code>hf-poor</code></td><td>RDM-600S</td><td>RDM-300S, then MFSK-32R</td><td>Fading HF / NVIS (the usual HF calling preset)</td></tr>
+            <tr><td><code>hf-weak</code></td><td>RDM-300S</td><td>MFSK-32R</td><td>The other station is faint</td></tr>
+            <tr><td><code>hf-deep</code></td><td>MFSK-32R</td><td>Stays on MFSK-32R</td><td>Last resort. Very slow. Short messages only</td></tr>
+            <tr><td><code>vox-safe</code></td><td>MFSK-32R</td><td>Stays on MFSK-32R</td><td>Any radio keyed by VOX. Long lead so the radio is keyed before data</td></tr>
           </tbody>
         </table>
       </div>
@@ -133,7 +133,7 @@
           <p>Send a short test to a station you can already hear, or to <code>#bulletin</code>.</p>
         </li>
         <li>
-          <p>Watch the status bar. If <strong>RETRY</strong> climbs and <strong>TX</strong> changes (QPSK → RDM-1200S → RDM-600S → RDM-300S → MFSK-32R), the program is already stepping down. Leave it.</p>
+          <p>Watch the status bar. If <strong>RETRY</strong> climbs, <strong>TX</strong> steps down the list in the table above (on <code>hf-poor</code> that is RDM-600S → RDM-300S → MFSK-32R). Leave it.</p>
         </li>
         <li>
           <p>If nothing decodes after several tries, set <code>hf-weak</code> yourself, then <code>hf-deep</code> for a one-line check.</p>
