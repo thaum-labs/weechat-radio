@@ -156,6 +156,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         );
         s.activity_panel = cfg.ui.activity_panel;
         s.version = crate::update::current_version().into();
+        s.tower = cfg.gateway.show_tower(cfg.mode);
     }
 
     // Bind chat and status before opening the store. A locked SQLite (old
@@ -1970,7 +1971,12 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                         }
                         let old = cfg.lock().mode;
                         cfg.lock().mode = mode;
-                        snap.lock().mode = mode;
+                        let show_tower = cfg.lock().gateway.show_tower(mode);
+                        {
+                            let mut s = snap.lock();
+                            s.mode = mode;
+                            s.tower = show_tower;
+                        }
                         persist_cfg(&cfg.lock());
                         apply_mode_change(rt, old, mode).await
                     }
@@ -2209,6 +2215,25 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                 crate::band::describe(s.freq_khz)
             }
         }
+        "tower" => {
+            let mode = cfg.lock().mode;
+            if !mode.is_gateway() {
+                return "tower map pin is only available in internet-radio".into();
+            }
+            let on = match sp.next().map(|s| s.to_ascii_lowercase()).as_deref() {
+                None => {
+                    let on = cfg.lock().gateway.tower;
+                    return format!("tower {}", if on { "on" } else { "off" });
+                }
+                Some("on" | "true" | "1") => true,
+                Some("off" | "false" | "0") => false,
+                Some(_) => return "usage: /radio tower on|off".into(),
+            };
+            cfg.lock().gateway.tower = on;
+            snap.lock().tower = on;
+            persist_cfg(&cfg.lock());
+            format!("tower {}", if on { "on" } else { "off" })
+        }
         "ptt" => {
             if let Some(p) = sp.next() {
                 cfg.lock().modem.ptt = p.to_string();
@@ -2319,7 +2344,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
             }
         }
         "" | "help" => {
-            "RADIO commands: mode preset status form group queue trace history freq qsy prio ptt checkin net mute theme activity update. Channels: /join #name  /invite CALL /part /prio"
+            "RADIO commands: mode preset tower status form group queue trace history freq qsy prio ptt checkin net mute theme activity update. Channels: /join #name  /invite CALL /part /prio"
                 .into()
         }
         other => format!("unknown RADIO subcommand '{other}'. Try /radio help"),

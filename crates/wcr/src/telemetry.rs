@@ -90,6 +90,10 @@ impl TelemetryDb {
             [],
         );
         let _ = conn.execute("ALTER TABLE nodes ADD COLUMN band TEXT", []);
+        let _ = conn.execute(
+            "ALTER TABLE node_seen ADD COLUMN tower INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
         let _ = conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS node_seen (
                 ts INTEGER NOT NULL,
@@ -102,7 +106,8 @@ impl TelemetryDb {
                 freq_khz INTEGER,
                 ptt TEXT,
                 preset TEXT,
-                snr REAL
+                snr REAL,
+                tower INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_node_seen ON node_seen(callsign, ts);",
         );
@@ -203,8 +208,8 @@ impl TelemetryDb {
             ],
         )?;
         conn.execute(
-            "INSERT INTO node_seen(ts, callsign, mode, grid, lat, lon, band, freq_khz, ptt, preset, snr)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            "INSERT INTO node_seen(ts, callsign, mode, grid, lat, lon, band, freq_khz, ptt, preset, snr, tower)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
             params![
                 report.ts as i64,
                 report.callsign.to_ascii_uppercase(),
@@ -217,6 +222,7 @@ impl TelemetryDb {
                 report.ptt,
                 report.preset,
                 report.snr,
+                reported_tower(&report.mode, &report.settings) as i64,
             ],
         )?;
         conn.execute(
@@ -231,7 +237,7 @@ impl TelemetryDb {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
-                "SELECT n.callsign, n.grid, n.lat, n.lon, n.mode, n.ptt, n.preset, n.snr, n.band, n.freq_khz
+                "SELECT n.callsign, n.grid, n.lat, n.lon, n.mode, n.ptt, n.preset, n.snr, n.band, n.freq_khz, n.tower
                  FROM node_seen n
                  INNER JOIN (
                     SELECT callsign, MAX(ts) AS ts
@@ -250,6 +256,7 @@ impl TelemetryDb {
                 } else {
                     serde_json::Value::String(crate::band::fmt_mhz(freq_khz))
                 };
+                let tower = r.get::<_, i64>(10).unwrap_or(0) != 0;
                 Ok(serde_json::json!({
                     "callsign": r.get::<_, String>(0)?,
                     "grid": r.get::<_, Option<String>>(1)?,
@@ -262,6 +269,7 @@ impl TelemetryDb {
                     "band": band.unwrap_or_default(),
                     "freq_khz": freq_khz,
                     "frequency": frequency,
+                    "tower": tower,
                 }))
             })
             .unwrap();
@@ -273,7 +281,7 @@ impl TelemetryDb {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
-                "SELECT ts, callsign, grid, lat, lon, mode, ptt, preset, snr, band, freq_khz
+                "SELECT ts, callsign, grid, lat, lon, mode, ptt, preset, snr, band, freq_khz, tower
                  FROM node_seen WHERE ts >= ?1 ORDER BY ts ASC LIMIT 8000",
             )
             .unwrap();
@@ -281,6 +289,7 @@ impl TelemetryDb {
             .query_map(params![since], |r| {
                 let freq_khz = r.get::<_, i64>(10).unwrap_or(0) as u32;
                 let band: Option<String> = r.get(9)?;
+                let tower = r.get::<_, i64>(11).unwrap_or(0) != 0;
                 Ok(serde_json::json!({
                     "ts": r.get::<_, i64>(0)?,
                     "callsign": r.get::<_, String>(1)?,
@@ -293,6 +302,7 @@ impl TelemetryDb {
                     "snr": r.get::<_, Option<f64>>(8)?,
                     "band": band.unwrap_or_default(),
                     "freq_khz": freq_khz,
+                    "tower": tower,
                 }))
             })
             .unwrap();
@@ -334,12 +344,18 @@ impl TelemetryDb {
                 } else {
                     serde_json::Value::String(crate::band::fmt_mhz(freq_khz))
                 };
+                let settings = serde_json::from_str::<serde_json::Value>(
+                    &r.get::<_, String>(12).unwrap_or_else(|_| "{}".into()),
+                )
+                .unwrap_or(serde_json::json!({}));
+                let mode = r.get::<_, Option<String>>(4)?.unwrap_or_default();
+                let tower = reported_tower(&mode, &settings);
                 Ok(serde_json::json!({
                     "callsign": r.get::<_, String>(0)?,
                     "grid": r.get::<_, Option<String>>(1)?,
                     "lat": r.get::<_, Option<f64>>(2)?,
                     "lon": r.get::<_, Option<f64>>(3)?,
-                    "mode": r.get::<_, Option<String>>(4)?,
+                    "mode": mode,
                     "ptt": r.get::<_, Option<String>>(5)?,
                     "preset": r.get::<_, Option<String>>(6)?,
                     "snr": r.get::<_, Option<f64>>(7)?,
@@ -347,10 +363,11 @@ impl TelemetryDb {
                     "queue": r.get::<_, Option<i64>>(9)?,
                     "hub_ok": r.get::<_, Option<i64>>(10)? == Some(1),
                     "last_seen": r.get::<_, i64>(11)?,
-                    "settings": serde_json::from_str::<serde_json::Value>(&r.get::<_, String>(12).unwrap_or_else(|_| "{}".into())).unwrap_or(serde_json::json!({})),
+                    "settings": settings,
                     "freq_khz": freq_khz,
                     "band": band.unwrap_or_default(),
                     "frequency": frequency,
+                    "tower": tower,
                 }))
             })
             .unwrap();
@@ -539,6 +556,14 @@ pub async fn get_nodes(
     }
 }
 
+fn reported_tower(mode: &str, settings: &serde_json::Value) -> bool {
+    mode == "internet-radio"
+        && settings
+            .get("tower")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+}
+
 fn header<'a>(h: &'a HeaderMap, name: &str) -> Option<&'a str> {
     h.get(name).and_then(|v| v.to_str().ok())
 }
@@ -589,6 +614,7 @@ pub async fn reporter_loop(
                             "frequency": s.frequency,
                             "audio": s.audio_label,
                             "band": s.band,
+                            "tower": s.tower,
                         }),
                         events: std::mem::take(&mut pending),
                         freq_khz: s.freq_khz,
@@ -698,6 +724,42 @@ mod tests {
         assert_eq!(db.nodes_at((t - 50) as i64)[0]["mode"], "internet");
         assert_eq!(db.nodes_at(t as i64)[0]["mode"], "radio-plus");
         assert!(db.nodes_at((t - 4000) as i64).is_empty());
+    }
+
+    #[test]
+    fn tower_pin_only_for_internet_radio() {
+        let db = TelemetryDb::open_memory().unwrap();
+        let report = NodeReport {
+            callsign: "G4ABC".into(),
+            ts: now(),
+            grid: "IO91WM".into(),
+            mode: "internet-radio".into(),
+            ptt: String::new(),
+            preset: "vhf-fm".into(),
+            snr: 0.0,
+            ber: 0.0,
+            queue: 0,
+            hub_ok: true,
+            settings: serde_json::json!({"tower": true}),
+            events: Vec::new(),
+            freq_khz: 144_950,
+            band: "2m".into(),
+        };
+        db.upsert_node(&report).unwrap();
+        let live = db.nodes();
+        assert_eq!(live[0]["tower"], true);
+        assert_eq!(live[0]["frequency"], "144.950");
+        let trail = db.nodes_since(0);
+        assert_eq!(trail[0]["tower"], true);
+
+        let mut radio = report.clone();
+        radio.callsign = "M7TJF".into();
+        radio.mode = "radio".into();
+        radio.settings = serde_json::json!({"tower": true});
+        db.upsert_node(&radio).unwrap();
+        let rows = db.nodes();
+        let m7 = rows.iter().find(|n| n["callsign"] == "M7TJF").unwrap();
+        assert_eq!(m7["tower"], false);
     }
 
     #[test]

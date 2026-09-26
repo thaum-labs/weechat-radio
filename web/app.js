@@ -525,6 +525,32 @@ function nodeFreq(n) {
   return (Number(khz) / 1000).toFixed(3);
 }
 
+function isTower(n) {
+  if (!n || (n.mode || "") !== "internet-radio") return false;
+  if (n.tower === true) return true;
+  const settings = n.settings;
+  return !!(settings && settings.tower === true);
+}
+
+function towerSvg(mode, cls) {
+  const c = MODE_COLOR[mode] || "#39ff14";
+  const k = cls || "map-mark";
+  return `<svg class="${k}" viewBox="0 0 64 60" fill="none" aria-hidden="true" focusable="false">
+    <path d="M32 8 V48" stroke="${c}" stroke-width="3.5" stroke-linecap="round"/>
+    <path d="M32 12 L26 18 M32 12 L38 18" stroke="${c}" stroke-width="3" stroke-linecap="round"/>
+    <path d="M23 24 H41" stroke="${c}" stroke-width="3" stroke-linecap="round"/>
+    <path d="M19 34 H45" stroke="${c}" stroke-width="3" stroke-linecap="round"/>
+    <path d="M15 44 H49" stroke="${c}" stroke-width="3" stroke-linecap="round"/>
+    <path d="M24 48 L32 56 L40 48" stroke="${c}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`;
+}
+
+function pinHtml(n, cls) {
+  const mode = (n && n.mode) || "";
+  if (isTower(n)) return towerSvg(mode, cls);
+  return modeMark(mode, cls);
+}
+
 function kv(rows) {
   return `<div class="kv">${rows.map(([k, v]) => `<span>${escapeHtml(k)}</span><b>${escapeHtml(v)}</b>`).join("")}</div>`;
 }
@@ -545,29 +571,45 @@ function modeMark(mode, cls) {
 function upsertNode(n) {
   if (n.lat == null || n.lon == null) return;
   const mode = n.mode || "";
+  const tower = isTower(n);
+  const freq = tower ? nodeFreq(n) : "";
+  const markKey = `${tower ? "tower" : "station"}|${mode}|${freq}`;
   let m = markers.get(n.callsign);
   if (!m) {
     const el = document.createElement("div");
     el.className = "map-mark-wrap";
     el.dataset.mode = mode;
     el.dataset.band = nodeBand(n);
+    el.dataset.markKey = markKey;
+    el.classList.toggle("tower", tower);
     el.style.opacity = selectedBand && nodeBand(n) !== selectedBand ? "0.25" : "";
-    el.innerHTML = modeMark(mode, "map-mark");
-    m = new maplibregl.Marker({ element: el }).setLngLat([n.lon, n.lat]).addTo(map);
+    el.innerHTML = markerInner(n);
+    m = new maplibregl.Marker({ element: el, anchor: "center" }).setLngLat([n.lon, n.lat]).addTo(map);
     el.addEventListener("click", () => showCard(n));
     markers.set(n.callsign, m);
     nodePos.set(n.callsign, { lat: n.lat, lon: n.lon });
   } else {
     m.setLngLat([n.lon, n.lat]);
     const el = m.getElement();
-    if (el.dataset.mode !== mode) {
-      el.dataset.mode = mode;
-      el.innerHTML = modeMark(mode, "map-mark");
-    }
+    el.dataset.mode = mode;
     el.dataset.band = nodeBand(n);
+    el.classList.toggle("tower", tower);
+    if (el.dataset.markKey !== markKey) {
+      el.dataset.markKey = markKey;
+      el.innerHTML = markerInner(n);
+    }
     el.style.opacity = selectedBand && nodeBand(n) !== selectedBand ? "0.25" : "";
     nodePos.set(n.callsign, { lat: n.lat, lon: n.lon });
   }
+}
+
+function markerInner(n) {
+  const html = pinHtml(n, "map-mark");
+  if (!isTower(n)) return html;
+  const freq = nodeFreq(n);
+  if (!freq) return html;
+  const color = MODE_COLOR[n.mode] || "#39ff14";
+  return `${html}<span class="tower-freq" style="color:${color}">${escapeHtml(freq)}</span>`;
 }
 
 function showCard(n) {
@@ -575,6 +617,7 @@ function showCard(n) {
   card.hidden = false;
   card.innerHTML = kv([
     ["call", n.callsign || "—"],
+    ["pin", isTower(n) ? "tower" : "station"],
     ["mode", n.mode || "—"],
     ["ptt", n.ptt || "—"],
     ["preset", n.preset || "—"],
@@ -648,7 +691,7 @@ function renderStations(nodes) {
     d.dataset.call = n.callsign || "";
     const band = nodeBand(n);
     const freq = nodeFreq(n);
-    d.innerHTML = `${modeMark(n.mode)}<span><b>${escapeHtml(n.callsign)}</b>${escapeHtml(n.mode || "")} ${escapeHtml(band)}${freq ? " " + escapeHtml(freq) : ""}</span>`;
+    d.innerHTML = `${pinHtml(n, "mode-mark")}<span><b>${escapeHtml(n.callsign)}</b>${escapeHtml(n.mode || "")} ${escapeHtml(band)}${freq ? " " + escapeHtml(freq) : ""}</span>`;
     d.onclick = () => {
       showCard(n);
       if (n.lat != null) map.flyTo({ center: [n.lon, n.lat], zoom: 6 });

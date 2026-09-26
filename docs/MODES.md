@@ -64,10 +64,13 @@ In `wcr.toml`:
 [gateway]
 rf_egress = true          # put internet traffic on the air
 third_party = "deny"      # guest (~nick) traffic on RF: allow or deny
+tower = false             # internet-radio only
 ```
+
+In internet-radio the station panel has a **TOWER** switch (`/tower on` or `/tower off`). On draws that station as a small tower on the public map, with the dial frequency beside the icon. Other modes keep the station mark. The switch does not change what goes on the air.
 
 Cross-frequency diagrams: [bridging](https://weechatradio.com/docs/bridging.html). Offline: `wcr help bridging`.
 
 ## How you know it worked
 
-The status bar colour matches the table. Other stations on the map show the same colours.
+The status bar colour matches the table. A station with the tower switch on shows a tower and its frequency. Other stations on the map show the same colours.

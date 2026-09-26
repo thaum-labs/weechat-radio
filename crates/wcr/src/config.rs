@@ -232,6 +232,8 @@ pub struct GatewayConfig {
     pub rf_egress: bool,
     /// allow | deny
     pub third_party: String,
+    /// Internet-radio only: public map draws a tower and the dial frequency.
+    pub tower: bool,
 }
 
 impl Default for GatewayConfig {
@@ -239,6 +241,7 @@ impl Default for GatewayConfig {
         Self {
             rf_egress: true,
             third_party: "deny".into(),
+            tower: false,
         }
     }
 }
@@ -246,6 +249,11 @@ impl Default for GatewayConfig {
 impl GatewayConfig {
     pub fn third_party_allow(&self) -> bool {
         self.third_party.eq_ignore_ascii_case("allow")
+    }
+
+    /// Tower pin only while this node is an internet-radio gateway.
+    pub fn show_tower(&self, mode: Mode) -> bool {
+        self.tower && mode.is_gateway()
     }
 }
 
@@ -580,6 +588,21 @@ mod tests {
         assert_eq!(back.modem.audio_input, "");
         assert_eq!(back.modem.audio_output, "");
         assert_eq!(back.tnc.bt_name, "VR-N76");
+        assert!(!back.gateway.tower);
+    }
+
+    #[test]
+    fn gateway_tower_defaults_off_when_missing() {
+        let cfg: Config =
+            toml::from_str("callsign = \"G4ABC\"\n[gateway]\nrf_egress = true\n").unwrap();
+        assert!(!cfg.gateway.tower);
+        assert!(!cfg.gateway.show_tower(Mode::InternetRadio));
+        let mut on = cfg;
+        on.gateway.tower = true;
+        assert!(on.gateway.show_tower(Mode::InternetRadio));
+        assert!(!on.gateway.show_tower(Mode::Radio));
+        assert!(!on.gateway.show_tower(Mode::Internet));
+        assert!(!on.gateway.show_tower(Mode::RadioPlus));
     }
 
     #[test]
