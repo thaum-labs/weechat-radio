@@ -11,7 +11,7 @@ shared chat framing, pacing, CSMA, modem-rung, retry, or delivery behavior.
 ## Baseline ledger
 
 - Live Chat over RF: **confirmed working by the user** at `v0.1.73`,
-  commit `950accadd0b8452a6181abcbfc3cb34a21bfe50b`, 21 Sep 2026. Short **and**
+  commit `a4e75da8ba559e696f869973b70f3c9d6cfea394`, 21 Sep 2026. Short **and**
   long messages, both directions, with `[ok]` returning once per message. This
   is the current locked Live Chat baseline. Diff against this, not v0.1.56.
 - Superseded: `v0.1.56` (`d3f32cdb11faeba7009cdc1c8113c49b6dec4c1b`) was the

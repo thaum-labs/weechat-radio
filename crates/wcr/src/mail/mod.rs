@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn chat_source_matches_v0_1_73() {
-        // Frozen functions at 950acca. pause/resume on AirQueue is outside these spans.
+        // Frozen functions at a4e75da. pause/resume on AirQueue is outside these spans.
         let checks = [
             (
                 "pace_and_send",

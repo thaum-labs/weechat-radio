@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Mail isolation
 
-Live Chat over RF is confirmed working at `v0.1.73`, commit `950acca`, and is
+Live Chat over RF is confirmed working at `v0.1.73`, commit `a4e75da`, and is
 frozen. Email is being rebuilt beside it. Email code lives in
 `crates/wcr/src/mail/` and nowhere else.
 
