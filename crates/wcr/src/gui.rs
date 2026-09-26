@@ -1731,6 +1731,7 @@ impl eframe::App for GuiApp {
                         let mut mode_cmd = None;
                         let mut preset_cmd = None;
                         let mut freq_cmd = None;
+                        let mut tower_cmd = None;
                         let mut freq_pending_set = None;
                         let mut freq_pick_last_set = None;
                         let mut want_radio_confirm = false;
@@ -1743,6 +1744,15 @@ impl eframe::App for GuiApp {
                                     want_radio_confirm = true;
                                 } else if next != s.mode {
                                     mode_cmd = Some(format!("/mode {}", next.as_str()));
+                                }
+                            }
+                            if s.mode == Mode::InternetRadio {
+                                if let Some(on) = tower_toggle(ui, s.tower) {
+                                    tower_cmd = Some(if on {
+                                        "/tower on".to_string()
+                                    } else {
+                                        "/tower off".to_string()
+                                    });
                                 }
                             }
                             let ptt_label = if s.ptt_on {
@@ -1885,6 +1895,9 @@ impl eframe::App for GuiApp {
                             self.freq_pick_last = Some(c);
                         }
                         if let Some(cmd) = mode_cmd {
+                            self.send_cmd(&cmd);
+                        }
+                        if let Some(cmd) = tower_cmd {
                             self.send_cmd(&cmd);
                         }
                         if let Some(cmd) = preset_cmd {
@@ -2580,6 +2593,7 @@ fn cheat_sheet(ui: &mut egui::Ui) {
     cheat_line(ui, "CALL", "1:1 — type their callsign");
     cheat_line(ui, "FREQ", "dial radio to match");
     cheat_line(ui, "MODE", "inet / RF / both");
+    cheat_line(ui, "TOWER", "map pin in internet-radio");
     cheat_line(ui, "[tx] [ok]", "sent delivered");
     cheat_line(ui, "RF", "always plaintext");
     cheat_line(ui, "hub", "TLS to the map");
@@ -2622,6 +2636,29 @@ fn mode_pick(ui: &mut egui::Ui, current: Mode) -> Option<Mode> {
             });
     });
     chosen
+}
+
+fn tower_toggle(ui: &mut egui::Ui, on: bool) -> Option<bool> {
+    let mut flipped = None;
+    let row = ui.horizontal(|ui| {
+        station_key(ui, "TOWER");
+        let label = if on { "on" } else { "off" };
+        let color = if on { GREEN } else { DIM };
+        let btn = ui.add(
+            egui::Button::new(RichText::new(label).color(color).monospace())
+                .fill(Color32::TRANSPARENT)
+                .stroke(hairline(if on { GREEN } else { LINE })),
+        );
+        if btn.clicked() {
+            flipped = Some(!on);
+        }
+        btn
+    });
+    hover_tip(
+        &row.inner,
+        "While internet-radio is on, show this station as a tower on the public map with its frequency beside the icon.",
+    );
+    flipped
 }
 
 fn preset_pick(ui: &mut egui::Ui, current: &str) -> Option<String> {

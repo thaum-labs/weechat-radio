@@ -95,6 +95,9 @@ pub struct StatusSnapshot {
     /// `relay` or `retry`.
     #[serde(default)]
     pub hold_kind: String,
+    /// Public map draws a tower. True only in internet-radio while the switch is on.
+    #[serde(default)]
+    pub tower: bool,
 }
 
 fn default_version() -> String {
@@ -347,6 +350,7 @@ impl Default for StatusSnapshot {
             hold_due: 0,
             hold_span: 0,
             hold_kind: String::new(),
+            tower: false,
         }
     }
 }
