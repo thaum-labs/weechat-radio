@@ -267,6 +267,22 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   width: 28px;
   height: 26px;
   cursor: pointer;
+  overflow: visible;
+}
+.map-mark-wrap .tower-freq {
+  position: absolute;
+  left: calc(100% + 3px);
+  top: 6px;
+  font-family: "Fira Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: 0 0 4px #07070a, 0 1px 2px #07070a;
+}
+.map-mark-wrap.mail-overlay .tower-freq {
+  top: 18px;
 }
 .map-mark-wrap.mail-overlay::after {
   content: "e";

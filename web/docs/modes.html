@@ -192,12 +192,14 @@ retry_jitter = true</pre>
       <p>In <code>wcr.toml</code>:</p>
       <pre class="plain">[gateway]
 rf_egress = true          # put internet traffic on the air
-third_party = "deny"      # guest (~nick) traffic on RF: allow or deny</pre>
+third_party = "deny"      # guest (~nick) traffic on RF: allow or deny
+tower = false             # internet-radio only</pre>
+      <p>In internet-radio the station panel has a <strong>TOWER</strong> switch (<code>/tower on</code> or <code>/tower off</code>). On draws that station as a small tower on the public map, with the dial frequency beside the icon. Other modes keep the station mark. The switch does not change what goes on the air.</p>
       <p>Stations on different frequencies use two gateways and the hub. Diagrams: <a href="/docs/bridging.html">cross-frequency chat</a>.</p>
 
       <div class="ok">
         <h2>How you know it worked</h2>
-        <p>The status bar colour matches the cards above. Other stations on the map show the same mode marks.</p>
+        <p>The status bar colour matches the cards above. A station with the tower switch on shows a tower and its frequency. Other stations show the mode mark in the same colours.</p>
       </div>
     </main>
   </div>
