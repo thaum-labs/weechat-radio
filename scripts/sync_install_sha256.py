@@ -16,11 +16,43 @@ def read_hash(path: Path) -> str:
     return path.read_text(encoding="utf-8").strip().lower()
 
 
+def apply_version(version: str) -> None:
+    """Point installer URLs and version fields at this release."""
+    tag = version[1:] if version.startswith("v") else version
+    if not tag:
+        return
+    brew = INSTALL / "homebrew" / "wcr.rb"
+    if brew.is_file():
+        text = brew.read_text(encoding="utf-8")
+        text = re.sub(r'(?m)^  version "[^"]+"', f'  version "{tag}"', text, count=1)
+        text = re.sub(r"releases/download/v[^/]+/", f"releases/download/v{tag}/", text)
+        brew.write_text(text, encoding="utf-8")
+        print("version", brew, tag)
+    scoop = INSTALL / "scoop" / "wcr.json"
+    if scoop.is_file():
+        data = json.loads(scoop.read_text(encoding="utf-8"))
+        data["version"] = tag
+        url = data["architecture"]["64bit"]["url"]
+        data["architecture"]["64bit"]["url"] = re.sub(
+            r"releases/download/v[^/]+/", f"releases/download/v{tag}/", url
+        )
+        scoop.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        print("version", scoop, tag)
+    for path in (INSTALL / "winget").glob("*.yaml"):
+        text = path.read_text(encoding="utf-8")
+        text = re.sub(r"(?m)^(PackageVersion: ).+$", rf"\g<1>{tag}", text)
+        text = re.sub(r"releases/download/v[^/]+/", f"releases/download/v{tag}/", text)
+        path.write_text(text, encoding="utf-8")
+        print("version", path, tag)
+
+
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: sync_install_sha256.py <download-dir>", file=sys.stderr)
+    if len(sys.argv) not in (2, 3):
+        print("usage: sync_install_sha256.py <download-dir> [version]", file=sys.stderr)
         return 2
     dl = Path(sys.argv[1])
+    if len(sys.argv) == 3:
+        apply_version(sys.argv[2])
     mapping = {
         "wcr-windows-x86_64.zip.sha256": ("scoop",),
         "wcr-linux-x86_64.tar.gz.sha256": ("homebrew", "linux-intel"),

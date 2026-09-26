@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
 PackageIdentifier: ThaumLabs.Wcr
-PackageVersion: 0.1.14
+PackageVersion: 0.1.78
 PackageLocale: en-US
 Publisher: Thaum Labs
 PublisherUrl: https://weechatradio.com
