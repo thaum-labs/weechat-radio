@@ -24,7 +24,7 @@ jobs:
           gh release download "${{ inputs.tag }}" --repo "${{ github.repository }}" --pattern '*.sha256' --dir /tmp/wcr-sha
           ls -la /tmp/wcr-sha
       - name: patch install manifests
-        run: python scripts/sync_install_sha256.py /tmp/wcr-sha
+        run: python scripts/sync_install_sha256.py /tmp/wcr-sha "${{ inputs.tag }}"
       - name: commit manifest hashes
         run: |
           set -euo pipefail
