@@ -1,0 +1,17 @@
+---
+description: Push only as the Thaum Labs git user
+alwaysApply: true
+---
+
+# Git identity
+
+Every commit and every push to this repository uses the Thaum Labs git user:
+
+`THAUM-io-commits <73592328+THAUM-io-commits@users.noreply.github.com>`
+
+```
+git config user.name "THAUM-io-commits"
+git config user.email "73592328+THAUM-io-commits@users.noreply.github.com"
+```
+
+Set that name and email before committing. Cursor Agent, Tobias Franklin, tobias-mos, and any other git user are the wrong identity for this repository.
