@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: WeeChat Radio Hub API
-  version: 0.1.77
+  version: 0.1.78
   description: |
     Public read endpoints and signed telemetry write for the live map and integrations.
     Message text is never accepted on the write path.
@@ -34,7 +34,7 @@ paths:
           description: Unix seconds. Returns the stations heard in the prior 30 minutes, with the mode they had then.
       responses:
         "200":
-          description: JSON `{ "nodes": [ … ] }` with band, freq_khz, grid, mode. With `since`, `{ "trail", "since" }` instead.
+          description: JSON `{ "nodes": [ … ] }` with band, freq_khz, grid, mode, tower. With `since`, `{ "trail", "since" }` instead.
   /api/v1/events:
     get:
       summary: Recent TX/RX/relay events
@@ -169,6 +169,9 @@ components:
         hub_ok: { type: boolean }
         freq_khz: { type: integer }
         band: { type: string }
+        tower:
+          type: boolean
+          description: True when an internet-radio station asked to appear as a map tower.
         settings: { type: object }
         events:
           type: array
