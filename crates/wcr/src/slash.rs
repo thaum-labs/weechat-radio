@@ -173,6 +173,22 @@ const COMMANDS: &[Cmd] = &[
         send_bare: false,
     },
     Cmd {
+        name: "tower",
+        usage: "/tower on|off",
+        summary: "Map pin as a tower (internet-radio)",
+        args: &[
+            Arg {
+                value: "on",
+                hint: "Tower and frequency on the public map",
+            },
+            Arg {
+                value: "off",
+                hint: "Normal station mark",
+            },
+        ],
+        send_bare: false,
+    },
+    Cmd {
         name: "preset",
         usage: "/preset vhf-fm|hf-good|hf-poor|hf-weak|hf-deep|vox-safe|afsk-1200",
         summary: "Modem waveform",
@@ -664,6 +680,15 @@ mod tests {
     fn mode_args_after_space() {
         let s = suggestions("/mode ");
         assert!(s.iter().any(|x| x.label.contains("internet-radio")));
+    }
+
+    #[test]
+    fn tower_command_is_a_radio_command() {
+        assert_eq!(to_radio_args("/tower on").as_deref(), Some("tower on"));
+        assert_eq!(
+            to_wire("/tower off", "#bulletin"),
+            vec!["RADIO tower off".to_string()]
+        );
     }
 
     #[test]

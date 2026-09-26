@@ -862,6 +862,19 @@ fn draw(f: &mut Frame, app: &App) {
             snap.map(|s| s.hold_lane(crate::status::unix_now_f64()).label)
                 .unwrap_or_else(|| "—".into()),
         ),
+        (
+            "tower",
+            snap.map(|s| {
+                if !s.mode.is_gateway() {
+                    "—".into()
+                } else if s.tower {
+                    "on".into()
+                } else {
+                    "off".into()
+                }
+            })
+            .unwrap_or_else(|| "—".into()),
+        ),
     ];
     f.render_widget(
         Paragraph::new(kv_lines(app, &station_rows)).block(panel("STATION", &app.nick, app)),
