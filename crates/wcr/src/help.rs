@@ -79,6 +79,11 @@ pub fn topics() -> &'static [(&'static str, &'static str, &'static str)] {
             "cross-frequency via a gateway",
             include_str!("../../../docs/BRIDGING.md"),
         ),
+        (
+            "hops",
+            "relay on one dial when not everyone is in range",
+            include_str!("../../../docs/HOPS.md"),
+        ),
     ]
 }
 
@@ -138,5 +143,18 @@ mod tests {
         assert_eq!(render(Some("lan")), body);
         assert_eq!(render(Some("sim")), body);
         assert!(render(Some("nope")).contains("unknown topic"));
+    }
+
+    #[test]
+    fn hops_topic_covers_20m_and_2m() {
+        let idx = render(None);
+        assert!(idx.contains("wcr help hops"));
+        let body = render(Some("hops"));
+        assert!(body.contains("14.070"));
+        assert!(body.contains("144.950"));
+        assert!(body.contains("Bucharest"));
+        assert!(body.contains("Boryspil"));
+        assert!(body.contains("3 hops"));
+        assert!(body.contains("Kyiv"));
     }
 }
