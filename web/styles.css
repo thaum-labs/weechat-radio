@@ -756,6 +756,76 @@ svg.dgm .mk-rf { fill: var(--orange); }
 svg.dgm .mk-accent { fill: var(--accent); }
 svg.dgm .mk-net { fill: var(--mode-internet); }
 svg.dgm .mk-dim { fill: var(--dim); }
+svg.dgm .land {
+  fill: #12121c;
+  stroke: rgba(125, 155, 255, 0.55);
+  stroke-width: 1.1;
+  stroke-linejoin: round;
+}
+svg.dgm .border {
+  fill: none;
+  stroke: rgba(125, 155, 255, 0.22);
+  stroke-width: 0.8;
+}
+svg.dgm .sea {
+  font-size: 10px;
+  fill: rgba(125, 155, 255, 0.38);
+  letter-spacing: 0.16em;
+}
+svg.dgm .range {
+  fill: rgba(255, 191, 0, 0.035);
+  stroke: rgba(255, 191, 0, 0.7);
+  stroke-width: 1.15;
+  stroke-dasharray: 3 4;
+}
+svg.dgm .city {
+  font-size: 13px;
+  fill: var(--mode-radio);
+  paint-order: stroke fill;
+  stroke: #07070a;
+  stroke-width: 4px;
+}
+svg.dgm .hop-n {
+  font-size: 11px;
+  fill: var(--orange);
+  paint-order: stroke fill;
+  stroke: #07070a;
+  stroke-width: 4px;
+}
+svg.dgm .town { fill: var(--dim); }
+svg.dgm .town-name {
+  font-size: 11px;
+  fill: var(--dim);
+  paint-order: stroke fill;
+  stroke: #07070a;
+  stroke-width: 3px;
+}
+svg.dgm .river {
+  fill: none;
+  stroke: rgba(125, 155, 255, 0.7);
+  stroke-width: 6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+svg.dgm .scale { stroke: var(--dim); stroke-width: 1.2; }
+svg.dgm .hop-run {
+  stroke-width: 1.8;
+  stroke-dasharray: 8 14;
+  marker-end: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  svg.dgm .hop-run { animation: hop-march 1.15s linear infinite; }
+}
+@media (prefers-reduced-motion: reduce) {
+  svg.dgm .hop-run { display: none; }
+}
+@keyframes hop-march { to { stroke-dashoffset: -44; } }
+.dgm-key i.k-range {
+  height: 0;
+  border: 0;
+  border-top: 2px dashed var(--mode-radio);
+  width: 20px;
+}
 
 .dgm-key {
   list-style: none;
