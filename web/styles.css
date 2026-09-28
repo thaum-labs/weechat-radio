@@ -785,6 +785,8 @@ svg.dgm .city {
   stroke: #07070a;
   stroke-width: 4px;
 }
+svg.dgm .city.on-gw { fill: var(--mode-internet-radio); }
+svg.dgm .city.on-hub { fill: var(--mode-internet); }
 svg.dgm .hop-n {
   font-size: 11px;
   fill: var(--orange);
