@@ -156,5 +156,7 @@ mod tests {
         assert!(body.contains("Boryspil"));
         assert!(body.contains("3 hops"));
         assert!(body.contains("Kyiv"));
+        assert!(body.contains("internet-radio"));
+        assert!(body.contains("Bucharest reads the line from the hub"));
     }
 }

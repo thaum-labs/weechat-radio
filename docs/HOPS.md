@@ -57,8 +57,30 @@ Vyshhorod, Boyarka, and Vasylkiv are nearby towns. They are not part of this rel
 
 Kyiv and Brovary have the line too. Bucha and Boryspil never hear each other. The group still shares the message on one dial.
 
+Same 20m map, with the hub
+
+Lisbon switches to `internet-radio`. Bucharest switches to `internet`. Barcelona and Munich stay on `radio`. The distances are the ones above. Bucharest's radio is off, so Bucharest has no reach.
+
+Internet-radio still transmits on the dial. It also uses the hub when the station it is calling has not been heard on that dial. Internet has no radio. It reads and sends only through the hub, and it does not take part in an air hop.
+
+Lisbon calls Bucharest. This is one station calling another. Lisbon has not heard Bucharest on 14.070, so the call goes to the hub as well as onto the air.
+
+```
+  air:  Lisbon --hops 3--> Barcelona --hops 2--> Munich --hops 1--> (Bucharest radio off)
+  hub:  Lisbon -----------------------------------------------> Bucharest
+```
+
+1. Lisbon transmits on 14.070 with 3 hops left, and sends the same line to the hub.
+2. Barcelona hears Lisbon on the air and sends it on with 2 hops left. Barcelona does not talk to the hub.
+3. Munich hears Barcelona and sends it on with 1 hop left. That would reach Bucharest, about 1,200 km. Bucharest's radio is off, so it is not heard.
+4. Bucharest reads the line from the hub and does not transmit.
+
+Barcelona and Munich have the copy from the air. Bucharest has the copy from the hub. Lisbon and Bucharest still do not hear each other on 20m.
+
+In `radio` mode the line is marked to stay off the internet. The air hops would run the same way and stop in the same place, and the hub would not have a copy for Bucharest.
+
 What a hop is not
 
-A hop stays on the frequency you are already using. It is not a voice repeater you have to set up, and it does not move a message from 2m to 20m.
+A hop stays on the frequency you are already using. It is not a voice repeater you have to set up, and it does not move a message from 2m to 20m. On one dial, an internet-radio station can also hand the same line to the hub when the other station has not been heard on the air.
 
 Suggested dials: `wcr help calling`.
