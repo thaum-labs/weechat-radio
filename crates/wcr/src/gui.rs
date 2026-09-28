@@ -2640,11 +2640,14 @@ fn mode_pick(ui: &mut egui::Ui, current: Mode) -> Option<Mode> {
 
 fn tower_toggle(ui: &mut egui::Ui, on: bool) -> Option<bool> {
     let mut flipped = None;
-    let row = ui.horizontal(|ui| {
+    let inner = ui.horizontal(|ui| {
         station_key(ui, "TOWER");
+        let w = ui.available_width();
+        let h = ui.spacing().interact_size.y;
         let label = if on { "on" } else { "off" };
         let color = if on { GREEN } else { DIM };
-        let btn = ui.add(
+        let btn = ui.add_sized(
+            [w, h],
             egui::Button::new(RichText::new(label).color(color).monospace())
                 .fill(Color32::TRANSPARENT)
                 .stroke(hairline(if on { GREEN } else { LINE })),
@@ -2652,10 +2655,14 @@ fn tower_toggle(ui: &mut egui::Ui, on: bool) -> Option<bool> {
         if btn.clicked() {
             flipped = Some(!on);
         }
-        btn
     });
+    let resp = ui.interact(
+        inner.response.rect,
+        ui.id().with("tower_toggle"),
+        egui::Sense::hover(),
+    );
     hover_tip(
-        &row.inner,
+        &resp,
         "While internet-radio is on, show this station as a tower on the public map with its frequency beside the icon.",
     );
     flipped
