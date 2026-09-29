@@ -14,7 +14,7 @@ shared chat framing, pacing, CSMA, modem-rung, retry, or delivery behavior.
   commit `a4e75da8ba559e696f869973b70f3c9d6cfea394`, 21 Sep 2026. Short **and**
   long messages, both directions, with `[ok]` returning once per message. This
   is the current locked Live Chat baseline. Diff against this, not v0.1.56.
-- Superseded: `v0.1.56` (`4672f5a43a64073f93b8678dc1cd4a9e10a052ed`) was the
+- Superseded: `v0.1.56` (`bdfd220c927639485e8d917e5626a9c165af6f23`) was the
   first locked baseline and `v0.1.71` restored it, but both were only ever
   confirmed for **short messages**. Do not roll back to them to "get a known
   good state" — they cannot deliver a line over ~145 characters.
