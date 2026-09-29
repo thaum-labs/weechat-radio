@@ -50,6 +50,17 @@
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> cross-frequency chat</h1>
       <p class="lead">A station talks on one dial at a time. Same-frequency chat is radio. Different-frequency chat uses a gateway and the hub. The program never changes your radio frequency by itself.</p>
 
+      <div class="note">
+        <h2>Public bulletin and private groups</h2>
+        <p>Cross-frequency chat works on the public <code>#bulletin</code> channel and on private groups. Both use an <code>internet-radio</code> gateway on each dial and the hub between them.</p>
+        <p>In <code>internet-radio</code>, a <code>#bulletin</code> line always goes to the hub and the LAN. The audience is everyone, so the program offers that path without waiting to see who is on this dial.</p>
+        <ul>
+          <li>A private group goes on the air when a listed member was heard on that dial over RF in the last 10 minutes.</li>
+          <li><code>#bulletin</code> goes on the air when anyone was heard on that dial over RF in the last 10 minutes. A gateway that has heard nobody stays quiet.</li>
+        </ul>
+        <p>Same-frequency hops still need no hub. A station in <code>radio</code> mode keeps its <code>#bulletin</code> lines on its own dial. A gateway that hears them may carry them onward when the frame allows internet (<code>INET_OK</code>).</p>
+      </div>
+
       <ul class="dgm-key">
         <li><i class="k-radio"></i>radio (RF only)</li>
         <li><i class="k-gw"></i>internet-radio (gateway)</li>
