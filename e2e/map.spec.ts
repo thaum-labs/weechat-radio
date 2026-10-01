@@ -5,6 +5,7 @@ declare global {
     WCR: {
       map: {
         isStyleLoaded(): boolean;
+        areTilesLoaded(): boolean;
         getBounds(): { contains(lngLat: [number, number]): boolean };
         getCenter(): { lng: number; lat: number };
         getZoom(): number;
@@ -12,6 +13,17 @@ declare global {
       };
     };
   }
+}
+
+async function dismissBoot(page: Page) {
+  const boot = page.locator("#boot_screen");
+  if (await boot.isVisible()) await boot.click();
+  await expect(boot).toBeHidden();
+  await page
+    .waitForFunction(() => window.WCR.map && window.WCR.map.areTilesLoaded(), undefined, {
+      timeout: 10_000,
+    })
+    .catch(() => {});
 }
 
 async function homeCamera(page: Page) {
@@ -57,6 +69,11 @@ test("home map centres on Europe with the US east coast and western Russia in fr
   expect(view.california).toBe(false);
   expect(view.tokyo).toBe(false);
 
+  await dismissBoot(page);
+  await page.locator("#map").screenshot({
+    path: "/opt/cursor/artifacts/map-home-europe.png",
+  });
+
   await page.evaluate(() => window.WCR.map.jumpTo({ center: [139.7, 35.7], zoom: 5 }));
   await page.goto("/why.html");
   await page.goto("/");
@@ -68,10 +85,6 @@ test("home map centres on Europe with the US east coast and western Russia in fr
   expect(returned.nyc).toBe(true);
   expect(returned.moscow).toBe(true);
   expect(returned.miami).toBe(true);
-
-  await page.locator("#map").screenshot({
-    path: "/opt/cursor/artifacts/map-home-europe.png",
-  });
 });
 
 test("home map keeps the same places in frame on a phone", async ({ page }) => {
@@ -86,6 +99,7 @@ test("home map keeps the same places in frame on a phone", async ({ page }) => {
   expect(view.miami).toBe(true);
   expect(view.moscow).toBe(true);
   expect(view.petersburg).toBe(true);
+  await dismissBoot(page);
   await page.locator("#map").screenshot({
     path: "/opt/cursor/artifacts/map-home-europe-phone.png",
   });
