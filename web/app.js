@@ -70,17 +70,38 @@ const initialMapStyle = preferredMapStyle();
 if (mapStyleSelect) mapStyleSelect.value = initialMapStyle;
 
 const coarse = matchMedia("(pointer: coarse)").matches;
+
+/** Just west of Florida's Atlantic coast, so the US east coast stays in frame. */
+const US_EAST_LNG = -81.5;
+/** Central Europe, vertically. */
+const HOME_LAT = 50;
+const MOSCOW = { lng: 37.6173, lat: 55.7558 };
+
+/** Longitude 100 km due east of Moscow. That is the home frame's eastern edge. */
+function moscowPlus100Lng() {
+  const phi = (MOSCOW.lat * Math.PI) / 180;
+  const sin = Math.sin(phi);
+  const metresPerDeg =
+    ((Math.PI / 180) * 6378137 * Math.cos(phi)) /
+    Math.sqrt(1 - 0.00669437999014 * sin * sin);
+  return MOSCOW.lng + (100 * 1000) / metresPerDeg;
+}
+
+const HOME_EAST_LNG = moscowPlus100Lng();
+const HOME_LNG = (US_EAST_LNG + HOME_EAST_LNG) / 2;
+
 const map = new maplibregl.Map({
   container: "map",
   style: rasterStyle(initialMapStyle),
-  center: [0, 20],
-  zoom: 1.4,
+  center: [HOME_LNG, HOME_LAT],
+  zoom: 1.7,
   attributionControl: false,
   cooperativeGestures: coarse,
   dragRotate: !coarse,
   pitchWithRotate: !coarse,
   touchPitch: !coarse,
 });
+window.WCR.map = map;
 map.addControl(
   new maplibregl.AttributionControl({ compact: false }),
   "bottom-right"
@@ -89,9 +110,69 @@ map.addControl(
 function fitMap() {
   try { map.resize(); } catch (_) {}
 }
-map.on("load", fitMap);
-window.addEventListener("resize", fitMap);
-window.addEventListener("orientationchange", fitMap);
+
+function showHomeView() {
+  try {
+    map.resize();
+    const canvas = map.getCanvas();
+    if (!canvas || canvas.clientWidth < 2 || canvas.clientHeight < 2) return false;
+    // A short north-south span makes longitude decide the zoom, so the
+    // right edge stays at Moscow + 100 km instead of opening further east.
+    const cam = map.cameraForBounds(
+      [
+        [US_EAST_LNG, HOME_LAT - 0.2],
+        [HOME_EAST_LNG, HOME_LAT + 0.2],
+      ],
+      { padding: 0 }
+    );
+    if (!cam || cam.zoom == null) return false;
+    map.jumpTo({
+      center: [HOME_LNG, HOME_LAT],
+      zoom: cam.zoom,
+      bearing: 0,
+      pitch: 0,
+    });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+let homeLocked = true;
+
+function frameHome() {
+  if (showHomeView()) return;
+  requestAnimationFrame(() => {
+    if (!showHomeView()) map.once("idle", showHomeView);
+  });
+}
+
+function userLeftHome(event) {
+  if (event && event.originalEvent) homeLocked = false;
+}
+
+map.on("dragstart", userLeftHome);
+map.on("zoomstart", userLeftHome);
+map.on("rotatestart", userLeftHome);
+map.on("pitchstart", userLeftHome);
+
+map.on("load", () => {
+  fitMap();
+  frameHome();
+});
+window.addEventListener("resize", () => {
+  fitMap();
+  if (homeLocked) frameHome();
+});
+window.addEventListener("orientationchange", () => {
+  fitMap();
+  if (homeLocked) frameHome();
+});
+window.addEventListener("pageshow", (event) => {
+  if (!event.persisted) return;
+  homeLocked = true;
+  frameHome();
+});
 
 if (mapStyleSelect) {
   mapStyleSelect.addEventListener("change", () => {
