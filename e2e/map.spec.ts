@@ -1,4 +1,127 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
+
+declare global {
+  interface Window {
+    WCR: {
+      map: {
+        isStyleLoaded(): boolean;
+        areTilesLoaded(): boolean;
+        getBounds(): {
+          contains(lngLat: [number, number]): boolean;
+          getEast(): number;
+          getWest(): number;
+        };
+        getCenter(): { lng: number; lat: number };
+        getZoom(): number;
+        jumpTo(camera: { center: [number, number]; zoom: number }): void;
+      };
+    };
+  }
+}
+
+async function dismissBoot(page: Page) {
+  const boot = page.locator("#boot_screen");
+  if (await boot.isVisible()) await boot.click();
+  await expect(boot).toBeHidden();
+  await page
+    .waitForFunction(() => window.WCR.map && window.WCR.map.areTilesLoaded(), undefined, {
+      timeout: 10_000,
+    })
+    .catch(() => {});
+}
+
+async function homeCamera(page: Page) {
+  await page.waitForFunction(() => {
+    const map = window.WCR && window.WCR.map;
+    if (!map || !map.isStyleLoaded()) return false;
+    const bounds = map.getBounds();
+    return bounds.contains([-74.0, 40.7]) && bounds.contains([37.6, 55.8]);
+  });
+  return page.evaluate(() => {
+    const map = window.WCR.map;
+    const center = map.getCenter();
+    const bounds = map.getBounds();
+    const inside = (lng: number, lat: number) => bounds.contains([lng, lat]);
+    return {
+      lng: center.lng,
+      lat: center.lat,
+      zoom: map.getZoom(),
+      nyc: inside(-74.0, 40.7),
+      miami: inside(-80.2, 25.8),
+      boston: inside(-71.1, 42.4),
+      moscow: inside(37.6, 55.8),
+      petersburg: inside(30.3, 59.9),
+      eastOfMoscow: inside(39.0, 55.75),
+      pastMoscow: inside(43.0, 55.75),
+      california: inside(-118.2, 34.1),
+      tokyo: inside(139.7, 35.7),
+      east: bounds.getEast(),
+      west: bounds.getWest(),
+    };
+  });
+}
+
+function expectHomeFrame(view: {
+  lng: number;
+  lat: number;
+  nyc: boolean;
+  miami: boolean;
+  boston: boolean;
+  moscow: boolean;
+  petersburg: boolean;
+  eastOfMoscow: boolean;
+  pastMoscow: boolean;
+  california: boolean;
+  tokyo: boolean;
+  east: number;
+  west: number;
+}) {
+  expect(view.lng).toBeGreaterThan(-30);
+  expect(view.lng).toBeLessThan(-12);
+  expect(view.lat).toBeGreaterThan(45);
+  expect(view.lat).toBeLessThan(55);
+  expect(view.nyc).toBe(true);
+  expect(view.miami).toBe(true);
+  expect(view.boston).toBe(true);
+  expect(view.moscow).toBe(true);
+  expect(view.petersburg).toBe(true);
+  expect(view.eastOfMoscow).toBe(true);
+  expect(view.pastMoscow).toBe(false);
+  expect(view.california).toBe(false);
+  expect(view.tokyo).toBe(false);
+  expect(view.west).toBeLessThan(-80);
+  expect(view.east).toBeGreaterThan(38.6);
+  expect(view.east).toBeLessThan(40.2);
+}
+
+test("home map runs from the US east coast to 100 km east of Moscow", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  const view = await homeCamera(page);
+  expectHomeFrame(view);
+
+  await dismissBoot(page);
+  await page.locator("#map").screenshot({
+    path: "/opt/cursor/artifacts/map-home-europe.png",
+  });
+
+  await page.evaluate(() => window.WCR.map.jumpTo({ center: [139.7, 35.7], zoom: 5 }));
+  await page.goto("/why.html");
+  await page.goto("/");
+  const returned = await homeCamera(page);
+  expectHomeFrame(returned);
+});
+
+test("home map keeps the same places in frame on a phone", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const view = await homeCamera(page);
+  expectHomeFrame(view);
+  await dismissBoot(page);
+  await page.locator("#map").screenshot({
+    path: "/opt/cursor/artifacts/map-home-europe-phone.png",
+  });
+});
 
 test("live map shell loads", async ({ page }) => {
   await page.goto("/");
