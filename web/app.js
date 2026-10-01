@@ -70,17 +70,64 @@ const initialMapStyle = preferredMapStyle();
 if (mapStyleSelect) mapStyleSelect.value = initialMapStyle;
 
 const coarse = matchMedia("(pointer: coarse)").matches;
+
+/** Central Europe. The home camera stays on this point. */
+const HOME_LNG = 10;
+const HOME_LAT = 50;
+
+/**
+ * Places the home frame must keep on screen. Each offset is mirrored around
+ * central Europe so the camera stays there: the US east coast sets how far
+ * west the frame reaches, and western Russia stays inside the matching east edge.
+ */
+const HOME_ANCHORS = [
+  [-80.2, 25.8], // Miami — western reach of the US east coast
+  [-74.0, 40.7], // New York
+  [-71.1, 42.4], // Boston
+  [-67.0, 44.9], // Maine
+  [30.3, 59.9], // St Petersburg
+  [37.6, 55.8], // Moscow
+];
+
+function mercatorY(lat) {
+  const phi = (lat * Math.PI) / 180;
+  return Math.log(Math.tan(Math.PI / 4 + phi / 2));
+}
+
+function latFromMercatorY(y) {
+  const phi = 2 * Math.atan(Math.exp(y)) - Math.PI / 2;
+  return (phi * 180) / Math.PI;
+}
+
+function europeHomeBounds() {
+  const y0 = mercatorY(HOME_LAT);
+  let maxAbsLng = 12;
+  let maxAbsY = 0.15;
+  for (const [lng, lat] of HOME_ANCHORS) {
+    maxAbsLng = Math.max(maxAbsLng, Math.abs(lng - HOME_LNG));
+    maxAbsY = Math.max(maxAbsY, Math.abs(mercatorY(lat) - y0));
+  }
+  // Margin so a coastline is not clipped flush with the map edge.
+  const lngPad = 5;
+  const yPad = 0.06;
+  return [
+    [HOME_LNG - maxAbsLng - lngPad, latFromMercatorY(y0 - maxAbsY - yPad)],
+    [HOME_LNG + maxAbsLng + lngPad, latFromMercatorY(y0 + maxAbsY + yPad)],
+  ];
+}
+
 const map = new maplibregl.Map({
   container: "map",
   style: rasterStyle(initialMapStyle),
-  center: [0, 20],
-  zoom: 1.4,
+  center: [HOME_LNG, HOME_LAT],
+  zoom: 1.7,
   attributionControl: false,
   cooperativeGestures: coarse,
   dragRotate: !coarse,
   pitchWithRotate: !coarse,
   touchPitch: !coarse,
 });
+window.WCR.map = map;
 map.addControl(
   new maplibregl.AttributionControl({ compact: false }),
   "bottom-right"
@@ -89,9 +136,42 @@ map.addControl(
 function fitMap() {
   try { map.resize(); } catch (_) {}
 }
-map.on("load", fitMap);
+
+function showHomeView() {
+  try {
+    map.resize();
+    const canvas = map.getCanvas();
+    if (!canvas || canvas.clientWidth < 2 || canvas.clientHeight < 2) return false;
+    const cam = map.cameraForBounds(europeHomeBounds(), { padding: 16 });
+    if (!cam || cam.zoom == null) return false;
+    map.jumpTo({
+      center: [HOME_LNG, HOME_LAT],
+      zoom: cam.zoom,
+      bearing: 0,
+      pitch: 0,
+    });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function frameHome() {
+  if (showHomeView()) return;
+  requestAnimationFrame(() => {
+    if (!showHomeView()) map.once("idle", showHomeView);
+  });
+}
+
+map.on("load", () => {
+  fitMap();
+  frameHome();
+});
 window.addEventListener("resize", fitMap);
 window.addEventListener("orientationchange", fitMap);
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) frameHome();
+});
 
 if (mapStyleSelect) {
   mapStyleSelect.addEventListener("change", () => {
