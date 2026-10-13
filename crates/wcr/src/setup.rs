@@ -118,7 +118,7 @@ pub fn run_wizard() -> Result<Config> {
             cfg.mode = Mode::Internet;
             cfg.modem.manage = false;
             cfg.modem.ptt = "none".into();
-            let public_hub = Confirm::with_theme(&theme)
+            let public_hub = Confirm::with_theme(&confirm_theme)
                 .with_prompt(ui_style::step(
                     4,
                     total_steps,
@@ -132,7 +132,7 @@ pub fn run_wizard() -> Result<Config> {
                     .interact_text()?;
                 cfg.hub.url = url;
             }
-            let share_map = Confirm::with_theme(&theme)
+            let share_map = Confirm::with_theme(&confirm_theme)
                 .with_prompt(ui_style::step(
                     5,
                     total_steps,
@@ -264,7 +264,7 @@ pub fn run_wizard() -> Result<Config> {
         println!("  {}", ui_style::dim().apply_to(skipped_radio_step_note()));
     }
 
-    if Confirm::with_theme(&theme)
+    if Confirm::with_theme(&confirm_theme)
         .with_prompt(ui_style::step(
             total_steps,
             total_steps,
