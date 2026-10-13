@@ -533,4 +533,19 @@ mod tests {
         s.beacon_due = 0;
         assert!(!s.has_live_countdown());
     }
+
+    #[test]
+    fn expired_retry_hold_stays_now_until_the_due_changes() {
+        let mut s = StatusSnapshot::default();
+        s.set_hold_due(100, "retry", 33);
+        assert_eq!(s.hold_lane(100.0).label, "retry now");
+        // The ARQ loop used to skip without bump_retry, so the same due
+        // was painted again and the countdown never restarted.
+        s.set_hold_due(100, "retry", 160);
+        assert_eq!(s.hold_due, 100);
+        assert_eq!(s.hold_span, 67);
+        assert_eq!(s.hold_lane(160.0).label, "retry now");
+        s.set_hold_due(227, "retry", 160);
+        assert_eq!(s.hold_lane(160.0).label, "retry 1:07");
+    }
 }

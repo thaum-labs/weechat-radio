@@ -202,6 +202,19 @@ fn hub_refusal(rt: &Runtime) -> Option<String> {
     }
 }
 
+/// Own retries are queued even when the modem is not idle.
+///
+/// Carrier sense lives in `pace_and_send`, which keys a routine frame once
+/// `max_defer_ms` elapses. Skipping the retry here used to `continue` without
+/// `bump_retry` whenever modem73 stayed in Rx, so `hold_until` remained in
+/// the past, the sidebar sat on "retry now", and AIR stayed 0 (VOX, no rig,
+/// noise floor on an open sound card).
+fn channel_blocks_own_retry(state: Option<ChannelState>) -> bool {
+    match state {
+        None | Some(ChannelState::Idle | ChannelState::Rx | ChannelState::Tx) => false,
+    }
+}
+
 /// Queued / sent / relayed still need an ACK. Failed, delivered, and [all] do not.
 fn still_awaiting_ack(store: &Store, id: &crate::proto::MsgId) -> bool {
     matches!(
@@ -488,10 +501,8 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                             let _ = rt_r.store.set_hold(&m.env.msg_id, 0, 0);
                             continue;
                         }
-                        if let Some(s) = rt_r.sense() {
-                            if s.state() != ChannelState::Idle {
-                                continue;
-                            }
+                        if channel_blocks_own_retry(rt_r.sense().map(|s| s.state())) {
+                            continue;
                         }
                         let n = retries + 1;
                         {
@@ -2722,6 +2733,14 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rx_does_not_swallow_a_due_retry() {
+        assert!(!channel_blocks_own_retry(None));
+        assert!(!channel_blocks_own_retry(Some(ChannelState::Idle)));
+        assert!(!channel_blocks_own_retry(Some(ChannelState::Rx)));
+        assert!(!channel_blocks_own_retry(Some(ChannelState::Tx)));
+    }
 
     #[test]
     fn ack_cancels_further_retries() {
