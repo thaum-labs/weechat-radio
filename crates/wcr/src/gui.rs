@@ -1509,11 +1509,12 @@ impl eframe::App for GuiApp {
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
                         ui.label(RichText::new("Callsign").color(DIM));
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.callsign)
-                                .desired_width(160.0)
-                                .hint_text("M7TJF or ~NICK"),
-                        );
+                        let edit = egui::TextEdit::singleline(&mut self.callsign)
+                            .desired_width(160.0)
+                            .hint_text("M7TJF or ~NICK");
+                        if ui.add(edit).changed() {
+                            self.callsign = self.callsign.to_ascii_uppercase();
+                        }
                     });
                     if !self.callsign.trim().starts_with('~') {
                         ui.horizontal(|ui| {
