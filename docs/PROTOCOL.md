@@ -86,9 +86,13 @@ Diagram: https://weechatradio.com/docs/protocol.html#delivery-marks
 
 Type ACK. This is what paints `[ok]` on the sender. Body is the 8-byte `msg_id` of the original, plus an optional 9th byte: receiver SNR in dB as a signed integer (`-32`…`31`). Relayed with TTL.
 
-Unacked messages originated by this station are retransmitted up to `rf.max_retries` times (default 3), stepping the modem73 mode down the robustness ladder each try. Retry hold times are jittered ±25% (`[rf] retry_jitter`) so stations that collided do not retry in lockstep. Once an ACK is in, the hold is cleared and a copy that was already keying does not schedule the next try.
+Unacked messages originated by this station are retransmitted up to `rf.max_retries` times (default 3), stepping the modem73 mode down the robustness ladder each try. That includes a line sitting on `[rl]`: hearing your own frame is not an ACK, so the retry timer keeps running until an ACK arrives or the retry count is used up. Retry hold times are jittered ±25% (`[rf] retry_jitter`) so stations that collided do not retry in lockstep. Once an ACK is in, the hold is cleared and a copy that was already keying does not schedule the next try.
 
 Group ACKs wait a random 0–`ack_dither_ms` (default 800 ms) before keying so every member of a net does not ACK at once. Direct (point-to-point) ACKs are not dithered.
+
+If the channel stays busy, an ACK does not wait out the full chat defer. It backs off one slot at a time, then goes to the modem after `emergency_max_defer_ms` (default 3 s) even when occupancy is still near 100%. Ordinary chat and relays use `max_defer_ms` (default 15 s). The modem's own carrier sense can still refuse to key over a carrier it hears. A station does not relay a frame whose destination is itself, and it does not relay a message that already has an ACK. An ACK toward another station is still relayed.
+
+A closed group on the hub is delivered to sessions that registered that group name (from their local member list) and to callsigns listed as members on the hub. It is not sent to every connected station. `#bulletin` still is.
 
 ## HAVE / WANT
 

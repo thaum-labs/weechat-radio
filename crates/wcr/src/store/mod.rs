@@ -526,7 +526,7 @@ impl Store {
              WHERE hold_until > 0 AND suppressed = 0
                AND (
                     (upper(origin) != upper(?1) AND hops_left > 0)
-                 OR (upper(origin) = upper(?1) AND delivery = 'sent' AND retries < ?2)
+                 OR (upper(origin) = upper(?1) AND delivery IN ('sent','relayed') AND retries < ?2)
                )
              ORDER BY hold_until ASC
              LIMIT 1",
@@ -642,7 +642,7 @@ impl Store {
             "SELECT msg_id, kind, origin, dest, flags, hops_left, ts, seq, body, signature, rx_time, delivery, retries
              FROM messages
              WHERE origin = ?1
-               AND delivery = 'sent'
+               AND delivery IN ('sent', 'relayed')
                AND hold_until > 0 AND hold_until <= ?2
                AND retries < ?3",
         )?;
@@ -1408,6 +1408,12 @@ mod tests {
         let due = s.retry_due(10, "G4ABC", 3).unwrap();
         assert_eq!(due.len(), 1);
         assert_eq!(due[0].1, 0);
+        // Hearing our own frame paints [rl] but the ACK is still outstanding.
+        s.set_delivery(&env.msg_id, Delivery::Relayed).unwrap();
+        assert_eq!(s.retry_due(10, "G4ABC", 3).unwrap().len(), 1);
+        s.set_delivery(&env.msg_id, Delivery::Delivered).unwrap();
+        assert!(s.retry_due(10, "G4ABC", 3).unwrap().is_empty());
+        s.set_delivery(&env.msg_id, Delivery::Sent).unwrap();
         s.bump_retry(&env.msg_id, 20).unwrap();
         assert_eq!(s.retries_of(&env.msg_id).unwrap(), 1);
         assert!(s.retry_due(10, "G4ABC", 3).unwrap().is_empty());
