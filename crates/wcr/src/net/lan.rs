@@ -33,7 +33,9 @@ impl LanMesh {
         let (tx_in, rx_in) = mpsc::channel(64);
         let (tx_out, mut rx_out) = mpsc::channel::<Envelope>(64);
         let peers = Arc::new(Mutex::new(HashSet::new()));
-        let listener = TcpListener::bind(("0.0.0.0", port)).await?;
+        let listener = TcpListener::bind(("0.0.0.0", port)).await.map_err(|e| {
+            crate::error::Error::Msg(format!("lan TCP port {port} ([lan] port / discovery): {e}"))
+        })?;
         let tx_accept = tx_in.clone();
         tokio::spawn(async move {
             loop {

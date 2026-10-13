@@ -6,7 +6,7 @@ use chrono::Utc;
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 
@@ -54,6 +54,8 @@ struct Client {
     registered: bool,
     tx: mpsc::Sender<String>,
 }
+
+const MAX_IRC_LINE: usize = 4096;
 
 #[derive(Clone)]
 pub struct IrcServer {
@@ -115,7 +117,6 @@ impl IrcServer {
 
     async fn handle_conn(&self, stream: TcpStream) -> Result<()> {
         let (read, mut write) = stream.into_split();
-        let mut lines = BufReader::new(read).lines();
         let (tx, mut rx) = mpsc::channel::<String>(128);
         let id = {
             let mut g = self.inner.lock();
@@ -145,7 +146,8 @@ impl IrcServer {
                 }
             }
         });
-        while let Ok(Some(line)) = lines.next_line().await {
+        let mut reader = tokio::io::BufReader::new(read);
+        while let Some(line) = read_irc_line(&mut reader).await? {
             self.on_line(id, &line).await?;
         }
         let nick = {
@@ -181,6 +183,11 @@ impl IrcServer {
             "NICK" => {
                 if let Some(n) = parts.get(1) {
                     let nick = n.trim_start_matches(':').to_string();
+                    if crate::proto::Callsign::parse(&nick).is_err() {
+                        self.send_numeric(id, 432, &format!("{nick} :Erroneous nickname"))
+                            .await;
+                        return Ok(());
+                    }
                     {
                         let mut g = self.inner.lock();
                         if let Some(c) = g.clients.get_mut(&id) {
@@ -278,6 +285,9 @@ impl IrcServer {
                 if parts.len() >= 3 {
                     let target = parts[1].clone();
                     let text = trailing(&parts[2..]);
+                    if text.is_empty() {
+                        return Ok(());
+                    }
                     let nick = self.nick(id);
                     if self.has_cap(id, "echo-message") {
                         let tagged = self.tag_privmsg(&nick, &target, &text, None, None);
@@ -306,9 +316,25 @@ impl IrcServer {
                     .await;
             }
             "QUIT" => {}
-            "WHO" | "MODE" | "WHOIS" | "NAMES" => {}
+            "WHO" => {
+                let nick = self.nick(id);
+                self.send_numeric(id, 352, &format!("{nick} wcr irc :0 {nick}"))
+                    .await;
+                self.send_numeric(id, 315, &format!("{nick} :End of /WHO"))
+                    .await;
+            }
+            "NAMES" => {
+                if let Some(ch) = parts.get(1) {
+                    let nick = self.nick(id);
+                    self.send_numeric(id, 353, &format!("= {ch} :{nick}")).await;
+                    self.send_numeric(id, 366, &format!("{ch} :End of /NAMES"))
+                        .await;
+                }
+            }
+            "MODE" | "WHOIS" => {}
             other => {
-                tracing::debug!("IRC unhandled {other}");
+                self.send_numeric(id, 421, &format!("{other} :Unknown command"))
+                    .await;
             }
         }
         Ok(())
@@ -382,7 +408,8 @@ impl IrcServer {
             "This server is a radio node, not the public internet",
         )
         .await;
-        self.send_numeric(id, 4, &format!("{srv} 0.1.0 o o")).await;
+        self.send_numeric(id, 4, &format!("{srv} {} o o", env!("CARGO_PKG_VERSION")))
+            .await;
         self.send_numeric(id, 376, ":End of MOTD").await;
         // Auto-join bulletin
         self.send_raw(id, &format!(":{nick} JOIN #bulletin")).await;
@@ -430,8 +457,9 @@ impl IrcServer {
 
     async fn send_numeric(&self, id: u64, num: u16, rest: &str) {
         let nick = self.nick(id);
+        let who = if nick.is_empty() { "*" } else { nick.as_str() };
         let srv = self.inner.lock().server_name.clone();
-        self.send_raw(id, &format!(":{srv} {num:03} {nick} {rest}"))
+        self.send_raw(id, &format!(":{srv} {num:03} {who} {rest}"))
             .await;
     }
 
@@ -597,6 +625,69 @@ impl IrcServer {
         for line in text.lines() {
             self.send_raw(id, &format!(":wcr.local NOTICE {nick} :{line}"))
                 .await;
+        }
+    }
+}
+
+async fn read_irc_line<R: AsyncBufReadExt + Unpin>(reader: &mut R) -> Result<Option<String>> {
+    let mut line = Vec::new();
+    loop {
+        let buf = reader.fill_buf().await?;
+        if buf.is_empty() {
+            return Ok(if line.is_empty() {
+                None
+            } else {
+                Some(String::from_utf8_lossy(&line).into_owned())
+            });
+        }
+        let mut consumed = 0usize;
+        let mut found_nl = false;
+        let mut overlong = false;
+        for (i, &b) in buf.iter().enumerate() {
+            if b == b'\n' {
+                line.extend_from_slice(&buf[..i]);
+                consumed = i + 1;
+                found_nl = true;
+                break;
+            }
+            if line.len() >= MAX_IRC_LINE {
+                consumed = i + 1;
+                overlong = true;
+                break;
+            }
+            line.push(b);
+            consumed = i + 1;
+        }
+        reader.consume(consumed);
+        if found_nl {
+            while line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            return Ok(Some(String::from_utf8_lossy(&line).into_owned()));
+        }
+        if overlong {
+            discard_irc_line_remainder(reader).await?;
+            return Ok(Some(String::from_utf8_lossy(&line).into_owned()));
+        }
+    }
+}
+
+async fn discard_irc_line_remainder<R: AsyncBufReadExt + Unpin>(reader: &mut R) -> Result<()> {
+    loop {
+        let (consume, done) = {
+            let buf = reader.fill_buf().await?;
+            if buf.is_empty() {
+                return Ok(());
+            }
+            if let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+                (pos + 1, true)
+            } else {
+                (buf.len(), false)
+            }
+        };
+        reader.consume(consume);
+        if done {
+            return Ok(());
         }
     }
 }

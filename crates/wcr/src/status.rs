@@ -380,7 +380,7 @@ pub async fn serve_listener_with(
     snap: Arc<SharedStatus>,
     extra: axum::Router,
 ) {
-    use axum::{routing::get, Json, Router};
+    use axum::{middleware, routing::get, Json, Router};
     let app = Router::new()
         .route(
             "/status",
@@ -392,7 +392,10 @@ pub async fn serve_listener_with(
                 }
             }),
         )
-        .merge(extra);
+        .merge(extra)
+        .layer(middleware::from_fn(
+            crate::http_local::require_loopback_host,
+        ));
     let _ = axum::serve(listener, app).await;
 }
 
