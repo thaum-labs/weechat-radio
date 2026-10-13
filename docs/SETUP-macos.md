@@ -19,13 +19,7 @@ The install command is the same as Linux. Then run setup, then the window.
 
    This downloads `wcr`. It does not run `brew install weechat`. Homebrew has no tap for this project yet, and on older macOS it would compile WeeChat from source.
 
-2. If a new terminal says `wcr: command not found`:
-
-   ```
-   export PATH="$HOME/.local/bin:$PATH"
-   ```
-
-   Add that line to `~/.zshrc` so it sticks.
+2. The installer adds `~/.local/bin` to your bash, zsh, or fish profile when it is not already on PATH. The terminal you used for the install does not see that yet. Run the `export` line it printed.
 
 3. Run setup first:
 
