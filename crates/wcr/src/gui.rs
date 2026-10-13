@@ -4506,7 +4506,18 @@ fn apply_line_delivery(
         }
         return;
     }
-    if state.starts_with("retry") && matches!(line.ticks.as_str(), "[ok]" | "[all]" | "[no]") {
+    // "retry-*" parses as Queued. That rank cannot advance a line already on
+    // [tx] or [rl], so the try count never moved and a keyed retry stayed [x1].
+    if state.starts_with("retry") {
+        if matches!(line.ticks.as_str(), "[ok]" | "[all]" | "[no]") {
+            return;
+        }
+        if tries > 0 {
+            line.tries = tries;
+        }
+        if line.ticks.is_empty() || line.ticks == "[..]" {
+            line.ticks = "[tx]".into();
+        }
         return;
     }
     if let Some(cur) = ticks_delivery(&line.ticks) {
@@ -4785,6 +4796,27 @@ mod tests {
         assert_eq!(chat[0].ticks, "[ok]");
         apply_delivery_to(&mut chat, "M7TJF", "cafe1234", "delivered", 0);
         assert_eq!(chat[0].ticks, "[ok]");
+    }
+
+    #[test]
+    fn retry_updates_try_count_without_demoting_tx() {
+        let mut mine = ChatLine::user("M7TJF", "radio check", "#bulletin");
+        mine.msgid = "deadbeef".into();
+        mine.ticks = "[tx]".into();
+        mine.tries = 1;
+        let mut chat = vec![mine];
+        apply_delivery_to(&mut chat, "M7TJF", "deadbeef", "retry-1/3", 2);
+        assert_eq!(chat[0].ticks, "[tx]");
+        assert_eq!(chat[0].tries, 2);
+        chat[0].ticks = "[rl]".into();
+        apply_delivery_to(&mut chat, "M7TJF", "deadbeef", "retry-2/3", 3);
+        assert_eq!(chat[0].ticks, "[rl]");
+        assert_eq!(chat[0].tries, 3);
+        chat[0].ticks = "[..]".into();
+        chat[0].tries = 0;
+        apply_delivery_to(&mut chat, "M7TJF", "deadbeef", "retry-1/3", 2);
+        assert_eq!(chat[0].ticks, "[tx]");
+        assert_eq!(chat[0].tries, 2);
     }
 
     #[test]

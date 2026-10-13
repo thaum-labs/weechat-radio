@@ -886,6 +886,46 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn own_frame_keys_after_defer_cap_while_rx() {
+        let q = AirQueue::new();
+        let sense = FakeSense::new();
+        sense.set_state(ChannelState::Rx);
+        sense.set_occupancy(50);
+        let (tx, mut rx) = mpsc::channel(8);
+        let mut c = Config::default();
+        c.rf.csma = true;
+        c.rf.slot_ms = 50;
+        c.rf.quiet_ms = 50;
+        c.rf.max_defer_ms = 400;
+        c.rf.emergency_max_defer_ms = 400;
+        c.rf.turnaround_ms = 0;
+        c.rf.congested_pct = 60;
+        let cfg = Arc::new(Mutex::new(c));
+        let snap = status::new_shared();
+        let h = tokio::spawn(run_air_queue(
+            q.clone(),
+            tx,
+            sense.clone(),
+            None,
+            cfg,
+            snap,
+            CancellationToken::new(),
+        ));
+        q.enqueue(item(AirClass::Own, 2));
+        tokio::time::advance(Duration::from_millis(80)).await;
+        tokio::task::yield_now().await;
+        assert!(
+            drain(&mut rx).await.is_empty(),
+            "routine frame waits inside the defer cap"
+        );
+        assert_eq!(sense.state(), ChannelState::Rx);
+        tokio::time::advance(Duration::from_millis(400)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(drain(&mut rx).await, vec![vec![2]]);
+        h.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn ack_goes_out_while_channel_stays_busy() {
         use crate::proto::{Callsign, Flags};
         let q = AirQueue::new();
