@@ -50,6 +50,19 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v0.1.82</p>
+          <p>Tue, 13 Oct 2026</p>
+        </h3>
+        <pre>A due retry now keys when the hold reaches zero, even if the modem stays in receive on an open sound card. The countdown starts again. The line advances [x1], [x2], [x3], and shows [no] after the last try. QUEUE is still messages waiting for an acknowledgement. AIR is frames at the radio.
+
+Setup asks whether to use the detected grid with [Y/n], and the square is already filled in, so Enter keeps it. The hub, map, and service questions (steps 4, 5, and 7) show [Y/n] or [y/N]. Internet-only setup says step 6 is skipped because it is radio only.
+
+The installer prints the command to add this folder to PATH immediately before the next command, which is wcr setup. It does not also tell you to start the node. wcr update removes a leftover minttyrc on Linux and macOS and names the previous binary it keeps as a .bak file.
+
+Known issue. With another station's signal on the channel, modem73 can hold frames indefinitely, so [x2], [x3], and [no] may show before a copy actually airs.</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>v0.1.81</p>
           <p>Tue, 13 Oct 2026</p>
         </h3>
