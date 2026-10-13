@@ -8,16 +8,36 @@ use wcr::config::{self, Config};
 use wcr::modes::Mode;
 use wcr::proto::IdentityKeys;
 
-async fn wait_tcp(port: u16, secs: u64) {
+/// Bind `n` ports at once so they are a free set, not `base+1` neighbours that
+/// another test's `bind(0)` claims the moment the probe socket is dropped.
+async fn reserve_ports(n: usize) -> Vec<u16> {
+    let mut held = Vec::with_capacity(n);
+    for _ in 0..n {
+        held.push(tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap());
+    }
+    let ports = held
+        .iter()
+        .map(|l| l.local_addr().unwrap().port())
+        .collect();
+    drop(held);
+    ports
+}
+
+/// True once `port` accepts. Returns as soon as `died` says the owner exited,
+/// instead of sitting out the whole timeout on a port that will never open.
+async fn wait_listen(port: u16, secs: u64, died: impl Fn() -> bool) -> Result<(), String> {
     let addr = format!("127.0.0.1:{port}");
     let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
     while tokio::time::Instant::now() < deadline {
-        if TcpStream::connect(&addr).await.is_ok() {
-            return;
+        if died() {
+            return Err(format!("{addr} closed before it accepted a connection"));
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        match TcpStream::connect(&addr).await {
+            Ok(_) => return Ok(()),
+            Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+        }
     }
-    panic!("timed out waiting for {addr}");
+    Err(format!("timed out waiting for {addr}"))
 }
 
 fn internet_node_cfg(
@@ -92,53 +112,59 @@ async fn hub_bulletin_one_privmsg_at_receiver() {
     std::env::set_var("WCR_HOME", &base);
     config::ensure_dirs().unwrap();
 
-    let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let hub_port = probe.local_addr().unwrap().port();
-    drop(probe);
-    let hub_bind = format!("127.0.0.1:{hub_port}");
-    let store = std::sync::Arc::new(wcr::store::Store::open_memory().unwrap());
-    let tel = std::sync::Arc::new(wcr::telemetry::TelemetryDb::open_memory().unwrap());
-    let keys = IdentityKeys::generate();
-    tokio::spawn(async move {
-        let _ = wcr::net::run_hub(&hub_bind, store, tel, keys).await;
-    });
-    wait_tcp(hub_port, 15).await;
     let client = reqwest::Client::new();
-    let health_deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-    while tokio::time::Instant::now() < health_deadline {
-        if client
-            .get(format!("http://127.0.0.1:{hub_port}/healthz"))
-            .send()
-            .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false)
-        {
-            break;
+    let mut last_err = String::from("no attempt");
+    let (irc_a, irc_b, status_a, status_b, node_a, node_b, hub) = 'start: {
+        for attempt in 1..=5 {
+            let ports = reserve_ports(5).await;
+            let hub_port = ports[0];
+            let irc_a = ports[1];
+            let irc_b = ports[2];
+            let status_a = ports[3];
+            let status_b = ports[4];
+            let hub_bind = format!("127.0.0.1:{hub_port}");
+            let store = std::sync::Arc::new(wcr::store::Store::open_memory().unwrap());
+            let tel = std::sync::Arc::new(wcr::telemetry::TelemetryDb::open_memory().unwrap());
+            let keys = IdentityKeys::generate();
+            let hub = tokio::spawn(async move {
+                let _ = wcr::net::run_hub(&hub_bind, store, tel, keys).await;
+            });
+            if let Err(e) = wait_listen(hub_port, 5, || hub.is_finished()).await {
+                hub.abort();
+                last_err = format!("attempt {attempt} hub: {e}");
+                continue;
+            }
+            let hub_ws = format!("ws://127.0.0.1:{hub_port}/ws");
+            let hub_report = format!("http://127.0.0.1:{hub_port}/api/v1/report");
+            let home_a = base.join(format!("a-{attempt}"));
+            let home_b = base.join(format!("b-{attempt}"));
+            std::fs::create_dir_all(&home_a).unwrap();
+            std::fs::create_dir_all(&home_b).unwrap();
+            let cfg_a =
+                internet_node_cfg("~QAONE1", &home_a, &hub_ws, &hub_report, irc_a, status_a);
+            let cfg_b =
+                internet_node_cfg("~QATWO2", &home_b, &hub_ws, &hub_report, irc_b, status_b);
+            let node_a = tokio::spawn(async move { wcr::node::run_node(cfg_a, false).await });
+            let node_b = tokio::spawn(async move { wcr::node::run_node(cfg_b, false).await });
+            let died = || node_a.is_finished() || node_b.is_finished() || hub.is_finished();
+            if let Err(e) = wait_listen(irc_a, 8, &died).await {
+                node_a.abort();
+                node_b.abort();
+                hub.abort();
+                last_err = format!("attempt {attempt} irc {irc_a}: {e}");
+                continue;
+            }
+            if let Err(e) = wait_listen(irc_b, 8, &died).await {
+                node_a.abort();
+                node_b.abort();
+                hub.abort();
+                last_err = format!("attempt {attempt} irc {irc_b}: {e}");
+                continue;
+            }
+            break 'start (irc_a, irc_b, status_a, status_b, node_a, node_b, hub);
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-
-    let hub_ws = format!("ws://127.0.0.1:{hub_port}/ws");
-    let hub_report = format!("http://127.0.0.1:{hub_port}/api/v1/report");
-
-    let home_a = base.join("a");
-    let home_b = base.join("b");
-    std::fs::create_dir_all(&home_a).unwrap();
-    std::fs::create_dir_all(&home_b).unwrap();
-
-    let irc_a = hub_port + 1;
-    let irc_b = hub_port + 2;
-    let status_a = hub_port + 3;
-    let status_b = hub_port + 4;
-
-    let cfg_a = internet_node_cfg("~QAONE1", &home_a, &hub_ws, &hub_report, irc_a, status_a);
-    let cfg_b = internet_node_cfg("~QATWO2", &home_b, &hub_ws, &hub_report, irc_b, status_b);
-
-    let node_a = tokio::spawn(async move { wcr::node::run_node(cfg_a, false).await });
-    let node_b = tokio::spawn(async move { wcr::node::run_node(cfg_b, false).await });
-
-    wait_tcp(irc_a, 30).await;
-    wait_tcp(irc_b, 30).await;
+        panic!("bulletin nodes did not open their ports: {last_err}");
+    };
 
     let hub_deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     while tokio::time::Instant::now() < hub_deadline {
@@ -210,8 +236,10 @@ async fn hub_bulletin_one_privmsg_at_receiver() {
 
     node_a.abort();
     node_b.abort();
+    hub.abort();
     let _ = node_a.await;
     let _ = node_b.await;
+    let _ = hub.await;
 
     assert!(tagged_ok, "expected one tagged inet PRIVMSG at receiver");
     assert_eq!(
