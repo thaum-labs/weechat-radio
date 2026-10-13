@@ -272,7 +272,7 @@ pub fn run_wizard() -> Result<Config> {
     config::ensure_dirs()?;
     cfg.save(&path)?;
     ui_style::panel("SAVED", path.display().to_string().as_str());
-    match crate::weechat_app::configure() {
+    match crate::weechat_app::configure(&Config::default_path()) {
         Ok(msg) => {
             println!("  {msg}");
         }

@@ -10,22 +10,22 @@ use std::time::{Duration, Instant};
 const RADIO_PY: &str = include_str!("../../../weechat/radio.py");
 const MINTTYRC: &str = include_str!("../../../weechat/minttyrc");
 
-pub fn run(configure_only: bool) -> Result<()> {
+pub fn run(configure_only: bool, cfg_path: &Path) -> Result<()> {
     if configure_only {
-        println!("{}", configure()?);
+        println!("{}", configure(cfg_path)?);
         return Ok(());
     }
-    let _ = configure();
+    let _ = configure(cfg_path);
     launch()
 }
 
-pub fn configure() -> Result<String> {
+pub fn configure(cfg_path: &Path) -> Result<String> {
     ensure_weechat()?;
     let script = install_radio_py()?;
     let home = weechat_home();
     std::fs::create_dir_all(home.join("python"))?;
 
-    run_headless_configure(&script)?;
+    run_headless_configure(&script, cfg_path)?;
     std::fs::create_dir_all(home.join("python").join("autoload"))?;
     let dest = home.join("python").join("radio.py");
     std::fs::copy(&script, &dest)?;
@@ -36,8 +36,9 @@ pub fn configure() -> Result<String> {
     quiet_core_logs(&home);
     write_minttyrc()?;
     write_launcher()?;
+    let listen = irc_listen_label(cfg_path);
     Ok(format!(
-        "WeeChat is configured for 127.0.0.1:6667 (home {}). Start the node with `wcr node`, then `wcr weechat`.",
+        "WeeChat is configured for {listen} (home {}). Start the node with `wcr node`, then `wcr weechat`.",
         home.display()
     ))
 }
@@ -103,9 +104,31 @@ fn ensure_weechat() -> Result<()> {
     ))
 }
 
-fn configure_cmds() -> String {
-    let mut cmds = String::from(
-        "/server add radio 127.0.0.1/6667 -autoconnect;\
+fn irc_listen_label(cfg_path: &Path) -> String {
+    crate::config::Config::load(cfg_path)
+        .map(|c| c.irc.bind)
+        .unwrap_or_else(|_| "127.0.0.1:6667".into())
+}
+
+/// WeeChat `/server add` wants `host/port`, taken from `irc.bind`.
+pub(crate) fn weechat_server_target(bind: &str) -> String {
+    let bind = bind.trim();
+    if let Some((host, port)) = bind.rsplit_once(':') {
+        if !host.is_empty() && !host.contains(':') && port.chars().all(|c| c.is_ascii_digit()) {
+            return format!("{host}/{port}");
+        }
+    }
+    "127.0.0.1/6667".into()
+}
+
+pub(crate) fn configure_cmds(cfg_path: &Path) -> String {
+    let cfg = crate::config::Config::load(cfg_path).ok();
+    let target = cfg
+        .as_ref()
+        .map(|c| weechat_server_target(&c.irc.bind))
+        .unwrap_or_else(|| "127.0.0.1/6667".into());
+    let mut cmds = format!(
+        "/server add radio {target} -autoconnect;\
          /mute -all /set irc.server.radio.tls off;\
          /mute -all /set irc.server.radio.tls_verify off;\
          /mute -all /set irc.server.radio.capabilities message-tags,echo-message,server-time,msgid;\
@@ -115,7 +138,7 @@ fn configure_cmds() -> String {
          /mute -all /set weechat.startup.display_version off;\
          /mute -all /set logger.level.core 0",
     );
-    if let Ok(cfg) = crate::config::Config::load(&crate::config::Config::default_path()) {
+    if let Some(cfg) = cfg {
         let nick = cfg.callsign.trim();
         if !nick.is_empty() {
             cmds.push_str(&format!(";/mute -all /set irc.server.radio.nicks {nick}"));
@@ -143,7 +166,7 @@ fn quiet_core_logs(home: &Path) {
     }
 }
 
-fn run_headless_configure(script: &Path) -> Result<()> {
+fn run_headless_configure(script: &Path, cfg_path: &Path) -> Result<()> {
     #[cfg(not(windows))]
     let _ = script;
     #[cfg(windows)]
@@ -156,7 +179,7 @@ fn run_headless_configure(script: &Path) -> Result<()> {
                      cp \"{script}\" \"$HOME/.weechat/python/radio.py\"; \
                      cp \"$HOME/.weechat/python/radio.py\" \"$HOME/.weechat/python/autoload/radio.py\"; \
                      weechat-headless -nc -d \"$HOME/.weechat\" -r '{cmds}'",
-                    cmds = configure_cmds(),
+                    cmds = configure_cmds(cfg_path),
                     home = cygwin_home_unix(),
                     script = cygwin_path(script)
                 );
@@ -188,7 +211,7 @@ fn run_headless_configure(script: &Path) -> Result<()> {
             "-d",
             &home.to_string_lossy(),
             "-r",
-            &configure_cmds(),
+            &configure_cmds(cfg_path),
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -424,4 +447,33 @@ fn write_launcher() -> Result<()> {
     }
     let _ = Path::new(".");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::configure_cmds;
+    use super::weechat_server_target;
+    use crate::config::Config;
+
+    #[test]
+    fn server_target_uses_config_port() {
+        assert_eq!(weechat_server_target("127.0.0.1:26667"), "127.0.0.1/26667");
+        assert_eq!(weechat_server_target("127.0.0.1:6667"), "127.0.0.1/6667");
+    }
+
+    #[test]
+    fn configure_cmds_follow_irc_bind() {
+        let dir = std::env::temp_dir().join(format!("wcr-wee-cfg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("wcr.toml");
+        let mut cfg = Config::default();
+        cfg.callsign = "G4ABC".into();
+        cfg.irc.bind = "127.0.0.1:26667".into();
+        cfg.save(&path).unwrap();
+        let cmds = configure_cmds(&path);
+        assert!(cmds.contains("/server add radio 127.0.0.1/26667"), "{cmds}");
+        assert!(!cmds.contains("127.0.0.1/6667"), "{cmds}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
