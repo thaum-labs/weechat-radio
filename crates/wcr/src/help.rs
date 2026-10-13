@@ -41,7 +41,7 @@ pub fn topics() -> &'static [(&'static str, &'static str, &'static str)] {
         ),
         (
             "modes",
-            "internet / radio / radio-plus",
+            "internet / internet-radio / radio / radio-plus",
             include_str!("../../../docs/MODES.md"),
         ),
         (
@@ -84,6 +84,21 @@ pub fn topics() -> &'static [(&'static str, &'static str, &'static str)] {
             "relay on one dial when not everyone is in range",
             include_str!("../../../docs/HOPS.md"),
         ),
+        (
+            "email",
+            "mail beside live chat",
+            include_str!("../../../docs/EMAIL.md"),
+        ),
+        (
+            "deploy",
+            "run the public hub",
+            include_str!("../../../docs/DEPLOY.md"),
+        ),
+        (
+            "try",
+            "two computers, speaker to radio",
+            include_str!("../../../docs/TRY.md"),
+        ),
     ]
 }
 
@@ -91,6 +106,16 @@ fn canonical_topic(raw: &str) -> String {
     match raw.trim().to_ascii_lowercase().as_str() {
         "test" | "lan" | "e2e-lan" | "e2e-radio" | "sim" => "e2e".into(),
         other => other.to_string(),
+    }
+}
+
+pub fn topic_found(topic: Option<&str>) -> bool {
+    match topic {
+        None | Some("help") | Some("") => true,
+        Some(t) => {
+            let key = canonical_topic(t);
+            topics().iter().any(|(k, _, _)| *k == key.as_str())
+        }
     }
 }
 
@@ -103,7 +128,13 @@ pub fn render(topic: Option<&str>) -> String {
                 .map(|(k, blurb, _)| format!("  wcr help {k:<width$}  {blurb}"))
                 .collect();
             format!(
-                "{}\n\nTopics:\n{}\n\nAlso: wcr help test  (same as wcr help e2e)\n",
+                "{}\n\nTopics:\n{}\n\nAlso: wcr help test  (same as wcr help e2e)\n\n\
+                 Commands:\n\
+                 \x20 wcr tnc scan                 paired Bluetooth devices\n\
+                 \x20 wcr tnc scan --inquiry       look for new radios (~8 s; put the radio in pairing mode)\n\
+                 \x20 wcr hub admin callsign release CALL\n\
+                 \x20 wcr hub admin callsign reassign CALL PUBKEY_HEX\n\
+                 \x20 wcr service install|uninstall|status\n",
                 crate::ui_style::panel_line("WEECHAT RADIO", "HELP"),
                 list.join("\n")
             )
@@ -127,6 +158,17 @@ mod tests {
     fn index_lists_e2e_with_blurb() {
         let idx = render(None);
         assert!(idx.contains("wcr help e2e"));
+        assert!(idx.contains("internet-radio"));
+        assert!(idx.contains("tnc scan --inquiry"));
+        assert!(idx.contains("hub admin callsign release"));
+        assert!(idx.contains("wcr service install"));
+        assert!(idx.contains("wcr help email"));
+        assert!(idx.contains("wcr help deploy"));
+        assert!(idx.contains("wcr help try"));
+        assert!(render(Some("email")).contains("mail.weechatradio.com"));
+        assert!(render(Some("try")).contains("hf-poor"));
+        assert!(!topic_found(Some("nope")));
+        assert!(topic_found(Some("modes")));
         assert!(idx.contains("simulated RF") || idx.contains("LAN hub"));
         assert!(idx.contains("wcr help test"));
     }
