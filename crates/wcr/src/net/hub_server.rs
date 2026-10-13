@@ -38,6 +38,9 @@ pub struct HubState {
     pub report_by_ip: Arc<KeyedLimiter>,
     pub hello_by_call: Arc<KeyedLimiter>,
     pub mail: Arc<crate::net::hub_mail::MailHubDb>,
+    /// Public map id. The production hub sets this from `WCR_DOMAIN`. A private
+    /// hub must not claim to be `hub.weechatradio.com`.
+    pub id: String,
 }
 
 pub struct Session {
@@ -89,6 +92,7 @@ pub async fn run_hub(
             )
             .unwrap_or_else(|_| crate::net::hub_mail::MailHubDb::open_memory().expect("mail db")),
         ),
+        id: hub_report_id(bind, &std::env::var("WCR_DOMAIN").unwrap_or_default()),
     };
     let app = Router::new()
         .route("/", get(ws_upgrade))
@@ -549,7 +553,7 @@ async fn get_hubs(State(st): State<HubState>) -> Json<serde_json::Value> {
     let bands = collect_bands(&st);
     Json(serde_json::json!({
         "hubs": [{
-            "id": "hub.weechatradio.com",
+            "id": st.id,
             "connected_nodes": n,
             "forwarded": fwd,
             "uptime_secs": st.started.elapsed().as_secs(),
@@ -591,6 +595,16 @@ pub fn test_hub_state() -> HubState {
         report_by_ip: rate_limit::per_minute(240),
         hello_by_call: rate_limit::per_minute(30),
         mail: Arc::new(crate::net::hub_mail::MailHubDb::open_memory().unwrap()),
+        id: hub_report_id("127.0.0.1:0", ""),
+    }
+}
+
+/// Production sets `WCR_DOMAIN=weechatradio.com`. Any other hub reports a local id.
+pub fn hub_report_id(bind: &str, domain: &str) -> String {
+    if domain.eq_ignore_ascii_case("weechatradio.com") || bind.contains("weechatradio.com") {
+        "hub.weechatradio.com".into()
+    } else {
+        format!("local:{bind}")
     }
 }
 
@@ -682,6 +696,15 @@ mod tests {
         let raw = env.encode().unwrap();
         let (_khz, _band, _bands) = route(&st, &env, &raw, "G4ABC");
         assert!(rx_b.try_recv().is_err(), "raw frag must not be routed");
+    }
+
+    #[test]
+    fn private_hub_id_is_not_the_public_name() {
+        assert_eq!(hub_report_id("127.0.0.1:7376", ""), "local:127.0.0.1:7376");
+        assert_eq!(
+            hub_report_id("0.0.0.0:7373", "weechatradio.com"),
+            "hub.weechatradio.com"
+        );
     }
 
     #[test]

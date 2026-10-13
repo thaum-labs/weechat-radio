@@ -86,6 +86,9 @@ async fn real_main() -> Result<()> {
         }
         Command::Help { topic } => {
             print!("{}", wcr::help::render(topic.as_deref()));
+            if !wcr::help::topic_found(topic.as_deref()) {
+                std::process::exit(1);
+            }
         }
         Command::Gui => {
             #[cfg(feature = "desktop")]
