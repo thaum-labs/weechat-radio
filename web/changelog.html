@@ -50,6 +50,15 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v0.1.80</p>
+          <p>Tue, 13 Oct 2026</p>
+        </h3>
+        <pre>A direct message now shows for the station it was sent to, and the sender gets [ok] once that station confirms it. #bulletin stops at [ok] on the first confirmation. A closed group reaches [all] when every member has confirmed. After [ok], a retry that was already keying is not tagged again. A hub that refuses the callsign, including one already claimed, shows [no] instead of sent. Hearing your own frame is still [rl], not a receipt.
+
+#bulletin on the hub reaches every connected station once. A burst of IRC lines is limited, and a line from the radio is no longer shown twice. wcr weechat --configure writes irc.conf. If the IRC port is already in use, the node stops and names that port. If modem73 exits at startup, the error is its log line. The Linux tray starts only where the desktop libraries are present, so a headless hub still builds. The hub image includes the modem checksums it checks while building. Installers and the modem download check a SHA-256 sidecar when one is published. The modem archive stays the v0.1.79 pin.</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>site</p>
           <p>Thu, 1 Oct 2026</p>
         </h3>
