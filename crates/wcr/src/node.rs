@@ -69,7 +69,15 @@ struct Runtime {
     assembler: Arc<Mutex<FragAssembler>>,
     last_rx_snr: Arc<Mutex<Option<f32>>>,
     radio_lock: Arc<tokio::sync::Mutex<()>>,
+    /// One ACK key at a time. The air queue is paused while it runs.
+    ack_lock: Arc<tokio::sync::Mutex<()>>,
     mail: crate::mail::MailHandle,
+    /// When we last ACKed `msg_id`. A later copy of an unacked frame is
+    /// answered again once [`relay::RETRY_ANSWER_GAP_S`] has passed.
+    ack_again: Arc<Mutex<HashMap<MsgId, u32>>>,
+    /// When we last relayed `msg_id`. Same gap, so an echo does not loop and
+    /// a sender retry still gets forwarded if the receipt never came back.
+    relay_again: Arc<Mutex<HashMap<MsgId, u32>>>,
 }
 
 impl Runtime {
@@ -90,6 +98,36 @@ impl Runtime {
     }
     fn peers_tx(&self) -> Option<mpsc::Sender<Envelope>> {
         self.txp.lock().peers.clone()
+    }
+
+    fn stamp_ack(&self, id: &MsgId) {
+        self.ack_again.lock().insert(*id, crate::proto::now_ts());
+    }
+
+    fn stamp_relay(&self, id: &MsgId) {
+        self.relay_again.lock().insert(*id, crate::proto::now_ts());
+    }
+
+    fn ack_due(&self, id: &MsgId, now: u32) -> bool {
+        let mut g = self.ack_again.lock();
+        let last = g.get(id).copied();
+        if relay::answer_again(now, last, relay::RETRY_ANSWER_GAP_S) {
+            g.insert(*id, now);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn relay_due(&self, id: &MsgId, now: u32) -> bool {
+        let mut g = self.relay_again.lock();
+        let last = g.get(id).copied();
+        if relay::answer_again(now, last, relay::RETRY_ANSWER_GAP_S) {
+            g.insert(*id, now);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -330,7 +368,10 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         assembler: Arc::new(Mutex::new(FragAssembler::new())),
         last_rx_snr,
         radio_lock: Arc::new(tokio::sync::Mutex::new(())),
+        ack_lock: Arc::new(tokio::sync::Mutex::new(())),
         mail,
+        ack_again: Arc::new(Mutex::new(HashMap::new())),
+        relay_again: Arc::new(Mutex::new(HashMap::new())),
     };
     refresh_group_prios(&rt);
 
@@ -395,6 +436,12 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 let our = rt_h.engine.our_call.clone();
                 if let Ok(due) = rt_h.store.hold_due(now) {
                     for m in due {
+                        // Own-origin rows are ARQ retries. may_rebroadcast is
+                        // false for them; clearing the hold here cancels the
+                        // retry and the queued copy. Leave them for the ARQ loop.
+                        if relay::is_own_origin(&our, &m.env) {
+                            continue;
+                        }
                         if !relay::may_rebroadcast(&our, &m.env, Some(m.delivery)) {
                             let _ = rt_h.store.set_hold(&m.env.msg_id, 0, 0);
                             if let Some(air) = rt_h.air() {
@@ -764,6 +811,9 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
             let _ = leave_channel(rt, &channel).await;
         }
         IrcEventKind::Join { channel } => {
+            if !dest_is_bulletin(&channel) {
+                publish_hub_membership(rt).await;
+            }
             let hist = rt.store.history(Some(&channel), 500)?;
             let irc_target = if channel.starts_with('#') || channel.starts_with('&') {
                 channel.clone()
@@ -1053,6 +1103,18 @@ async fn enqueue_rf(
     preset: Preset,
     opts: EnqueueOpts,
 ) -> Result<bool> {
+    if rf_env.kind == MsgType::Ack {
+        // Key off the IRC/RX loop. Waiting out a busy channel must not stall
+        // reading the next frame.
+        let rt = rt.clone();
+        let frames = frames.clone();
+        let env = rf_env.clone();
+        let delay = opts.delay;
+        tokio::spawn(async move {
+            let _ = key_ack_now(&rt, &env, &frames, preset, delay).await;
+        });
+        return Ok(true);
+    }
     let Some(air) = rt.air() else {
         if let Some(k) = rt.kiss() {
             for f in &frames {
@@ -1074,6 +1136,46 @@ async fn enqueue_rf(
         note_own_rf_tx(rt, rf_env);
     }
     Ok(queued)
+}
+
+/// ACK frames skip the air queue. A steady busy channel was leaving them
+/// behind dozens of frames whose modem CSMA never keyed, so the 3 s cap
+/// never started. Pause, wait out that cap, then key this frame with carrier
+/// sense off if the channel is still busy.
+async fn key_ack_now(
+    rt: &Runtime,
+    rf_env: &Envelope,
+    frames: &[Vec<u8>],
+    preset: Preset,
+    delay: Duration,
+) -> Result<bool> {
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
+    }
+    let _key = rt.ack_lock.lock().await;
+    let rf = rt.cfg.lock().rf.clone();
+    let sense = rt.sense();
+    let control = rt.control();
+    let kiss = rt.kiss();
+    let air = rt.air();
+    let sent = air::transmit_ack(air::AckTx {
+        frames,
+        preset,
+        air: air.as_ref(),
+        sense: sense.as_ref().map(|s| s.as_ref() as &dyn ChannelSense),
+        control: control.as_ref(),
+        kiss: kiss.as_ref(),
+        cap: Duration::from_millis(u64::from(rf.emergency_max_defer_ms)),
+        slot: Duration::from_millis(u64::from(rf.slot_ms.max(1))),
+        quiet: Duration::from_millis(u64::from(rf.quiet_ms)),
+        csma: rf.csma,
+        drain_cap: Duration::from_secs(5),
+    })
+    .await;
+    if sent {
+        note_own_rf_tx(rt, rf_env);
+    }
+    Ok(sent)
 }
 
 fn note_own_rf_tx(rt: &Runtime, env: &Envelope) {
@@ -1241,6 +1343,13 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
         None
     };
     let decision = rt.engine.on_rx(&env, medium, snr, freq)?;
+    if decision.action == Action::Accept {
+        if let Ok(Some(stored)) = rt.store.get(&env.msg_id) {
+            if relay::may_rebroadcast(&rt.engine.our_call, &stored.env, Some(stored.delivery)) {
+                rt.stamp_relay(&env.msg_id);
+            }
+        }
+    }
     if decision.action == Action::Suppress {
         if let Some(air) = rt.air() {
             air.cancel(env.msg_id);
@@ -1256,6 +1365,10 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
         );
     }
     if !should_apply_local_effects(decision.action) {
+        // A retry of a frame we already displayed or already relayed. The
+        // first copy can reach the far end while its ACK never comes back;
+        // ignoring every later copy leaves the sender at [rl] after 3/3.
+        maybe_answer_retry(rt, &env, snr).await;
         refresh_heard(rt);
         return Ok(());
     }
@@ -1342,6 +1455,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                         env.origin.as_str(),
                         &text,
                     ) {
+                        publish_hub_membership(rt).await;
                         rt.irc.send_invite(env.origin.as_str(), &ch).await;
                     }
                 }
@@ -1364,42 +1478,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                 && env.flags.req_ack()
                 && (env.dest.as_str() == rt.engine.our_call || env.flags.group())
             {
-                let seq = rt.store.next_seq(&rt.engine.our_call)?;
-                let mut ack = Envelope::ack_for(
-                    &env,
-                    Callsign::from_raw(rt.engine.our_call.clone()),
-                    seq,
-                    snr,
-                );
-                // Mode flags (including THIRD_PARTY on ~guest) must be set before
-                // the signature. dispatch() stamps them again; a later mutation
-                // makes the hub drop the ACK as unverified.
-                stamp_own_mode_flags(&mut ack, &rt.engine.our_call, rt.cfg.lock().mode);
-                if rt.cfg.lock().mode.uses_internet() {
-                    let _ = rt.keys.sign_envelope(&mut ack);
-                }
-                let dither = if env.flags.group() {
-                    let max = rt.cfg.lock().rf.ack_dither_ms as u64;
-                    if max > 0 {
-                        Duration::from_millis(rand::thread_rng().gen_range(0..=max))
-                    } else {
-                        Duration::ZERO
-                    }
-                } else {
-                    Duration::ZERO
-                };
-                if dither.is_zero() {
-                    let _ = dispatch(rt, &ack).await;
-                } else {
-                    let cfg_g = rt.cfg.lock().clone();
-                    if cfg_g.mode.uses_internet() && ack.flags.inet_ok() && inet_gap_for(rt, &ack) {
-                        offer_hub(rt, &ack).await;
-                        if let Some(l) = &rt.lan {
-                            let _ = l.send(ack.clone()).await;
-                        }
-                    }
-                    let _ = dispatch_rf_at(rt, &ack, 0, dither, 0).await;
-                }
+                let _ = acknowledge(rt, &env, snr).await;
             }
             if !mute_closed && env.flags.group() {
                 let _ = rt.store.receipt(
@@ -1487,6 +1566,91 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
 
 fn should_apply_local_effects(action: Action) -> bool {
     action.applies_local_effects()
+}
+
+/// ACK a frame addressed to us. Stamps the retry gap first so an echo of the
+/// same copy does not key a second receipt.
+async fn acknowledge(rt: &Runtime, env: &Envelope, snr: Option<f32>) -> Result<()> {
+    rt.stamp_ack(&env.msg_id);
+    let seq = rt.store.next_seq(&rt.engine.our_call)?;
+    let mut ack = Envelope::ack_for(
+        env,
+        Callsign::from_raw(rt.engine.our_call.clone()),
+        seq,
+        snr,
+    );
+    // Mode flags (including THIRD_PARTY on ~guest) must be set before the
+    // signature. dispatch() stamps them again; a later mutation makes the hub
+    // drop the ACK as unverified.
+    stamp_own_mode_flags(&mut ack, &rt.engine.our_call, rt.cfg.lock().mode);
+    if rt.cfg.lock().mode.uses_internet() {
+        let _ = rt.keys.sign_envelope(&mut ack);
+    }
+    let dither = if env.flags.group() {
+        let max = rt.cfg.lock().rf.ack_dither_ms as u64;
+        if max > 0 {
+            Duration::from_millis(rand::thread_rng().gen_range(0..=max))
+        } else {
+            Duration::ZERO
+        }
+    } else {
+        Duration::ZERO
+    };
+    if dither.is_zero() {
+        let _ = dispatch(rt, &ack).await;
+    } else {
+        let cfg_g = rt.cfg.lock().clone();
+        if cfg_g.mode.uses_internet() && ack.flags.inet_ok() && inet_gap_for(rt, &ack) {
+            offer_hub(rt, &ack).await;
+            if let Some(l) = &rt.lan {
+                let _ = l.send(ack.clone()).await;
+            }
+        }
+        let _ = dispatch_rf_at(rt, &ack, 0, dither, 0).await;
+    }
+    Ok(())
+}
+
+/// Duplicate of a frame we already handled. Answer it again when the sender
+/// is clearly still waiting, and relay it again when we are the middle hop
+/// and the receipt has not landed.
+async fn maybe_answer_retry(rt: &Runtime, env: &Envelope, snr: Option<f32>) {
+    if !env.flags.req_ack() {
+        return;
+    }
+    if !matches!(
+        env.kind,
+        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status
+    ) {
+        return;
+    }
+    if dest_is_bulletin(env.dest.as_str()) && !env.flags.group() {
+        return;
+    }
+    let now = crate::proto::now_ts();
+    let name = env.dest.to_string().to_ascii_lowercase();
+    let closed = env.flags.group() && !dest_is_bulletin(env.dest.as_str());
+    let member = rt
+        .store
+        .is_group_member(&name, &rt.engine.our_call)
+        .unwrap_or(false);
+    let for_us = env.dest.as_str().eq_ignore_ascii_case(&rt.engine.our_call)
+        || (env.flags.group() && (!closed || member));
+    if for_us && rt.ack_due(&env.msg_id, now) {
+        let _ = acknowledge(rt, env, snr).await;
+        return;
+    }
+    if closed && !member {
+        return;
+    }
+    let Ok(Some(stored)) = rt.store.get(&env.msg_id) else {
+        return;
+    };
+    if relay::may_rebroadcast(&rt.engine.our_call, &stored.env, Some(stored.delivery))
+        && rt.relay_due(&env.msg_id, now)
+    {
+        let _ = dispatch(rt, &stored.env).await;
+    }
 }
 
 async fn forward_gateway(rt: &Runtime, env: &Envelope, medium: &str) -> Result<()> {
@@ -1621,6 +1785,22 @@ fn hub_register_names(rt: &Runtime) -> Vec<String> {
     names.sort();
     names.dedup();
     names
+}
+
+/// Push closed-group names to the hub immediately. The periodic heard refresh
+/// is 60 s, and a group created or joined in that window is not routable yet,
+/// so the first message stays at `sent`.
+async fn publish_hub_membership(rt: &Runtime) {
+    if !rt.cfg.lock().mode.uses_internet() {
+        return;
+    }
+    let Some(h) = rt.hub() else {
+        return;
+    };
+    let khz = rt.snap.lock().freq_khz;
+    let heard = hub_register_names(rt);
+    let body = serde_json::json!({ "heard": heard, "freq_khz": khz }).to_string();
+    let _ = h.send_text(&body).await;
 }
 
 fn refresh_heard(rt: &Runtime) {
@@ -2211,6 +2391,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                         return "usage: /radio group create <name> <callsigns...>".into();
                     }
                     let _ = store.group_create(&name, &members);
+                    publish_hub_membership(rt).await;
                     format!("group {name} created")
                 }
                 "invite" | "add" => {
@@ -2220,6 +2401,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                         return "usage: /radio group invite <name> <callsigns...>".into();
                     }
                     let _ = store.group_create(&name, &members);
+                    publish_hub_membership(rt).await;
                     format!("invited {} to {name}", members.join(", "))
                 }
                 "list" => store.group_list().unwrap_or_default().join(", "),
