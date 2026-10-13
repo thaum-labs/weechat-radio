@@ -93,7 +93,7 @@ Full table: [modes](https://weechatradio.com/docs/modes.html)
 
 ## Radio
 
-You need a valid licence, a radio, and audio into the PC. [modem73](https://github.com/RFnexus/modem73) is the TNC. Windows, macOS, and Linux installers put it next to `wcr`. Common paths:
+You need a valid licence, a radio, and audio into the PC. [modem73](https://github.com/RFnexus/modem73) is the TNC. Windows, macOS, and Linux installers put it next to `wcr`. If it is missing, `wcr` downloads the copy published with release `v0.1.79` and checks `third_party/modem73/sha256.json`. To move that pin, see `third_party/modem73/NOTICE`. Common paths:
 
 | Path | What you need |
 |------|----------------|
@@ -117,7 +117,7 @@ wcr node
 wcr weechat
 ```
 
-`wcr weechat --configure` rewrites the `radio` server (`127.0.0.1:6667`) and loads [`weechat/radio.py`](weechat/radio.py). The built-in UI is still `wcr gui` or `wcr tui`.
+`wcr weechat --configure` rewrites the `radio` server to the node's IRC listen address from `wcr.toml` (default `127.0.0.1:6667`; `wcr weechat --configure -c other.toml` follows that file) and loads [`weechat/radio.py`](weechat/radio.py). The built-in UI is still `wcr gui` or `wcr tui`.
 
 Step-by-step: [WeeChat guide](https://weechatradio.com/guides/weechat.html)
 

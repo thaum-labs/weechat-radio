@@ -102,7 +102,7 @@ async fn real_main() -> Result<()> {
         }
         Command::Weechat { configure } => {
             wcr::ui_style::panel("WEECHAT RADIO", "WEECHAT");
-            wcr::weechat_app::run(configure)?;
+            wcr::weechat_app::run(configure, &cfg_path)?;
         }
         Command::Tnc { action } => {
             wcr::ui_style::panel("WEECHAT RADIO", "TNC");
