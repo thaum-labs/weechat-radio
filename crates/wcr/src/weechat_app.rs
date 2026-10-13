@@ -539,6 +539,16 @@ mod tests {
             install.contains("WEECHAT_CFG="),
             "configure output must be captured into the summary"
         );
+        let strip = install
+            .find("Start the node with `wcr node`")
+            .expect("old configure sentence is stripped");
+        let echoed = install
+            .rfind("echo \"$WEECHAT_CFG\"")
+            .expect("configure line is printed in the summary");
+        assert!(
+            strip < echoed,
+            "the node-start sentence must be removed before the summary prints it"
+        );
     }
 
     #[test]
