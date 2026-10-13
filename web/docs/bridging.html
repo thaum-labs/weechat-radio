@@ -59,6 +59,7 @@
           <li><code>#bulletin</code> goes on the air when anyone was heard on that dial over RF in the last 10 minutes. A gateway that has heard nobody stays quiet.</li>
         </ul>
         <p>Same-frequency hops still need no hub. A station in <code>radio</code> mode keeps its <code>#bulletin</code> lines on its own dial. A gateway that hears them may carry them onward when the frame allows internet (<code>INET_OK</code>).</p>
+        <p><strong>Hub routing today:</strong> the hub keeps a <code>serves</code> set per connected station. Your own callsign is always included. RF stations heard on your dial are added from the periodic <code>{&quot;heard&quot;:[...],&quot;freq_khz&quot;:…}</code> JSON your node sends after <code>hub_ok</code> (the WebSocket hello starts with an empty <code>heard</code> list). Private 1:1 and closed-group frames are delivered only to sessions whose <code>serves</code> contains the destination callsign. Internet-only stations with nobody heard on RF therefore rely on the public <code>#bulletin</code> path until a member appears in <code>heard</code> or you are the destination.</p>
       </div>
 
       <ul class="dgm-key">

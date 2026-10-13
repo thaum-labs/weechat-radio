@@ -1,11 +1,13 @@
 //! SPDX-License-Identifier: Apache-2.0
 //! Embedded localhost IRC server for WeeChat and the built-in TUI.
 
+use crate::emcomm::BULLETIN_CHANNEL;
 use crate::error::Result;
 use chrono::Utc;
 use parking_lot::Mutex;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
@@ -53,7 +55,16 @@ struct Client {
     channels: HashSet<String>,
     registered: bool,
     tx: mpsc::Sender<String>,
+    /// IRC PRIVMSG lines already delivered to this client (by msgid).
+    delivered_msgids: HashSet<String>,
+    delivered_order: VecDeque<String>,
+    flood_tokens: f32,
+    flood_last: Instant,
 }
+
+const FLOOD_CAPACITY: f32 = 24.0;
+const FLOOD_REFILL_PER_SEC: f32 = 8.0;
+const DELIVERED_MSGID_CAP: usize = 512;
 
 const MAX_IRC_LINE: usize = 4096;
 
@@ -132,6 +143,10 @@ impl IrcServer {
                     channels: HashSet::new(),
                     registered: false,
                     tx: tx.clone(),
+                    delivered_msgids: HashSet::new(),
+                    delivered_order: VecDeque::new(),
+                    flood_tokens: FLOOD_CAPACITY,
+                    flood_last: Instant::now(),
                 },
             );
             id
@@ -178,6 +193,18 @@ impl IrcServer {
             return Ok(());
         }
         let cmd = parts[0].to_ascii_uppercase();
+        if !flood_allows(&self.inner, id, &cmd) {
+            let nick = self.nick(id);
+            let srv = self.inner.lock().server_name.clone();
+            self.send_raw(
+                id,
+                &format!(
+                    ":{srv} NOTICE {nick} :Slow down — message rate limited (try again in a moment)"
+                ),
+            )
+            .await;
+            return Ok(());
+        }
         match cmd.as_str() {
             "CAP" => self.cap(id, &parts).await,
             "NICK" => {
@@ -490,7 +517,8 @@ impl IrcServer {
         msgid: Option<&str>,
         via: Option<&str>,
     ) {
-        let line = self.tag_privmsg(from, target, text, msgid, via);
+        let target = normalize_irc_channel(target);
+        let line = self.tag_privmsg(from, &target, text, msgid, via);
         let via_mark = crate::store::via_bracket(via.unwrap_or(""));
         let plain = if via_mark.is_empty() {
             format!(":{from} PRIVMSG {target} :{text}")
@@ -502,23 +530,21 @@ impl IrcServer {
             g.clients
                 .values()
                 .map(|c| {
-                    let in_chan = target.starts_with('#')
-                        || target.starts_with('&')
-                        || c.channels.contains(target)
-                        || c.nick.eq_ignore_ascii_case(target)
-                        || c.nick.eq_ignore_ascii_case(from);
-                    (
-                        c.id,
-                        in_chan || !target.starts_with('#') && !target.starts_with('&'),
-                        c.caps.contains("message-tags"),
-                    )
+                    let in_chan = client_receives_target(c, &target, from);
+                    (c.id, in_chan, c.caps.contains("message-tags"))
                 })
                 .collect()
         };
         for (id, include, tags) in clients {
-            if include {
-                self.send_raw(id, if tags { &line } else { &plain }).await;
+            if !include {
+                continue;
             }
+            if let Some(mid) = msgid {
+                if !remember_msgid(&self.inner, id, mid) {
+                    continue;
+                }
+            }
+            self.send_raw(id, if tags { &line } else { &plain }).await;
         }
     }
 
@@ -604,8 +630,11 @@ impl IrcServer {
             if !tries.is_empty() && tries != "0" {
                 tags.push_str(&format!(";+radio/tries={tries}"));
             }
+            let target = normalize_irc_channel(&target);
             let tagged = format!("@{tags} :{from} PRIVMSG {target} :{text}");
-            self.send_raw(id, &tagged).await;
+            if remember_msgid(&self.inner, id, &msgid) {
+                self.send_raw(id, &tagged).await;
+            }
         }
         if has_batch {
             self.send_raw(id, ":wcr.local BATCH -hist").await;
@@ -721,4 +750,64 @@ fn split_irc(line: &str) -> Vec<String> {
 
 fn trailing(parts: &[String]) -> String {
     parts.join(" ")
+}
+
+fn normalize_irc_channel(target: &str) -> String {
+    if crate::slash::is_bulletin(target) {
+        return BULLETIN_CHANNEL.to_string();
+    }
+    if target.starts_with('#') || target.starts_with('&') {
+        return target.to_ascii_lowercase();
+    }
+    target.to_string()
+}
+
+fn client_receives_target(c: &Client, target: &str, from: &str) -> bool {
+    if target.starts_with('#') || target.starts_with('&') {
+        return c.channels.iter().any(|ch| ch.eq_ignore_ascii_case(target));
+    }
+    c.nick.eq_ignore_ascii_case(target) || c.nick.eq_ignore_ascii_case(from)
+}
+
+fn remember_msgid(inner: &Arc<Mutex<Inner>>, client_id: u64, msgid: &str) -> bool {
+    if msgid.is_empty() {
+        return true;
+    }
+    let mut g = inner.lock();
+    let Some(c) = g.clients.get_mut(&client_id) else {
+        return false;
+    };
+    if c.delivered_msgids.contains(msgid) {
+        return false;
+    }
+    c.delivered_msgids.insert(msgid.to_string());
+    c.delivered_order.push_back(msgid.to_string());
+    while c.delivered_order.len() > DELIVERED_MSGID_CAP {
+        if let Some(old) = c.delivered_order.pop_front() {
+            c.delivered_msgids.remove(&old);
+        }
+    }
+    true
+}
+
+fn flood_allows(inner: &Arc<Mutex<Inner>>, id: u64, cmd: &str) -> bool {
+    if matches!(
+        cmd,
+        "CAP" | "NICK" | "USER" | "PASS" | "PING" | "PONG" | "QUIT" | "AUTH"
+    ) {
+        return true;
+    }
+    let mut g = inner.lock();
+    let Some(c) = g.clients.get_mut(&id) else {
+        return false;
+    };
+    let now = Instant::now();
+    let elapsed = now.duration_since(c.flood_last).as_secs_f32();
+    c.flood_last = now;
+    c.flood_tokens = (c.flood_tokens + elapsed * FLOOD_REFILL_PER_SEC).min(FLOOD_CAPACITY);
+    if c.flood_tokens < 1.0 {
+        return false;
+    }
+    c.flood_tokens -= 1.0;
+    true
 }

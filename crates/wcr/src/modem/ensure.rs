@@ -4,7 +4,11 @@
 use crate::config;
 use crate::error::{Error, Result};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+const PINNED_SHA256_JSON: &str = include_str!("../../../../third_party/modem73/sha256.json");
 
 const RELEASES: &str = "https://github.com/thaum-labs/weechat-radio/releases/latest/download";
 
@@ -191,16 +195,53 @@ async fn download_rfnexus_macos(dest: &Path) -> Result<()> {
     unpack_tar_gz(&bytes, dest)
 }
 
+fn pinned_sha256_table() -> &'static HashMap<String, String> {
+    static TABLE: OnceLock<HashMap<String, String>> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        serde_json::from_str(PINNED_SHA256_JSON).unwrap_or_else(|e| {
+            tracing::warn!("modem73 pinned sha256 table invalid: {e}");
+            HashMap::new()
+        })
+    })
+}
+
+fn asset_name_from_url(url: &str) -> Option<&str> {
+    url.rsplit('/').next().filter(|s| !s.is_empty())
+}
+
 async fn fetch_verified_bytes(url: &str) -> Result<bytes::Bytes> {
     let bytes = fetch_bytes(url).await?;
+    let asset = asset_name_from_url(url).unwrap_or_default();
+    if let Some(expected) = pinned_sha256_table().get(asset) {
+        if expected.chars().all(|c| c == '0') {
+            return Err(Error::Modem(format!(
+                "pinned SHA-256 for {asset} is not set in-repo; update third_party/modem73/sha256.json"
+            )));
+        }
+        verify_sha256_hex(&bytes, expected)?;
+        return Ok(bytes);
+    }
     if let Ok(expected) = fetch_bytes(&format!("{url}.sha256")).await {
         verify_sha256_file(&bytes, &expected)?;
-    } else {
-        tracing::error!(
-            "SECURITY: no SHA-256 sidecar at {url}.sha256 — download is unverified (modem73 release assets often lack sidecars; install from a trusted network or verify manually)"
-        );
+        return Ok(bytes);
     }
-    Ok(bytes)
+    Err(Error::Modem(format!(
+        "no SHA-256 checksum for {url} (pin it in third_party/modem73/sha256.json or publish a .sha256 sidecar)"
+    )))
+}
+
+fn verify_sha256_hex(bytes: &[u8], expected: &str) -> Result<()> {
+    let expected = expected.trim().to_ascii_lowercase();
+    if expected.len() != 64 {
+        return Err(Error::Modem("invalid pinned SHA-256".into()));
+    }
+    let got = hex::encode(Sha256::digest(bytes));
+    if got != expected {
+        return Err(Error::Modem(format!(
+            "checksum mismatch (expected {expected}, got {got})"
+        )));
+    }
+    Ok(())
 }
 
 fn verify_sha256_file(bytes: &[u8], sidecar: &[u8]) -> Result<()> {
