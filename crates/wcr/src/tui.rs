@@ -250,11 +250,23 @@ pub async fn run(cfg: &Config) -> Result<()> {
         Err(_) => {
             // Start a node in-process, then retry.
             let cfg_n = cfg.clone();
-            tokio::spawn(async move {
-                let _ = crate::node::run_node(cfg_n, false).await;
-            });
+            let bind = cfg.irc.bind.clone();
+            let node = tokio::spawn(async move { crate::node::run_node(cfg_n, false).await });
             tokio::time::sleep(Duration::from_millis(400)).await;
-            TcpStream::connect(&cfg.irc.bind).await?
+            match TcpStream::connect(&bind).await {
+                Ok(s) => s,
+                Err(e) => {
+                    if let Ok(joined) = tokio::time::timeout(Duration::from_millis(200), node).await
+                    {
+                        if let Ok(Err(node_err)) = joined {
+                            return Err(node_err);
+                        }
+                    }
+                    return Err(crate::error::Error::Msg(format!(
+                        "IRC port {bind} is not available ({e})"
+                    )));
+                }
+            }
         }
     };
     stream.set_nodelay(true)?;
@@ -574,6 +586,76 @@ fn parse_tui_part(line: &str) -> Option<(String, String)> {
     Some((nick, ch))
 }
 
+/// Paint a delivery mark on the newest line this station sent.
+///
+/// TAGMSG does not name a channel. Matching the last line of the current
+/// buffer put `[ok]` on someone else's bulletin reply instead of ours.
+fn apply_own_delivery(app: &mut App, state: &str, tries: u32) {
+    let Some(mark) = tui_delivery_mark(state, app.unicode) else {
+        return;
+    };
+    let nick = app.nick.clone();
+    for buf in app.buffers.iter_mut().rev() {
+        for line in buf.lines.iter_mut().rev() {
+            if !line.from.eq_ignore_ascii_case(&nick) {
+                continue;
+            }
+            if !tui_mark_advances(&line.ticks, &mark) {
+                return;
+            }
+            line.ticks = mark;
+            if tries > 0 {
+                line.tries = tries;
+            }
+            return;
+        }
+    }
+}
+
+fn tui_delivery_mark(state: &str, unicode: bool) -> Option<String> {
+    let text = match state {
+        "failed" => "[no]",
+        "queued" | "sent" | "relayed" | "delivered" | "all" => {
+            let d = crate::store::Delivery::parse(state);
+            if unicode {
+                d.ticks(true)
+            } else {
+                d.ticks_bracket()
+            }
+        }
+        s if s.starts_with("retry") => {
+            if unicode {
+                "·"
+            } else {
+                crate::store::Delivery::Queued.ticks_bracket()
+            }
+        }
+        _ => return None,
+    };
+    Some(text.to_string())
+}
+
+fn tui_mark_rank(ticks: &str) -> u8 {
+    match ticks {
+        "[ok]" | "VV" | "[all]" | "VVV" => 4,
+        "[no]" => 3,
+        "[rl]" | "vv" => 2,
+        "[tx]" | "v" => 1,
+        _ => 0,
+    }
+}
+
+/// `[ok]` and `[all]` stay put. A later retry must not walk the mark backwards.
+fn tui_mark_advances(current: &str, next: &str) -> bool {
+    if matches!(current, "[ok]" | "VV" | "[all]" | "VVV") {
+        return matches!(next, "[ok]" | "VV" | "[all]" | "VVV");
+    }
+    if current == "[no]" {
+        return matches!(next, "[ok]" | "VV" | "[all]" | "VVV" | "[no]");
+    }
+    tui_mark_rank(next) >= tui_mark_rank(current)
+}
+
 fn irc_via(line: &str) -> String {
     line.split("radio/via=")
         .nth(1)
@@ -707,39 +789,9 @@ fn handle_irc(app: &mut App, line: &str) {
     }
     if line.contains("radio/delivery=") {
         if let Some(rest) = line.split("radio/delivery=").nth(1) {
-            let state = rest.split(';').next().unwrap_or("");
+            let state = rest.split([';', ' ']).next().unwrap_or("");
             let tries = irc_tries(line);
-            let uni = app.unicode;
-            if let Some(last) = app.cur_mut().lines.back_mut() {
-                if tries > 0 {
-                    last.tries = tries;
-                }
-                let next = crate::store::Delivery::parse(state);
-                let keep_ok = matches!(
-                    next,
-                    crate::store::Delivery::Relayed | crate::store::Delivery::Sent
-                ) && (last.ticks == "[ok]" || last.ticks == "[all]");
-                if !keep_ok {
-                    last.ticks = match state {
-                        "queued" | "sent" | "relayed" | "delivered" | "all" => {
-                            let d = crate::store::Delivery::parse(state);
-                            if uni {
-                                d.ticks(true)
-                            } else {
-                                d.ticks_bracket()
-                            }
-                            .into()
-                        }
-                        s if s.starts_with("retry") => if uni {
-                            "·"
-                        } else {
-                            crate::store::Delivery::Queued.ticks_bracket()
-                        }
-                        .into(),
-                        _ => last.ticks.clone(),
-                    };
-                }
-            }
+            apply_own_delivery(app, state, tries);
         }
     }
     if line.contains("Internet down") {
@@ -1346,5 +1398,41 @@ mod tests {
         assert_eq!(last.from, "M0XYZ");
         assert_eq!(last.text, "hello");
         assert!(!app.heard.contains(&"?".to_string()));
+    }
+
+    #[test]
+    fn delivery_mark_lands_on_our_line_not_the_reply() {
+        let cfg = Config::default();
+        let mut app = App::new("G4ABC".into(), &cfg);
+        app.open_channel("#bulletin");
+        handle_irc(&mut app, ":G4ABC PRIVMSG #bulletin :bulletin-body");
+        handle_irc(&mut app, ":M0XYZ PRIVMSG #bulletin :i copied that");
+        handle_irc(
+            &mut app,
+            "@+radio/delivery=delivered;+radio/msgid=abc TAGMSG *",
+        );
+        let buf = app
+            .buffers
+            .iter()
+            .find(|b| b.name.eq_ignore_ascii_case("#bulletin"))
+            .unwrap();
+        let ours = buf.lines.iter().find(|l| l.from == "G4ABC").unwrap();
+        let theirs = buf.lines.iter().find(|l| l.from == "M0XYZ").unwrap();
+        assert_eq!(ours.ticks, "[ok]");
+        assert!(theirs.ticks.is_empty());
+        handle_irc(
+            &mut app,
+            "@+radio/delivery=retry-2/3;+radio/msgid=abc TAGMSG *",
+        );
+        let ours = app
+            .buffers
+            .iter()
+            .find(|b| b.name.eq_ignore_ascii_case("#bulletin"))
+            .unwrap()
+            .lines
+            .iter()
+            .find(|l| l.from == "G4ABC")
+            .unwrap();
+        assert_eq!(ours.ticks, "[ok]");
     }
 }

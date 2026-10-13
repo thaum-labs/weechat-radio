@@ -4,6 +4,7 @@
 use crate::modem::control::encode_control_frame;
 use crate::modem::kiss::{encode_frame, KissDecoder};
 use crate::proto::Envelope;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -11,16 +12,19 @@ use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 
 /// A lossy broadcast medium: every TX is delivered to all other listeners with `loss`.
+/// `send_from` tags the transmitter so a linked modem can hide some neighbours.
 #[derive(Clone)]
 pub struct SharedAir {
     tx: broadcast::Sender<Vec<u8>>,
+    linked: broadcast::Sender<(u64, Vec<u8>)>,
     pub loss: f32,
 }
 
 impl SharedAir {
     pub fn new(loss: f32) -> Self {
         let (tx, _) = broadcast::channel(256);
-        Self { tx, loss }
+        let (linked, _) = broadcast::channel(256);
+        Self { tx, linked, loss }
     }
 
     pub fn send(&self, frame: Vec<u8>) {
@@ -30,8 +34,19 @@ impl SharedAir {
         let _ = self.tx.send(frame);
     }
 
+    pub fn send_from(&self, station: u64, frame: Vec<u8>) {
+        if rand::random::<f32>() < self.loss {
+            return;
+        }
+        let _ = self.linked.send((station, frame));
+    }
+
     pub fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
         self.tx.subscribe()
+    }
+
+    pub fn subscribe_linked(&self) -> broadcast::Receiver<(u64, Vec<u8>)> {
+        self.linked.subscribe()
     }
 }
 
@@ -42,8 +57,10 @@ pub async fn mock_modem73(
     air: SharedAir,
 ) -> crate::error::Result<()> {
     let last_air = Arc::new(Mutex::new(None::<Instant>));
+    let tx_count = Arc::new(AtomicU64::new(0));
     let air_k = air.clone();
     let last_k = last_air.clone();
+    let tx_k = tx_count.clone();
     let kiss_bind = kiss_bind.to_string();
     tokio::spawn(async move {
         let listener = TcpListener::bind(&kiss_bind).await.expect("kiss bind");
@@ -51,6 +68,7 @@ pub async fn mock_modem73(
             let (mut stream, _) = listener.accept().await.expect("kiss accept");
             let air = air_k.clone();
             let last_air = last_k.clone();
+            let tx_k = tx_k.clone();
             tokio::spawn(async move {
                 let mut dec = KissDecoder::new();
                 let mut rx = air.subscribe();
@@ -63,6 +81,7 @@ pub async fn mock_modem73(
                                 Ok(n) => {
                                     for payload in dec.push(&buf[..n]) {
                                         *last_air.lock().expect("last_air") = Some(Instant::now());
+                                        tx_k.fetch_add(1, Ordering::Relaxed);
                                         air.send(payload);
                                     }
                                 }
@@ -87,6 +106,7 @@ pub async fn mock_modem73(
         loop {
             let (mut stream, _) = listener.accept().await.expect("ctrl accept");
             let last_air = last_air.clone();
+            let tx_count = tx_count.clone();
             tokio::spawn(async move {
                 let mut stash = Vec::new();
                 let mut buf = [0u8; 2048];
@@ -106,6 +126,7 @@ pub async fn mock_modem73(
                                         .and_then(|g| *g)
                                         .map(|t| t.elapsed() < Duration::from_millis(400))
                                         .unwrap_or(false);
+                                    let sent = tx_count.load(Ordering::Relaxed);
                                     let reply = match cmd {
                                         "get_status" => serde_json::json!({
                                             "channel_state": if busy { "rx" } else { "idle" },
@@ -114,9 +135,124 @@ pub async fn mock_modem73(
                                             "audio_connected": true,
                                             "occupancy_pct": if busy { 80 } else { 0 },
                                             "input_level_db": if busy { -12.0 } else { -48.0 },
-                                            "output_level_db": -80.0
+                                            "output_level_db": -80.0,
+                                            "tx_frame_count": sent
                                         }),
                                         "set_config" => serde_json::json!({"ok": true}),
+                                        _ => serde_json::json!({"ok": true}),
+                                    };
+                                    if let Ok(f) = encode_control_frame(&reply) {
+                                        if stream.write_all(&f).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+    Ok(())
+}
+
+/// Like [`mock_modem73`], but this station only hears `hear` and tags its own TX.
+/// Use this when A must not hear C directly and B is the relay.
+pub async fn mock_modem73_linked(
+    kiss_bind: &str,
+    ctrl_bind: &str,
+    air: SharedAir,
+    station: u64,
+    hear: std::collections::HashSet<u64>,
+) -> crate::error::Result<()> {
+    let last_air = Arc::new(Mutex::new(None::<Instant>));
+    let tx_count = Arc::new(AtomicU64::new(0));
+    let air_k = air.clone();
+    let last_k = last_air.clone();
+    let tx_k = tx_count.clone();
+    let kiss_bind = kiss_bind.to_string();
+    let hear = Arc::new(hear);
+    tokio::spawn(async move {
+        let listener = TcpListener::bind(&kiss_bind).await.expect("kiss bind");
+        loop {
+            let (mut stream, _) = listener.accept().await.expect("kiss accept");
+            let air = air_k.clone();
+            let last_air = last_k.clone();
+            let hear = hear.clone();
+            let tx_k = tx_k.clone();
+            tokio::spawn(async move {
+                let mut dec = KissDecoder::new();
+                let mut rx = air.subscribe_linked();
+                let mut buf = [0u8; 2048];
+                loop {
+                    tokio::select! {
+                        n = stream.read(&mut buf) => {
+                            match n {
+                                Ok(0) | Err(_) => break,
+                                Ok(n) => {
+                                    for payload in dec.push(&buf[..n]) {
+                                        *last_air.lock().expect("last_air") = Some(Instant::now());
+                                        tx_k.fetch_add(1, Ordering::Relaxed);
+                                        air.send_from(station, payload);
+                                    }
+                                }
+                            }
+                        }
+                        frame = rx.recv() => {
+                            if let Ok((from, payload)) = frame {
+                                if from == station || !hear.contains(&from) {
+                                    continue;
+                                }
+                                *last_air.lock().expect("last_air") = Some(Instant::now());
+                                let enc = encode_frame(&payload);
+                                if stream.write_all(&enc).await.is_err() { break; }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+
+    let ctrl_bind = ctrl_bind.to_string();
+    tokio::spawn(async move {
+        let listener = TcpListener::bind(&ctrl_bind).await.expect("ctrl bind");
+        loop {
+            let (mut stream, _) = listener.accept().await.expect("ctrl accept");
+            let last_air = last_air.clone();
+            let tx_count = tx_count.clone();
+            tokio::spawn(async move {
+                let mut stash = Vec::new();
+                let mut buf = [0u8; 2048];
+                loop {
+                    match stream.read(&mut buf).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            stash.extend_from_slice(&buf[..n]);
+                            if let Ok(frames) =
+                                crate::modem::control::decode_control_frames(&mut stash)
+                            {
+                                for v in frames {
+                                    let cmd = v.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
+                                    let busy = last_air
+                                        .lock()
+                                        .ok()
+                                        .and_then(|g| *g)
+                                        .map(|t| t.elapsed() < Duration::from_millis(400))
+                                        .unwrap_or(false);
+                                    let sent = tx_count.load(Ordering::Relaxed);
+                                    let reply = match cmd {
+                                        "get_status" => serde_json::json!({
+                                            "channel_state": if busy { "rx" } else { "idle" },
+                                            "ptt_on": false,
+                                            "last_snr": 12.0,
+                                            "audio_connected": true,
+                                            "occupancy_pct": if busy { 80 } else { 0 },
+                                            "input_level_db": if busy { -12.0 } else { -48.0 },
+                                            "output_level_db": -80.0,
+                                            "tx_frame_count": sent
+                                        }),
                                         _ => serde_json::json!({"ok": true}),
                                     };
                                     if let Ok(f) = encode_control_frame(&reply) {
