@@ -33,8 +33,12 @@ impl AirClass {
         if env.flags.priority() == Priority::Emergency {
             return Self::Emergency;
         }
+        // ACKs share the emergency defer cap. A channel that stays busy
+        // (occupancy near 100%) must not hold a short ACK for the full
+        // `max_defer_ms`. `pace_and_send` still backs off slot by slot, then
+        // hands the frame to the modem once `emergency_max_defer_ms` elapses.
         if env.kind == MsgType::Ack {
-            return Self::Ack;
+            return Self::Emergency;
         }
         if env.flags.priority() == Priority::Priority {
             return Self::Priority;
@@ -740,6 +744,56 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn ack_goes_out_while_channel_stays_busy() {
+        use crate::proto::{Callsign, Flags};
+        let q = AirQueue::new();
+        let sense = FakeSense::new();
+        sense.set_state(ChannelState::Rx);
+        sense.set_occupancy(99);
+        let (tx, mut rx) = mpsc::channel(8);
+        let cfg = test_cfg();
+        let snap = status::new_shared();
+        let h = tokio::spawn(run_air_queue(
+            q.clone(),
+            tx,
+            sense.clone(),
+            None,
+            cfg,
+            snap,
+            CancellationToken::new(),
+        ));
+        let ack = Envelope::ack_for(
+            &Envelope::new_msg(
+                Callsign::parse("M0XYZ").unwrap(),
+                Callsign::parse("G4ABC").unwrap(),
+                1,
+                b"hi".to_vec(),
+                3,
+                Flags::new(),
+            )
+            .unwrap(),
+            Callsign::parse("G4ABC").unwrap(),
+            2,
+            None,
+        );
+        q.enqueue(AirItem::new(&ack, "G4ABC", vec![vec![9]], Preset::VhfFm));
+        let own = item(AirClass::Own, 3);
+        q.enqueue(own);
+        tokio::time::advance(Duration::from_millis(80)).await;
+        tokio::task::yield_now().await;
+        assert!(
+            drain(&mut rx).await.is_empty(),
+            "ACK waits through the busy backoff"
+        );
+        // emergency_max_defer_ms is 200 in test_cfg. The ACK uses that cap.
+        // The ordinary frame keeps the 15s cap and must still be held.
+        tokio::time::advance(Duration::from_millis(250)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(drain(&mut rx).await, vec![vec![9]]);
+        h.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn background_dropped_when_congested() {
         let q = AirQueue::new();
         let sense = FakeSense::new();
@@ -826,7 +880,7 @@ mod tests {
         assert_eq!(AirClass::classify(&relay, us), AirClass::Relay);
         let mut ack = msg.clone();
         ack.kind = MsgType::Ack;
-        assert_eq!(AirClass::classify(&ack, us), AirClass::Ack);
+        assert_eq!(AirClass::classify(&ack, us), AirClass::Emergency);
         let mut beacon = msg.clone();
         beacon.kind = MsgType::Beacon;
         assert_eq!(AirClass::classify(&beacon, us), AirClass::Background);
