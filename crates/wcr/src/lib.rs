@@ -14,6 +14,7 @@ pub mod grid;
 #[cfg(feature = "desktop")]
 pub mod gui;
 pub mod help;
+pub mod http_local;
 pub mod ircd;
 pub mod mail;
 pub mod modem;

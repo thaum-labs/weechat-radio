@@ -13,7 +13,8 @@ Manual steps, if you installed WeeChat yourself:
 
 1. Copy `radio.py` into WeeChat's Python directory:
 
-   - Linux: `~/.weechat/python/`
+   - Linux (WeeChat ≥ 3.2): `~/.local/share/weechat/python/`
+   - Linux (older): `~/.weechat/python/`
    - macOS: `~/.weechat/python/`
    - Windows (WSL): same as Linux inside WSL
 
