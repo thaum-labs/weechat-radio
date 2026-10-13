@@ -191,7 +191,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         Err(e) => tracing::warn!("status HTTP {status_bind}: {e}"),
     }
 
-    let keys = load_or_create(&Config::key_path())?;
+    let keys = load_or_create(&cfg.identity_key_path())?;
     let store = Arc::new(Store::open(
         &cfg.store.path,
         cfg.store.max_age_hours,

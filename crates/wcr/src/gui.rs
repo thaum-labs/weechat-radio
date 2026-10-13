@@ -918,6 +918,13 @@ impl GuiApp {
     }
 
     fn install_tray(&mut self) {
+        #[cfg(target_os = "linux")]
+        {
+            if gtk::init().is_err() {
+                tracing::warn!("system tray unavailable (GTK init failed)");
+                return;
+            }
+        }
         let show = MenuItem::new("Show window", true, None);
         let stop = MenuItem::new("Stop station", true, None);
         let quit = MenuItem::new("Quit", true, None);

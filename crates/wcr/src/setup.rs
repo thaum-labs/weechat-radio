@@ -11,6 +11,11 @@ use dialoguer::{Confirm, Input, Select};
 use std::io::Write;
 
 pub fn run_wizard() -> Result<Config> {
+    if !console::Term::stdout().is_term() {
+        return Err(crate::error::Error::Msg(
+            "wcr setup needs an interactive terminal. Run it in a shell, or copy wcr.toml from the docs.".into(),
+        ));
+    }
     let theme = ui_style::prompt_theme();
     ui_style::panel("WEECHAT RADIO", "SETUP");
     println!(
@@ -29,8 +34,19 @@ pub fn run_wizard() -> Result<Config> {
     });
 
     let call: String = Input::with_theme(&theme)
-        .with_prompt(ui_style::step(1, total_steps, "Callsign (guests: ~NICK)"))
-        .validate_with(|s: &String| Callsign::parse(s).map(|_| ()).map_err(|e| e.to_string()))
+        .with_prompt(ui_style::step(
+            1,
+            total_steps,
+            "Callsign (guests: ~NICK, max 8 chars including ~)",
+        ))
+        .validate_with(|s: &String| {
+            Callsign::parse(s).map(|_| ()).map_err(|e| {
+                e.to_string()
+                    .strip_prefix("protocol: ")
+                    .map(str::to_string)
+                    .unwrap_or_else(|| e.to_string())
+            })
+        })
         .interact_text()?;
 
     let guessed = grid_rx.recv().ok().flatten();
@@ -49,9 +65,17 @@ pub fn run_wizard() -> Result<Config> {
         };
         println!(
             "  {}",
-            ui_style::dim().apply_to(format!("Detected {label}"))
+            ui_style::dim().apply_to(format!(
+                "Detected {label} (shown on the public map if you enable telemetry)"
+            ))
         );
-        grid_prompt = grid_prompt.default(hit.grid.clone());
+        let use_detected = Confirm::with_theme(&theme)
+            .with_prompt("Use this grid on the map?")
+            .default(false)
+            .interact()?;
+        if use_detected {
+            grid_prompt = grid_prompt.default(hit.grid.clone());
+        }
     } else {
         println!(
             "  {}",
@@ -91,6 +115,31 @@ pub fn run_wizard() -> Result<Config> {
             cfg.mode = Mode::Internet;
             cfg.modem.manage = false;
             cfg.modem.ptt = "none".into();
+            let public_hub = Confirm::with_theme(&theme)
+                .with_prompt(ui_style::step(
+                    4,
+                    total_steps,
+                    "Use the public hub (wss://hub.weechatradio.com)?",
+                ))
+                .default(true)
+                .interact()?;
+            if !public_hub {
+                let url: String = Input::with_theme(&theme)
+                    .with_prompt("Hub WebSocket URL (wss://host/ws)")
+                    .interact_text()?;
+                cfg.hub.url = url;
+            }
+            let share_map = Confirm::with_theme(&theme)
+                .with_prompt(ui_style::step(
+                    5,
+                    total_steps,
+                    "Share callsign and grid on the public map? (never message text)",
+                ))
+                .default(false)
+                .interact()?;
+            if !share_map {
+                cfg.telemetry.url.clear();
+            }
         }
         1 => {
             cfg.mode = Mode::InternetRadio;
@@ -208,12 +257,6 @@ pub fn run_wizard() -> Result<Config> {
         );
     }
 
-    println!();
-    println!("  Telemetry: in Internet and Internet+Radio modes, this node uploads");
-    println!("  metadata (callsign, grid, mode, SNR — never message text) to");
-    println!("  weechatradio.com so the live map can show the network.");
-    println!();
-
     if Confirm::with_theme(&theme)
         .with_prompt(ui_style::step(
             total_steps,
@@ -245,8 +288,8 @@ pub fn run_wizard() -> Result<Config> {
             println!("  Re-run the official installer, or use `wcr tui`.");
         }
     }
-    println!("  Next:  wcr node     then  wcr weechat");
-    println!("  Or use the built-in UI:  wcr tui");
+    println!("  Next:  wcr gui   or   wcr tui");
+    println!("  With WeeChat:  wcr node   then   wcr weechat");
     println!("  How you know it worked: the status bar shows your callsign and mode.");
     ui_style::rule();
     let _ = std::io::stdout().flush();

@@ -261,6 +261,9 @@ impl GatewayConfig {
 #[serde(default)]
 pub struct StoreConfig {
     pub path: PathBuf,
+    /// Override identity key path (for tests and multi-station e2e). Empty = default.
+    #[serde(default)]
+    pub identity_key: PathBuf,
     pub max_age_hours: u64,
     pub max_msgs: u64,
 }
@@ -269,6 +272,7 @@ impl Default for StoreConfig {
     fn default() -> Self {
         Self {
             path: PathBuf::new(),
+            identity_key: PathBuf::new(),
             max_age_hours: 72,
             max_msgs: 10_000,
         }
@@ -470,10 +474,16 @@ impl Config {
         let text = std::fs::read_to_string(path)?;
         let mut cfg: Config = toml::from_str(&text)?;
         cfg.normalize();
+        if !cfg.callsign.is_empty() {
+            crate::proto::Callsign::parse(&cfg.callsign)?;
+        }
         Ok(cfg)
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
+        if !self.callsign.is_empty() {
+            crate::proto::Callsign::parse(&self.callsign)?;
+        }
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -513,6 +523,14 @@ impl Config {
 
     pub fn key_path() -> PathBuf {
         default_data_dir().join("identity.key")
+    }
+
+    pub fn identity_key_path(&self) -> PathBuf {
+        if self.store.identity_key.as_os_str().is_empty() {
+            Self::key_path()
+        } else {
+            self.store.identity_key.clone()
+        }
     }
 
     /// True when this station will open a hub WebSocket.
@@ -572,6 +590,15 @@ pub fn ensure_dirs() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn load_rejects_invalid_callsign() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wcr.toml");
+        std::fs::write(&path, "callsign = \"!!BAD!!\"\n").unwrap();
+        let err = Config::load(&path).unwrap_err();
+        assert!(err.to_string().contains("callsign") || err.to_string().contains("protocol"));
+    }
 
     #[test]
     fn roundtrip_toml() {

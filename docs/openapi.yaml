@@ -8,6 +8,14 @@ info:
 servers:
   - url: https://hub.weechatradio.com
 paths:
+  /:
+    get:
+      summary: Hub WebSocket upgrade (same as `/ws`)
+      description: Nodes connect with a signed JSON `hello` then exchange binary envelopes.
+  /ws:
+    get:
+      summary: Hub WebSocket (node protocol)
+      description: Signed hello, then binary `Envelope` frames. Public map clients may use `/ws/live` instead.
   /healthz:
     get:
       summary: Liveness

@@ -297,7 +297,7 @@ def _sync_buffer_nicks(buf, channel, heard):
 
 def radio_cmd(data, buffer, args):
     server = weechat.buffer_get_string(buffer, "localvar_server")
-    weechat.command(buffer, "/quote %s RADIO %s" % (server or "radio", args))
+    weechat.command(buffer, "/quote -server %s RADIO %s" % (server or "radio", args))
     return weechat.WEECHAT_RC_OK
 
 
