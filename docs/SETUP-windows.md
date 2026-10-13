@@ -15,7 +15,7 @@ On the web: https://weechatradio.com/guides/windows.html
    irm https://weechatradio.com/install.ps1 | iex
    ```
 
-   Or download the zip from GitHub Releases and put `wcr.exe` on your PATH.
+   That adds WeeChat Radio to your user PATH. Open a new PowerShell window before `wcr setup`. Before WeeChat is downloaded, the installer says what it is installing. Or download the zip from GitHub Releases and put `wcr.exe` on your PATH.
 
 2. Run setup first:
 

@@ -66,9 +66,7 @@
           <p>This downloads <code>wcr</code>. It does not run <code>brew install weechat</code>. Homebrew has no tap for this project yet, and on older macOS it would compile WeeChat from source.</p>
         </li>
         <li>
-          <p>If a new terminal says <code>wcr: command not found</code>:</p>
-          <pre>export PATH="$HOME/.local/bin:$PATH"</pre>
-          <p>Add that line to <code>~/.zshrc</code> so it sticks.</p>
+          <p>The installer adds <code>~/.local/bin</code> to your bash, zsh, or fish profile when it is not already on PATH. This terminal does not see that yet. Run the <code>export</code> line it printed, then <code>wcr setup</code>.</p>
         </li>
         <li>
           <p>Run setup first. It asks for your callsign, grid, and whether you have a radio:</p>
