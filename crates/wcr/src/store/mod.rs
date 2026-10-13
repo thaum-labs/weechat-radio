@@ -1460,6 +1460,36 @@ mod tests {
     }
 
     #[test]
+    fn queue_depth_counts_unacked_rows() {
+        let s = Store::open_memory().unwrap();
+        let mk = |seq, body: &[u8]| {
+            Envelope::new_msg(
+                Callsign::parse("G4ABC").unwrap(),
+                Callsign::parse("M0XYZ").unwrap(),
+                seq,
+                body.to_vec(),
+                3,
+                Flags::new(),
+            )
+            .unwrap()
+        };
+        let sent = mk(1, b"one");
+        let queued = mk(2, b"two");
+        let done = mk(3, b"three");
+        let failed = mk(4, b"four");
+        s.insert(&sent, Delivery::Sent).unwrap();
+        s.insert(&queued, Delivery::Queued).unwrap();
+        s.insert(&done, Delivery::Delivered).unwrap();
+        s.insert(&failed, Delivery::Failed).unwrap();
+        s.set_hold(&sent.msg_id, 50, 3).unwrap();
+        // Sidebar QUEUE is this outbound count. AIR is the TNC queue and
+        // stays 0 when these rows never get a frame enqueued.
+        let (outbound, hold) = s.queue_depth().unwrap();
+        assert_eq!(outbound, 2);
+        assert_eq!(hold, 1);
+    }
+
+    #[test]
     fn group_receipts() {
         let s = Store::open_memory().unwrap();
         s.group_create("net", &["G4ABC".into(), "M0XYZ".into()])

@@ -591,6 +591,10 @@ fn parse_tui_part(line: &str) -> Option<(String, String)> {
 /// TAGMSG does not name a channel. Matching the last line of the current
 /// buffer put `[ok]` on someone else's bulletin reply instead of ours.
 fn apply_own_delivery(app: &mut App, state: &str, tries: u32) {
+    if state.starts_with("retry") {
+        apply_own_retry(app, tries);
+        return;
+    }
     let Some(mark) = tui_delivery_mark(state, app.unicode) else {
         return;
     };
@@ -606,6 +610,37 @@ fn apply_own_delivery(app: &mut App, state: &str, tries: u32) {
             line.ticks = mark;
             if tries > 0 {
                 line.tries = tries;
+            }
+            return;
+        }
+    }
+}
+
+/// A retry is another copy of a line already marked sent or relayed.
+/// Mapping it to the queued mark made `[tx]` refuse the update, so `[xN]` stuck.
+fn apply_own_retry(app: &mut App, tries: u32) {
+    let nick = app.nick.clone();
+    let sent = if app.unicode {
+        crate::store::Delivery::Sent.ticks(true)
+    } else {
+        crate::store::Delivery::Sent.ticks_bracket()
+    };
+    for buf in app.buffers.iter_mut().rev() {
+        for line in buf.lines.iter_mut().rev() {
+            if !line.from.eq_ignore_ascii_case(&nick) {
+                continue;
+            }
+            if matches!(
+                line.ticks.as_str(),
+                "[ok]" | "VV" | "[all]" | "VVV" | "[no]"
+            ) {
+                return;
+            }
+            if tries > 0 {
+                line.tries = tries;
+            }
+            if line.ticks.is_empty() || matches!(line.ticks.as_str(), "·" | "-" | "[..]") {
+                line.ticks = sent.to_string();
             }
             return;
         }
@@ -1434,5 +1469,32 @@ mod tests {
             .find(|l| l.from == "G4ABC")
             .unwrap();
         assert_eq!(ours.ticks, "[ok]");
+    }
+
+    #[test]
+    fn retry_updates_try_count_without_demoting_tx() {
+        let cfg = Config::default();
+        let mut app = App::new("M7TJF".into(), &cfg);
+        app.open_channel("#bulletin");
+        handle_irc(&mut app, ":M7TJF PRIVMSG #bulletin :radio check");
+        handle_irc(
+            &mut app,
+            "@+radio/delivery=sent;+radio/tries=1;+radio/msgid=abc TAGMSG *",
+        );
+        handle_irc(
+            &mut app,
+            "@+radio/delivery=retry-1/3;+radio/tries=2;+radio/msgid=abc TAGMSG *",
+        );
+        let ours = app
+            .buffers
+            .iter()
+            .find(|b| b.name.eq_ignore_ascii_case("#bulletin"))
+            .unwrap()
+            .lines
+            .iter()
+            .find(|l| l.from == "M7TJF")
+            .unwrap();
+        assert_eq!(ours.ticks, "[tx]");
+        assert_eq!(ours.tries, 2);
     }
 }
