@@ -183,6 +183,15 @@ async fn hub_bulletin_one_privmsg_at_receiver() {
         }
         if line.contains("PRIVMSG #bulletin") || line.contains("PRIVMSG #BULLETIN") {
             privmsg_hits += 1;
+            let body = line.trim_end();
+            assert!(
+                body.ends_with(":hub-dedupe-qa"),
+                "exact body missing: {body}"
+            );
+            assert!(
+                !body.contains("hub-dedupe-qaPRIVMSG") && !body.contains("hub-dedupe-qa\r"),
+                "doubled IRC line: {body}"
+            );
             if line.starts_with('@')
                 && line.contains("msgid=")
                 && line.contains(":~QAONE1 PRIVMSG")
