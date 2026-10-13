@@ -50,6 +50,21 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v0.1.80</p>
+          <p>Tue, 13 Oct 2026</p>
+        </h3>
+        <pre>A direct message now shows for the station it was sent to, and the sender gets [ok] once that station confirms it. #bulletin stops at [ok] on the first confirmation. A closed group reaches [all] when every member has confirmed. After [ok], a retry that was already keying is not tagged again. A hub that refuses the callsign, including one already claimed, shows [no] instead of sent. Hearing your own frame is still [rl], not a receipt, and retries keep going until an ACK arrives or the count is used up. This station does not relay its own direct messages.
+
+A closed group created or joined here is registered with the hub straight away, so the first message does not wait for the periodic refresh. If a receipt is lost, a later copy of that unacked frame is ACKed and forwarded again.
+
+An ACK does not sit behind the rest of the queue. Under a steady noise floor it is keyed with modem carrier sense off after about 3 seconds, or sooner when the modem reports undecodable busy, and carrier sense is then turned back on. Carrier sense stays on while another station's frame is being received. When the retries are used up the line shows [no], and hearing that frame again does not put it back on [rl]. A later ACK can still move [no] to [ok].
+
+#bulletin on the hub reaches every connected station once. A burst of IRC lines is limited, and a line from the radio is no longer shown twice. wcr weechat --configure writes irc.conf. If the IRC port is already in use, the node stops and names that port. If modem73 exits at startup, the error is its log line. The Linux tray starts only where the desktop libraries are present, so a headless hub still builds. The hub image includes the modem checksums it checks while building. Installers and the modem download check a SHA-256 sidecar when one is published. The modem archive stays the v0.1.79 pin.
+
+Known issues. A relay that already saw an ACK does not send it again when the sender retries, so a sender that missed the first ACK can show a false [no]. A third station can forward an ACK again and occasionally key over the middle station. The first transmission in a fast OFDM mode is often missed and needs one retry.</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>site</p>
           <p>Thu, 1 Oct 2026</p>
         </h3>
