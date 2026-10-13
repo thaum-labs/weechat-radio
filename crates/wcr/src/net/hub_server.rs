@@ -426,9 +426,11 @@ fn route(st: &HubState, env: &Envelope, raw: &[u8], from: &str) -> (u32, String,
     let (from_khz, sessions) = {
         let g = st.sessions.lock();
         let from_khz = g.get(from).map(|s| s.freq_khz).unwrap_or(0);
+        let broadcast = crate::slash::is_hub_broadcast(&dest);
         let sessions: Vec<(u32, mpsc::Sender<Vec<u8>>)> = g
             .iter()
-            .filter(|(call, s)| *call != from && (s.serves.contains(&dest) || *call == &dest))
+            .filter(|(call, _)| *call != from)
+            .filter(|(call, s)| broadcast || *call == &dest || s.serves.contains(&dest))
             .map(|(_, s)| (s.freq_khz, s.tx.clone()))
             .collect();
         (from_khz, sessions)
@@ -639,6 +641,45 @@ mod tests {
     }
 
     #[test]
+    fn bulletin_reaches_all_sessions() {
+        let st = test_hub_state();
+        let (tx_a, mut rx_a) = mpsc::channel(4);
+        let (tx_b, mut rx_b) = mpsc::channel(4);
+        {
+            let mut g = st.sessions.lock();
+            g.insert(
+                "G4ABC".into(),
+                Session {
+                    callsign: "G4ABC".into(),
+                    pubkey: [0u8; 32],
+                    serves: HashSet::from(["G4ABC".into()]),
+                    tx: tx_a,
+                    connected_at: std::time::Instant::now(),
+                    freq_khz: 0,
+                    conn_id: 1,
+                },
+            );
+            g.insert(
+                "M0XYZ".into(),
+                Session {
+                    callsign: "M0XYZ".into(),
+                    pubkey: [1u8; 32],
+                    serves: HashSet::from(["M0XYZ".into()]),
+                    tx: tx_b,
+                    connected_at: std::time::Instant::now(),
+                    freq_khz: 0,
+                    conn_id: 2,
+                },
+            );
+        }
+        let mut env = sample_msg("G4ABC");
+        env.dest = Callsign::from_raw("BULLETIN");
+        let raw = env.encode().unwrap();
+        let (_khz, _band, _bands) = route(&st, &env, &raw, "G4ABC");
+        assert!(rx_b.try_recv().is_ok());
+        assert!(rx_a.try_recv().is_err());
+    }
+
     fn session_replace_invalidates_old_conn() {
         let st = test_hub_state();
         let (tx1, _rx1) = mpsc::channel(1);

@@ -400,6 +400,12 @@ pub fn is_bulletin(channel: &str) -> bool {
     channel.eq_ignore_ascii_case("#bulletin") || channel.eq_ignore_ascii_case("bulletin")
 }
 
+/// Hub-wide destinations: every connected session should receive these.
+pub fn is_hub_broadcast(dest: &str) -> bool {
+    let n = dest.trim().trim_start_matches('#').trim_start_matches('&');
+    n.eq_ignore_ascii_case("BULLETIN") || n.eq_ignore_ascii_case("BEACON")
+}
+
 /// Human + wire body for a channel invite (also sent as a 1:1 PRIVMSG).
 pub fn invite_notice(channel: &str, nick: &str) -> String {
     let ch = normalize_channel(channel);

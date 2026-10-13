@@ -382,7 +382,7 @@ pub async fn run_radio(timeout_secs: u64) -> Result<()> {
         E2E_RADIO_STATUS_A,
         &home_a,
     )?;
-    let node_a = spawn_radio_node(cfg_a.clone(), &home_a).await?;
+    let node_a = spawn_radio_node(cfg_a.clone()).await?;
     wait_irc(E2E_RADIO_IRC_A, Instant::now() + timeout).await?;
 
     let cfg_b = radio_station_cfg(
@@ -393,7 +393,7 @@ pub async fn run_radio(timeout_secs: u64) -> Result<()> {
         E2E_RADIO_STATUS_B,
         &home_b,
     )?;
-    let node_b = spawn_radio_node(cfg_b.clone(), &home_b).await?;
+    let node_b = spawn_radio_node(cfg_b.clone()).await?;
     wait_irc(E2E_RADIO_IRC_B, Instant::now() + timeout).await?;
 
     let deadline = Instant::now() + timeout;
@@ -476,6 +476,7 @@ fn radio_station_cfg(
 ) -> Result<Config> {
     std::env::set_var("WCR_HOME", home);
     config::ensure_dirs()?;
+    let data = home.join("data");
     let mut cfg = Config {
         callsign: callsign.into(),
         grid: grid_from_host(callsign),
@@ -516,6 +517,8 @@ fn radio_station_cfg(
         },
         ..Default::default()
     };
+    cfg.store.path = data.join("wcr.db");
+    cfg.store.identity_key = data.join("identity.key");
     cfg.normalize();
     cfg.save(&Config::default_path())?;
     if cfg.dials_hub() || cfg.reports_telemetry() {
@@ -526,11 +529,7 @@ fn radio_station_cfg(
     Ok(cfg)
 }
 
-async fn spawn_radio_node(
-    cfg: Config,
-    home: &std::path::Path,
-) -> Result<tokio::task::JoinHandle<Result<()>>> {
-    std::env::set_var("WCR_HOME", home);
+async fn spawn_radio_node(cfg: Config) -> Result<tokio::task::JoinHandle<Result<()>>> {
     Ok(tokio::spawn(async move {
         crate::node::run_node(cfg, false).await
     }))
@@ -922,6 +921,10 @@ async fn run_exchange(
     let mut last_send = Instant::now();
     let mut peer = None::<String>;
     let mut hub_ok = false;
+    let timeout_secs = deadline
+        .saturating_duration_since(Instant::now())
+        .as_secs()
+        .max(1);
 
     while Instant::now() < deadline {
         let wait = Duration::from_millis(250);
@@ -953,12 +956,10 @@ async fn run_exchange(
     }
 
     let Some(peer) = peer else {
+        let timeout_secs = timeout_secs.max(1);
         return Err(Error::Msg(format!(
             "no peer token in {}s ({})",
-            deadline
-                .saturating_duration_since(Instant::now())
-                .as_secs()
-                .max(1),
+            timeout_secs,
             if need_hub {
                 "allow UDP/TCP on the LAN port if Windows asked"
             } else {

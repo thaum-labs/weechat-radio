@@ -7,7 +7,7 @@
 <p align="center"><strong>Chat that keeps working when the internet does not.</strong></p>
 
 <p align="center">
-  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.80-DEA584?logo=rust&logoColor=white" alt="Rust 1.80" /></a>
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.88-DEA584?logo=rust&logoColor=white" alt="Rust 1.88" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="Apache-2.0" /></a>
   <img src="https://img.shields.io/badge/version-0.1.79-7d9bff" alt="Version 0.1.79" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6" alt="Windows, macOS and Linux" />
@@ -30,7 +30,7 @@ With WeeChat Radio you can:
 3. Store and forward messages so stations catch up later
 4. Appear on the public map: [weechatradio.com](https://weechatradio.com)
 
-The site, desktop app, TUI, and CLI share one dark terminal shell: indigo `#7d9bff` prompts, orange accents, and the chevron-and-waves mark. The mark recolours with the live station mode (cyan / green / amber / magenta). Change the TUI with `/radio theme hacker` or `/radio theme terminal`.
+The site, desktop app, TUI, and CLI share one dark terminal shell: indigo `#7d9bff` prompts, orange accents, and the chevron-and-waves mark. The mark recolours with the live station mode (cyan / green / amber / magenta). The default UI theme is `tron`; change it with `/radio theme hacker` or `/radio theme terminal`.
 
 **You do not need a radio** to try internet mode.
 **You do not need WeeChat** — the desktop app or TUI is enough.
@@ -158,7 +158,7 @@ wcr setup
 wcr gui
 ```
 
-You need a Rust toolchain (1.80 or newer). On Windows, the MSVC build tools are required for the bundled SQLite. `--no-default-features` skips the desktop GUI if you only want the TUI.
+You need a Rust toolchain (1.88 or newer). On Linux, `wcr gui` needs GTK 3, `libxkbcommon-x11`, and Ayatana AppIndicator (`libayatana-appindicator3-1` on Debian). On Windows, the MSVC build tools are required for the bundled SQLite. `--no-default-features` skips the desktop GUI if you only want the TUI.
 
 ---
 

@@ -14,6 +14,7 @@ use std::sync::Arc;
 pub type MailSlot = Arc<parking_lot::Mutex<Option<MailHandle>>>;
 
 pub fn router(slot: MailSlot) -> Router {
+    use axum::middleware;
     Router::new()
         .route("/mail/tab", get(tab))
         .route("/mail/list", get(list))
@@ -27,6 +28,9 @@ pub fn router(slot: MailSlot) -> Router {
         .route("/mail/copy", post(copy_set))
         .route("/mail/copy/confirm", post(copy_confirm))
         .layer(axum::Extension(slot))
+        .layer(middleware::from_fn(
+            crate::http_local::require_loopback_host,
+        ))
 }
 
 async fn handle(slot: &MailSlot) -> std::result::Result<MailHandle, StatusCode> {

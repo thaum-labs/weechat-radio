@@ -42,6 +42,24 @@ ASSET="wcr-${OS}-${ARCH}.tar.gz"
 if [ "$OS" = "darwin" ]; then ASSET="wcr-macos-${ARCH}.tar.gz"; fi
 if [ "$OS" = "linux" ]; then ASSET="wcr-linux-${ARCH}.tar.gz"; fi
 TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+verify_sha256() {
+  file="$1"
+  base_url="$2"
+  if curl -fsSL "${base_url}.sha256" -o "$TMP/asset.sha256" 2>/dev/null; then
+    expected=$(awk '{print $1}' "$TMP/asset.sha256")
+    got=$(sha256sum "$file" | awk '{print $1}')
+    if [ "$got" != "$expected" ]; then
+      echo "SHA-256 mismatch for $base_url" >&2
+      exit 1
+    fi
+    echo "Verified SHA-256 for $(basename "$file")"
+  else
+    echo "Warning: no .sha256 sidecar for $base_url" >&2
+  fi
+}
+
 URL="https://github.com/${REPO}/releases/latest/download/${ASSET}"
 echo "Downloading $URL"
 curl -fsSL "$URL" -o "$TMP/wcr.tgz" || {
