@@ -20,12 +20,15 @@ pub fn run(configure_only: bool, cfg_path: &Path) -> Result<()> {
 }
 
 pub fn configure(cfg_path: &Path) -> Result<String> {
+    configure_home(cfg_path, &weechat_home())
+}
+
+fn configure_home(cfg_path: &Path, home: &Path) -> Result<String> {
     ensure_weechat()?;
     let script = install_radio_py()?;
-    let home = weechat_home();
     std::fs::create_dir_all(home.join("python"))?;
 
-    run_headless_configure(&script, cfg_path)?;
+    run_headless_configure(&script, cfg_path, home)?;
     std::fs::create_dir_all(home.join("python").join("autoload"))?;
     let dest = home.join("python").join("radio.py");
     std::fs::copy(&script, &dest)?;
@@ -33,7 +36,7 @@ pub fn configure(cfg_path: &Path) -> Result<String> {
         &script,
         home.join("python").join("autoload").join("radio.py"),
     )?;
-    quiet_core_logs(&home);
+    quiet_core_logs(home);
     write_minttyrc()?;
     write_launcher()?;
     let listen = irc_listen_label(cfg_path);
@@ -166,34 +169,33 @@ fn quiet_core_logs(home: &Path) {
     }
 }
 
-fn run_headless_configure(script: &Path, cfg_path: &Path) -> Result<()> {
+fn run_headless_configure(script: &Path, cfg_path: &Path, home: &Path) -> Result<()> {
+    let stderr = invoke_headless(script, cfg_path, home)?;
+    verify_radio_server(home, cfg_path, &stderr)
+}
+
+/// `-nc` is not "no connect": WeeChat reads it as `-c`/`--colors`, prints the
+/// colour table, and exits before `-r` runs. Use `-d` and `-r` only.
+fn invoke_headless(script: &Path, cfg_path: &Path, home: &Path) -> Result<String> {
     #[cfg(not(windows))]
     let _ = script;
     #[cfg(windows)]
     {
         if let Some(bash) = cygwin_root().map(|r| r.join("bin").join("bash.exe")) {
             if bash.is_file() {
+                let home_unix = cygwin_path(home);
                 let cmd = format!(
-                    "export PATH=/usr/bin:/bin; export HOME={home}; \
-                     mkdir -p \"$HOME/.weechat/python/autoload\"; \
-                     cp \"{script}\" \"$HOME/.weechat/python/radio.py\"; \
-                     cp \"$HOME/.weechat/python/radio.py\" \"$HOME/.weechat/python/autoload/radio.py\"; \
-                     weechat-headless -nc -d \"$HOME/.weechat\" -r '{cmds}'",
+                    "export PATH=/usr/bin:/bin; \
+                     mkdir -p \"{home_unix}/python/autoload\"; \
+                     cp \"{script}\" \"{home_unix}/python/radio.py\"; \
+                     cp \"{home_unix}/python/radio.py\" \"{home_unix}/python/autoload/radio.py\"; \
+                     weechat-headless -d \"{home_unix}\" -r '{cmds}'",
                     cmds = configure_cmds(cfg_path),
-                    home = cygwin_home_unix(),
-                    script = cygwin_path(script)
+                    script = cygwin_path(script),
                 );
-                let status = Command::new(bash)
-                    .args(["--norc", "--noprofile", "-c", &cmd])
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()?;
-                if !status.success() {
-                    return Err(Error::Msg(format!(
-                        "weechat-headless exited {status} while writing the radio server"
-                    )));
-                }
-                return Ok(());
+                let mut bash_cmd = Command::new(bash);
+                bash_cmd.args(["--norc", "--noprofile", "-c", &cmd]);
+                return run_command(&mut bash_cmd);
             }
         }
     }
@@ -204,24 +206,58 @@ fn run_headless_configure(script: &Path, cfg_path: &Path) -> Result<()> {
                 .into(),
         ));
     };
-    let home = weechat_home();
-    let status = Command::new(&headless)
-        .args([
-            "-nc",
-            "-d",
-            &home.to_string_lossy(),
-            "-r",
-            &configure_cmds(cfg_path),
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
-    if !status.success() {
+    let mut wee = Command::new(&headless);
+    wee.args([
+        "-d",
+        &home.to_string_lossy(),
+        "-r",
+        &configure_cmds(cfg_path),
+    ]);
+    run_command(&mut wee)
+}
+
+fn run_command(cmd: &mut Command) -> Result<String> {
+    let out = cmd.stdout(Stdio::null()).stderr(Stdio::piped()).output()?;
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    if !out.status.success() {
         return Err(Error::Msg(format!(
-            "weechat-headless exited {status} while writing the radio server"
+            "weechat-headless exited {} while writing the radio server{}",
+            out.status,
+            stderr_note(&stderr)
+        )));
+    }
+    Ok(stderr)
+}
+
+fn verify_radio_server(home: &Path, cfg_path: &Path, stderr: &str) -> Result<()> {
+    let path = home.join("irc.conf");
+    let text = std::fs::read_to_string(&path).map_err(|e| {
+        Error::Msg(format!(
+            "WeeChat did not write {} ({e}). The radio server was not configured.{}",
+            path.display(),
+            stderr_note(stderr)
+        ))
+    })?;
+    let target = crate::config::Config::load(cfg_path)
+        .map(|c| weechat_server_target(&c.irc.bind))
+        .unwrap_or_else(|_| "127.0.0.1/6667".into());
+    if !text.contains("radio.addresses") || !text.contains(&target) {
+        return Err(Error::Msg(format!(
+            "WeeChat {} has no radio server for {target}. Re-run `wcr weechat --configure`.{}",
+            path.display(),
+            stderr_note(stderr)
         )));
     }
     Ok(())
+}
+
+fn stderr_note(stderr: &str) -> String {
+    let trimmed = stderr.trim();
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!("\nweechat stderr:\n{trimmed}")
+    }
 }
 
 fn install_radio_py() -> Result<PathBuf> {
@@ -474,6 +510,41 @@ mod tests {
         let cmds = configure_cmds(&path);
         assert!(cmds.contains("/server add radio 127.0.0.1/26667"), "{cmds}");
         assert!(!cmds.contains("127.0.0.1/6667"), "{cmds}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn headless_configure_writes_radio_server() {
+        if super::find_weechat_headless().is_none() {
+            eprintln!("skip: weechat-headless is not installed");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "wcr-wee-live-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let home = dir.join("weechat");
+        let cfg_path = dir.join("wcr.toml");
+        let mut cfg = Config::default();
+        cfg.callsign = "G4ABC".into();
+        cfg.irc.bind = "127.0.0.1:26667".into();
+        cfg.save(&cfg_path).unwrap();
+        super::configure_home(&cfg_path, &home).expect("configure writes irc.conf");
+        let irc = std::fs::read_to_string(home.join("irc.conf")).expect("irc.conf");
+        assert!(
+            irc.contains("radio.addresses"),
+            "irc.conf missing radio server:\n{irc}"
+        );
+        assert!(
+            irc.contains("127.0.0.1/26667"),
+            "irc.conf did not use the config listen address:\n{irc}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
