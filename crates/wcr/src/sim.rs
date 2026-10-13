@@ -50,59 +50,18 @@ impl SharedAir {
     }
 }
 
-/// Fake modem73: KISS TCP + length-prefixed JSON control, bridged to SharedAir.
-pub async fn mock_modem73(
-    kiss_bind: &str,
-    ctrl_bind: &str,
-    air: SharedAir,
-) -> crate::error::Result<()> {
-    let last_air = Arc::new(Mutex::new(None::<Instant>));
-    let tx_count = Arc::new(AtomicU64::new(0));
-    let air_k = air.clone();
-    let last_k = last_air.clone();
-    let tx_k = tx_count.clone();
-    let kiss_bind = kiss_bind.to_string();
-    tokio::spawn(async move {
-        let listener = TcpListener::bind(&kiss_bind).await.expect("kiss bind");
-        loop {
-            let (mut stream, _) = listener.accept().await.expect("kiss accept");
-            let air = air_k.clone();
-            let last_air = last_k.clone();
-            let tx_k = tx_k.clone();
-            tokio::spawn(async move {
-                let mut dec = KissDecoder::new();
-                let mut rx = air.subscribe();
-                let mut buf = [0u8; 2048];
-                loop {
-                    tokio::select! {
-                        n = stream.read(&mut buf) => {
-                            match n {
-                                Ok(0) | Err(_) => break,
-                                Ok(n) => {
-                                    for payload in dec.push(&buf[..n]) {
-                                        *last_air.lock().expect("last_air") = Some(Instant::now());
-                                        tx_k.fetch_add(1, Ordering::Relaxed);
-                                        air.send(payload);
-                                    }
-                                }
-                            }
-                        }
-                        frame = rx.recv() => {
-                            if let Ok(payload) = frame {
-                                *last_air.lock().expect("last_air") = Some(Instant::now());
-                                let enc = encode_frame(&payload);
-                                if stream.write_all(&enc).await.is_err() { break; }
-                            }
-                        }
-                    }
-                }
-            });
-        }
-    });
+async fn loopback_listener() -> crate::error::Result<(TcpListener, u16)> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let port = listener.local_addr()?.port();
+    Ok((listener, port))
+}
 
-    let ctrl_bind = ctrl_bind.to_string();
+fn spawn_ctrl(
+    listener: TcpListener,
+    last_air: Arc<Mutex<Option<Instant>>>,
+    tx_count: Arc<AtomicU64>,
+) {
     tokio::spawn(async move {
-        let listener = TcpListener::bind(&ctrl_bind).await.expect("ctrl bind");
         loop {
             let (mut stream, _) = listener.accept().await.expect("ctrl accept");
             let last_air = last_air.clone();
@@ -154,33 +113,96 @@ pub async fn mock_modem73(
             });
         }
     });
-    Ok(())
 }
 
-/// Like [`mock_modem73`], but this station only hears `hear` and tags its own TX.
-/// Use this when A must not hear C directly and B is the relay.
-pub async fn mock_modem73_linked(
+fn spawn_open_kiss(
+    listener: TcpListener,
+    air: SharedAir,
+    last_air: Arc<Mutex<Option<Instant>>>,
+    tx_count: Arc<AtomicU64>,
+) {
+    tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = listener.accept().await.expect("kiss accept");
+            let air = air.clone();
+            let last_air = last_air.clone();
+            let tx_count = tx_count.clone();
+            tokio::spawn(async move {
+                let mut dec = KissDecoder::new();
+                let mut rx = air.subscribe();
+                let mut buf = [0u8; 2048];
+                loop {
+                    tokio::select! {
+                        n = stream.read(&mut buf) => {
+                            match n {
+                                Ok(0) | Err(_) => break,
+                                Ok(n) => {
+                                    for payload in dec.push(&buf[..n]) {
+                                        *last_air.lock().expect("last_air") = Some(Instant::now());
+                                        tx_count.fetch_add(1, Ordering::Relaxed);
+                                        air.send(payload);
+                                    }
+                                }
+                            }
+                        }
+                        frame = rx.recv() => {
+                            if let Ok(payload) = frame {
+                                *last_air.lock().expect("last_air") = Some(Instant::now());
+                                let enc = encode_frame(&payload);
+                                if stream.write_all(&enc).await.is_err() { break; }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+}
+
+fn start_open_modem(kiss: TcpListener, ctrl: TcpListener, air: SharedAir) {
+    let last_air = Arc::new(Mutex::new(None::<Instant>));
+    let tx_count = Arc::new(AtomicU64::new(0));
+    spawn_open_kiss(kiss, air, last_air.clone(), tx_count.clone());
+    spawn_ctrl(ctrl, last_air, tx_count);
+}
+
+/// Fake modem73: KISS TCP + length-prefixed JSON control, bridged to SharedAir.
+/// Both listeners are bound before this returns, so a lost probe port cannot
+/// be claimed by another test between the call and a later spawned bind.
+pub async fn mock_modem73(
     kiss_bind: &str,
     ctrl_bind: &str,
     air: SharedAir,
-    station: u64,
-    hear: std::collections::HashSet<u64>,
 ) -> crate::error::Result<()> {
-    let last_air = Arc::new(Mutex::new(None::<Instant>));
-    let tx_count = Arc::new(AtomicU64::new(0));
-    let air_k = air.clone();
-    let last_k = last_air.clone();
-    let tx_k = tx_count.clone();
-    let kiss_bind = kiss_bind.to_string();
-    let hear = Arc::new(hear);
+    let kiss = TcpListener::bind(kiss_bind).await?;
+    let ctrl = TcpListener::bind(ctrl_bind).await?;
+    start_open_modem(kiss, ctrl, air);
+    Ok(())
+}
+
+/// Same as [`mock_modem73`], on two fresh loopback ports that stay bound.
+pub async fn mock_modem73_free(air: SharedAir) -> crate::error::Result<(u16, u16)> {
+    let (kiss, kiss_port) = loopback_listener().await?;
+    let (ctrl, ctrl_port) = loopback_listener().await?;
+    start_open_modem(kiss, ctrl, air);
+    Ok((kiss_port, ctrl_port))
+}
+
+fn spawn_linked_kiss(
+    listener: TcpListener,
+    air: SharedAir,
+    station: u64,
+    hear: Arc<std::collections::HashSet<u64>>,
+    last_air: Arc<Mutex<Option<Instant>>>,
+    tx_count: Arc<AtomicU64>,
+) {
     tokio::spawn(async move {
-        let listener = TcpListener::bind(&kiss_bind).await.expect("kiss bind");
         loop {
             let (mut stream, _) = listener.accept().await.expect("kiss accept");
-            let air = air_k.clone();
-            let last_air = last_k.clone();
+            let air = air.clone();
+            let last_air = last_air.clone();
             let hear = hear.clone();
-            let tx_k = tx_k.clone();
+            let tx_count = tx_count.clone();
             tokio::spawn(async move {
                 let mut dec = KissDecoder::new();
                 let mut rx = air.subscribe_linked();
@@ -193,7 +215,7 @@ pub async fn mock_modem73_linked(
                                 Ok(n) => {
                                     for payload in dec.push(&buf[..n]) {
                                         *last_air.lock().expect("last_air") = Some(Instant::now());
-                                        tx_k.fetch_add(1, Ordering::Relaxed);
+                                        tx_count.fetch_add(1, Ordering::Relaxed);
                                         air.send_from(station, payload);
                                     }
                                 }
@@ -214,61 +236,54 @@ pub async fn mock_modem73_linked(
             });
         }
     });
+}
 
-    let ctrl_bind = ctrl_bind.to_string();
-    tokio::spawn(async move {
-        let listener = TcpListener::bind(&ctrl_bind).await.expect("ctrl bind");
-        loop {
-            let (mut stream, _) = listener.accept().await.expect("ctrl accept");
-            let last_air = last_air.clone();
-            let tx_count = tx_count.clone();
-            tokio::spawn(async move {
-                let mut stash = Vec::new();
-                let mut buf = [0u8; 2048];
-                loop {
-                    match stream.read(&mut buf).await {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => {
-                            stash.extend_from_slice(&buf[..n]);
-                            if let Ok(frames) =
-                                crate::modem::control::decode_control_frames(&mut stash)
-                            {
-                                for v in frames {
-                                    let cmd = v.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
-                                    let busy = last_air
-                                        .lock()
-                                        .ok()
-                                        .and_then(|g| *g)
-                                        .map(|t| t.elapsed() < Duration::from_millis(400))
-                                        .unwrap_or(false);
-                                    let sent = tx_count.load(Ordering::Relaxed);
-                                    let reply = match cmd {
-                                        "get_status" => serde_json::json!({
-                                            "channel_state": if busy { "rx" } else { "idle" },
-                                            "ptt_on": false,
-                                            "last_snr": 12.0,
-                                            "audio_connected": true,
-                                            "occupancy_pct": if busy { 80 } else { 0 },
-                                            "input_level_db": if busy { -12.0 } else { -48.0 },
-                                            "output_level_db": -80.0,
-                                            "tx_frame_count": sent
-                                        }),
-                                        _ => serde_json::json!({"ok": true}),
-                                    };
-                                    if let Ok(f) = encode_control_frame(&reply) {
-                                        if stream.write_all(&f).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-        }
-    });
+fn start_linked_modem(
+    kiss: TcpListener,
+    ctrl: TcpListener,
+    air: SharedAir,
+    station: u64,
+    hear: std::collections::HashSet<u64>,
+) {
+    let last_air = Arc::new(Mutex::new(None::<Instant>));
+    let tx_count = Arc::new(AtomicU64::new(0));
+    spawn_linked_kiss(
+        kiss,
+        air,
+        station,
+        Arc::new(hear),
+        last_air.clone(),
+        tx_count.clone(),
+    );
+    spawn_ctrl(ctrl, last_air, tx_count);
+}
+
+/// Like [`mock_modem73`], but this station only hears `hear` and tags its own TX.
+/// Use this when A must not hear C directly and B is the relay.
+/// Both listeners are bound before this returns.
+pub async fn mock_modem73_linked(
+    kiss_bind: &str,
+    ctrl_bind: &str,
+    air: SharedAir,
+    station: u64,
+    hear: std::collections::HashSet<u64>,
+) -> crate::error::Result<()> {
+    let kiss = TcpListener::bind(kiss_bind).await?;
+    let ctrl = TcpListener::bind(ctrl_bind).await?;
+    start_linked_modem(kiss, ctrl, air, station, hear);
     Ok(())
+}
+
+/// Same as [`mock_modem73_linked`], on two fresh loopback ports that stay bound.
+pub async fn mock_modem73_linked_free(
+    air: SharedAir,
+    station: u64,
+    hear: std::collections::HashSet<u64>,
+) -> crate::error::Result<(u16, u16)> {
+    let (kiss, kiss_port) = loopback_listener().await?;
+    let (ctrl, ctrl_port) = loopback_listener().await?;
+    start_linked_modem(kiss, ctrl, air, station, hear);
+    Ok((kiss_port, ctrl_port))
 }
 
 pub fn encode_over_air(env: &Envelope) -> Vec<u8> {
@@ -382,9 +397,7 @@ mod tests {
     #[tokio::test]
     async fn mock_kiss_roundtrip() {
         let air = SharedAir::new(0.0);
-        mock_modem73("127.0.0.1:18001", "127.0.0.1:18073", air.clone())
-            .await
-            .unwrap();
+        mock_modem73_free(air.clone()).await.unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let env = Envelope::new_msg(
             Callsign::parse("G4AAA").unwrap(),
