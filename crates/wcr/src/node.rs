@@ -507,10 +507,6 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                             rt_r.snap.lock().retries = 0;
                             continue;
                         }
-                        let jitter = rt_r.cfg.lock().rf.retry_jitter;
-                        let next =
-                            relay::next_retry_hold_jittered(n, now, m.env.priority(), jitter);
-                        let _ = rt_r.store.bump_retry(&m.env.msg_id, next);
                         let tries = rt_r.store.rf_tx_of(&m.env.msg_id).ok();
                         rt_r.irc
                             .tagmsg_progress(
@@ -519,6 +515,19 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                                 tries,
                             )
                             .await;
+                        if relay::retries_exhausted(n, max) {
+                            // Last copy is out. Do not leave the line on [rl]
+                            // with a hold that will never fire.
+                            let _ = rt_r.store.bump_retry(&m.env.msg_id, 0);
+                            rt_r.irc
+                                .tagmsg_delivery(&m.env.msg_id.hex(), "failed")
+                                .await;
+                            continue;
+                        }
+                        let jitter = rt_r.cfg.lock().rf.retry_jitter;
+                        let next =
+                            relay::next_retry_hold_jittered(n, now, m.env.priority(), jitter);
+                        let _ = rt_r.store.bump_retry(&m.env.msg_id, next);
                     }
                 }
             }
@@ -1138,10 +1147,11 @@ async fn enqueue_rf(
     Ok(queued)
 }
 
-/// ACK frames skip the air queue. A steady busy channel was leaving them
-/// behind dozens of frames whose modem CSMA never keyed, so the 3 s cap
-/// never started. Pause, wait out that cap, then key this frame with carrier
-/// sense off if the channel is still busy.
+/// ACK frames skip the air queue. Pause it, then key this frame with modem
+/// carrier sense off once `emergency_max_defer_ms` has elapsed, or as soon as
+/// the modem reports busy. This station's own sense can stay idle under
+/// steady noise while modem73 still holds the frame. Carrier sense is
+/// restored afterwards.
 async fn key_ack_now(
     rt: &Runtime,
     rf_env: &Envelope,
