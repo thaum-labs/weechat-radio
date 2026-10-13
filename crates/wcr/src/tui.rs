@@ -537,6 +537,26 @@ fn irc_time(line: &str) -> String {
     crate::store::chat_stamp(raw)
 }
 
+/// Parse `:nick PRIVMSG target [:]text` (IRC trailing param optional).
+fn parse_privmsg_payload(payload: &str) -> Option<(String, String, String)> {
+    let rest = payload.strip_prefix(':')?;
+    let (nick_part, cmd) = rest.split_once(' ')?;
+    let nick = nick_part.split('!').next()?.to_string();
+    let cmd = cmd.trim_start();
+    let body = cmd
+        .strip_prefix("PRIVMSG ")
+        .or_else(|| cmd.strip_prefix("privmsg "))?;
+    let (target, text) = if let Some((t, msg)) = body.split_once(" :") {
+        (t.trim().to_string(), msg.to_string())
+    } else {
+        let mut parts = body.split_whitespace();
+        let target = parts.next()?.to_string();
+        let text = parts.collect::<Vec<_>>().join(" ");
+        (target, text)
+    };
+    Some((nick, target, text))
+}
+
 fn parse_tui_part(line: &str) -> Option<(String, String)> {
     let rest = if let Some(tagged) = line.strip_prefix('@') {
         tagged.find(" :").map(|i| &tagged[i + 1..]).unwrap_or(line)
@@ -648,34 +668,38 @@ fn handle_irc(app: &mut App, line: &str) {
         return;
     }
     if payload.contains("PRIVMSG") {
-        if let Some((head, text)) = payload.split_once(" :") {
-            let from = head
-                .strip_prefix(':')
-                .and_then(|h| h.split('!').next())
-                .unwrap_or("?")
-                .to_string();
+        if let Some((from, to, text)) = parse_privmsg_payload(payload) {
             let emergency = text.starts_with("!!");
             if !app.heard.contains(&from) && from != app.nick {
                 app.heard.push(from.clone());
             }
-            app.cur_mut().lines.push_back(ChatLine {
+            let ch = crate::slash::normalize_channel(&to);
+            let row = ChatLine {
                 from: from.clone(),
-                text: text.to_string(),
+                text: text.clone(),
                 ticks: String::new(),
-                via: irc_via(payload),
-                tries: irc_tries(payload),
-                when: irc_time(payload),
+                via: irc_via(line),
+                tries: irc_tries(line),
+                when: irc_time(line),
                 emergency,
-            });
-            if app.cur().lines.len() > 500 {
-                app.cur_mut().lines.pop_front();
+            };
+            if let Some(buf) = app
+                .buffers
+                .iter_mut()
+                .find(|b| b.name.eq_ignore_ascii_case(&ch))
+            {
+                buf.lines.push_back(row);
+                if buf.lines.len() > 500 {
+                    buf.lines.pop_front();
+                }
+            } else {
+                app.cur_mut().lines.push_back(row);
             }
-            let to = head.split_whitespace().nth(2).unwrap_or("");
-            if should_notify(&app, &from, text, to) {
+            if should_notify(&app, &from, &text, &to) {
                 let preview = if text.len() > 120 {
                     format!("{}…", &text[..120])
                 } else {
-                    text.to_string()
+                    text.clone()
                 };
                 notify(&format!("WeeChat Radio — {from}"), &preview);
             }
@@ -1269,6 +1293,45 @@ mod tests {
         assert_eq!(
             irc_time("@server-time=2026-09-18T12:00:00Z :M0XYZ PRIVMSG #bulletin :hi"),
             crate::store::chat_stamp(Some("2026-09-18T12:00:00Z"))
+        );
+    }
+
+    #[test]
+    fn parse_privmsg_without_trailing_colon() {
+        let (nick, target, text) =
+            parse_privmsg_payload(":~QATEST1 PRIVMSG #bulletin QA flood 16").unwrap();
+        assert_eq!(nick, "~QATEST1");
+        assert_eq!(target, "#bulletin");
+        assert_eq!(text, "QA flood 16");
+    }
+
+    #[test]
+    fn parse_privmsg_with_trailing_colon() {
+        let (nick, target, text) =
+            parse_privmsg_payload(":M0XYZ PRIVMSG #bulletin :hello world").unwrap();
+        assert_eq!(nick, "M0XYZ");
+        assert_eq!(target, "#bulletin");
+        assert_eq!(text, "hello world");
+    }
+
+    #[test]
+    fn history_replay_uses_server_time_tag() {
+        let cfg = Config::default();
+        let mut app = App::new("~TEST".into(), &cfg);
+        app.open_channel("#bulletin");
+        let line = "@server-time=2026-09-18T14:30:00Z;batch=hist;msgid=abc;+radio/delivery=sent :~QATEST1 PRIVMSG #bulletin QA flood 16";
+        handle_irc(&mut app, line);
+        let buf = app
+            .buffers
+            .iter()
+            .find(|b| b.name.eq_ignore_ascii_case("#bulletin"))
+            .expect("bulletin buffer");
+        let last = buf.lines.back().expect("line");
+        assert_eq!(last.from, "~QATEST1");
+        assert_eq!(last.text, "QA flood 16");
+        assert_eq!(
+            last.when,
+            crate::store::chat_stamp(Some("2026-09-18T14:30:00Z"))
         );
     }
 

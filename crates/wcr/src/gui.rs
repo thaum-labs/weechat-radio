@@ -918,7 +918,7 @@ impl GuiApp {
     }
 
     fn install_tray(&mut self) {
-        #[cfg(target_os = "linux")]
+        #[cfg(all(target_os = "linux", feature = "gtk"))]
         {
             if gtk::init().is_err() {
                 tracing::warn!("system tray unavailable (GTK init failed)");
