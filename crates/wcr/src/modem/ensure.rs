@@ -10,7 +10,11 @@ use std::sync::OnceLock;
 
 const PINNED_SHA256_JSON: &str = include_str!("../../../../third_party/modem73/sha256.json");
 
-const RELEASES: &str = "https://github.com/thaum-labs/weechat-radio/releases/latest/download";
+/// Modem binaries shipped beside this wcr tag. Do not use `/releases/latest`:
+/// a newer tag would invalidate `third_party/modem73/sha256.json`.
+/// To move the pin: publish the new modem73 assets on a wcr release, recompute
+/// each SHA-256 into `third_party/modem73/sha256.json`, and set this tag.
+const MODEM73_RELEASE: &str = "v0.1.79";
 
 pub fn exe_name() -> &'static str {
     if cfg!(windows) {
@@ -145,7 +149,9 @@ fn is_writable_dir(dir: &Path) -> bool {
 }
 
 async fn download(asset: &str, dest: &Path) -> Result<()> {
-    let url = format!("{RELEASES}/{asset}");
+    let url = format!(
+        "https://github.com/thaum-labs/weechat-radio/releases/download/{MODEM73_RELEASE}/{asset}"
+    );
     let bytes = fetch_verified_bytes(&url).await?;
     if asset.ends_with(".tar.gz") {
         unpack_tar_gz(&bytes, dest)?;
@@ -420,5 +426,11 @@ mod tests {
             "/usr/local/bin/modem73"
         };
         assert_eq!(resolve_binary(p), Path::new(p));
+    }
+
+    #[test]
+    fn modem_download_is_a_tagged_release() {
+        assert!(super::MODEM73_RELEASE.starts_with('v'));
+        assert!(!super::MODEM73_RELEASE.contains("latest"));
     }
 }

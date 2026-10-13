@@ -661,44 +661,48 @@ impl IrcServer {
 async fn read_irc_line<R: AsyncBufReadExt + Unpin>(reader: &mut R) -> Result<Option<String>> {
     let mut line = Vec::new();
     loop {
+        if line.len() >= MAX_IRC_LINE {
+            discard_irc_line_remainder(reader).await?;
+            return Ok(Some(finish_irc_line(&line)));
+        }
         let buf = reader.fill_buf().await?;
         if buf.is_empty() {
             return Ok(if line.is_empty() {
                 None
             } else {
-                Some(String::from_utf8_lossy(&line).into_owned())
+                Some(finish_irc_line(&line))
             });
         }
-        let mut consumed = 0usize;
-        let mut found_nl = false;
-        let mut overlong = false;
-        for (i, &b) in buf.iter().enumerate() {
-            if b == b'\n' {
-                line.extend_from_slice(&buf[..i]);
-                consumed = i + 1;
-                found_nl = true;
-                break;
+        if let Some(nl) = buf.iter().position(|&b| b == b'\n') {
+            let chunk = &buf[..nl];
+            let room = MAX_IRC_LINE - line.len();
+            if chunk.len() > room {
+                line.extend_from_slice(&chunk[..room]);
+            } else {
+                line.extend_from_slice(chunk);
             }
-            if line.len() >= MAX_IRC_LINE {
-                consumed = i + 1;
-                overlong = true;
-                break;
-            }
-            line.push(b);
-            consumed = i + 1;
+            reader.consume(nl + 1);
+            return Ok(Some(finish_irc_line(&line)));
         }
-        reader.consume(consumed);
-        if found_nl {
-            while line.last() == Some(&b'\r') {
-                line.pop();
-            }
-            return Ok(Some(String::from_utf8_lossy(&line).into_owned()));
-        }
-        if overlong {
+        let room = MAX_IRC_LINE - line.len();
+        if buf.len() > room {
+            line.extend_from_slice(&buf[..room]);
+            reader.consume(room);
             discard_irc_line_remainder(reader).await?;
-            return Ok(Some(String::from_utf8_lossy(&line).into_owned()));
+            return Ok(Some(finish_irc_line(&line)));
         }
+        let n = buf.len();
+        line.extend_from_slice(buf);
+        reader.consume(n);
     }
+}
+
+fn finish_irc_line(line: &[u8]) -> String {
+    let mut end = line.len();
+    while end > 0 && line[end - 1] == b'\r' {
+        end -= 1;
+    }
+    String::from_utf8_lossy(&line[..end]).into_owned()
 }
 
 async fn discard_irc_line_remainder<R: AsyncBufReadExt + Unpin>(reader: &mut R) -> Result<()> {
