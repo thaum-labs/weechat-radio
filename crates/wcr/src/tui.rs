@@ -221,6 +221,14 @@ impl App {
 
     fn airtime(&self) -> String {
         let n = self.input.len();
+        if self
+            .snapshot
+            .as_ref()
+            .map(|s| s.mode == crate::modes::Mode::Internet)
+            .unwrap_or(false)
+        {
+            return format!("{n} B");
+        }
         let secs = presets::airtime_secs(self.preset, n, 0);
         format!("{n} B ~{secs:.1} s @ {}", self.preset.as_str())
     }
@@ -231,6 +239,7 @@ impl App {
 }
 
 pub async fn run(cfg: &Config) -> Result<()> {
+    let _log_guard = tui_log_guard();
     let nick = if cfg.callsign.is_empty() {
         "guest".into()
     } else {
@@ -300,7 +309,13 @@ pub async fn run(cfg: &Config) -> Result<()> {
                 }
             }
             if !snap.hub_banner.is_empty() {
-                app.banner = snap.hub_banner.clone();
+                app.banner = if snap.hub_ok {
+                    String::new()
+                } else {
+                    snap.hub_banner.clone()
+                };
+            } else if snap.hub_ok {
+                app.banner.clear();
             }
             app.show_activity = snap.activity_panel;
             app.snapshot = Some(snap);
@@ -348,9 +363,28 @@ pub async fn run(cfg: &Config) -> Result<()> {
                     {
                         app.running = false;
                     }
+                    KeyCode::Char('u') | KeyCode::Char('U')
+                        if k.modifiers.contains(KeyModifiers::CONTROL) =>
+                    {
+                        app.input.clear();
+                    }
                     KeyCode::Enter => {
                         let line = std::mem::take(&mut app.input);
                         if !line.is_empty() {
+                            if line.contains("/radio") && !line.trim_start().starts_with('/') {
+                                app.cur_mut().lines.push_back(ChatLine {
+                                    from: "*".into(),
+                                    text:
+                                        "Put /radio at the start of the line (Ctrl-U clears input)"
+                                            .into(),
+                                    ticks: String::new(),
+                                    via: String::new(),
+                                    tries: 0,
+                                    when: crate::store::chat_stamp(None),
+                                    emergency: false,
+                                });
+                                continue;
+                            }
                             if let Some(cmd) = line.strip_prefix('/') {
                                 let cmd = cmd.trim();
                                 if cmd.eq_ignore_ascii_case("clear")
@@ -390,6 +424,24 @@ pub async fn run(cfg: &Config) -> Result<()> {
                                             .await?;
                                         app.close_channel(&target);
                                     }
+                                } else if cmd.eq_ignore_ascii_case("help") {
+                                    out.write_all(b"RADIO help\r\n").await?;
+                                    app.cur_mut().lines.push_back(ChatLine {
+                                        from: "*".into(),
+                                        text: "Requested RADIO help (see lines above)".into(),
+                                        ticks: String::new(),
+                                        via: String::new(),
+                                        tries: 0,
+                                        when: crate::store::chat_stamp(None),
+                                        emergency: false,
+                                    });
+                                } else if cmd.eq_ignore_ascii_case("radio")
+                                    || cmd.to_ascii_lowercase().starts_with("radio ")
+                                {
+                                    let rest =
+                                        cmd.strip_prefix("radio").unwrap_or(cmd).trim_start();
+                                    out.write_all(format!("RADIO {rest}\r\n").as_bytes())
+                                        .await?;
                                 } else {
                                     out.write_all(format!("{cmd}\r\n").as_bytes()).await?;
                                 }
@@ -511,11 +563,32 @@ fn irc_via(line: &str) -> String {
         .to_string()
 }
 
+fn irc_payload(line: &str) -> &str {
+    if let Some(tagged) = line.strip_prefix('@') {
+        tagged.find(" :").map(|i| &tagged[i + 1..]).unwrap_or(line)
+    } else {
+        line
+    }
+}
+
+fn tui_log_guard() -> tracing::subscriber::DefaultGuard {
+    use tracing_subscriber::filter::LevelFilter;
+    use tracing_subscriber::util::SubscriberInitExt;
+    tracing_subscriber::fmt()
+        .with_writer(std::io::sink)
+        .with_ansi(false)
+        .with_max_level(LevelFilter::ERROR)
+        .set_default()
+}
+
 fn handle_irc(app: &mut App, line: &str) {
     if line.starts_with("PING") {
         return;
     }
-    app.status = line.chars().take(80).collect();
+    let payload = irc_payload(line);
+    if !payload.contains("PRIVMSG") && !payload.contains("TAGMSG") {
+        app.status = payload.chars().take(18).collect();
+    }
     if let Some((from, ch)) = crate::slash::parse_irc_invite(line) {
         app.open_channel(&ch);
         app.cur_mut().lines.push_back(ChatLine {
@@ -574,14 +647,11 @@ fn handle_irc(app: &mut App, line: &str) {
         }
         return;
     }
-    if line.contains("PRIVMSG") {
-        if let Some((head, text)) = line.split_once(" :") {
+    if payload.contains("PRIVMSG") {
+        if let Some((head, text)) = payload.split_once(" :") {
             let from = head
-                .rsplit_once(' ')
-                .and_then(|_| head.split(':').nth(1))
-                .unwrap_or("?")
-                .split('!')
-                .next()
+                .strip_prefix(':')
+                .and_then(|h| h.split('!').next())
                 .unwrap_or("?")
                 .to_string();
             let emergency = text.starts_with("!!");
@@ -592,9 +662,9 @@ fn handle_irc(app: &mut App, line: &str) {
                 from: from.clone(),
                 text: text.to_string(),
                 ticks: String::new(),
-                via: irc_via(line),
-                tries: irc_tries(line),
-                when: irc_time(line),
+                via: irc_via(payload),
+                tries: irc_tries(payload),
+                when: irc_time(payload),
                 emergency,
             });
             if app.cur().lines.len() > 500 {
@@ -1200,5 +1270,18 @@ mod tests {
             irc_time("@server-time=2026-09-18T12:00:00Z :M0XYZ PRIVMSG #bulletin :hi"),
             crate::store::chat_stamp(Some("2026-09-18T12:00:00Z"))
         );
+    }
+
+    #[test]
+    fn privmsg_sender_with_message_tags() {
+        let cfg = Config::default();
+        let mut app = App::new("~TEST".into(), &cfg);
+        let line =
+            "@server-time=2026-09-18T12:00:00Z;msgid=abc :M0XYZ!u@h PRIVMSG #bulletin :hello";
+        handle_irc(&mut app, line);
+        let last = app.cur().lines.back().expect("line");
+        assert_eq!(last.from, "M0XYZ");
+        assert_eq!(last.text, "hello");
+        assert!(!app.heard.contains(&"?".to_string()));
     }
 }

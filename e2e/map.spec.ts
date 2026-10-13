@@ -94,7 +94,9 @@ function expectHomeFrame(view: {
   expect(view.east).toBeLessThan(40.2);
 }
 
-test("home map runs from the US east coast to 100 km east of Moscow", async ({ page }) => {
+test("home map runs from the US east coast to 100 km east of Moscow", async ({
+  page,
+}, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
   const view = await homeCamera(page);
@@ -102,7 +104,7 @@ test("home map runs from the US east coast to 100 km east of Moscow", async ({ p
 
   await dismissBoot(page);
   await page.locator("#map").screenshot({
-    path: "/opt/cursor/artifacts/map-home-europe.png",
+    path: testInfo.outputPath("map-home-europe.png"),
   });
 
   await page.evaluate(() => window.WCR.map.jumpTo({ center: [139.7, 35.7], zoom: 5 }));
@@ -112,14 +114,14 @@ test("home map runs from the US east coast to 100 km east of Moscow", async ({ p
   expectHomeFrame(returned);
 });
 
-test("home map keeps the same places in frame on a phone", async ({ page }) => {
+test("home map keeps the same places in frame on a phone", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   const view = await homeCamera(page);
   expectHomeFrame(view);
   await dismissBoot(page);
   await page.locator("#map").screenshot({
-    path: "/opt/cursor/artifacts/map-home-europe-phone.png",
+    path: testInfo.outputPath("map-home-europe-phone.png"),
   });
 });
 
@@ -130,7 +132,7 @@ test("live map shell loads", async ({ page }) => {
   await expect(page.locator("#hub-panel")).toBeAttached();
 });
 
-test("internet-radio tower pin shows the dial frequency", async ({ page }) => {
+test("internet-radio tower pin shows the dial frequency", async ({ page }, testInfo) => {
   await page.route("**/api/v1/**", async (route) => {
     const url = route.request().url();
     if (url.includes("/api/v1/nodes") && url.includes("since=")) {
@@ -203,6 +205,6 @@ test("internet-radio tower pin shows the dial frequency", async ({ page }) => {
   await page.locator(".station", { hasText: "G4ABC" }).click();
   await page.waitForTimeout(600);
   await page.locator("#map").screenshot({
-    path: "/opt/cursor/artifacts/map-tower-pin.png",
+    path: testInfo.outputPath("map-tower-pin.png"),
   });
 });

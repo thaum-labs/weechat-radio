@@ -3,6 +3,7 @@
 
 use crate::config;
 use crate::error::{Error, Result};
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 const RELEASES: &str = "https://github.com/thaum-labs/weechat-radio/releases/latest/download";
@@ -141,7 +142,7 @@ fn is_writable_dir(dir: &Path) -> bool {
 
 async fn download(asset: &str, dest: &Path) -> Result<()> {
     let url = format!("{RELEASES}/{asset}");
-    let bytes = fetch_bytes(&url).await?;
+    let bytes = fetch_verified_bytes(&url).await?;
     if asset.ends_with(".tar.gz") {
         unpack_tar_gz(&bytes, dest)?;
     } else {
@@ -186,8 +187,43 @@ async fn download_rfnexus_macos(dest: &Path) -> Result<()> {
         })
         .ok_or_else(|| Error::Modem(format!("no RFnexus modem73 asset matching {needle}")))?;
     tracing::info!("downloading {url}");
-    let bytes = fetch_bytes(&url).await?;
+    let bytes = fetch_verified_bytes(&url).await?;
     unpack_tar_gz(&bytes, dest)
+}
+
+async fn fetch_verified_bytes(url: &str) -> Result<bytes::Bytes> {
+    let bytes = fetch_bytes(url).await?;
+    if let Ok(expected) = fetch_bytes(&format!("{url}.sha256")).await {
+        verify_sha256_file(&bytes, &expected)?;
+    } else {
+        tracing::error!(
+            "SECURITY: no SHA-256 sidecar at {url}.sha256 — download is unverified (modem73 release assets often lack sidecars; install from a trusted network or verify manually)"
+        );
+    }
+    Ok(bytes)
+}
+
+fn verify_sha256_file(bytes: &[u8], sidecar: &[u8]) -> Result<()> {
+    let line = sidecar
+        .split(|b| *b == b'\n' || *b == b'\r')
+        .next()
+        .unwrap_or(sidecar);
+    let expected = std::str::from_utf8(line)
+        .unwrap_or("")
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if expected.len() != 64 {
+        return Err(Error::Modem("invalid .sha256 sidecar".into()));
+    }
+    let got = hex::encode(Sha256::digest(bytes));
+    if got != expected {
+        return Err(Error::Modem(format!(
+            "checksum mismatch (expected {expected}, got {got})"
+        )));
+    }
+    Ok(())
 }
 
 async fn fetch_bytes(url: &str) -> Result<bytes::Bytes> {

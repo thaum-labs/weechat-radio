@@ -29,7 +29,7 @@ pub enum Command {
     /// Run the public hub + telemetry API
     Hub {
         /// Bind address
-        #[arg(long, default_value = "0.0.0.0:7373")]
+        #[arg(long, default_value = "127.0.0.1:7373")]
         bind: String,
         #[command(subcommand)]
         admin: Option<HubAdmin>,
