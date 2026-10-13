@@ -79,6 +79,27 @@ pub fn may_rebroadcast(our_call: &str, env: &Envelope, delivery: Option<Delivery
     true
 }
 
+/// The hold pump and the ARQ loop share one table. A row we originated is a
+/// retry, not a relay: `may_rebroadcast` is false for it, and the pump must
+/// leave the hold alone so the retry timer still fires.
+pub fn is_own_origin(our_call: &str, env: &Envelope) -> bool {
+    env.origin.as_str().eq_ignore_ascii_case(our_call)
+}
+
+/// Minimum gap before a duplicate of an unacked frame is answered or relayed
+/// again. Short enough that an emergency retry (8 s) still gets a new ACK,
+/// long enough that the echo of the copy we just sent does not.
+pub const RETRY_ANSWER_GAP_S: u32 = 6;
+
+/// `last` is when we last ACKed or relayed this id. `None` means we have not
+/// answered a later copy yet, so the first retry should go out.
+pub fn answer_again(now: u32, last: Option<u32>, gap: u32) -> bool {
+    match last {
+        Some(t) => now.saturating_sub(t) >= gap,
+        None => true,
+    }
+}
+
 pub fn jitter_ms(priority: Priority) -> u64 {
     let range = priority.jitter_ms();
     rand::thread_rng().gen_range(range)
@@ -276,6 +297,32 @@ impl Engine {
 mod tests {
     use super::*;
     use crate::proto::{Callsign, Envelope, Flags};
+
+    #[test]
+    fn own_origin_is_not_a_relay_hold() {
+        let env = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::parse("M0BBB").unwrap(),
+            1,
+            b"ping".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        assert!(is_own_origin("G4AAA", &env));
+        assert!(is_own_origin("g4aaa", &env));
+        assert!(!is_own_origin("M0BBB", &env));
+        assert!(!may_rebroadcast("G4AAA", &env, Some(Delivery::Sent)));
+        assert!(!may_rebroadcast("G4AAA", &env, Some(Delivery::Relayed)));
+    }
+
+    #[test]
+    fn answer_again_waits_out_the_echo() {
+        assert!(answer_again(100, None, RETRY_ANSWER_GAP_S));
+        assert!(!answer_again(100, Some(96), RETRY_ANSWER_GAP_S));
+        assert!(answer_again(100, Some(94), RETRY_ANSWER_GAP_S));
+        assert!(answer_again(8, Some(0), RETRY_ANSWER_GAP_S));
+    }
 
     #[test]
     fn ttl_and_dedupe() {

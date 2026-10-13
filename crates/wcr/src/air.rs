@@ -3,6 +3,7 @@
 
 use crate::config::Config;
 use crate::modem::control::{ControlClient, ModemStatus};
+use crate::modem::KissClient;
 use crate::presets::{airtime_secs, Preset, Rung};
 use crate::proto::{Envelope, MsgId, MsgType, Priority};
 use crate::status::SharedStatus;
@@ -568,6 +569,117 @@ async fn pace_and_send(
 /// Extra patience on top of the airtime estimate while modem73 clears its queue.
 const DRAIN_GRACE_S: f64 = 15.0;
 
+/// Preset modem config with carrier sense off, for one ACK that has already
+/// waited out `emergency_max_defer_ms`. The rung stays the preset's own
+/// `control_config` (never a faster mode). Chat's config is not modified.
+pub fn ack_force_config(preset: Preset) -> serde_json::Value {
+    let mut v = preset.control_config();
+    if let Some(obj) = v.as_object_mut() {
+        obj.insert("csma_enabled".into(), serde_json::json!(false));
+    }
+    v
+}
+
+/// Key one ACK without waiting behind the air queue.
+///
+/// The queue is paused so a backlog cannot take the modem while this frame
+/// is borrowed. If the channel is still busy when `cap` elapses, modem CSMA
+/// is turned off for this ACK only and restored to the preset afterwards.
+/// That is what makes the receipt actually leave under a steady noise floor:
+/// handing the frame to a modem that still refuses to key does not.
+pub struct AckTx<'a> {
+    pub frames: &'a [Vec<u8>],
+    pub preset: Preset,
+    pub air: Option<&'a AirQueue>,
+    pub sense: Option<&'a dyn ChannelSense>,
+    pub control: Option<&'a ControlClient>,
+    pub kiss: Option<&'a KissClient>,
+    pub cap: Duration,
+    pub slot: Duration,
+    pub quiet: Duration,
+    pub csma: bool,
+    pub drain_cap: Duration,
+}
+
+pub async fn transmit_ack(tx: AckTx<'_>) -> bool {
+    if let Some(air) = tx.air {
+        air.pause();
+    }
+    let sent = transmit_ack_while_paused(&tx).await;
+    if let Some(air) = tx.air {
+        air.resume();
+    }
+    sent
+}
+
+async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
+    let started = Instant::now();
+    let mut force = false;
+    if tx.csma {
+        if let Some(sense) = tx.sense {
+            loop {
+                let idle = sense.state() == ChannelState::Idle && sense.since_last_rx() >= tx.quiet;
+                if idle {
+                    break;
+                }
+                if started.elapsed() >= tx.cap {
+                    force = true;
+                    break;
+                }
+                let slot = if tx.slot.is_zero() {
+                    Duration::from_millis(1)
+                } else {
+                    tx.slot
+                };
+                tokio::time::sleep(slot).await;
+            }
+        } else if !tx.cap.is_zero() {
+            // No channel feed: still honour the cap, then key.
+            tokio::time::sleep(tx.cap).await;
+            force = true;
+        }
+    }
+    if force {
+        if let Some(c) = tx.control {
+            let _ = c.set_config(ack_force_config(tx.preset)).await;
+        }
+    }
+    let before = match tx.control {
+        Some(c) => c.get_status().await.ok().map(|s| s.tx_frame_count),
+        None => None,
+    };
+    let mut sent = false;
+    if let Some(k) = tx.kiss {
+        for frame in tx.frames {
+            if k.send(frame).await.is_err() {
+                break;
+            }
+            sent = true;
+        }
+    }
+    if let (Some(c), Some(before)) = (tx.control, before) {
+        let target = before.saturating_add(tx.frames.len() as u64);
+        let start = Instant::now();
+        loop {
+            match c.get_status().await {
+                Ok(st) if st.tx_frame_count >= target => break,
+                Err(_) => break,
+                _ => {}
+            }
+            if start.elapsed() >= tx.drain_cap {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+    if force {
+        if let Some(c) = tx.control {
+            let _ = c.set_config(tx.preset.control_config()).await;
+        }
+    }
+    sent
+}
+
 /// Wait until the modem reports `target` transmitted frames, or `cap` elapses.
 async fn wait_for_tx_drain(control: &ControlClient, target: u64, cap: Duration) {
     let start = Instant::now();
@@ -912,5 +1024,187 @@ mod tests {
         assert!(!q.is_paused());
         assert!(q.pop_ready().is_some());
         assert_eq!(q.depth(), 0);
+    }
+
+    #[test]
+    fn ack_force_config_keeps_the_preset_and_drops_csma() {
+        let forced = ack_force_config(Preset::HfPoor);
+        assert_eq!(
+            forced.get("csma_enabled").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert_eq!(forced.get("robust_mode").and_then(|v| v.as_i64()), Some(6));
+        let restored = Preset::HfPoor.control_config();
+        assert_eq!(
+            restored.get("csma_enabled").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            restored.get("robust_mode").and_then(|v| v.as_i64()),
+            Some(6)
+        );
+    }
+
+    /// Steady noise, occupancy stuck high, and a full air queue. The ACK must
+    /// be keyed (CSMA off) within the short cap, and the backlog must stay queued.
+    #[tokio::test]
+    async fn ack_keys_past_busy_cap_ahead_of_backlog() {
+        use crate::modem::control::{decode_control_frames, encode_control_frame};
+        use crate::modem::kiss::KissDecoder;
+        use crate::modem::{ControlClient, KissClient};
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let csma_on = Arc::new(AtomicBool::new(true));
+        let tx_count = Arc::new(AtomicU64::new(0));
+        let csma_seen = Arc::new(Mutex::new(Vec::<bool>::new()));
+        let got = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+
+        let ctrl_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ctrl_addr = ctrl_listener.local_addr().unwrap();
+        let kiss_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let kiss_addr = kiss_listener.local_addr().unwrap();
+
+        let csma_c = csma_on.clone();
+        let tx_c = tx_count.clone();
+        let seen_c = csma_seen.clone();
+        tokio::spawn(async move {
+            let (mut stream, _) = ctrl_listener.accept().await.unwrap();
+            let mut stash = Vec::new();
+            let mut buf = [0u8; 2048];
+            loop {
+                match stream.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        stash.extend_from_slice(&buf[..n]);
+                        let Ok(frames) = decode_control_frames(&mut stash) else {
+                            continue;
+                        };
+                        for v in frames {
+                            let cmd = v.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
+                            if cmd == "set_config" {
+                                if let Some(on) = v.get("csma_enabled").and_then(|x| x.as_bool()) {
+                                    csma_c.store(on, AtomicOrdering::SeqCst);
+                                    seen_c.lock().push(on);
+                                }
+                            }
+                            let reply = if cmd == "get_status" {
+                                serde_json::json!({
+                                    "channel_state": "rx",
+                                    "occupancy_pct": 99,
+                                    "tx_frame_count": tx_c.load(AtomicOrdering::SeqCst),
+                                    "audio_connected": true
+                                })
+                            } else {
+                                serde_json::json!({"ok": true})
+                            };
+                            if let Ok(f) = encode_control_frame(&reply) {
+                                if stream.write_all(&f).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let csma_k = csma_on.clone();
+        let tx_k = tx_count.clone();
+        let got_k = got.clone();
+        tokio::spawn(async move {
+            let (mut stream, _) = kiss_listener.accept().await.unwrap();
+            let mut dec = KissDecoder::new();
+            let mut buf = [0u8; 2048];
+            loop {
+                match stream.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        for payload in dec.push(&buf[..n]) {
+                            // Carrier sense on: the modem accepts the frame and
+                            // does not key it. tx_frame_count stays put.
+                            if !csma_k.load(AtomicOrdering::SeqCst) {
+                                tx_k.fetch_add(1, AtomicOrdering::SeqCst);
+                            }
+                            got_k.lock().push(payload);
+                        }
+                    }
+                }
+            }
+        });
+
+        let (control, _ev) = ControlClient::connect(&ctrl_addr.to_string())
+            .await
+            .unwrap();
+        let (kiss, _rx) = KissClient::connect(&kiss_addr.to_string()).await.unwrap();
+
+        let q = AirQueue::new();
+        let sense = FakeSense::new();
+        sense.set_state(ChannelState::Rx);
+        sense.set_occupancy(99);
+        for n in 0..22u8 {
+            q.enqueue(item(AirClass::Own, n));
+        }
+        let (air_tx, mut air_rx) = mpsc::channel(32);
+        let cfg = test_cfg();
+        let snap = status::new_shared();
+        let worker = tokio::spawn(run_air_queue(
+            q.clone(),
+            air_tx,
+            sense.clone(),
+            Some(control.clone()),
+            cfg,
+            snap,
+            CancellationToken::new(),
+        ));
+
+        let ack = vec![vec![0xA1, 0xA1]];
+        let keyed = transmit_ack(AckTx {
+            frames: &ack,
+            preset: Preset::HfPoor,
+            air: Some(&q),
+            sense: Some(sense.as_ref()),
+            control: Some(&control),
+            kiss: Some(&kiss),
+            cap: Duration::from_millis(200),
+            slot: Duration::from_millis(20),
+            quiet: Duration::from_millis(50),
+            csma: true,
+            drain_cap: Duration::from_secs(2),
+        })
+        .await;
+        assert!(keyed, "ACK was not handed to the modem");
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline && got.lock().is_empty() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            got.lock().clone(),
+            vec![vec![0xA1, 0xA1]],
+            "ACK did not key ahead of the backlog"
+        );
+        assert!(
+            !csma_on.load(AtomicOrdering::SeqCst) || csma_seen.lock().contains(&false),
+            "ACK must disable carrier sense after the cap: {:?}",
+            csma_seen.lock()
+        );
+        assert_eq!(
+            csma_seen.lock().last().copied(),
+            Some(true),
+            "carrier sense must be restored: {:?}",
+            csma_seen.lock()
+        );
+        // One backlog frame may be in flight inside pace_and_send. The rest stay.
+        assert!(
+            q.depth() >= 21,
+            "backlog was dumped with the ACK: {}",
+            q.depth()
+        );
+        assert!(
+            drain(&mut air_rx).await.is_empty(),
+            "the busy backlog must not reach KISS before its own cap"
+        );
+        worker.abort();
     }
 }
