@@ -583,10 +583,11 @@ pub fn ack_force_config(preset: Preset) -> serde_json::Value {
 /// Key one ACK without waiting behind the air queue.
 ///
 /// The queue is paused so a backlog cannot take the modem while this frame
-/// is borrowed. If the channel is still busy when `cap` elapses, modem CSMA
-/// is turned off for this ACK only and restored to the preset afterwards.
-/// That is what makes the receipt actually leave under a steady noise floor:
-/// handing the frame to a modem that still refuses to key does not.
+/// is borrowed. Modem carrier sense is turned off for this ACK once
+/// `cap` elapses, and also as soon as the modem itself reports busy.
+/// Our channel sense is not enough: steady noise often leaves it `idle`
+/// (no decoded frame) while modem73's own detector still holds the frame.
+/// The preset config, with carrier sense on, is restored afterwards.
 pub struct AckTx<'a> {
     pub frames: &'a [Vec<u8>],
     pub preset: Preset,
@@ -612,31 +613,45 @@ pub async fn transmit_ack(tx: AckTx<'_>) -> bool {
     sent
 }
 
+/// modem73 is holding the channel even if we have not decoded a frame.
+pub fn modem_reports_busy(st: &ModemStatus) -> bool {
+    match st.channel_state.trim().to_ascii_lowercase().as_str() {
+        "rx" | "tx" | "busy" => true,
+        _ => st.occupancy_pct > 0,
+    }
+}
+
+/// Carrier sense must be off for this ACK. A decoded-frame sense that says
+/// idle does not count: after the cap, or as soon as the modem reports busy.
+pub fn ack_forces_csma_off(cap_elapsed: bool, modem_busy: bool) -> bool {
+    cap_elapsed || modem_busy
+}
+
 async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
     let started = Instant::now();
     let mut force = false;
     if tx.csma {
-        if let Some(sense) = tx.sense {
-            loop {
-                let idle = sense.state() == ChannelState::Idle && sense.since_last_rx() >= tx.quiet;
-                if idle {
-                    break;
-                }
-                if started.elapsed() >= tx.cap {
-                    force = true;
-                    break;
-                }
-                let slot = if tx.slot.is_zero() {
-                    Duration::from_millis(1)
-                } else {
-                    tx.slot
-                };
-                tokio::time::sleep(slot).await;
+        loop {
+            let modem_busy = match tx.control {
+                Some(c) => c
+                    .get_status()
+                    .await
+                    .ok()
+                    .is_some_and(|st| modem_reports_busy(&st)),
+                None => false,
+            };
+            // Do not send early just because we have not decoded a frame.
+            // That left CSMA on, and modem73 then held the ACK over noise.
+            if ack_forces_csma_off(started.elapsed() >= tx.cap, modem_busy) {
+                force = true;
+                break;
             }
-        } else if !tx.cap.is_zero() {
-            // No channel feed: still honour the cap, then key.
-            tokio::time::sleep(tx.cap).await;
-            force = true;
+            let slot = if tx.slot.is_zero() {
+                Duration::from_millis(1)
+            } else {
+                tx.slot
+            };
+            tokio::time::sleep(slot).await;
         }
     }
     if force {
@@ -1045,6 +1060,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ack_csma_off_after_cap_or_modem_busy() {
+        assert!(ack_forces_csma_off(true, false));
+        assert!(ack_forces_csma_off(false, true));
+        assert!(!ack_forces_csma_off(false, false));
+        assert!(modem_reports_busy(&ModemStatus {
+            channel_state: "rx".into(),
+            ..ModemStatus::default()
+        }));
+        assert!(modem_reports_busy(&ModemStatus {
+            channel_state: "idle".into(),
+            occupancy_pct: 99,
+            ..ModemStatus::default()
+        }));
+        assert!(!modem_reports_busy(&ModemStatus {
+            channel_state: "idle".into(),
+            occupancy_pct: 0,
+            ..ModemStatus::default()
+        }));
+    }
+
     /// Steady noise, occupancy stuck high, and a full air queue. The ACK must
     /// be keyed (CSMA off) within the short cap, and the backlog must stay queued.
     #[tokio::test]
@@ -1206,5 +1242,216 @@ mod tests {
             "the busy backlog must not reach KISS before its own cap"
         );
         worker.abort();
+    }
+
+    struct AckModem {
+        control: crate::modem::ControlClient,
+        kiss: crate::modem::KissClient,
+        csma_seen: Arc<Mutex<Vec<bool>>>,
+        tx_count: Arc<std::sync::atomic::AtomicU64>,
+        got: Arc<Mutex<Vec<Vec<u8>>>>,
+    }
+
+    /// Control port reports `channel_state` / occupancy. KISS accepts a frame
+    /// always, but `tx_frame_count` moves only while carrier sense is off —
+    /// the same hold modem73 applies when its detector is busy and CSMA is on.
+    async fn spawn_ack_modem(channel_state: &'static str, occupancy: i32) -> AckModem {
+        use crate::modem::control::{decode_control_frames, encode_control_frame};
+        use crate::modem::kiss::KissDecoder;
+        use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let csma_on = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let tx_count = Arc::new(AtomicU64::new(0));
+        let csma_seen = Arc::new(Mutex::new(Vec::<bool>::new()));
+        let got = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+
+        let ctrl_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ctrl_addr = ctrl_listener.local_addr().unwrap();
+        let kiss_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let kiss_addr = kiss_listener.local_addr().unwrap();
+
+        let csma_c = csma_on.clone();
+        let tx_c = tx_count.clone();
+        let seen_c = csma_seen.clone();
+        tokio::spawn(async move {
+            let (mut stream, _) = ctrl_listener.accept().await.unwrap();
+            let mut stash = Vec::new();
+            let mut buf = [0u8; 2048];
+            loop {
+                match stream.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        stash.extend_from_slice(&buf[..n]);
+                        let Ok(frames) = decode_control_frames(&mut stash) else {
+                            continue;
+                        };
+                        for v in frames {
+                            let cmd = v.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
+                            if cmd == "set_config" {
+                                if let Some(on) = v.get("csma_enabled").and_then(|x| x.as_bool()) {
+                                    csma_c.store(on, AtomicOrdering::SeqCst);
+                                    seen_c.lock().push(on);
+                                }
+                            }
+                            let reply = if cmd == "get_status" {
+                                serde_json::json!({
+                                    "channel_state": channel_state,
+                                    "occupancy_pct": occupancy,
+                                    "tx_frame_count": tx_c.load(AtomicOrdering::SeqCst),
+                                    "audio_connected": true
+                                })
+                            } else {
+                                serde_json::json!({"ok": true})
+                            };
+                            if let Ok(f) = encode_control_frame(&reply) {
+                                if stream.write_all(&f).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let csma_k = csma_on.clone();
+        let tx_k = tx_count.clone();
+        let got_k = got.clone();
+        tokio::spawn(async move {
+            let (mut stream, _) = kiss_listener.accept().await.unwrap();
+            let mut dec = KissDecoder::new();
+            let mut buf = [0u8; 2048];
+            loop {
+                match stream.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        for payload in dec.push(&buf[..n]) {
+                            if !csma_k.load(AtomicOrdering::SeqCst) {
+                                tx_k.fetch_add(1, AtomicOrdering::SeqCst);
+                            }
+                            got_k.lock().push(payload);
+                        }
+                    }
+                }
+            }
+        });
+
+        let (control, _ev) = crate::modem::ControlClient::connect(&ctrl_addr.to_string())
+            .await
+            .unwrap();
+        let (kiss, _rx) = crate::modem::KissClient::connect(&kiss_addr.to_string())
+            .await
+            .unwrap();
+        AckModem {
+            control,
+            kiss,
+            csma_seen,
+            tx_count,
+            got,
+        }
+    }
+
+    /// Steady noise: modem73's detector is busy, this station has decoded
+    /// nothing so its own sense stays idle. The ACK must still leave with
+    /// carrier sense off, well before a long cap, and sense must be restored.
+    #[tokio::test]
+    async fn ack_keys_csma_off_when_modem_busy_and_wcr_idle() {
+        use std::sync::atomic::Ordering as AtomicOrdering;
+
+        let modem = spawn_ack_modem("rx", 99).await;
+        let sense = FakeSense::new();
+        assert_eq!(sense.state(), ChannelState::Idle);
+        sense.set_occupancy(0);
+
+        let ack = vec![vec![0xA1, 0xA1]];
+        let started = Instant::now();
+        let keyed = transmit_ack(AckTx {
+            frames: &ack,
+            preset: Preset::HfPoor,
+            air: None,
+            sense: Some(sense.as_ref()),
+            control: Some(&modem.control),
+            kiss: Some(&modem.kiss),
+            cap: Duration::from_secs(5),
+            slot: Duration::from_millis(20),
+            quiet: Duration::from_millis(50),
+            csma: true,
+            drain_cap: Duration::from_millis(800),
+        })
+        .await;
+        let elapsed = started.elapsed();
+        assert!(keyed, "ACK was not handed to the modem");
+        assert!(
+            elapsed < Duration::from_millis(1500),
+            "modem-busy ACK waited {elapsed:?}; carrier sense should drop immediately"
+        );
+        assert_eq!(sense.state(), ChannelState::Idle);
+        assert_eq!(modem.got.lock().clone(), vec![vec![0xA1, 0xA1]]);
+        assert!(
+            modem.tx_count.load(AtomicOrdering::SeqCst) >= 1,
+            "frame was accepted while carrier sense was still on"
+        );
+        assert!(
+            modem.csma_seen.lock().contains(&false),
+            "ACK must disable carrier sense while the modem is busy and wcr is idle: {:?}",
+            modem.csma_seen.lock()
+        );
+        assert_eq!(
+            modem.csma_seen.lock().last().copied(),
+            Some(true),
+            "carrier sense must be restored: {:?}",
+            modem.csma_seen.lock()
+        );
+    }
+
+    /// Neither side reports busy. After the cap the ACK is still keyed with
+    /// carrier sense off, so a detector that does not show up in status cannot
+    /// hold the frame the way modem73 did for 53 s.
+    #[tokio::test]
+    async fn ack_keys_csma_off_after_cap_when_both_idle() {
+        use std::sync::atomic::Ordering as AtomicOrdering;
+
+        let modem = spawn_ack_modem("idle", 0).await;
+        let sense = FakeSense::new();
+        assert_eq!(sense.state(), ChannelState::Idle);
+
+        let ack = vec![vec![0xB2]];
+        let started = Instant::now();
+        let keyed = transmit_ack(AckTx {
+            frames: &ack,
+            preset: Preset::HfPoor,
+            air: None,
+            sense: Some(sense.as_ref()),
+            control: Some(&modem.control),
+            kiss: Some(&modem.kiss),
+            cap: Duration::from_millis(200),
+            slot: Duration::from_millis(20),
+            quiet: Duration::from_millis(1),
+            csma: true,
+            drain_cap: Duration::from_millis(800),
+        })
+        .await;
+        let elapsed = started.elapsed();
+        assert!(keyed, "ACK was not handed to the modem");
+        assert!(
+            elapsed >= Duration::from_millis(150),
+            "ACK left before the cap ({elapsed:?}) with carrier sense still on"
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "ACK did not key once the cap elapsed ({elapsed:?})"
+        );
+        assert_eq!(sense.state(), ChannelState::Idle);
+        assert!(
+            modem.tx_count.load(AtomicOrdering::SeqCst) >= 1,
+            "frame was accepted while carrier sense was still on"
+        );
+        assert_eq!(
+            modem.csma_seen.lock().last().copied(),
+            Some(true),
+            "carrier sense must be restored: {:?}",
+            modem.csma_seen.lock()
+        );
     }
 }
