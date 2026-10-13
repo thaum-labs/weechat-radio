@@ -6,8 +6,7 @@ use chrono::Utc;
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 
@@ -53,7 +52,6 @@ struct Client {
     caps: HashSet<String>,
     channels: HashSet<String>,
     registered: bool,
-    last_line: Instant,
     tx: mpsc::Sender<String>,
 }
 
@@ -133,7 +131,6 @@ impl IrcServer {
                     caps: HashSet::new(),
                     channels: HashSet::new(),
                     registered: false,
-                    last_line: Instant::now(),
                     tx: tx.clone(),
                 },
             );
@@ -149,8 +146,8 @@ impl IrcServer {
                 }
             }
         });
-        let mut read = read;
-        while let Some(line) = read_irc_line(&mut read).await? {
+        let mut reader = tokio::io::BufReader::new(read);
+        while let Some(line) = read_irc_line(&mut reader).await? {
             self.on_line(id, &line).await?;
         }
         let nick = {
@@ -174,16 +171,6 @@ impl IrcServer {
         let line = line.trim_end();
         if line.is_empty() {
             return Ok(());
-        }
-        {
-            let mut g = self.inner.lock();
-            if let Some(c) = g.clients.get_mut(&id) {
-                let now = Instant::now();
-                if now.duration_since(c.last_line) < Duration::from_millis(80) {
-                    return Ok(());
-                }
-                c.last_line = now;
-            }
         }
         let (tags, rest) = split_tags(line);
         let parts = split_irc(rest);
@@ -470,8 +457,9 @@ impl IrcServer {
 
     async fn send_numeric(&self, id: u64, num: u16, rest: &str) {
         let nick = self.nick(id);
+        let who = if nick.is_empty() { "*" } else { nick.as_str() };
         let srv = self.inner.lock().server_name.clone();
-        self.send_raw(id, &format!(":{srv} {num:03} {nick} {rest}"))
+        self.send_raw(id, &format!(":{srv} {num:03} {who} {rest}"))
             .await;
     }
 
@@ -641,29 +629,67 @@ impl IrcServer {
     }
 }
 
-async fn read_irc_line<R: tokio::io::AsyncRead + Unpin>(read: &mut R) -> Result<Option<String>> {
-    let mut buf = Vec::new();
-    let mut byte = [0u8; 1];
-    while buf.len() < MAX_IRC_LINE {
-        let n = read.read(&mut byte).await?;
-        if n == 0 {
-            return Ok(if buf.is_empty() {
+async fn read_irc_line<R: AsyncBufReadExt + Unpin>(reader: &mut R) -> Result<Option<String>> {
+    let mut line = Vec::new();
+    loop {
+        let buf = reader.fill_buf().await?;
+        if buf.is_empty() {
+            return Ok(if line.is_empty() {
                 None
             } else {
-                Some(String::from_utf8_lossy(&buf).into_owned())
+                Some(String::from_utf8_lossy(&line).into_owned())
             });
         }
-        if byte[0] == b'\n' {
-            break;
+        let mut consumed = 0usize;
+        let mut found_nl = false;
+        let mut overlong = false;
+        for (i, &b) in buf.iter().enumerate() {
+            if b == b'\n' {
+                line.extend_from_slice(&buf[..i]);
+                consumed = i + 1;
+                found_nl = true;
+                break;
+            }
+            if line.len() >= MAX_IRC_LINE {
+                consumed = i + 1;
+                overlong = true;
+                break;
+            }
+            line.push(b);
+            consumed = i + 1;
         }
-        if byte[0] != b'\r' {
-            buf.push(byte[0]);
+        reader.consume(consumed);
+        if found_nl {
+            while line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            return Ok(Some(String::from_utf8_lossy(&line).into_owned()));
+        }
+        if overlong {
+            discard_irc_line_remainder(reader).await?;
+            return Ok(Some(String::from_utf8_lossy(&line).into_owned()));
         }
     }
-    if buf.len() >= MAX_IRC_LINE {
-        while read.read(&mut byte).await? > 0 && byte[0] != b'\n' {}
+}
+
+async fn discard_irc_line_remainder<R: AsyncBufReadExt + Unpin>(reader: &mut R) -> Result<()> {
+    loop {
+        let (consume, done) = {
+            let buf = reader.fill_buf().await?;
+            if buf.is_empty() {
+                return Ok(());
+            }
+            if let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+                (pos + 1, true)
+            } else {
+                (buf.len(), false)
+            }
+        };
+        reader.consume(consume);
+        if done {
+            return Ok(());
+        }
     }
-    Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
 }
 
 fn split_tags(line: &str) -> (HashMap<String, String>, &str) {

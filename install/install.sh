@@ -67,6 +67,7 @@ curl -fsSL "$URL" -o "$TMP/wcr.tgz" || {
   echo "  git clone https://github.com/${REPO} && cd weechat-radio && cargo install --path crates/wcr"
   exit 1
 }
+verify_sha256 "$TMP/wcr.tgz" "$URL"
 tar -xzf "$TMP/wcr.tgz" -C "$TMP"
 BIN="$TMP/wcr"
 chmod +x "$BIN"

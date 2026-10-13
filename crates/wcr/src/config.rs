@@ -474,6 +474,9 @@ impl Config {
         let text = std::fs::read_to_string(path)?;
         let mut cfg: Config = toml::from_str(&text)?;
         cfg.normalize();
+        if !cfg.callsign.is_empty() {
+            crate::proto::Callsign::parse(&cfg.callsign)?;
+        }
         Ok(cfg)
     }
 
@@ -587,6 +590,15 @@ pub fn ensure_dirs() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn load_rejects_invalid_callsign() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wcr.toml");
+        std::fs::write(&path, "callsign = \"!!BAD!!\"\n").unwrap();
+        let err = Config::load(&path).unwrap_err();
+        assert!(err.to_string().contains("callsign") || err.to_string().contains("protocol"));
+    }
 
     #[test]
     fn roundtrip_toml() {
