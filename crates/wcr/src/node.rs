@@ -395,7 +395,11 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 let our = rt_h.engine.our_call.clone();
                 if let Ok(due) = rt_h.store.hold_due(now) {
                     for m in due {
-                        if m.env.origin.as_str() == our {
+                        if !relay::may_rebroadcast(&our, &m.env, Some(m.delivery)) {
+                            let _ = rt_h.store.set_hold(&m.env.msg_id, 0, 0);
+                            if let Some(air) = rt_h.air() {
+                                air.cancel(m.env.msg_id);
+                            }
                             continue;
                         }
                         let _ = dispatch(&rt_h, &m.env).await;
@@ -648,15 +652,9 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 refresh_group_prios(&rt_f);
                 if let Some(h) = rt_f.hub() {
                     let (khz, heard, hub_ok) = {
-                        let s = rt_f.snap.lock();
-                        (
-                            s.freq_khz,
-                            s.heard
-                                .iter()
-                                .map(|x| x.callsign.clone())
-                                .collect::<Vec<_>>(),
-                            s.hub_ok,
-                        )
+                        let khz = rt_f.snap.lock().freq_khz;
+                        let hub_ok = rt_f.snap.lock().hub_ok;
+                        (khz, hub_register_names(&rt_f), hub_ok)
                     };
                     if hub_ok
                         && (khz != last_hub_khz || last_hub.elapsed() >= Duration::from_secs(60))
@@ -1603,6 +1601,28 @@ fn heard_freq(rt: &Runtime, env: &Envelope, medium: &str) -> Option<u32> {
     None
 }
 
+/// Callsigns this station has heard, plus closed-group names it belongs to.
+/// The hub treats both as `serves`, so a group message is routed to members.
+fn hub_register_names(rt: &Runtime) -> Vec<String> {
+    let mut names: Vec<String> = rt
+        .store
+        .group_list()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|n| n.to_ascii_uppercase())
+        .collect();
+    names.extend(
+        rt.snap
+            .lock()
+            .heard
+            .iter()
+            .map(|h| h.callsign.to_ascii_uppercase()),
+    );
+    names.sort();
+    names.dedup();
+    names
+}
+
 fn refresh_heard(rt: &Runtime) {
     let now = crate::proto::now_ts();
     let cutoff = now.saturating_sub(600);
@@ -2028,7 +2048,7 @@ async fn start_hub(rt: &Runtime) -> Result<()> {
         &cfg.hub.url,
         &cfg.callsign,
         &rt.keys,
-        vec![],
+        hub_register_names(rt),
         cfg.rf.frequency_khz,
         rt.hub_in_tx.clone(),
         rt.hub_flag.clone(),
