@@ -2,7 +2,8 @@
 //! Terminal-style console helpers for CLI output.
 
 use console::Style;
-use dialoguer::theme::ColorfulTheme;
+use dialoguer::theme::{ColorfulTheme, Theme};
+use std::fmt;
 
 /// Approximate #7d9bff / #ff7a3d in xterm-256.
 const ACCENT: u8 = 111;
@@ -84,14 +85,84 @@ pub fn prompt_theme() -> ColorfulTheme {
     }
 }
 
+/// Confirm prompts that show `[Y/n]` or `[y/N]`.
+///
+/// `ColorfulTheme` always prints `(y/n)` and a separate yes/no word, so Enter
+/// on the grid question looked like it had no default.
+pub struct BracketConfirmTheme {
+    inner: ColorfulTheme,
+}
+
+pub fn bracket_confirm_theme() -> BracketConfirmTheme {
+    BracketConfirmTheme {
+        inner: prompt_theme(),
+    }
+}
+
+impl Theme for BracketConfirmTheme {
+    fn format_confirm_prompt(
+        &self,
+        f: &mut dyn fmt::Write,
+        prompt: &str,
+        default: Option<bool>,
+    ) -> fmt::Result {
+        if !prompt.is_empty() {
+            write!(
+                f,
+                "{} {} ",
+                self.inner.prompt_prefix,
+                self.inner.prompt_style.apply_to(prompt)
+            )?;
+        }
+        let hint = match default {
+            Some(true) => "[Y/n]",
+            Some(false) => "[y/N]",
+            None => "[y/n]",
+        };
+        write!(
+            f,
+            "{} {}",
+            self.inner.hint_style.apply_to(hint),
+            self.inner.prompt_suffix
+        )
+    }
+
+    fn format_confirm_prompt_selection(
+        &self,
+        f: &mut dyn fmt::Write,
+        prompt: &str,
+        selection: Option<bool>,
+    ) -> fmt::Result {
+        Theme::format_confirm_prompt_selection(&self.inner, f, prompt, selection)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dialoguer::theme::Theme;
 
     #[test]
     fn panel_line_contains_title() {
         let s = panel_line("WEECHAT RADIO", "HELP");
         assert!(s.contains("WEECHAT RADIO"));
         assert!(s.contains("HELP"));
+    }
+
+    #[test]
+    fn yes_confirm_shows_bracket_default() {
+        let theme = bracket_confirm_theme();
+        let mut yes = String::new();
+        theme
+            .format_confirm_prompt(&mut yes, "Use this grid on the map?", Some(true))
+            .unwrap();
+        assert!(yes.contains("Use this grid on the map?"));
+        assert!(yes.contains("[Y/n]"), "{yes}");
+        assert!(!yes.contains("(y/n)"), "{yes}");
+        let mut no = String::new();
+        theme
+            .format_confirm_prompt(&mut no, "Use this grid on the map?", Some(false))
+            .unwrap();
+        assert!(no.contains("[y/N]"), "{no}");
     }
 }

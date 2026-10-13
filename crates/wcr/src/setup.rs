@@ -43,6 +43,7 @@ pub fn run_wizard() -> Result<Config> {
     )?;
 
     let guessed = grid_rx.recv().ok().flatten();
+    let confirm_theme = ui_style::bracket_confirm_theme();
     let mut grid_prompt = Input::with_theme(&theme)
         .with_prompt(ui_style::step(
             2,
@@ -50,6 +51,7 @@ pub fn run_wizard() -> Result<Config> {
             "Maidenhead grid square (Enter to accept, or type your own)",
         ))
         .allow_empty(true);
+    let mut accepted_detected = false;
     if let Some(hit) = &guessed {
         let label = if hit.label.is_empty() {
             hit.grid.clone()
@@ -62,12 +64,16 @@ pub fn run_wizard() -> Result<Config> {
                 "Detected {label} (shown on the public map if you enable telemetry)"
             ))
         );
-        let use_detected = Confirm::with_theme(&theme)
+        accepted_detected = Confirm::with_theme(&confirm_theme)
             .with_prompt("Use this grid on the map?")
-            .default(false)
+            .default(true)
             .interact()?;
-        if use_detected {
-            grid_prompt = grid_prompt.default(hit.grid.clone());
+        if accepted_detected {
+            // `.default` is only a hint. The field itself has to be filled or
+            // Enter stores an empty grid.
+            grid_prompt = grid_prompt
+                .default(hit.grid.clone())
+                .with_initial_text(hit.grid.clone());
         }
     } else {
         println!(
@@ -76,7 +82,11 @@ pub fn run_wizard() -> Result<Config> {
                 .apply_to("Could not detect reliably — leave empty or type e.g. IO81UF",)
         );
     }
-    let grid: String = grid_prompt.interact_text()?;
+    let typed: String = grid_prompt.interact_text()?;
+    let grid = match &guessed {
+        Some(hit) => grid_from_setup(accepted_detected, &hit.grid, &typed),
+        None => typed.trim().to_ascii_uppercase(),
+    };
     if !grid.is_empty() {
         crate::grid::normalize(&grid)?;
     }
@@ -248,6 +258,10 @@ pub fn run_wizard() -> Result<Config> {
             "  {}",
             ui_style::dim().apply_to("Verify your band plan before you transmit.")
         );
+    }
+
+    if path == 0 {
+        println!("  {}", ui_style::dim().apply_to(skipped_radio_step_note()));
     }
 
     if Confirm::with_theme(&theme)
@@ -487,4 +501,40 @@ fn bluetooth_pick(theme: &dyn dialoguer::theme::Theme, cfg: &mut Config) -> Resu
 
 pub fn calling_card() -> String {
     crate::band::calling_card_text()
+}
+
+/// Internet-only setup has no audio step. The service prompt stays 7/7.
+pub fn skipped_radio_step_note() -> &'static str {
+    "Step 6 skipped (radio only)."
+}
+
+/// Enter on an empty field keeps the detected square when the operator
+/// accepted it. A typed square wins either way. Declining and pressing
+/// Enter stores nothing.
+pub fn grid_from_setup(accepted_detected: bool, detected: &str, typed: &str) -> String {
+    let typed = typed.trim();
+    if typed.is_empty() && accepted_detected {
+        detected.trim().to_ascii_uppercase()
+    } else {
+        typed.to_ascii_uppercase()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enter_keeps_detected_grid_only_when_accepted() {
+        assert_eq!(grid_from_setup(true, "IO81uf", ""), "IO81UF");
+        assert_eq!(grid_from_setup(true, "IO81UF", "   "), "IO81UF");
+        assert_eq!(grid_from_setup(true, "IO81UF", "jo01"), "JO01");
+        assert_eq!(grid_from_setup(false, "IO81UF", ""), "");
+        assert_eq!(grid_from_setup(false, "IO81UF", "jn68"), "JN68");
+    }
+
+    #[test]
+    fn internet_only_names_the_skipped_radio_step() {
+        assert_eq!(skipped_radio_step_note(), "Step 6 skipped (radio only).");
+    }
 }
