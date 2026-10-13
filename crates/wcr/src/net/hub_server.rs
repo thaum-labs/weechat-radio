@@ -680,6 +680,7 @@ mod tests {
         assert!(rx_a.try_recv().is_err());
     }
 
+    #[test]
     fn session_replace_invalidates_old_conn() {
         let st = test_hub_state();
         let (tx1, _rx1) = mpsc::channel(1);

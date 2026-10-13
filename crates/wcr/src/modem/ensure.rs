@@ -196,7 +196,9 @@ async fn fetch_verified_bytes(url: &str) -> Result<bytes::Bytes> {
     if let Ok(expected) = fetch_bytes(&format!("{url}.sha256")).await {
         verify_sha256_file(&bytes, &expected)?;
     } else {
-        tracing::warn!("no SHA-256 sidecar for {url}; skipping checksum verify");
+        tracing::error!(
+            "SECURITY: no SHA-256 sidecar at {url}.sha256 — download is unverified (modem73 release assets often lack sidecars; install from a trusted network or verify manually)"
+        );
     }
     Ok(bytes)
 }
