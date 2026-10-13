@@ -432,14 +432,29 @@ fn route(st: &HubState, env: &Envelope, raw: &[u8], from: &str) -> (u32, String,
         return (0, String::new(), Vec::new());
     }
     let dest = env.dest.to_string().to_ascii_uppercase();
+    let broadcast = crate::slash::is_hub_broadcast(&dest);
+    // Closed groups are not hub-wide. Members register the group name from
+    // their local group list (hello / heard `serves`), and any membership
+    // row on this hub is included too.
+    let members: HashSet<String> = if env.flags.group() && !broadcast {
+        st.store
+            .group_members(&dest)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|m| m.to_ascii_uppercase())
+            .collect()
+    } else {
+        HashSet::new()
+    };
     let (from_khz, sessions) = {
         let g = st.sessions.lock();
         let from_khz = g.get(from).map(|s| s.freq_khz).unwrap_or(0);
-        let broadcast = crate::slash::is_hub_broadcast(&dest);
         let sessions: Vec<(u32, mpsc::Sender<Vec<u8>>)> = g
             .iter()
             .filter(|(call, _)| *call != from)
-            .filter(|(call, s)| broadcast || *call == &dest || s.serves.contains(&dest))
+            .filter(|(call, s)| {
+                broadcast || *call == &dest || s.serves.contains(&dest) || members.contains(*call)
+            })
             .map(|(_, s)| (s.freq_khz, s.tx.clone()))
             .collect();
         (from_khz, sessions)
@@ -745,6 +760,83 @@ mod tests {
         let (_khz, _band, _bands) = route(&st, &env, &raw, "G4ABC");
         assert!(rx_b.try_recv().is_ok());
         assert!(rx_a.try_recv().is_err());
+    }
+
+    #[test]
+    fn closed_group_reaches_members_only() {
+        let st = test_hub_state();
+        st.store
+            .group_create("net", &["G4AAA".into(), "M0BBB".into(), "2E0CCC".into()])
+            .unwrap();
+        let (tx_b, mut rx_b) = mpsc::channel(4);
+        let (tx_c, mut rx_c) = mpsc::channel(4);
+        let (tx_z, mut rx_z) = mpsc::channel(4);
+        {
+            let mut g = st.sessions.lock();
+            for (call, tx) in [("G4AAA", tx_b), ("M0BBB", tx_c), ("G0ZZZ", tx_z)] {
+                g.insert(
+                    call.into(),
+                    Session {
+                        callsign: call.into(),
+                        pubkey: [0u8; 32],
+                        serves: HashSet::from([call.into()]),
+                        tx,
+                        connected_at: std::time::Instant::now(),
+                        freq_khz: 0,
+                        conn_id: 1,
+                    },
+                );
+            }
+        }
+        let mut env = sample_msg("G4AAA");
+        env.dest = Callsign::from_raw("NET");
+        env.flags.set(crate::proto::FLAG_GROUP, true);
+        let raw = env.encode().unwrap();
+        let (_khz, _band, _bands) = route(&st, &env, &raw, "G4AAA");
+        assert!(rx_b.try_recv().is_err(), "sender is not echoed");
+        assert!(rx_c.try_recv().is_ok(), "member should receive the group");
+        assert!(rx_z.try_recv().is_err(), "non-member must not receive it");
+    }
+
+    #[test]
+    fn closed_group_follows_a_registered_group_name() {
+        let st = test_hub_state();
+        let (tx_m, mut rx_m) = mpsc::channel(4);
+        let (tx_z, mut rx_z) = mpsc::channel(4);
+        {
+            let mut g = st.sessions.lock();
+            g.insert(
+                "M0BBB".into(),
+                Session {
+                    callsign: "M0BBB".into(),
+                    pubkey: [0u8; 32],
+                    serves: HashSet::from(["M0BBB".into(), "NET".into()]),
+                    tx: tx_m,
+                    connected_at: std::time::Instant::now(),
+                    freq_khz: 0,
+                    conn_id: 1,
+                },
+            );
+            g.insert(
+                "G0ZZZ".into(),
+                Session {
+                    callsign: "G0ZZZ".into(),
+                    pubkey: [1u8; 32],
+                    serves: HashSet::from(["G0ZZZ".into()]),
+                    tx: tx_z,
+                    connected_at: std::time::Instant::now(),
+                    freq_khz: 0,
+                    conn_id: 2,
+                },
+            );
+        }
+        let mut env = sample_msg("G4AAA");
+        env.dest = Callsign::from_raw("NET");
+        env.flags.set(crate::proto::FLAG_GROUP, true);
+        let raw = env.encode().unwrap();
+        let (_khz, _band, _bands) = route(&st, &env, &raw, "G4AAA");
+        assert!(rx_m.try_recv().is_ok());
+        assert!(rx_z.try_recv().is_err());
     }
 
     #[test]

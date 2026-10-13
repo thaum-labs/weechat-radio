@@ -60,6 +60,25 @@ pub fn decide(store: &Store, env: &Envelope, we_are_waiting: bool) -> Result<Rel
     })
 }
 
+/// Whether this station should key `env` again for someone else.
+///
+/// A frame addressed to us stays here (the local client and the ACK path
+/// handle it). A message that already reached `[ok]` or `[all]` is not
+/// relayed again. An ACK toward another station still is: that is how a
+/// receipt gets back through a middle station.
+pub fn may_rebroadcast(our_call: &str, env: &Envelope, delivery: Option<Delivery>) -> bool {
+    if env.hops_left == 0 || env.origin.as_str().eq_ignore_ascii_case(our_call) {
+        return false;
+    }
+    if env.dest.as_str().eq_ignore_ascii_case(our_call) {
+        return false;
+    }
+    if env.kind != MsgType::Ack && matches!(delivery, Some(Delivery::Delivered | Delivery::All)) {
+        return false;
+    }
+    true
+}
+
 pub fn jitter_ms(priority: Priority) -> u64 {
     let range = priority.jitter_ms();
     rand::thread_rng().gen_range(range)
@@ -230,8 +249,9 @@ impl Engine {
                 if ack_for_us {
                     self.store.set_delivery(&stored.msg_id, Delivery::Relayed)?;
                 }
-                let now = crate::proto::now_ts();
-                if stored.hops_left > 0 && stored.origin.as_str() != self.our_call && !ack_for_us {
+                let delivery = self.store.delivery_of(&stored.msg_id).ok().flatten();
+                if may_rebroadcast(&self.our_call, &stored, delivery) {
+                    let now = crate::proto::now_ts();
                     self.store.set_hold(
                         &stored.msg_id,
                         now + (decision.delay_ms / 1000) as u32,
@@ -379,6 +399,40 @@ mod tests {
         );
         let due = engine.store.hold_due(u32::MAX).unwrap();
         assert!(due.iter().all(|m| m.env.msg_id != ack.msg_id));
+    }
+
+    #[test]
+    fn dm_to_us_is_not_rebroadcast_and_acked_frames_stop() {
+        let us = "M0BBB";
+        let dm = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::parse(us).unwrap(),
+            1,
+            b"for-b".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        assert!(!may_rebroadcast(us, &dm, Some(Delivery::Queued)));
+        let store = Store::open_memory().unwrap();
+        let engine = Engine::new(std::sync::Arc::new(store), us.into());
+        engine.on_rx(&dm, "rf", None, None).unwrap();
+        assert!(engine.store.hold_due(u32::MAX).unwrap().is_empty());
+
+        let onward = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::parse("2E0CCC").unwrap(),
+            2,
+            b"for-c".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        assert!(may_rebroadcast(us, &onward, Some(Delivery::Queued)));
+        assert!(!may_rebroadcast(us, &onward, Some(Delivery::Delivered)));
+        let ack = Envelope::ack_for(&onward, Callsign::parse("2E0CCC").unwrap(), 3, None);
+        assert!(may_rebroadcast(us, &ack, Some(Delivery::Queued)));
+        assert!(!may_rebroadcast("2E0CCC", &ack, Some(Delivery::Queued)));
     }
 
     #[test]
