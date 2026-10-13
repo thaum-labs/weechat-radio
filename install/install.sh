@@ -194,6 +194,7 @@ ensure_user_path() {
 }
 
 WEECHAT_NOTE=""
+WEECHAT_CFG=""
 if [ "${WCR_SKIP_WEECHAT:-}" != "1" ]; then
   if ! command -v weechat >/dev/null 2>&1; then
     if [ "$OS" = "darwin" ]; then
@@ -223,7 +224,10 @@ if [ "${WCR_SKIP_WEECHAT:-}" != "1" ]; then
     if [ -n "${WEECHAT_TRIED:-}" ]; then
       WEECHAT_NOTE="WeeChat: installed with ${WEECHAT_TRIED}."
     fi
-    "$PREFIX/wcr" weechat --configure || echo "WeeChat configure failed; run: wcr weechat --configure" >&2
+    if ! WEECHAT_CFG=$("$PREFIX/wcr" weechat --configure 2>&1); then
+      echo "WeeChat configure failed; run: wcr weechat --configure" >&2
+      WEECHAT_CFG=""
+    fi
   elif [ "$OS" != "darwin" ] && [ -z "$WEECHAT_NOTE" ]; then
     WEECHAT_NOTE="WeeChat: install did not succeed. Install it from https://weechat.org/ then run: wcr weechat --configure"
     echo "$WEECHAT_NOTE" >&2
@@ -243,13 +247,18 @@ echo "Installed $PREFIX/wcr"
 if [ -n "$WEECHAT_NOTE" ]; then
   echo "$WEECHAT_NOTE"
 fi
+if [ -n "$WEECHAT_CFG" ]; then
+  echo "$WEECHAT_CFG"
+fi
 if [ -n "$PATH_NOTE" ]; then
   echo "$PATH_NOTE"
-  echo "This terminal does not see that yet. Apply it with:"
-  echo "  $PATH_APPLY"
 fi
 if [ "$OS" = "linux" ]; then
   echo "Linux GUI (wcr gui): needs libxkbcommon-x11 and libayatana-appindicator3 (Debian: libxkbcommon-x11-0 libayatana-appindicator3-1)."
+fi
+if [ -n "$PATH_APPLY" ]; then
+  echo "This terminal does not see that yet. Apply it with:"
+  echo "  $PATH_APPLY"
 fi
 echo "Next, run:"
 echo "  wcr setup"
