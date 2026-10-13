@@ -4474,7 +4474,7 @@ fn apply_delivery_to(chat: &mut [ChatLine], me: &str, msgid: &str, state: &str, 
             .rev()
             .find(|l| !l.msgid.is_empty() && l.msgid.eq_ignore_ascii_case(msgid))
         {
-            apply_line_delivery(line, ticks, next, tries);
+            apply_line_delivery(line, ticks, next, tries, state);
             return;
         }
     }
@@ -4489,11 +4489,26 @@ fn apply_delivery_to(chat: &mut [ChatLine], me: &str, msgid: &str, state: &str, 
         if line.msgid.is_empty() {
             line.msgid = msgid.to_string();
         }
-        apply_line_delivery(line, ticks, next, tries);
+        apply_line_delivery(line, ticks, next, tries, state);
     }
 }
 
-fn apply_line_delivery(line: &mut ChatLine, ticks: &str, next: crate::store::Delivery, tries: u32) {
+fn apply_line_delivery(
+    line: &mut ChatLine,
+    ticks: &str,
+    next: crate::store::Delivery,
+    tries: u32,
+    state: &str,
+) {
+    if state == "failed" {
+        if !matches!(line.ticks.as_str(), "[ok]" | "[all]") {
+            line.ticks = "[no]".into();
+        }
+        return;
+    }
+    if state.starts_with("retry") && matches!(line.ticks.as_str(), "[ok]" | "[all]" | "[no]") {
+        return;
+    }
     if let Some(cur) = ticks_delivery(&line.ticks) {
         if !cur.can_advance(next) {
             return;
@@ -4520,6 +4535,7 @@ fn delivery_ticks(state: &str) -> Option<&'static str> {
     let d = crate::store::Delivery::parse(state);
     match state {
         "queued" | "sent" | "relayed" | "delivered" | "all" => Some(d.ticks_bracket()),
+        "failed" => Some("[no]"),
         s if s.starts_with("retry") => Some(crate::store::Delivery::Queued.ticks_bracket()),
         _ => None,
     }

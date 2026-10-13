@@ -130,6 +130,48 @@ async fn connect_control_retry(
     }))
 }
 
+enum HubTick {
+    Flush(Vec<Envelope>),
+    Refused {
+        banner: String,
+        queued: Vec<Envelope>,
+    },
+}
+
+fn irc_bind_error(bind: &str, err: std::io::Error) -> crate::error::Error {
+    if err.kind() == std::io::ErrorKind::AddrInUse {
+        crate::error::Error::Msg(format!(
+            "IRC port {bind} is already in use. Stop the other wcr, or set irc.bind in wcr.toml."
+        ))
+    } else {
+        crate::error::Error::Msg(format!("IRC port {bind} failed to bind: {err}"))
+    }
+}
+
+fn is_hub_refusal(err: &str) -> bool {
+    err.contains("already claimed") || err.contains("hub refused")
+}
+
+fn hub_refusal(rt: &Runtime) -> Option<String> {
+    if rt.hub_flag.get() {
+        return None;
+    }
+    let err = rt.hub_flag.error();
+    if is_hub_refusal(&err) {
+        Some(err)
+    } else {
+        None
+    }
+}
+
+/// Queued / sent / relayed still need an ACK. Delivered and [all] do not.
+fn still_awaiting_ack(store: &Store, id: &crate::proto::MsgId) -> bool {
+    matches!(
+        store.delivery_of(id).ok().flatten(),
+        Some(Delivery::Queued | Delivery::Sent | Delivery::Relayed)
+    )
+}
+
 pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     cfg.normalize();
     crate::config::ensure_dirs()?;
@@ -165,16 +207,16 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     let (irc_tx, mut irc_rx) = mpsc::channel(64);
     let irc = IrcServer::new(irc_tx);
     let irc_bind = cfg.irc.bind.clone();
-    match tokio::net::TcpListener::bind(&irc_bind).await {
-        Ok(listener) => {
-            let irc_s = irc.clone();
-            tokio::spawn(async move {
-                if let Err(e) = irc_s.accept_loop(listener).await {
-                    tracing::error!("irc: {e}");
-                }
-            });
-        }
-        Err(e) => tracing::error!("irc {irc_bind}: {e}"),
+    let listener = tokio::net::TcpListener::bind(&irc_bind)
+        .await
+        .map_err(|e| irc_bind_error(&irc_bind, e))?;
+    {
+        let irc_s = irc.clone();
+        tokio::spawn(async move {
+            if let Err(e) = irc_s.accept_loop(listener).await {
+                tracing::error!("irc: {e}");
+            }
+        });
     }
 
     let mail_slot: crate::mail::MailSlot = Arc::new(Mutex::new(None));
@@ -311,7 +353,14 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 };
                 if want && (rt_w.kiss().is_none() || modem_dead) {
                     if modem_dead {
-                        tracing::warn!("modem73 exited; restarting radio");
+                        let note = rt_w
+                            .txp
+                            .lock()
+                            .modem
+                            .as_mut()
+                            .and_then(|m| m.exit_note())
+                            .unwrap_or_else(|| "modem73 exited; restarting radio".into());
+                        tracing::warn!("{note}");
                         stop_radio(&rt_w);
                     } else {
                         tracing::warn!("radio sound engine not connected; retrying");
@@ -384,6 +433,10 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 };
                 if let Ok(due) = rt_r.store.retry_due(now, &our, max) {
                     for (m, retries) in due {
+                        if !still_awaiting_ack(&rt_r.store, &m.env.msg_id) {
+                            let _ = rt_r.store.set_hold(&m.env.msg_id, 0, 0);
+                            continue;
+                        }
                         if let Some(s) = rt_r.sense() {
                             if s.state() != ChannelState::Idle {
                                 continue;
@@ -395,6 +448,12 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                             s.retries = n;
                         }
                         if !dispatch_rf_rung(&rt_r, &m.env, n).await.unwrap_or(false) {
+                            continue;
+                        }
+                        // An ACK can land while this copy is still keying.
+                        if !still_awaiting_ack(&rt_r.store, &m.env.msg_id) {
+                            let _ = rt_r.store.set_hold(&m.env.msg_id, 0, 0);
+                            rt_r.snap.lock().retries = 0;
                             continue;
                         }
                         let jitter = rt_r.cfg.lock().rf.retry_jitter;
@@ -428,33 +487,58 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 if s.hub_ok {
                     if !was {
                         drop(s);
-                        Some(rt_hub.pending_inet.lock().drain(..).collect::<Vec<_>>())
+                        Some(HubTick::Flush(
+                            rt_hub.pending_inet.lock().drain(..).collect::<Vec<_>>(),
+                        ))
                     } else {
                         s.hub_banner.clear();
                         None
                     }
-                } else {
-                    if rt_hub.cfg.lock().mode.uses_internet() {
-                        let err = hub_flag_s.error();
-                        s.hub_banner = if !err.is_empty() {
-                            err
-                        } else if was {
-                            "Internet down, radio only".into()
-                        } else {
-                            s.hub_banner.clone()
-                        };
+                } else if rt_hub.cfg.lock().mode.uses_internet() {
+                    let err = hub_flag_s.error();
+                    let banner = if !err.is_empty() {
+                        err
+                    } else if was {
+                        "Internet down, radio only".into()
+                    } else {
+                        s.hub_banner.clone()
+                    };
+                    let changed = s.hub_banner != banner;
+                    let refused = changed && is_hub_refusal(&banner);
+                    s.hub_banner = banner.clone();
+                    if refused {
+                        drop(s);
+                        let queued = rt_hub.pending_inet.lock().drain(..).collect::<Vec<_>>();
+                        Some(HubTick::Refused { banner, queued })
+                    } else {
+                        None
                     }
+                } else {
                     None
                 }
             };
-            if let Some(batch) = pending {
-                if rt_hub.cfg.lock().mode.uses_internet() {
-                    for env in batch {
-                        if let Some(h) = rt_hub.hub() {
-                            let _ = h.send(&env).await;
+            match pending {
+                Some(HubTick::Flush(batch)) => {
+                    if rt_hub.cfg.lock().mode.uses_internet() {
+                        for env in batch {
+                            if let Some(h) = rt_hub.hub() {
+                                let _ = h.send(&env).await;
+                            }
                         }
                     }
                 }
+                Some(HubTick::Refused { banner, queued }) => {
+                    rt_hub.irc.notice_all(&banner).await;
+                    for env in queued {
+                        if env.origin.as_str() == rt_hub.engine.our_call {
+                            rt_hub
+                                .irc
+                                .tagmsg_delivery(&env.msg_id.hex(), "failed")
+                                .await;
+                        }
+                    }
+                }
+                None => {}
             }
         }
     });
@@ -842,6 +926,16 @@ async fn send_chat(rt: &Runtime, target: &str, text: &str) -> Result<()> {
             rt.keys.sign_envelope(&mut env)?;
         }
         rt.store.insert(&env, Delivery::Queued)?;
+        if let Some(reason) = hub_refusal(rt) {
+            if !cfg_g.mode.uses_radio() {
+                rt.irc.notice_all(&reason).await;
+                rt.irc.tagmsg_delivery(&env.msg_id.hex(), "failed").await;
+                continue;
+            }
+            rt.irc
+                .notice_all(&format!("{reason}. The radio copy was still keyed."))
+                .await;
+        }
         dispatch(rt, &env).await?;
         rt.store.set_delivery(&env.msg_id, Delivery::Sent)?;
         if env.flags.req_ack() && cfg_g.mode.uses_radio() {
@@ -1139,6 +1233,15 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
         return Ok(());
     }
     let freq = heard_freq(rt, &env, medium);
+    // `Engine::on_rx` marks the original Delivered as soon as it stores the
+    // ACK. Read the previous state first: the first ACK must still paint [ok],
+    // and a later ACK from another station must not paint it again.
+    let acked_prior = if env.kind == MsgType::Ack {
+        env.acked_id()
+            .and_then(|id| rt.store.delivery_of(&id).ok().flatten())
+    } else {
+        None
+    };
     let decision = rt.engine.on_rx(&env, medium, snr, freq)?;
     if decision.action == Action::Suppress {
         if let Some(air) = rt.air() {
@@ -1166,6 +1269,10 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                 } else {
                     format!("#{}", env.dest.to_string().to_ascii_lowercase())
                 }
+            } else if env.dest.as_str().eq_ignore_ascii_case(&rt.engine.our_call) {
+                // Incoming DM is `:<sender> PRIVMSG <our nick> :text`. Addressing it
+                // to the sender drops it: the local client nick is ours.
+                rt.engine.our_call.clone()
             } else {
                 env.origin.to_string()
             };
@@ -1266,6 +1373,10 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                     seq,
                     snr,
                 );
+                // Mode flags (including THIRD_PARTY on ~guest) must be set before
+                // the signature. dispatch() stamps them again; a later mutation
+                // makes the hub drop the ACK as unverified.
+                stamp_own_mode_flags(&mut ack, &rt.engine.our_call, rt.cfg.lock().mode);
                 if rt.cfg.lock().mode.uses_internet() {
                     let _ = rt.keys.sign_envelope(&mut ack);
                 }
@@ -1309,13 +1420,31 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
         }
         MsgType::Ack => {
             if let Some(id) = env.acked_id() {
-                rt.store.set_delivery(&id, Delivery::Delivered)?;
+                let already = matches!(acked_prior, Some(Delivery::Delivered | Delivery::All));
+                // Stop ARQ even when this ACK is a duplicate. A retry that is
+                // already keying re-checks `still_awaiting_ack` before the next hold.
                 let _ = rt.store.set_hold(&id, 0, 0);
                 if let Some(air) = rt.air() {
                     air.cancel(id);
                 }
-                rt.irc.tagmsg_delivery(&id.hex(), "delivered").await;
                 rt.snap.lock().retries = 0;
+                if !already {
+                    let _ = rt.store.set_delivery(&id, Delivery::Delivered);
+                    rt.irc.tagmsg_delivery(&id.hex(), "delivered").await;
+                }
+                if let Ok(Some(orig)) = rt.store.get(&id) {
+                    // #bulletin has no member list, so the first ACK is [ok] and
+                    // there is no [all]. Closed groups record each member.
+                    if orig.env.flags.group() && !dest_is_bulletin(orig.env.dest.as_str()) {
+                        let group = orig.env.dest.to_string().to_ascii_lowercase();
+                        let _ = rt.store.receipt(&group, &id, env.origin.as_str());
+                        let _ = rt.store.receipt(&group, &id, &rt.engine.our_call);
+                        if rt.store.group_all_received(&group, &id).unwrap_or(false) {
+                            let _ = rt.store.set_delivery(&id, Delivery::All);
+                            rt.irc.tagmsg_delivery(&id.hex(), "all").await;
+                        }
+                    }
+                }
             }
             if let Some(snr_db) = env.acked_snr() {
                 let preset = Preset::parse(&rt.cfg.lock().modem.preset).unwrap_or(Preset::VhfFm);
@@ -1730,10 +1859,14 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
                 txp.modem = None;
             }
         }
+        let mut modem_err = None;
         if already.is_none() && cfg.modem.manage && rt.txp.lock().modem.is_none() {
             match ModemProcess::spawn(&cfg).await {
                 Ok(c) => modem = Some(c),
-                Err(e) => tracing::warn!("{e}"),
+                Err(e) => {
+                    modem_err = Some(e.to_string());
+                    tracing::warn!("{e}");
+                }
             }
         }
         let connected = if let Some(pair) = already {
@@ -1756,6 +1889,11 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
                             txp.modem = Some(child);
                         }
                     }
+                }
+                if let Some(reason) = modem_err {
+                    let mut s = rt.snap.lock();
+                    s.audio_label = "no modem".into();
+                    return Err(crate::error::Error::Modem(reason));
                 }
                 let mut s = rt.snap.lock();
                 s.audio_label = "no modem".into();
@@ -2358,6 +2496,28 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ack_cancels_further_retries() {
+        let store = Store::open_memory().unwrap();
+        let env = Envelope::new_msg(
+            Callsign::parse("G4ABC").unwrap(),
+            Callsign::parse("M0XYZ").unwrap(),
+            1,
+            b"ping".to_vec(),
+            3,
+            Flags::new().with(FLAG_REQ_ACK),
+        )
+        .unwrap();
+        store.insert(&env, Delivery::Sent).unwrap();
+        assert!(still_awaiting_ack(&store, &env.msg_id));
+        store
+            .set_delivery(&env.msg_id, Delivery::Delivered)
+            .unwrap();
+        assert!(!still_awaiting_ack(&store, &env.msg_id));
+        store.set_delivery(&env.msg_id, Delivery::All).unwrap();
+        assert!(!still_awaiting_ack(&store, &env.msg_id));
+    }
 
     #[test]
     fn long_message_keys_a_robust_rung_not_ofdm() {

@@ -122,7 +122,9 @@ if [ -z "$RADIO" ]; then RADIO=$(find "$TMP" -maxdepth 3 -type f -name radio.py 
 if [ -n "$RADIO" ]; then
   cp "$RADIO" "$PREFIX/radio.py"
 else
-  curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/weechat/radio.py" -o "$PREFIX/radio.py"
+  RELEASE_TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
+  if [ -z "$RELEASE_TAG" ]; then RELEASE_TAG="main"; fi
+  curl -fsSL "https://raw.githubusercontent.com/${REPO}/${RELEASE_TAG}/weechat/radio.py" -o "$PREFIX/radio.py"
 fi
 GUI_EXEC="$PREFIX/wcr-gui"
 if [ ! -x "$GUI_EXEC" ]; then GUI_EXEC="$PREFIX/wcr gui"; fi
@@ -156,7 +158,7 @@ if [ "${WCR_SKIP_WEECHAT:-}" != "1" ]; then
     else
       echo "Installing WeeChat..."
       if command -v apt-get >/dev/null 2>&1; then
-        sudo apt-get update -y && sudo apt-get install -y weechat weechat-python || true
+        sudo apt-get update -y && sudo apt-get install -y weechat-curses weechat-python || true
       elif command -v dnf >/dev/null 2>&1; then
         sudo dnf install -y weechat || true
       else
@@ -164,13 +166,20 @@ if [ "${WCR_SKIP_WEECHAT:-}" != "1" ]; then
       fi
     fi
   fi
-  if command -v weechat >/dev/null 2>&1 || command -v weechat-headless >/dev/null 2>&1; then
-    "$PREFIX/wcr" weechat --configure
+  if command -v weechat >/dev/null 2>&1; then
+    "$PREFIX/wcr" weechat --configure || echo "WeeChat configure failed; run: wcr weechat --configure" >&2
   elif [ "$OS" != "darwin" ]; then
     echo "WeeChat did not install. Install it from https://weechat.org/ then run: wcr weechat --configure" >&2
   fi
 fi
 
+case ":$PATH:" in
+  *":$PREFIX:"*) ;;
+  *) echo "Note: add $PREFIX to your PATH (e.g. export PATH=\"$PREFIX:\$PATH\")" ;;
+esac
+if [ "$OS" = "linux" ]; then
+  echo "Linux GUI (wcr gui): needs libxkbcommon-x11 and libayatana-appindicator3 (Debian: libxkbcommon-x11-0 libayatana-appindicator3-1)."
+fi
 echo "Next:"
 echo "  wcr setup"
 echo "  wcr gui"

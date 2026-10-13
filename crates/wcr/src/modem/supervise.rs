@@ -5,11 +5,17 @@ use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::modem::ensure;
 use crate::presets::Preset;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::Duration;
 use tokio::process::{Child, Command};
+
+/// Dynamic linker failures (missing libncurses) show up well inside this window.
+const STARTUP_GRACE: Duration = Duration::from_millis(400);
 
 pub struct ModemProcess {
     child: Child,
+    log_path: PathBuf,
 }
 
 impl ModemProcess {
@@ -81,14 +87,15 @@ impl ModemProcess {
         if let Some(dir) = binary.parent() {
             cmd.current_dir(dir);
         }
-        let child = cmd.spawn().map_err(|e| {
+        let mut child = cmd.spawn().map_err(|e| {
             Error::Modem(format!(
                 "could not start {}: {e}. Re-run the installer or set modem.binary in wcr.toml.",
                 binary.display()
             ))
         })?;
+        confirm_still_running(&mut child, &log_path).await?;
         tracing::info!("started {} (log {})", binary.display(), log_path.display());
-        Ok(Self { child })
+        Ok(Self { child, log_path })
     }
 
     pub async fn wait(&mut self) -> Result<()> {
@@ -102,5 +109,77 @@ impl ModemProcess {
     /// True when the child has already exited (bad CLI args, missing audio, …).
     pub fn exited(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(Some(_)))
+    }
+
+    /// Exit status plus the last log line, when the child is already gone.
+    pub fn exit_note(&mut self) -> Option<String> {
+        match self.child.try_wait() {
+            Ok(Some(status)) => Some(format!(
+                "modem73 exited ({status}). {}Log: {}",
+                log_tail(&self.log_path),
+                self.log_path.display()
+            )),
+            _ => None,
+        }
+    }
+}
+
+async fn confirm_still_running(child: &mut Child, log_path: &Path) -> Result<()> {
+    tokio::time::sleep(STARTUP_GRACE).await;
+    if let Some(status) = child.try_wait()? {
+        return Err(Error::Modem(format!(
+            "modem73 exited immediately ({status}). {}Log: {}",
+            log_tail(log_path),
+            log_path.display()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn early_exit_reports_the_log_instead_of_started() {
+        let dir = std::env::temp_dir().join(format!("wcr-modem-exit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let log_path = dir.join("modem73.log");
+        let log = std::fs::File::create(&log_path).unwrap();
+        let err = log.try_clone().unwrap();
+        let mut child = Command::new("sh")
+            .args([
+                "-c",
+                "echo 'error while loading shared libraries: libncurses.so.6: cannot open shared object file' >&2; exit 127",
+            ])
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(err))
+            .spawn()
+            .unwrap();
+        let err = confirm_still_running(&mut child, &log_path)
+            .await
+            .expect_err("exited child");
+        let msg = err.to_string();
+        assert!(msg.contains("exited immediately"), "{msg}");
+        assert!(msg.contains("libncurses"), "{msg}");
+        assert!(!msg.contains("started"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+fn log_tail(path: &Path) -> String {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return String::new();
+    };
+    let line = text
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("");
+    if line.is_empty() {
+        String::new()
+    } else {
+        format!("{line}. ")
     }
 }
