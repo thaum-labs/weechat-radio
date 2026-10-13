@@ -78,13 +78,15 @@ Marks on your own live-chat line only move forward: `[..]` waiting, `[tx]` sent,
 
 `[tx]` is this station keying the message. `[rl]` is that same message heard again with your callsign still the origin: a speaker echo (common on VOX) or someone relaying your frame. It is not the other station confirming receipt, and it can be skipped. `[ok]` is their ACK: origin is their callsign, body names your `msg_id`. If that ACK arrives before any echo, the line goes from `[tx]` to `[ok]`.
 
+A direct message paints `[ok]` once. A later ACK for the same line does not repeat `delivered`, and it cancels any retry that was still queued or keying. A closed group paints `[ok]` on the first member ACK and `[all]` when every member stored on this station has ACKed. `#bulletin` is public: there is no member list, so the first ACK from anyone paints `[ok]` and the line does not go on to `[all]`. Extra bulletin ACKs are quiet. `[no]` means this station did not accept the send (the hub refused the callsign, for example).
+
 Diagram: https://weechatradio.com/docs/protocol.html#delivery-marks
 
 ## ACK
 
 Type ACK. This is what paints `[ok]` on the sender. Body is the 8-byte `msg_id` of the original, plus an optional 9th byte: receiver SNR in dB as a signed integer (`-32`…`31`). Relayed with TTL.
 
-Unacked messages originated by this station are retransmitted up to `rf.max_retries` times (default 3), stepping the modem73 mode down the robustness ladder each try. Retry hold times are jittered ±25% (`[rf] retry_jitter`) so stations that collided do not retry in lockstep.
+Unacked messages originated by this station are retransmitted up to `rf.max_retries` times (default 3), stepping the modem73 mode down the robustness ladder each try. Retry hold times are jittered ±25% (`[rf] retry_jitter`) so stations that collided do not retry in lockstep. Once an ACK is in, the hold is cleared and a copy that was already keying does not schedule the next try.
 
 Group ACKs wait a random 0–`ack_dither_ms` (default 800 ms) before keying so every member of a net does not ACK at once. Direct (point-to-point) ACKs are not dithered.
 

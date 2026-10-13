@@ -7,7 +7,7 @@ The maps on the web page are radio only. The hub is not in the path. The program
 
 What the program does
 
-A normal message goes out with 3 hops left. A priority message (a leading `!`) starts with 4. An emergency message (`!!`) starts with 5.
+A normal message goes out with 3 hops left. A priority message (a leading `!`) starts with 4. An emergency message (`!!`) starts with 5. The public `#bulletin` channel starts with 6 hops so a line can cross more relays than a private message.
 
 The first time a station hears the message, it shows the line locally and subtracts one from hops left. If any hops remain, and this station did not write the message, it waits a short random moment and sends the message again.
 

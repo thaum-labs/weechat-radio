@@ -46,4 +46,4 @@ Manual steps, if you installed WeeChat yourself:
 
 ## How you know it worked
 
-The `radio` bar at the bottom of WeeChat shows your mode and SNR, separated like `INTERNET-RADIO │ IDLE │ VHF-FM │ SNR 12`. Sending a message adds delivery ticks on the line (`✓` then `✓✓`).
+The `radio` bar at the bottom of WeeChat shows your mode and SNR, separated like `INTERNET-RADIO │ IDLE │ VHF-FM │ SNR 12`. Sending a message adds the same marks as the node: `[tx]`, then `[ok]` when an ACK arrives. A closed group can go on to `[all]`.
