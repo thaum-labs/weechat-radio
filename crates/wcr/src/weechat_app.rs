@@ -3,7 +3,7 @@
 
 use crate::error::{Error, Result};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 #[cfg(windows)]
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,9 @@ pub fn configure() -> Result<String> {
     ensure_weechat()?;
     let script = install_radio_py()?;
     let home = weechat_home();
+    std::fs::create_dir_all(home.join("python"))?;
+
+    run_headless_configure(&script)?;
     std::fs::create_dir_all(home.join("python").join("autoload"))?;
     let dest = home.join("python").join("radio.py");
     std::fs::copy(&script, &dest)?;
@@ -30,8 +33,6 @@ pub fn configure() -> Result<String> {
         &script,
         home.join("python").join("autoload").join("radio.py"),
     )?;
-
-    run_headless_configure(&script)?;
     quiet_core_logs(&home);
     write_minttyrc()?;
     write_launcher()?;
@@ -154,13 +155,15 @@ fn run_headless_configure(script: &Path) -> Result<()> {
                      mkdir -p \"$HOME/.weechat/python/autoload\"; \
                      cp \"{script}\" \"$HOME/.weechat/python/radio.py\"; \
                      cp \"$HOME/.weechat/python/radio.py\" \"$HOME/.weechat/python/autoload/radio.py\"; \
-                     weechat-headless -d \"$HOME/.weechat\" -r '{cmds}'",
+                     weechat-headless -nc -d \"$HOME/.weechat\" -r '{cmds}'",
                     cmds = configure_cmds(),
                     home = cygwin_home_unix(),
                     script = cygwin_path(script)
                 );
                 let status = Command::new(bash)
                     .args(["--norc", "--noprofile", "-c", &cmd])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
                     .status()?;
                 if !status.success() {
                     return Err(Error::Msg(format!(
@@ -180,7 +183,15 @@ fn run_headless_configure(script: &Path) -> Result<()> {
     };
     let home = weechat_home();
     let status = Command::new(&headless)
-        .args(["-d", &home.to_string_lossy(), "-r", &configure_cmds()])
+        .args([
+            "-nc",
+            "-d",
+            &home.to_string_lossy(),
+            "-r",
+            &configure_cmds(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()?;
     if !status.success() {
         return Err(Error::Msg(format!(
