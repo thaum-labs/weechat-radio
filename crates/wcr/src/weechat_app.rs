@@ -8,6 +8,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 const RADIO_PY: &str = include_str!("../../../weechat/radio.py");
+#[cfg(windows)]
 const MINTTYRC: &str = include_str!("../../../weechat/minttyrc");
 
 pub fn run(configure_only: bool, cfg_path: &Path) -> Result<()> {
@@ -447,6 +448,9 @@ fn cygwin_path(p: &Path) -> String {
 }
 
 fn write_minttyrc() -> Result<()> {
+    // mintty is the Windows terminal. Writing this beside wcr on Linux or
+    // macOS leaves a stray file in ~/.local/bin.
+    #[cfg(windows)]
     if let Some(path) = minttyrc_path() {
         std::fs::write(path, MINTTYRC)?;
     }
@@ -454,6 +458,7 @@ fn write_minttyrc() -> Result<()> {
 }
 
 fn minttyrc_path() -> Option<PathBuf> {
+    #[cfg(windows)]
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             return Some(dir.join("minttyrc"));
@@ -490,6 +495,16 @@ mod tests {
     use super::configure_cmds;
     use super::weechat_server_target;
     use crate::config::Config;
+
+    #[test]
+    fn minttyrc_is_only_written_on_windows() {
+        let path = super::minttyrc_path();
+        if cfg!(windows) {
+            assert!(path.is_some());
+        } else {
+            assert!(path.is_none());
+        }
+    }
 
     #[test]
     fn server_target_uses_config_port() {

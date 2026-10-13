@@ -16,6 +16,8 @@ The install command is the same as macOS. Then run setup, then the window.
    curl -fsSL https://weechatradio.com/install.sh | sh
    ```
 
+   Before WeeChat is installed, the installer says it will use apt or dnf and that sudo may ask for your password. If `~/.local/bin` is not on PATH, it adds that directory to your bash, zsh, or fish profile and prints the line to run in this terminal.
+
 2. If you will use a USB radio cable, add your user to the serial group (then log out and back in):
 
    ```
