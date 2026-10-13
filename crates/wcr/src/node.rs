@@ -202,7 +202,7 @@ fn hub_refusal(rt: &Runtime) -> Option<String> {
     }
 }
 
-/// Queued / sent / relayed still need an ACK. Delivered and [all] do not.
+/// Queued / sent / relayed still need an ACK. Failed, delivered, and [all] do not.
 fn still_awaiting_ack(store: &Store, id: &crate::proto::MsgId) -> bool {
     matches!(
         store.delivery_of(id).ok().flatten(),
@@ -517,11 +517,18 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                             .await;
                         if relay::retries_exhausted(n, max) {
                             // Last copy is out. Do not leave the line on [rl]
-                            // with a hold that will never fire.
+                            // with a hold that will never fire. A later echo
+                            // must not walk this back to relayed.
                             let _ = rt_r.store.bump_retry(&m.env.msg_id, 0);
-                            rt_r.irc
-                                .tagmsg_delivery(&m.env.msg_id.hex(), "failed")
-                                .await;
+                            if rt_r
+                                .store
+                                .advance_delivery(&m.env.msg_id, Delivery::Failed)
+                                .unwrap_or(false)
+                            {
+                                rt_r.irc
+                                    .tagmsg_delivery(&m.env.msg_id.hex(), "failed")
+                                    .await;
+                            }
                             continue;
                         }
                         let jitter = rt_r.cfg.lock().rf.retry_jitter;
@@ -1149,9 +1156,8 @@ async fn enqueue_rf(
 
 /// ACK frames skip the air queue. Pause it, then key this frame with modem
 /// carrier sense off once `emergency_max_defer_ms` has elapsed, or as soon as
-/// the modem reports busy. This station's own sense can stay idle under
-/// steady noise while modem73 still holds the frame. Carrier sense is
-/// restored afterwards.
+/// the modem reports undecodable busy. Carrier sense stays on while a frame
+/// from another station is being received. It is restored afterwards.
 async fn key_ack_now(
     rt: &Runtime,
     rf_env: &Envelope,
@@ -1319,18 +1325,18 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
             }
             return Ok(());
         }
-        // Do not pull [ok] back to [rl].
-        if matches!(
-            rt.store.delivery_of(&env.msg_id)?,
-            Some(Delivery::Delivered) | Some(Delivery::All)
-        ) {
-            if let Some(air) = rt.air() {
-                air.cancel(env.msg_id);
-            }
-            return Ok(());
+        // [no], [ok], and [all] are terminal. Hearing the final copy again
+        // must not paint [rl] over a failure. A real ACK is the only way
+        // off [no], and that path does not come through our own origin.
+        if rt
+            .store
+            .advance_delivery(&env.msg_id, Delivery::Relayed)
+            .unwrap_or(false)
+        {
+            rt.irc.tagmsg_delivery(&env.msg_id.hex(), "relayed").await;
+        } else if let Some(air) = rt.air() {
+            air.cancel(env.msg_id);
         }
-        rt.store.set_delivery(&env.msg_id, Delivery::Relayed)?;
-        rt.irc.tagmsg_delivery(&env.msg_id.hex(), "relayed").await;
         return Ok(());
     }
     if env.kind == MsgType::Frag {
@@ -1515,8 +1521,12 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                     air.cancel(id);
                 }
                 rt.snap.lock().retries = 0;
-                if !already {
-                    let _ = rt.store.set_delivery(&id, Delivery::Delivered);
+                if !already
+                    && rt
+                        .store
+                        .advance_delivery(&id, Delivery::Delivered)
+                        .unwrap_or(false)
+                {
                     rt.irc.tagmsg_delivery(&id.hex(), "delivered").await;
                 }
                 if let Ok(Some(orig)) = rt.store.get(&id) {
@@ -1526,8 +1536,12 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                         let group = orig.env.dest.to_string().to_ascii_lowercase();
                         let _ = rt.store.receipt(&group, &id, env.origin.as_str());
                         let _ = rt.store.receipt(&group, &id, &rt.engine.our_call);
-                        if rt.store.group_all_received(&group, &id).unwrap_or(false) {
-                            let _ = rt.store.set_delivery(&id, Delivery::All);
+                        if rt.store.group_all_received(&group, &id).unwrap_or(false)
+                            && rt
+                                .store
+                                .advance_delivery(&id, Delivery::All)
+                                .unwrap_or(false)
+                        {
                             rt.irc.tagmsg_delivery(&id.hex(), "all").await;
                         }
                     }
