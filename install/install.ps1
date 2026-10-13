@@ -37,15 +37,25 @@ if ($radio) {
     Invoke-WebRequest -Uri "https://raw.githubusercontent.com/$repo/main/weechat/radio.py" -OutFile (Join-Path $dir "radio.py")
 }
 $envPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if ($envPath -notlike "*$dir*") {
+$pathAdded = $false
+if ([string]::IsNullOrEmpty($envPath)) {
+    [Environment]::SetEnvironmentVariable("Path", $dir, "User")
+    $pathAdded = $true
+} elseif ($envPath -notlike "*$dir*") {
     [Environment]::SetEnvironmentVariable("Path", "$envPath;$dir", "User")
+    $pathAdded = $true
 }
 Write-Host "Installed $dir\wcr.exe"
 
+$weechatNote = "WeeChat: skipped (WCR_SKIP_WEECHAT=1)."
 if ($env:WCR_SKIP_WEECHAT -ne "1") {
     $cyg = Join-Path $env:USERPROFILE "cygwin64"
     $wee = Join-Path $cyg "bin\weechat.exe"
-    if (-not (Test-Path $wee)) {
+    $weechatWasMissing = -not (Test-Path $wee)
+    if ($weechatWasMissing) {
+        Write-Host "WeeChat is the chat program this station connects to. It is not installed yet."
+        Write-Host "The installer will download Cygwin and install WeeChat into $cyg."
+        Write-Host "This does not ask for an administrator password."
         Write-Host "Installing WeeChat via Cygwin (a few minutes)..."
         $setup = Join-Path $env:TEMP "cygwin-setup-x86_64.exe"
         $pkg = Join-Path $env:LOCALAPPDATA "cygwin-packages"
@@ -70,6 +80,11 @@ if ($env:WCR_SKIP_WEECHAT -ne "1") {
     }
     if (-not (Test-Path $wee)) {
         throw "WeeChat did not install. Run the installer again, or install WeeChat from https://weechat.org/"
+    }
+    if ($weechatWasMissing) {
+        $weechatNote = "WeeChat: installed with Cygwin into $cyg."
+    } else {
+        $weechatNote = "WeeChat: already installed at $wee."
     }
     Write-Host "Configuring WeeChat for 127.0.0.1:6667..."
     & (Join-Path $dir "wcr.exe") weechat --configure
@@ -102,6 +117,14 @@ if ($desktop) {
 }
 
 Write-Host ""
+Write-Host $weechatNote
+if ($pathAdded) {
+    Write-Host "PATH: added $dir to your user PATH."
+    Write-Host "This window does not see it yet. Open a new PowerShell window, then run:  wcr setup"
+} else {
+    Write-Host "PATH: $dir is already on your user PATH."
+    Write-Host "Next, run:  wcr setup"
+}
 Write-Host "Open WeeChat Radio from the Start menu or the desktop shortcut."
 Write-Host "The window starts the station and chat. No terminal needed."
 Write-Host "Skip WeeChat next time with:  `$env:WCR_SKIP_WEECHAT=1"
