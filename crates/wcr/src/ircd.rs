@@ -6,7 +6,8 @@ use chrono::Utc;
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use std::time::{Duration, Instant};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 
@@ -52,8 +53,11 @@ struct Client {
     caps: HashSet<String>,
     channels: HashSet<String>,
     registered: bool,
+    last_line: Instant,
     tx: mpsc::Sender<String>,
 }
+
+const MAX_IRC_LINE: usize = 4096;
 
 #[derive(Clone)]
 pub struct IrcServer {
@@ -115,7 +119,6 @@ impl IrcServer {
 
     async fn handle_conn(&self, stream: TcpStream) -> Result<()> {
         let (read, mut write) = stream.into_split();
-        let mut lines = BufReader::new(read).lines();
         let (tx, mut rx) = mpsc::channel::<String>(128);
         let id = {
             let mut g = self.inner.lock();
@@ -130,6 +133,7 @@ impl IrcServer {
                     caps: HashSet::new(),
                     channels: HashSet::new(),
                     registered: false,
+                    last_line: Instant::now(),
                     tx: tx.clone(),
                 },
             );
@@ -145,7 +149,8 @@ impl IrcServer {
                 }
             }
         });
-        while let Ok(Some(line)) = lines.next_line().await {
+        let mut read = read;
+        while let Some(line) = read_irc_line(&mut read).await? {
             self.on_line(id, &line).await?;
         }
         let nick = {
@@ -170,6 +175,16 @@ impl IrcServer {
         if line.is_empty() {
             return Ok(());
         }
+        {
+            let mut g = self.inner.lock();
+            if let Some(c) = g.clients.get_mut(&id) {
+                let now = Instant::now();
+                if now.duration_since(c.last_line) < Duration::from_millis(80) {
+                    return Ok(());
+                }
+                c.last_line = now;
+            }
+        }
         let (tags, rest) = split_tags(line);
         let parts = split_irc(rest);
         if parts.is_empty() {
@@ -181,6 +196,11 @@ impl IrcServer {
             "NICK" => {
                 if let Some(n) = parts.get(1) {
                     let nick = n.trim_start_matches(':').to_string();
+                    if crate::proto::Callsign::parse(&nick).is_err() {
+                        self.send_numeric(id, 432, &format!("{nick} :Erroneous nickname"))
+                            .await;
+                        return Ok(());
+                    }
                     {
                         let mut g = self.inner.lock();
                         if let Some(c) = g.clients.get_mut(&id) {
@@ -278,6 +298,9 @@ impl IrcServer {
                 if parts.len() >= 3 {
                     let target = parts[1].clone();
                     let text = trailing(&parts[2..]);
+                    if text.is_empty() {
+                        return Ok(());
+                    }
                     let nick = self.nick(id);
                     if self.has_cap(id, "echo-message") {
                         let tagged = self.tag_privmsg(&nick, &target, &text, None, None);
@@ -306,9 +329,25 @@ impl IrcServer {
                     .await;
             }
             "QUIT" => {}
-            "WHO" | "MODE" | "WHOIS" | "NAMES" => {}
+            "WHO" => {
+                let nick = self.nick(id);
+                self.send_numeric(id, 352, &format!("{nick} wcr irc :0 {nick}"))
+                    .await;
+                self.send_numeric(id, 315, &format!("{nick} :End of /WHO"))
+                    .await;
+            }
+            "NAMES" => {
+                if let Some(ch) = parts.get(1) {
+                    let nick = self.nick(id);
+                    self.send_numeric(id, 353, &format!("= {ch} :{nick}")).await;
+                    self.send_numeric(id, 366, &format!("{ch} :End of /NAMES"))
+                        .await;
+                }
+            }
+            "MODE" | "WHOIS" => {}
             other => {
-                tracing::debug!("IRC unhandled {other}");
+                self.send_numeric(id, 421, &format!("{other} :Unknown command"))
+                    .await;
             }
         }
         Ok(())
@@ -382,7 +421,8 @@ impl IrcServer {
             "This server is a radio node, not the public internet",
         )
         .await;
-        self.send_numeric(id, 4, &format!("{srv} 0.1.0 o o")).await;
+        self.send_numeric(id, 4, &format!("{srv} {} o o", env!("CARGO_PKG_VERSION")))
+            .await;
         self.send_numeric(id, 376, ":End of MOTD").await;
         // Auto-join bulletin
         self.send_raw(id, &format!(":{nick} JOIN #bulletin")).await;
@@ -599,6 +639,31 @@ impl IrcServer {
                 .await;
         }
     }
+}
+
+async fn read_irc_line<R: tokio::io::AsyncRead + Unpin>(read: &mut R) -> Result<Option<String>> {
+    let mut buf = Vec::new();
+    let mut byte = [0u8; 1];
+    while buf.len() < MAX_IRC_LINE {
+        let n = read.read(&mut byte).await?;
+        if n == 0 {
+            return Ok(if buf.is_empty() {
+                None
+            } else {
+                Some(String::from_utf8_lossy(&buf).into_owned())
+            });
+        }
+        if byte[0] == b'\n' {
+            break;
+        }
+        if byte[0] != b'\r' {
+            buf.push(byte[0]);
+        }
+    }
+    if buf.len() >= MAX_IRC_LINE {
+        while read.read(&mut byte).await? > 0 && byte[0] != b'\n' {}
+    }
+    Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
 }
 
 fn split_tags(line: &str) -> (HashMap<String, String>, &str) {

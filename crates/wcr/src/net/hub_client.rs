@@ -52,6 +52,7 @@ impl HubClient {
         let stop = cancel.clone();
         tokio::spawn(async move {
             let mut backoff = 1u64;
+            let mut last_hello_ts = 0u64;
             loop {
                 if stop.is_cancelled() {
                     connected.set(false);
@@ -83,15 +84,20 @@ impl HubClient {
                     connected.set(false);
                     return;
                 }
-                connected.set(true);
                 backoff = 1;
                 let (mut sink, mut stream) = ws.split();
-                let ts = crate::proto::now_ts() as u64;
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let ts = now.max(last_hello_ts + 1);
+                last_hello_ts = ts;
                 let hello = build_hello(&callsign, &keys, &heard, freq_khz, ts);
                 if sink.send(Message::Text(hello.into())).await.is_err() {
                     connected.fail("hub hello send failed");
                     continue;
                 }
+                let mut hub_ready = false;
                 loop {
                     tokio::select! {
                         _ = stop.cancelled() => {
@@ -125,7 +131,10 @@ impl HubClient {
                                 }
                                 Some(Ok(Message::Text(t))) => {
                                     tracing::debug!("hub text {t}");
-                                    if t.contains("\"ok\":false") {
+                                    if t.contains("\"ok\":true") {
+                                        hub_ready = true;
+                                        connected.set(true);
+                                    } else if t.contains("\"ok\":false") {
                                         let why = hub_error_text(&t);
                                         connected.fail(why);
                                         break;
@@ -142,8 +151,10 @@ impl HubClient {
                     connected.set(false);
                     return;
                 }
-                if connected.get() {
+                if hub_ready {
                     connected.fail("hub disconnected");
+                } else {
+                    connected.set(false);
                 }
                 tokio::select! {
                     _ = stop.cancelled() => {
