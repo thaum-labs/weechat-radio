@@ -5,6 +5,7 @@ COPY Cargo.toml Cargo.lock* ./
 COPY crates ./crates
 COPY docs ./docs
 COPY weechat ./weechat
+COPY third_party ./third_party
 COPY README.md LICENSE NOTICE ./
 RUN cargo build --release -p wcr --bin wcr --no-default-features
 
