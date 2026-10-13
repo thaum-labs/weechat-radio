@@ -37,13 +37,13 @@ The receiver hears all of these at once. You can send `hf-weak` while they are s
 4. When an ACK comes back, it includes how strong they heard you. A good report steps the waveform back up.
 5. Lines that start with `!!` (emergency) go out twice, a moment apart, so a fade is less likely to take both.
 6. Group chat on HF is split into pieces. Any two of three pieces rebuild the message. If several internet gateways each hear a different piece, the hub stitches them.
-7. If the frequency is already busy, the program waits for a gap (status bar **PTT** reads `wait`). Beacons stay off while occupancy is high. Group ACKs and retries are staggered so they do not all key at once. An ACK still goes out after about 3 seconds if the channel never goes quiet. Chat and relays wait up to 15 seconds. `[rl]` does not stop the retries; only an ACK does.
+7. If the frequency is already busy, the program waits for a gap (status bar **PTT** reads `wait`). Beacons stay off while occupancy is high. Group ACKs and retries are staggered so they do not all key at once. An ACK still goes out after about 3 seconds if the channel never goes quiet. Chat and relays wait up to 15 seconds. `[rl]` does not stop the retries; only an ACK does. When the retries are used up the line shows `[no]`. A later ACK can still move it to `[ok]`.
 
 ## Busy channel
 
 modem73 carrier-sense is on for every preset. On top of that, `wcr` keeps a single air queue: one frame (or fragment burst) at a time, emergency first, then ACKs, then your chat, then relays, then beacons.
 
-**OCC** in the station panel is channel occupancy 0–100. **wait** means a frame is queued until the channel is idle. After the defer cap it is handed to the modem anyway: 3 seconds for an emergency or an ACK (`emergency_max_defer_ms`), 15 seconds for chat and relays (`max_defer_ms`). While it waits, it backs off one slot at a time. An ACK does not sit behind the other queued frames. When the 3 seconds are up and the channel is still busy, that ACK is keyed with the modem's carrier sense off, then carrier sense is turned back on. Chat and relays can still be held by a carrier the modem hears. A steady noise floor near 100% occupancy therefore delays an ACK by about 3 seconds, then lets it out.
+**OCC** in the station panel is channel occupancy 0–100. **wait** means a frame is queued until the channel is idle. After the defer cap it is handed to the modem anyway: 3 seconds for an emergency or an ACK (`emergency_max_defer_ms`), 15 seconds for chat and relays (`max_defer_ms`). While it waits, it backs off one slot at a time. An ACK does not sit behind the other queued frames. When the 3 seconds are up, that ACK is keyed with the modem's carrier sense off even if this station has not decoded a frame, then carrier sense is turned back on. If the modem itself reports the channel busy, carrier sense is turned off for that ACK immediately. Chat and relays can still be held by a carrier the modem hears.
 
 ## Steps (HF fading)
 

@@ -105,6 +105,12 @@ pub fn jitter_ms(priority: Priority) -> u64 {
     rand::thread_rng().gen_range(range)
 }
 
+/// `sent` is how many retransmissions have gone out (the `n` in `retry-n/M`).
+/// The line has given up once that reaches `max`.
+pub fn retries_exhausted(sent: u32, max: u32) -> bool {
+    max > 0 && sent >= max
+}
+
 pub fn next_retry_hold_base(retries: u32, now: u32, priority: Priority) -> u32 {
     let base: u32 = match priority {
         Priority::Emergency => 8,
@@ -314,6 +320,13 @@ mod tests {
         assert!(!is_own_origin("M0BBB", &env));
         assert!(!may_rebroadcast("G4AAA", &env, Some(Delivery::Sent)));
         assert!(!may_rebroadcast("G4AAA", &env, Some(Delivery::Relayed)));
+    }
+
+    #[test]
+    fn last_retry_is_a_failure() {
+        assert!(!retries_exhausted(2, 3));
+        assert!(retries_exhausted(3, 3));
+        assert!(!retries_exhausted(0, 0));
     }
 
     #[test]
