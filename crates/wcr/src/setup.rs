@@ -33,21 +33,14 @@ pub fn run_wizard() -> Result<Config> {
         let _ = grid_tx.send(crate::grid::detect_from_ip());
     });
 
-    let call: String = Input::with_theme(&theme)
-        .with_prompt(ui_style::step(
+    let call = read_callsign_uppercase(
+        &theme,
+        ui_style::step(
             1,
             total_steps,
             "Callsign (guests: ~NICK, max 8 chars including ~)",
-        ))
-        .validate_with(|s: &String| {
-            Callsign::parse(s).map(|_| ()).map_err(|e| {
-                e.to_string()
-                    .strip_prefix("protocol: ")
-                    .map(str::to_string)
-                    .unwrap_or_else(|| e.to_string())
-            })
-        })
-        .interact_text()?;
+        ),
+    )?;
 
     let guessed = grid_rx.recv().ok().flatten();
     let mut grid_prompt = Input::with_theme(&theme)
@@ -294,6 +287,26 @@ pub fn run_wizard() -> Result<Config> {
     ui_style::rule();
     let _ = std::io::stdout().flush();
     Ok(cfg)
+}
+
+fn read_callsign_uppercase(theme: &dyn dialoguer::theme::Theme, prompt: String) -> Result<String> {
+    loop {
+        let raw: String = Input::with_theme(theme)
+            .with_prompt(prompt.clone())
+            .interact_text()?;
+        let call = raw.trim().to_ascii_uppercase();
+        match Callsign::parse(&call) {
+            Ok(_) => return Ok(call),
+            Err(e) => {
+                let msg = e
+                    .to_string()
+                    .strip_prefix("protocol: ")
+                    .map(str::to_string)
+                    .unwrap_or_else(|| e.to_string());
+                println!("  {}", ui_style::warn().apply_to(msg));
+            }
+        }
+    }
 }
 
 fn pick_serial_port(

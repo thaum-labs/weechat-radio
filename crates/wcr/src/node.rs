@@ -1161,7 +1161,11 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
     match env.kind {
         MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status => {
             let target = if env.flags.group() {
-                format!("#{}", env.dest)
+                if dest_is_bulletin(env.dest.as_str()) {
+                    BULLETIN_CHANNEL.to_string()
+                } else {
+                    format!("#{}", env.dest.to_string().to_ascii_lowercase())
+                }
             } else {
                 env.origin.to_string()
             };
