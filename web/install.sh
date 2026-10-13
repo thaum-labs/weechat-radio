@@ -149,37 +149,107 @@ $ICON_LINE
 EOF
 echo "Menu launcher: $APPS/weechat-radio.desktop"
 
+# Append PREFIX to the user's shell profile once. The marker keeps a second
+# install from adding the same block again.
+ensure_user_path() {
+  prefix="$1"
+  case ":${PATH}:" in
+    *":${prefix}:"*)
+      PATH_NOTE=""
+      PATH_APPLY=""
+      return 0
+      ;;
+  esac
+  shell_name=$(basename "${SHELL:-sh}")
+  case "$shell_name" in
+    zsh)
+      profile="$HOME/.zshrc"
+      line="export PATH=\"${prefix}:\$PATH\""
+      apply="export PATH=\"${prefix}:\$PATH\""
+      ;;
+    fish)
+      profile="$HOME/.config/fish/config.fish"
+      mkdir -p "$HOME/.config/fish"
+      line="fish_add_path --prepend \"${prefix}\""
+      apply="fish_add_path --prepend \"${prefix}\""
+      ;;
+    *)
+      profile="$HOME/.bashrc"
+      line="export PATH=\"${prefix}:\$PATH\""
+      apply="export PATH=\"${prefix}:\$PATH\""
+      ;;
+  esac
+  if [ -f "$profile" ] && grep -q "weechat-radio path" "$profile"; then
+    PATH_NOTE="PATH: ${prefix} is already listed in ${profile}."
+  else
+    {
+      echo ""
+      echo "# >>> weechat-radio path >>>"
+      echo "$line"
+      echo "# <<< weechat-radio path <<<"
+    } >> "$profile"
+    PATH_NOTE="PATH: added ${prefix} to ${profile}."
+  fi
+  PATH_APPLY="$apply"
+}
+
+WEECHAT_NOTE=""
 if [ "${WCR_SKIP_WEECHAT:-}" != "1" ]; then
   if ! command -v weechat >/dev/null 2>&1; then
     if [ "$OS" = "darwin" ]; then
       echo "Skipping WeeChat on macOS (optional). Homebrew often compiles it from source."
       echo "Chat without it:  wcr gui"
       echo "Add it later: https://weechatradio.com/guides/weechat.html"
+      WEECHAT_NOTE="WeeChat: not installed (skipped on macOS). Chat with: wcr gui"
+    elif command -v apt-get >/dev/null 2>&1; then
+      echo "WeeChat is the chat program this station connects to."
+      echo "Installing it with apt. sudo may ask for your password."
+      sudo apt-get update -y && sudo apt-get install -y weechat-curses weechat-python || true
+      WEECHAT_TRIED="apt"
+    elif command -v dnf >/dev/null 2>&1; then
+      echo "WeeChat is the chat program this station connects to."
+      echo "Installing it with dnf. sudo may ask for your password."
+      sudo dnf install -y weechat || true
+      WEECHAT_TRIED="dnf"
     else
-      echo "Installing WeeChat..."
-      if command -v apt-get >/dev/null 2>&1; then
-        sudo apt-get update -y && sudo apt-get install -y weechat-curses weechat-python || true
-      elif command -v dnf >/dev/null 2>&1; then
-        sudo dnf install -y weechat || true
-      else
-        echo "Install WeeChat from https://weechat.org/ then run: wcr weechat --configure"
-      fi
+      echo "WeeChat is the chat program this station connects to."
+      echo "This system has no apt or dnf. Install WeeChat from https://weechat.org/ then run: wcr weechat --configure"
+      WEECHAT_NOTE="WeeChat: not installed. Install it from https://weechat.org/ then run: wcr weechat --configure"
     fi
+  else
+    WEECHAT_NOTE="WeeChat: already installed."
   fi
   if command -v weechat >/dev/null 2>&1; then
+    if [ -n "${WEECHAT_TRIED:-}" ]; then
+      WEECHAT_NOTE="WeeChat: installed with ${WEECHAT_TRIED}."
+    fi
     "$PREFIX/wcr" weechat --configure || echo "WeeChat configure failed; run: wcr weechat --configure" >&2
-  elif [ "$OS" != "darwin" ]; then
-    echo "WeeChat did not install. Install it from https://weechat.org/ then run: wcr weechat --configure" >&2
+  elif [ "$OS" != "darwin" ] && [ -z "$WEECHAT_NOTE" ]; then
+    WEECHAT_NOTE="WeeChat: install did not succeed. Install it from https://weechat.org/ then run: wcr weechat --configure"
+    echo "$WEECHAT_NOTE" >&2
   fi
+else
+  WEECHAT_NOTE="WeeChat: skipped (WCR_SKIP_WEECHAT=1)."
 fi
 
-case ":$PATH:" in
-  *":$PREFIX:"*) ;;
-  *) echo "Note: add $PREFIX to your PATH (e.g. export PATH=\"$PREFIX:\$PATH\")" ;;
-esac
+if [ -f "$PREFIX/minttyrc" ]; then
+  rm -f "$PREFIX/minttyrc"
+  echo "Removed $PREFIX/minttyrc (mintty settings are only used on Windows)."
+fi
+
+ensure_user_path "$PREFIX"
+echo ""
+echo "Installed $PREFIX/wcr"
+if [ -n "$WEECHAT_NOTE" ]; then
+  echo "$WEECHAT_NOTE"
+fi
+if [ -n "$PATH_NOTE" ]; then
+  echo "$PATH_NOTE"
+  echo "This terminal does not see that yet. Apply it with:"
+  echo "  $PATH_APPLY"
+fi
 if [ "$OS" = "linux" ]; then
   echo "Linux GUI (wcr gui): needs libxkbcommon-x11 and libayatana-appindicator3 (Debian: libxkbcommon-x11-0 libayatana-appindicator3-1)."
 fi
-echo "Next:"
+echo "Next, run:"
 echo "  wcr setup"
-echo "  wcr gui"

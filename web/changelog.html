@@ -50,6 +50,17 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v0.1.81</p>
+          <p>Tue, 13 Oct 2026</p>
+        </h3>
+        <pre>The installer no longer leaves minttyrc next to wcr on Linux or macOS. That file is only for the Windows terminal.
+
+Before WeeChat is installed, the installer says what it is doing and why. On Linux it names apt or dnf and that sudo may ask for your password. On Windows it says it will download Cygwin and that this does not need an administrator password. The summary at the end says whether WeeChat was installed.
+
+If the install folder is not on PATH, Linux and macOS add it to the bash, zsh, or fish profile, with a marker comment so a second run does not add it again. The installer prints the line to run in this terminal, then the next command: wcr setup. Windows already adds the folder to the user PATH, and now says to open a new PowerShell window before wcr setup.</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>v0.1.80</p>
           <p>Tue, 13 Oct 2026</p>
         </h3>
