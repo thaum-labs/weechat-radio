@@ -396,17 +396,9 @@ async fn radio_bulletin_reaches_ok_and_dm_ack_cancels_retry() {
     let mut status = Vec::new();
     for call in ["G4AAA", "M0BBB"] {
         let home = scratch(call);
-        let kiss = port().await;
-        let ctrl = port().await;
+        let (kiss, ctrl) = wcr::sim::mock_modem73_free(air.clone()).await.unwrap();
         let irc_p = port().await;
         let status_p = port().await;
-        wcr::sim::mock_modem73(
-            &format!("127.0.0.1:{kiss}"),
-            &format!("127.0.0.1:{ctrl}"),
-            air.clone(),
-        )
-        .await
-        .unwrap();
         let cfg = radio_cfg(call, &home, kiss, ctrl, irc_p, status_p);
         nodes.push(tokio::spawn(async move {
             wcr::node::run_node(cfg, false).await
@@ -514,17 +506,9 @@ async fn radio_group_reaches_all() {
             .group_create("net", &members.map(|s| s.to_string()))
             .unwrap();
         drop(store);
-        let kiss = port().await;
-        let ctrl = port().await;
+        let (kiss, ctrl) = wcr::sim::mock_modem73_free(air.clone()).await.unwrap();
         let irc_p = port().await;
         let status_p = port().await;
-        wcr::sim::mock_modem73(
-            &format!("127.0.0.1:{kiss}"),
-            &format!("127.0.0.1:{ctrl}"),
-            air.clone(),
-        )
-        .await
-        .unwrap();
         let cfg = radio_cfg(call, &home, kiss, ctrl, irc_p, status_p);
         nodes.push(tokio::spawn(async move {
             wcr::node::run_node(cfg, false).await
@@ -574,19 +558,11 @@ async fn relay_through_middle_station_acks_sender() {
     let mut status = Vec::new();
     for (call, station, hear) in plan {
         let home = scratch(call);
-        let kiss = port().await;
-        let ctrl = port().await;
+        let (kiss, ctrl) = wcr::sim::mock_modem73_linked_free(air.clone(), station, hear)
+            .await
+            .unwrap();
         let irc_p = port().await;
         let status_p = port().await;
-        wcr::sim::mock_modem73_linked(
-            &format!("127.0.0.1:{kiss}"),
-            &format!("127.0.0.1:{ctrl}"),
-            air.clone(),
-            station,
-            hear,
-        )
-        .await
-        .unwrap();
         let cfg = radio_cfg(call, &home, kiss, ctrl, irc_p, status_p);
         nodes.push(tokio::spawn(async move {
             wcr::node::run_node(cfg, false).await
@@ -658,19 +634,11 @@ async fn dm_to_the_relay_is_not_copied_onward() {
     let mut status = Vec::new();
     for (call, station, hear) in plan {
         let home = scratch(call);
-        let kiss = port().await;
-        let ctrl = port().await;
+        let (kiss, ctrl) = wcr::sim::mock_modem73_linked_free(air.clone(), station, hear)
+            .await
+            .unwrap();
         let irc_p = port().await;
         let status_p = port().await;
-        wcr::sim::mock_modem73_linked(
-            &format!("127.0.0.1:{kiss}"),
-            &format!("127.0.0.1:{ctrl}"),
-            air.clone(),
-            station,
-            hear,
-        )
-        .await
-        .unwrap();
         let cfg = radio_cfg(call, &home, kiss, ctrl, irc_p, status_p);
         nodes.push(tokio::spawn(async move {
             wcr::node::run_node(cfg, false).await
@@ -880,17 +848,9 @@ async fn irc_port_in_use_fails_fast() {
 async fn own_message_retries_while_the_relay_loop_runs() {
     let air = wcr::sim::SharedAir::new(0.0);
     let home = scratch("retry-own");
-    let kiss = port().await;
-    let ctrl = port().await;
+    let (kiss, ctrl) = wcr::sim::mock_modem73_free(air).await.unwrap();
     let irc_p = port().await;
     let status_p = port().await;
-    wcr::sim::mock_modem73(
-        &format!("127.0.0.1:{kiss}"),
-        &format!("127.0.0.1:{ctrl}"),
-        air,
-    )
-    .await
-    .unwrap();
     let cfg = radio_cfg("G4AAA", &home, kiss, ctrl, irc_p, status_p);
     let node = tokio::spawn(async move { wcr::node::run_node(cfg, false).await });
     wait_tcp(irc_p, 20).await;
