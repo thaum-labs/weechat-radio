@@ -32,6 +32,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxdo-dev libasound2-dev libudev-dev pkg-config
       - uses: dtolnay/rust-toolchain@1.89.0
       - run: cargo test --workspace
+  headless-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: headless wcr (hub Docker image)
+        run: cargo build --release -p wcr --bin wcr --no-default-features
   gui-smoke:
     runs-on: ubuntu-latest
     steps:
