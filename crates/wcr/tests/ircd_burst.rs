@@ -129,3 +129,82 @@ async fn flood_limit_notices_but_registration_survives() {
     assert!(got_001, "registration must complete under flood");
     assert!(notices > 0, "expected at least one flood NOTICE");
 }
+
+fn privmsg_text(line: &str) -> Option<&str> {
+    let line = line.trim_end_matches(['\r', '\n']);
+    let payload = if let Some(rest) = line.strip_prefix('@') {
+        rest.split_once(' ')?.1
+    } else {
+        line
+    };
+    payload
+        .split_once("PRIVMSG ")?
+        .1
+        .split_once(" :")
+        .map(|(_, b)| b)
+}
+
+async fn collect_echo_bodies(raw: &str) -> Vec<String> {
+    let (events_tx, _events_rx) = mpsc::channel(8);
+    let server = IrcServer::new(events_tx);
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = server.accept_loop(listener).await;
+    });
+    let mut stream = TcpStream::connect(addr).await.expect("connect");
+    let reg = concat!(
+        "CAP LS\r\n",
+        "NICK G4ABC\r\n",
+        "USER G4ABC 0 * :wcr test\r\n",
+        "CAP REQ :message-tags echo-message server-time msgid\r\n",
+        "CAP END\r\n",
+        "JOIN #bulletin\r\n",
+    );
+    stream.write_all(reg.as_bytes()).await.expect("reg");
+    stream.write_all(raw.as_bytes()).await.expect("write");
+    stream.flush().await.expect("flush");
+    let expect = raw.matches("PRIVMSG ").count();
+    let mut reader = tokio::io::BufReader::new(stream);
+    let mut bodies = Vec::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    let mut line_buf = String::new();
+    while tokio::time::Instant::now() < deadline && bodies.len() < expect {
+        line_buf.clear();
+        let read = tokio::time::timeout(
+            std::time::Duration::from_millis(300),
+            reader.read_line(&mut line_buf),
+        )
+        .await;
+        match read {
+            Ok(Ok(0)) => break,
+            Ok(Err(e)) => panic!("read: {e}"),
+            Err(_) => continue,
+            Ok(Ok(_)) => {}
+        }
+        if let Some(body) = privmsg_text(&line_buf) {
+            bodies.push(body.to_string());
+        }
+    }
+    bodies
+}
+
+#[tokio::test]
+async fn privmsg_body_exact_crlf_lf_and_burst() {
+    let one = collect_echo_bodies("PRIVMSG #bulletin :solo-body\r\n").await;
+    assert_eq!(one, vec!["solo-body".to_string()]);
+
+    let lf = collect_echo_bodies("PRIVMSG #bulletin :lf-only\n").await;
+    assert_eq!(lf, vec!["lf-only".to_string()]);
+
+    let burst = collect_echo_bodies(concat!(
+        "PRIVMSG #bulletin :one\r\n",
+        "PRIVMSG #bulletin :two\n",
+        "PRIVMSG #bulletin :three\r\n",
+    ))
+    .await;
+    assert_eq!(
+        burst,
+        vec!["one".to_string(), "two".to_string(), "three".to_string()]
+    );
+}

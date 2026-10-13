@@ -849,7 +849,7 @@ impl GuiApp {
             self.error = e.to_string();
             return;
         }
-        let _ = crate::weechat_app::configure();
+        let _ = crate::weechat_app::configure(&Config::default_path());
         self.chat.push(ChatLine::sys(
             format!("saved {}", Config::default_path().display()),
             "",
@@ -1459,7 +1459,7 @@ impl eframe::App for GuiApp {
                         self.start_station();
                     }
                     if nav_link(ui, "weechat").clicked() {
-                        if let Err(e) = crate::weechat_app::run(false) {
+                        if let Err(e) = crate::weechat_app::run(false, &Config::default_path()) {
                             self.error = e.to_string();
                         }
                     }
