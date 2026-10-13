@@ -227,6 +227,10 @@ if [ "${WCR_SKIP_WEECHAT:-}" != "1" ]; then
     if ! WEECHAT_CFG=$("$PREFIX/wcr" weechat --configure 2>&1); then
       echo "WeeChat configure failed; run: wcr weechat --configure" >&2
       WEECHAT_CFG=""
+    else
+      # v0.1.81 printed a second next step from this command. The summary
+      # below is the only one: wcr setup.
+      WEECHAT_CFG=$(printf '%s\n' "$WEECHAT_CFG" | sed 's/ Start the node with `wcr node`, then `wcr weechat`\.//')
     fi
   elif [ "$OS" != "darwin" ] && [ -z "$WEECHAT_NOTE" ]; then
     WEECHAT_NOTE="WeeChat: install did not succeed. Install it from https://weechat.org/ then run: wcr weechat --configure"
