@@ -265,7 +265,9 @@ impl Engine {
                 self.store.insert(&stored, Delivery::Queued)?;
                 if stored.kind == MsgType::Ack {
                     if let Some(id) = stored.acked_id() {
-                        self.store.set_delivery(&id, Delivery::Delivered)?;
+                        // Failed -> delivered is allowed. Delivered and [all]
+                        // do not move backwards.
+                        let _ = self.store.advance_delivery(&id, Delivery::Delivered)?;
                     }
                 }
                 if stored.kind == MsgType::Msg && stored.dest.as_str() == self.our_call {
@@ -274,7 +276,9 @@ impl Engine {
                 let ack_for_us =
                     stored.kind == MsgType::Ack && stored.dest.as_str() == self.our_call;
                 if ack_for_us {
-                    self.store.set_delivery(&stored.msg_id, Delivery::Relayed)?;
+                    let _ = self
+                        .store
+                        .advance_delivery(&stored.msg_id, Delivery::Relayed)?;
                 }
                 let delivery = self.store.delivery_of(&stored.msg_id).ok().flatten();
                 if may_rebroadcast(&self.our_call, &stored, delivery) {
@@ -288,7 +292,9 @@ impl Engine {
             }
             Action::Suppress => {
                 self.store.suppress(&env.msg_id)?;
-                self.store.set_delivery(&env.msg_id, Delivery::Relayed)?;
+                let _ = self
+                    .store
+                    .advance_delivery(&env.msg_id, Delivery::Relayed)?;
             }
             Action::Ignore => {}
             Action::DropRelay => {
@@ -327,6 +333,54 @@ mod tests {
         assert!(!retries_exhausted(2, 3));
         assert!(retries_exhausted(3, 3));
         assert!(!retries_exhausted(0, 0));
+    }
+
+    #[test]
+    fn failed_stays_until_a_real_ack() {
+        let store = Store::open_memory().unwrap();
+        let engine = Engine::new(std::sync::Arc::new(store), "G4AAA".into());
+        let original = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::parse("M0BBB").unwrap(),
+            1,
+            b"ping".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        engine.store.insert(&original, Delivery::Relayed).unwrap();
+        assert!(engine
+            .store
+            .advance_delivery(&original.msg_id, Delivery::Failed)
+            .unwrap());
+        assert_eq!(engine.store.retries_of(&original.msg_id).unwrap(), 0);
+        engine.store.bump_retry(&original.msg_id, 0).unwrap();
+        engine.store.bump_retry(&original.msg_id, 0).unwrap();
+        engine.store.bump_retry(&original.msg_id, 0).unwrap();
+        assert_eq!(engine.store.retries_of(&original.msg_id).unwrap(), 3);
+        // The relay of the final copy must not walk the row back to relayed.
+        assert!(!engine
+            .store
+            .advance_delivery(&original.msg_id, Delivery::Relayed)
+            .unwrap());
+        assert_eq!(
+            engine.store.delivery_of(&original.msg_id).unwrap(),
+            Some(Delivery::Failed)
+        );
+        let ack = Envelope::ack_for(&original, Callsign::parse("M0BBB").unwrap(), 4, None);
+        engine.on_rx(&ack, "rf", None, None).unwrap();
+        assert_eq!(
+            engine.store.delivery_of(&original.msg_id).unwrap(),
+            Some(Delivery::Delivered)
+        );
+        assert!(!engine
+            .store
+            .advance_delivery(&original.msg_id, Delivery::Relayed)
+            .unwrap());
+        assert_eq!(
+            engine.store.delivery_of(&original.msg_id).unwrap(),
+            Some(Delivery::Delivered)
+        );
     }
 
     #[test]
