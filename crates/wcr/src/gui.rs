@@ -4525,6 +4525,7 @@ fn ticks_delivery(ticks: &str) -> Option<crate::store::Delivery> {
         "[..]" => Some(crate::store::Delivery::Queued),
         "[tx]" => Some(crate::store::Delivery::Sent),
         "[rl]" => Some(crate::store::Delivery::Relayed),
+        "[no]" => Some(crate::store::Delivery::Failed),
         "[ok]" => Some(crate::store::Delivery::Delivered),
         "[all]" => Some(crate::store::Delivery::All),
         _ => None,
@@ -4783,6 +4784,24 @@ mod tests {
         apply_delivery_to(&mut chat, "M7TJF", "cafe1234", "relayed", 0);
         assert_eq!(chat[0].ticks, "[ok]");
         apply_delivery_to(&mut chat, "M7TJF", "cafe1234", "delivered", 0);
+        assert_eq!(chat[0].ticks, "[ok]");
+    }
+
+    #[test]
+    fn failed_mark_survives_a_later_relay() {
+        let mut mine = ChatLine::user("G4AAA", "ping", "M0BBB");
+        mine.msgid = "036d5d15".into();
+        mine.ticks = "[rl]".into();
+        let mut chat = vec![mine];
+        apply_delivery_to(&mut chat, "G4AAA", "036d5d15", "failed", 0);
+        assert_eq!(chat[0].ticks, "[no]");
+        apply_delivery_to(&mut chat, "G4AAA", "036d5d15", "relayed", 0);
+        assert_eq!(chat[0].ticks, "[no]");
+        apply_delivery_to(&mut chat, "G4AAA", "036d5d15", "retry-3/3", 3);
+        assert_eq!(chat[0].ticks, "[no]");
+        apply_delivery_to(&mut chat, "G4AAA", "036d5d15", "delivered", 0);
+        assert_eq!(chat[0].ticks, "[ok]");
+        apply_delivery_to(&mut chat, "G4AAA", "036d5d15", "relayed", 0);
         assert_eq!(chat[0].ticks, "[ok]");
     }
 

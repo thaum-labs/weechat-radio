@@ -16,6 +16,9 @@ pub enum Delivery {
     Queued,
     Sent,
     Relayed,
+    /// Retries are used up. Terminal, except a real ACK may move it to
+    /// [`Delivery::Delivered`].
+    Failed,
     Delivered,
     All,
 }
@@ -26,6 +29,7 @@ impl Delivery {
             Self::Queued => "queued",
             Self::Sent => "sent",
             Self::Relayed => "relayed",
+            Self::Failed => "failed",
             Self::Delivered => "delivered",
             Self::All => "all",
         }
@@ -35,6 +39,7 @@ impl Delivery {
         match s {
             "sent" => Self::Sent,
             "relayed" => Self::Relayed,
+            "failed" => Self::Failed,
             "delivered" => Self::Delivered,
             "all" => Self::All,
             _ => Self::Queued,
@@ -46,6 +51,7 @@ impl Delivery {
             Self::Queued => "[..]",
             Self::Sent => "[tx]",
             Self::Relayed => "[rl]",
+            Self::Failed => "[no]",
             Self::Delivered => "[ok]",
             Self::All => "[all]",
         }
@@ -57,6 +63,7 @@ impl Delivery {
                 Self::Queued => "·",
                 Self::Sent => "[tx]",
                 Self::Relayed => "[rl]",
+                Self::Failed => "[no]",
                 Self::Delivered => "[ok]",
                 Self::All => "[all]",
             }
@@ -65,6 +72,7 @@ impl Delivery {
                 Self::Queued => "-",
                 Self::Sent => "v",
                 Self::Relayed => "vv",
+                Self::Failed => "[no]",
                 Self::Delivered => "VV",
                 Self::All => "VVV",
             }
@@ -80,12 +88,18 @@ impl Delivery {
             Self::Queued => 0,
             Self::Sent => 1,
             Self::Relayed => 2,
-            Self::Delivered => 3,
-            Self::All => 4,
+            // Above relayed, so an echo cannot walk a failure back to [rl].
+            // Below delivered, so a real ACK can still move failed -> delivered.
+            Self::Failed => 3,
+            Self::Delivered => 4,
+            Self::All => 5,
         }
     }
 
     /// True when `next` is the same state or further along.
+    ///
+    /// `Failed` and `Delivered` do not move backwards. The one exception is a
+    /// real ACK: `Failed` may become `Delivered` (and then `All`).
     pub fn can_advance(self, next: Self) -> bool {
         next.rank() >= self.rank()
     }
@@ -394,6 +408,21 @@ impl Store {
             params![d.as_str(), id.hex()],
         )?;
         Ok(())
+    }
+
+    /// Write `next` only when it does not walk a terminal mark backwards.
+    /// Returns false when the row is missing or the transition is refused.
+    pub fn advance_delivery(&self, id: &MsgId, next: Delivery) -> Result<bool> {
+        let Some(cur) = self.delivery_of(id)? else {
+            return Ok(false);
+        };
+        if !cur.can_advance(next) {
+            return Ok(false);
+        }
+        if cur != next {
+            self.set_delivery(id, next)?;
+        }
+        Ok(true)
     }
 
     pub fn delivery_of(&self, id: &MsgId) -> Result<Option<Delivery>> {
@@ -1237,6 +1266,11 @@ mod tests {
         assert!(Delivery::Relayed.can_advance(Delivery::Delivered));
         assert!(!Delivery::Delivered.can_advance(Delivery::Relayed));
         assert!(Delivery::Delivered.can_advance(Delivery::Delivered));
+        assert!(Delivery::Relayed.can_advance(Delivery::Failed));
+        assert!(!Delivery::Failed.can_advance(Delivery::Relayed));
+        assert!(Delivery::Failed.can_advance(Delivery::Delivered));
+        assert!(!Delivery::Delivered.can_advance(Delivery::Failed));
+        assert_eq!(Delivery::Failed.ticks_bracket(), "[no]");
         let stamp = chat_stamp(Some("2026-09-18T12:00:00Z"));
         assert_eq!(stamp.len(), 19);
         assert!(stamp.chars().nth(10) == Some(' '));
@@ -1413,6 +1447,11 @@ mod tests {
         assert_eq!(s.retry_due(10, "G4ABC", 3).unwrap().len(), 1);
         s.set_delivery(&env.msg_id, Delivery::Delivered).unwrap();
         assert!(s.retry_due(10, "G4ABC", 3).unwrap().is_empty());
+        s.set_delivery(&env.msg_id, Delivery::Sent).unwrap();
+        assert!(s.advance_delivery(&env.msg_id, Delivery::Failed).unwrap());
+        assert!(s.retry_due(100, "G4ABC", 3).unwrap().is_empty());
+        assert!(!s.advance_delivery(&env.msg_id, Delivery::Relayed).unwrap());
+        assert_eq!(s.delivery_of(&env.msg_id).unwrap(), Some(Delivery::Failed));
         s.set_delivery(&env.msg_id, Delivery::Sent).unwrap();
         s.bump_retry(&env.msg_id, 20).unwrap();
         assert_eq!(s.retries_of(&env.msg_id).unwrap(), 1);
