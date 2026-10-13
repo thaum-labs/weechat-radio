@@ -41,10 +41,15 @@ fn configure_home(cfg_path: &Path, home: &Path) -> Result<String> {
     write_minttyrc()?;
     write_launcher()?;
     let listen = irc_listen_label(cfg_path);
-    Ok(format!(
-        "WeeChat is configured for {listen} (home {}). Start the node with `wcr node`, then `wcr weechat`.",
+    Ok(configured_message(&listen, home))
+}
+
+/// What was configured. The next command is printed once, by setup or the installer.
+pub fn configured_message(listen: &str, home: &Path) -> String {
+    format!(
+        "WeeChat is configured for {listen} (home {}).",
         home.display()
-    ))
+    )
 }
 
 pub fn launch() -> Result<()> {
@@ -495,6 +500,46 @@ mod tests {
     use super::configure_cmds;
     use super::weechat_server_target;
     use crate::config::Config;
+    use std::path::Path;
+
+    #[test]
+    fn configured_message_does_not_name_a_next_command() {
+        let msg = super::configured_message("127.0.0.1:6667", Path::new("/tmp/weechat"));
+        assert_eq!(
+            msg,
+            "WeeChat is configured for 127.0.0.1:6667 (home /tmp/weechat)."
+        );
+        assert!(!msg.contains("wcr node"));
+        assert!(!msg.contains("wcr weechat"));
+        assert!(!msg.contains("wcr setup"));
+    }
+
+    #[test]
+    fn install_summary_puts_path_apply_before_setup() {
+        let install = include_str!("../../../install/install.sh");
+        let web = include_str!("../../../web/install.sh");
+        assert_eq!(
+            install, web,
+            "web/install.sh drifted from install/install.sh"
+        );
+        let gui = install.rfind("Linux GUI").expect("linux gui notice");
+        let apply = install.rfind("Apply it with:").expect("path apply");
+        let next = install.rfind("Next, run:").expect("next step");
+        let setup = install.rfind("wcr setup").expect("wcr setup");
+        assert!(
+            gui < apply,
+            "library notice must sit above the PATH apply line"
+        );
+        assert!(
+            apply < next,
+            "PATH apply must sit immediately before the next step"
+        );
+        assert!(next < setup);
+        assert!(
+            install.contains("WEECHAT_CFG="),
+            "configure output must be captured into the summary"
+        );
+    }
 
     #[test]
     fn minttyrc_is_only_written_on_windows() {
