@@ -231,19 +231,81 @@ pub async fn apply() -> Result<String> {
             }
         }
     }
+    let removed_mintty = remove_stray_minttyrc(&exe);
     let restarted = crate::service::restart_if_installed();
-    if restarted {
-        Ok(format!(
-            "updated to {} at {} — station restarted so radio audio keeps working",
-            info.version,
+    Ok(update_success_message(
+        &info.version,
+        &exe,
+        restarted,
+        removed_mintty,
+    ))
+}
+
+fn update_success_message(
+    version: &str,
+    exe: &Path,
+    restarted: bool,
+    removed_mintty: bool,
+) -> String {
+    let mut msg = if restarted {
+        format!(
+            "updated to {version} at {} — station restarted so radio audio keeps working",
             exe.display()
-        ))
+        )
     } else {
-        Ok(format!(
-            "updated to {} at {} — close this window and run wcr --version in a new terminal",
-            info.version,
+        format!(
+            "updated to {version} at {} — close this window and run wcr --version in a new terminal",
             exe.display()
-        ))
+        )
+    };
+    if let Some(dir) = exe.parent() {
+        msg.push_str(&kept_backup_sentence(&present_backups(dir)));
+    }
+    if removed_mintty {
+        msg.push_str(". Removed minttyrc (only used on Windows)");
+    }
+    msg
+}
+
+fn backup_file_names() -> &'static [&'static str] {
+    if cfg!(windows) {
+        &["wcr.exe.bak", "wcr-gui.exe.bak", "modem73.exe.bak"]
+    } else {
+        &["wcr.bak", "wcr-gui.bak", "modem73.bak"]
+    }
+}
+
+fn present_backups(dir: &Path) -> Vec<String> {
+    backup_file_names()
+        .iter()
+        .filter(|name| dir.join(name).is_file())
+        .map(|name| (*name).to_string())
+        .collect()
+}
+
+fn kept_backup_sentence(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => format!(". Kept the previous binary as {one}"),
+        many => format!(". Kept the previous binaries as {}", many.join(", ")),
+    }
+}
+
+/// `install.sh` drops minttyrc on Unix. `wcr update` replaces the binary in
+/// place, so an older install can leave the file beside `wcr`.
+fn remove_stray_minttyrc(exe: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let _ = exe;
+        false
+    }
+    #[cfg(not(windows))]
+    {
+        let Some(dir) = exe.parent() else {
+            return false;
+        };
+        let path = dir.join("minttyrc");
+        path.is_file() && fs::remove_file(&path).is_ok()
     }
 }
 
@@ -539,6 +601,42 @@ mod tests {
             highest_newer_tag(&releases, "0.1.15").as_deref(),
             Some("0.1.16")
         );
+    }
+
+    #[test]
+    fn update_note_mentions_bak_and_drops_unix_minttyrc() {
+        let dir = std::env::temp_dir().join(format!("wcr-upd-note-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join(if cfg!(windows) { "wcr.exe" } else { "wcr" });
+        fs::write(&exe, b"new").unwrap();
+        let bak = if cfg!(windows) {
+            "wcr.exe.bak"
+        } else {
+            "wcr.bak"
+        };
+        fs::write(dir.join(bak), b"old").unwrap();
+        fs::write(dir.join("wcr-gui.bak"), b"old").unwrap();
+        fs::write(dir.join("minttyrc"), b"theme").unwrap();
+        let removed = remove_stray_minttyrc(&exe);
+        if cfg!(windows) {
+            assert!(!removed);
+            assert!(dir.join("minttyrc").is_file());
+        } else {
+            assert!(removed);
+            assert!(!dir.join("minttyrc").exists());
+        }
+        let msg = update_success_message("0.1.81", &exe, false, removed);
+        assert!(msg.contains(bak), "{msg}");
+        assert!(msg.contains("wcr --version"), "{msg}");
+        if removed {
+            assert!(msg.contains("Removed minttyrc"), "{msg}");
+        } else {
+            assert!(!msg.contains("Removed minttyrc"), "{msg}");
+        }
+        let none = kept_backup_sentence(&[]);
+        assert!(none.is_empty());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
