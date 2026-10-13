@@ -1,0 +1,7 @@
+{
+  "modem73-linux-x86_64": "672c8345f0abea5a40cc826addce8c5645a6bef03c5efc8d4e6b85c01181a5a1",
+  "modem73-linux-aarch64": "5081160bcc13c9d2a6c1610cc101a3fe45fae2b0fb07e8786a82a359f964bf80",
+  "modem73-windows-x86_64.exe": "48b5e39d1451fdb143908784feec186f8c65673c449476ae488bdf54467713e5",
+  "modem73-macos-x86_64.tar.gz": "6ed667b44350025f7d55dff80de8efa1a8faf37120b2bbd0ab80941eb99cf0a8",
+  "modem73-macos-aarch64.tar.gz": "8908691d1011439a319dcaebb1ee5c3fc1c749365229b2ab921e2f8ccf958f35"
+}
