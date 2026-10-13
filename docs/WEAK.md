@@ -43,7 +43,7 @@ The receiver hears all of these at once. You can send `hf-weak` while they are s
 
 modem73 carrier-sense is on for every preset. On top of that, `wcr` keeps a single air queue: one frame (or fragment burst) at a time, emergency first, then ACKs, then your chat, then relays, then beacons.
 
-**OCC** in the station panel is channel occupancy 0–100. **wait** means a frame is queued until the channel is idle. After the defer cap it is handed to the modem anyway: 3 seconds for an emergency or an ACK (`emergency_max_defer_ms`), 15 seconds for chat and relays (`max_defer_ms`). While it waits, it backs off one slot at a time. The modem still will not key over a carrier it can hear. A steady noise floor near 100% occupancy therefore delays an ACK, then lets it out, instead of holding it forever.
+**OCC** in the station panel is channel occupancy 0–100. **wait** means a frame is queued until the channel is idle. After the defer cap it is handed to the modem anyway: 3 seconds for an emergency or an ACK (`emergency_max_defer_ms`), 15 seconds for chat and relays (`max_defer_ms`). While it waits, it backs off one slot at a time. An ACK does not sit behind the other queued frames. When the 3 seconds are up and the channel is still busy, that ACK is keyed with the modem's carrier sense off, then carrier sense is turned back on. Chat and relays can still be held by a carrier the modem hears. A steady noise floor near 100% occupancy therefore delays an ACK by about 3 seconds, then lets it out.
 
 ## Steps (HF fading)
 

@@ -90,9 +90,9 @@ Unacked messages originated by this station are retransmitted up to `rf.max_retr
 
 Group ACKs wait a random 0–`ack_dither_ms` (default 800 ms) before keying so every member of a net does not ACK at once. Direct (point-to-point) ACKs are not dithered.
 
-If the channel stays busy, an ACK does not wait out the full chat defer. It backs off one slot at a time, then goes to the modem after `emergency_max_defer_ms` (default 3 s) even when occupancy is still near 100%. Ordinary chat and relays use `max_defer_ms` (default 15 s). The modem's own carrier sense can still refuse to key over a carrier it hears. A station does not relay a frame whose destination is itself, and it does not relay a message that already has an ACK. An ACK toward another station is still relayed.
+If the channel stays busy, an ACK does not wait behind the rest of the air queue or out the full chat defer. It backs off one slot at a time, then is keyed after `emergency_max_defer_ms` (default 3 s) even when occupancy is still near 100%. That key turns modem carrier sense off for the ACK alone and restores it afterwards, so a steady noise floor cannot hold the receipt. Ordinary chat and relays use `max_defer_ms` (default 15 s), and the modem may still refuse to key those over a carrier it hears. A station does not relay a frame whose destination is itself, and it does not relay a message that already has an ACK. An ACK toward another station is still relayed. Hearing a later copy of an unacked frame (a retry) is answered again, and a middle station forwards that retry, so a lost receipt does not end at `[rl]`.
 
-A closed group on the hub is delivered to sessions that registered that group name (from their local member list) and to callsigns listed as members on the hub. It is not sent to every connected station. `#bulletin` still is.
+A closed group on the hub is delivered to sessions that registered that group name (from their local member list) and to callsigns listed as members on the hub. It is not sent to every connected station. The group name is sent to the hub when the group is created or joined, so the first message does not wait for the periodic membership refresh. `#bulletin` still goes to every connected station.
 
 ## HAVE / WANT
 
