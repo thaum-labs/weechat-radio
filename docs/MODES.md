@@ -36,7 +36,7 @@ Versus JS8, FT8, Olivia, and APRS: [compare modes](https://weechatradio.com/docs
 When several stations talk at once, frames would otherwise pile onto the KISS port and key over each other. Two layers stop that:
 
 1. **modem73 CSMA** is on for every preset (VHF and HF). The modem itself waits for a quiet carrier before PTT.
-2. **`wcr` air queue** serialises our own traffic. It waits while the channel is `rx`/`tx`, spreads retries and group ACKs so they do not land on the same slot, skips beacons when occupancy is high, and leaves a turnaround gap after each TX so an ACK can be heard. An ACK or emergency frame stops waiting after `emergency_max_defer_ms` (3 s) and is handed to the modem even if occupancy is still near 100%. Chat and relays use `max_defer_ms` (15 s). The wait itself is a slot backoff, not a single sleep.
+2. **`wcr` air queue** serialises our own traffic. It waits while the channel is `rx`/`tx`, spreads retries and group ACKs so they do not land on the same slot, skips beacons when occupancy is high, and leaves a turnaround gap after each TX so an ACK can be heard. An ACK skips that queue. It stops waiting after `emergency_max_defer_ms` (3 s) and is keyed even if occupancy is still near 100%, with modem carrier sense off for that frame only. Emergency chat still uses the 3 s cap inside the queue. Other chat and relays use `max_defer_ms` (15 s). The wait itself is a slot backoff, not a single sleep.
 
 The status bar **PTT** field shows `wait` while the queue is holding a frame. **OCC** is occupancy 0–100 from the modem. **QUEUE** includes how many frames are in the air queue (`air N`).
 
