@@ -49,6 +49,7 @@ TICKS = {
     "relayed": "[rl]",
     "delivered": "[ok]",
     "all": "[all]",
+    "failed": "[no]",
 }
 
 ACCENT = "111"

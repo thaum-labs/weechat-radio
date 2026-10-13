@@ -68,7 +68,7 @@ Open **WeeChat Radio** from the Start menu. First launch is setup; then you chat
 wcr gui
 ```
 
-How you know it worked: the status bar shows your callsign. Send a line in `#bulletin`. Marks on your own lines: `[..]` waiting, `[tx]` sent, `[rl]` relayed, `[ok]` delivered, `[all]` every station in a group.
+How you know it worked: the status bar shows your callsign. Send a line in `#bulletin`. Marks on your own lines: `[..]` waiting, `[tx]` sent, `[rl]` you heard your own frame come back (echo or a relay, not a receipt), `[ok]` delivered, `[all]` every station in a group.
 
 Radio guides: [VR-N76 / UV-PRO over Bluetooth](https://weechatradio.com/guides/vr-n76.html) · [handheld + Digirig](https://weechatradio.com/guides/handheld.html) · [VOX cable](https://weechatradio.com/guides/vox.html) · [HF + CAT](https://weechatradio.com/guides/hf.html)
 

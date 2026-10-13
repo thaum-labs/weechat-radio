@@ -49,10 +49,11 @@ The status bar at the bottom shows your callsign and mode. After you send, a mar
 
 - `[..]` waiting to go out
 - `[tx]` sent
-- `[rl]` relayed
-- `[ok]` delivered
-- `[all]` every station in a group got it
+- `[rl]` you heard your own frame come back (a speaker echo, or someone relaying it). Not a receipt.
+- `[ok]` delivered — they sent an ACK. A direct message and `#bulletin` stop here. `#bulletin` is public, so one ACK is enough and the mark does not repeat for every listener.
+- `[all]` every member of a closed group ACKed
+- `[no]` the send was refused (for example the hub said the callsign is already claimed)
 
-The terminal TUI may show `·` / `✓` / `✓✓` / `✓✓✓` instead when Unicode is on. WeeChat uses the same Unicode ticks.
+The window and the TUI use these same marks.
 
 The TUI uses the `tron` theme by default (indigo / orange, like the website). Switch with `/radio theme hacker` or `/radio theme terminal`, or set `theme` under `[ui]` in `wcr.toml`.
