@@ -281,18 +281,20 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
                         }
                     }
                     let _ = st.store.insert(&env, crate::store::Delivery::Queued);
-                    *st.forwarded.lock() += 1;
-                    let (from_khz, from_band, to_bands) = route(&st, &env, &bin, &call);
-                    publish_forward(
-                        &st,
-                        env.origin.to_string(),
-                        env.dest.to_string(),
-                        env.kind.as_str(),
-                        env.msg_id.hex(),
-                        from_khz,
-                        from_band,
-                        to_bands,
-                    );
+                    if env.kind != MsgType::Frag {
+                        *st.forwarded.lock() += 1;
+                        let (from_khz, from_band, to_bands) = route(&st, &env, &bin, &call);
+                        publish_forward(
+                            &st,
+                            env.origin.to_string(),
+                            env.dest.to_string(),
+                            env.kind.as_str(),
+                            env.msg_id.hex(),
+                            from_khz,
+                            from_band,
+                            to_bands,
+                        );
+                    }
                     for full in extras {
                         if let Ok(raw) = full.encode() {
                             let _ = st.store.insert(&full, crate::store::Delivery::Queued);
@@ -422,6 +424,9 @@ fn publish_forward(
 }
 
 fn route(st: &HubState, env: &Envelope, raw: &[u8], from: &str) -> (u32, String, Vec<String>) {
+    if env.kind == MsgType::Frag {
+        return (0, String::new(), Vec::new());
+    }
     let dest = env.dest.to_string().to_ascii_uppercase();
     let (from_khz, sessions) = {
         let g = st.sessions.lock();
@@ -592,7 +597,7 @@ pub fn test_hub_state() -> HubState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::{Callsign, Envelope, Flags, IdentityKeys};
+    use crate::proto::{Callsign, Envelope, Flags, IdentityKeys, MsgType};
 
     fn sample_msg(origin: &str) -> Envelope {
         Envelope::new_msg(
@@ -638,6 +643,45 @@ mod tests {
         origin.sign_envelope(&mut env).unwrap();
         assert!(verify_inbound(&st, &env, "G4ABC", &origin.public_bytes()));
         assert!(!verify_inbound(&st, &env, "M0XYZ", &other.public_bytes()));
+    }
+
+    #[test]
+    fn frag_frames_are_not_forwarded_only_reassembled() {
+        let st = test_hub_state();
+        let (tx_b, mut rx_b) = mpsc::channel(4);
+        {
+            let mut g = st.sessions.lock();
+            g.insert(
+                "G4ABC".into(),
+                Session {
+                    callsign: "G4ABC".into(),
+                    pubkey: [0u8; 32],
+                    serves: HashSet::from(["G4ABC".into()]),
+                    tx: mpsc::channel(1).0,
+                    connected_at: std::time::Instant::now(),
+                    freq_khz: 0,
+                    conn_id: 1,
+                },
+            );
+            g.insert(
+                "M0XYZ".into(),
+                Session {
+                    callsign: "M0XYZ".into(),
+                    pubkey: [1u8; 32],
+                    serves: HashSet::from(["M0XYZ".into()]),
+                    tx: tx_b,
+                    connected_at: std::time::Instant::now(),
+                    freq_khz: 0,
+                    conn_id: 2,
+                },
+            );
+        }
+        let mut env = sample_msg("G4ABC");
+        env.dest = Callsign::from_raw("BULLETIN");
+        env.kind = MsgType::Frag;
+        let raw = env.encode().unwrap();
+        let (_khz, _band, _bands) = route(&st, &env, &raw, "G4ABC");
+        assert!(rx_b.try_recv().is_err(), "raw frag must not be routed");
     }
 
     #[test]

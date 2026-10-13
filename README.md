@@ -49,7 +49,7 @@ Best way to get the **latest** version: install from [weechatradio.com](https://
 
 ```bash
 curl -fsSL https://weechatradio.com/install.sh | sh
-wcr setup
+wcr setup   # 7 steps: callsign, grid, radio path, hub/map choices, service
 wcr gui
 ```
 
