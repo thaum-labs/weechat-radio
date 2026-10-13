@@ -873,3 +873,112 @@ async fn irc_port_in_use_fails_fast() {
     assert!(msg.contains("already in use"), "{msg}");
     drop(held);
 }
+
+/// The relay hold pump runs in every node. It must not clear the retry hold
+/// on a message we originated, or the line is sent once and never retried.
+#[tokio::test]
+async fn own_message_retries_while_the_relay_loop_runs() {
+    let air = wcr::sim::SharedAir::new(0.0);
+    let home = scratch("retry-own");
+    let kiss = port().await;
+    let ctrl = port().await;
+    let irc_p = port().await;
+    let status_p = port().await;
+    wcr::sim::mock_modem73(
+        &format!("127.0.0.1:{kiss}"),
+        &format!("127.0.0.1:{ctrl}"),
+        air,
+    )
+    .await
+    .unwrap();
+    let cfg = radio_cfg("G4AAA", &home, kiss, ctrl, irc_p, status_p);
+    let node = tokio::spawn(async move { wcr::node::run_node(cfg, false).await });
+    wait_tcp(irc_p, 20).await;
+    wait_radio(&[status_p]).await;
+    let mut sender = TcpStream::connect(format!("127.0.0.1:{irc_p}"))
+        .await
+        .unwrap();
+    irc_register(&mut sender, "G4AAA").await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Nobody answers M0BBB. Emergency retry hold is 8 s. The body must not
+    // contain the tag text this assertion searches for.
+    sender
+        .write_all(b"PRIVMSG M0BBB :!!own-retry-body\r\n")
+        .await
+        .unwrap();
+    let mut reader = tokio::io::BufReader::new(&mut sender);
+    let got = read_lines_until(&mut reader, 20, |lines| {
+        lines.iter().any(|l| l.contains("+radio/delivery=retry-"))
+    })
+    .await;
+    assert!(
+        got.iter().any(|l| l.contains("+radio/delivery=retry-")),
+        "own message was not retried while the relay loop ran: {got:?}"
+    );
+    node.abort();
+}
+
+/// A group created after both stations are already on the hub must be routable
+/// immediately, not on the next 60 s membership refresh.
+#[tokio::test]
+async fn hub_group_created_at_runtime_is_routable() {
+    let hub_port = start_hub().await;
+    let hub_ws = format!("ws://127.0.0.1:{hub_port}/ws");
+    let members = ["G4AAA", "M0BBB"];
+    let mut nodes = Vec::new();
+    let mut irc = Vec::new();
+    let mut status = Vec::new();
+    for call in members {
+        let home = scratch(call);
+        let irc_p = port().await;
+        let status_p = port().await;
+        let cfg = internet_cfg(call, &home, &hub_ws, irc_p, status_p);
+        nodes.push(tokio::spawn(async move {
+            wcr::node::run_node(cfg, false).await
+        }));
+        irc.push(irc_p);
+        status.push(status_p);
+    }
+    for p in &irc {
+        wait_tcp(*p, 20).await;
+    }
+    wait_hub_ok(&status).await;
+    let mut sender = TcpStream::connect(format!("127.0.0.1:{}", irc[0]))
+        .await
+        .unwrap();
+    irc_register(&mut sender, "G4AAA").await;
+    let mut peer = TcpStream::connect(format!("127.0.0.1:{}", irc[1]))
+        .await
+        .unwrap();
+    irc_register(&mut peer, "M0BBB").await;
+    sender.write_all(b"JOIN #net\r\n").await.unwrap();
+    peer.write_all(b"JOIN #net\r\n").await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    sender
+        .write_all(b"RADIO group create net G4AAA M0BBB\r\n")
+        .await
+        .unwrap();
+    peer.write_all(b"RADIO group create net G4AAA M0BBB\r\n")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let body = "runtime-group-body";
+    sender
+        .write_all(format!("PRIVMSG #net :{body}\r\n").as_bytes())
+        .await
+        .unwrap();
+    let mut peer_reader = tokio::io::BufReader::new(&mut peer);
+    let got = read_lines_until(&mut peer_reader, 8, |lines| {
+        lines
+            .iter()
+            .any(|l| privmsg(l).is_some_and(|p| p.2 == body))
+    })
+    .await;
+    assert!(
+        got.iter().any(|l| privmsg(l).is_some_and(|p| p.2 == body)),
+        "group created at runtime was not routed before the 60 s refresh: {got:?}"
+    );
+    for n in nodes {
+        n.abort();
+    }
+}
