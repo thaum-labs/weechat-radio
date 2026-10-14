@@ -236,6 +236,8 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   font-size: 12px;
 }
 .station b { display: block; font-weight: 400; color: var(--accent); }
+.station .heard { display: block; color: var(--dim); font-size: 11px; }
+.station.online .heard { color: var(--fg); }
 .station:hover { color: var(--orange); }
 .station.on, .station.on b { color: var(--orange); }
 .station .mode-mark {
@@ -268,6 +270,10 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   height: 26px;
   cursor: pointer;
   overflow: visible;
+}
+.map-mark-age {
+  width: 28px;
+  height: 26px;
 }
 .map-mark-wrap .tower-freq {
   position: absolute;
@@ -1081,6 +1087,8 @@ details.maplibregl-ctrl-attrib:not([open]) {
 @media (prefers-reduced-motion: reduce) {
   .clock-mod .colon { animation: none; }
   .mod, .mod_column.activated .mod { animation: none; opacity: 1; }
+  .map-mark-wrap.pulse-tx svg,
+  .map-mark-wrap.pulse-rx svg { animation: none; }
 }
 
 @media (max-width: 900px), (max-height: 560px) {
