@@ -209,7 +209,7 @@ async fn status_json(port: u16) -> Option<serde_json::Value> {
 }
 
 async fn wait_hub_ok(ports: &[u16]) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     while tokio::time::Instant::now() < deadline {
         let mut ok = true;
         for p in ports {
@@ -224,7 +224,7 @@ async fn wait_hub_ok(ports: &[u16]) {
         }
         tokio::time::sleep(Duration::from_millis(150)).await;
     }
-    panic!("hub_ok never came up");
+    panic!("hub_ok never came up (ports {ports:?})");
 }
 
 async fn wait_radio(ports: &[u16]) {

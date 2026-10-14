@@ -624,6 +624,8 @@ struct GuiApp {
     mail_hold: bool,
     mail_pending: String,
     mail_toast: String,
+    mail_toast_warn: bool,
+    mail_notice: String,
     mail_open: Option<crate::mail::MailRow>,
     mail_rows: Vec<crate::mail::MailRow>,
     mail_waiting: Vec<crate::mail::WaitHeader>,
@@ -715,6 +717,8 @@ impl GuiApp {
             mail_hold: false,
             mail_pending: String::new(),
             mail_toast: String::new(),
+            mail_toast_warn: false,
+            mail_notice: String::new(),
             mail_open: None,
             mail_rows: Vec::new(),
             mail_waiting: Vec::new(),
@@ -3536,6 +3540,12 @@ impl GuiApp {
             return;
         };
         let unread = tab.get("unread").and_then(|v| v.as_u64()).unwrap_or(0);
+        let notice = tab.get("notice").and_then(|v| v.as_str()).unwrap_or("");
+        if !notice.is_empty() && notice != self.mail_notice {
+            self.mail_notice = notice.to_string();
+            self.mail_toast = notice.to_string();
+            self.mail_toast_warn = true;
+        }
         if unread > self.mail_unread && self.center != CenterView::Email {
             let _ = notify_rust::Notification::new()
                 .summary("WeeChat Radio")
@@ -3563,6 +3573,10 @@ impl GuiApp {
                 self.mail_waiting = rows;
             }
         }
+        if self.mail_toast == "Checking…" && !self.mail_waiting.is_empty() {
+            self.mail_toast.clear();
+            self.mail_toast_warn = false;
+        }
         if !self.mail_pending.is_empty() {
             if let Some(row) =
                 mail_http("GET", &format!("/mail/open?id={}", self.mail_pending), None)
@@ -3576,7 +3590,21 @@ impl GuiApp {
                     self.mail_hold = false;
                     self.mail_pending.clear();
                     self.mail_toast = "Sent".into();
+                    self.mail_toast_warn = false;
                     self.mail_folder = "sent".into();
+                } else if state == "failed" {
+                    let detail = row.get("detail").and_then(|v| v.as_str()).unwrap_or("");
+                    self.mail_toast = if detail.is_empty() {
+                        "Failed".into()
+                    } else {
+                        detail.to_string()
+                    };
+                    self.mail_toast_warn = true;
+                    self.mail_hold = false;
+                    self.mail_pending.clear();
+                } else if state == "gateway" {
+                    self.mail_toast = "At the gateway, waiting for it to be accepted.".into();
+                    self.mail_toast_warn = true;
                 }
             }
         }
@@ -3587,7 +3615,8 @@ impl GuiApp {
         module_title(ui, "EMAIL", &addr);
         ui.add_space(6.0);
         if !self.mail_toast.is_empty() {
-            ui.label(RichText::new(&self.mail_toast).color(GREEN).monospace());
+            let color = if self.mail_toast_warn { ORANGE } else { GREEN };
+            ui.label(RichText::new(&self.mail_toast).color(color).monospace());
             ui.add_space(4.0);
         }
         let mode = self
@@ -3623,6 +3652,9 @@ impl GuiApp {
                         .monospace(),
                 );
                 if ui.add(hair_btn("Check mail", ORANGE)).clicked() {
+                    self.mail_notice.clear();
+                    self.mail_toast = "Checking…".into();
+                    self.mail_toast_warn = false;
                     let _ = mail_http("POST", "/mail/check", Some("{}"));
                 }
             }
@@ -3664,18 +3696,24 @@ impl GuiApp {
                     }
                 }
                 for row in &rows {
-                    let mark = match row.state.as_str() {
-                        "queued" => "[..]",
-                        "tx" => "[tx]",
-                        "sent" => "[ok]",
-                        _ => "    ",
+                    let mark = crate::mail::state_mark(&row.state);
+                    let detail = if row.state == "failed" && !row.detail.is_empty() {
+                        format!("  {}", row.detail)
+                    } else if row.state == "gateway" {
+                        "  at gateway".into()
+                    } else {
+                        String::new()
                     };
                     let who = if self.mail_folder == "outbox" || self.mail_folder == "sent" {
                         &row.to_addr
                     } else {
                         &row.from_addr
                     };
-                    let line = format!("{}  {mark}  {who}  {}", utc_stamp(row.ts), row.subject);
+                    let line = format!(
+                        "{}  {mark}  {who}  {}{detail}",
+                        utc_stamp(row.ts),
+                        row.subject
+                    );
                     ui.horizontal(|ui| {
                         if ui
                             .selectable_label(
