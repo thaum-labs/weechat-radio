@@ -50,6 +50,23 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v0.1.84</p>
+          <p>Wed, 14 Oct 2026</p>
+        </h3>
+        <pre>After the last keyed copy, the station waits one more retry interval for an acknowledgement before it shows [no]. It does not key again during that wait. A busy channel can make the gap longer than the timer. Unacked messages older than one hour are marked [no]. /radio flush marks this station's unacked lines [no] and drops relay holds that have not gone out.
+
+Delivery marks go only to the client that sent the line. Relay logs no longer print binary frames. An invite names you. NAMES after you join lists the members this station has stored. /radio status counts each forwarded frame and how many distinct messages that was.
+
+A radio-plus station still does not open the hub from this computer. An internet-radio gateway that hears it may forward a direct message, a closed group, #bulletin, and email. The sender shows [gw] when the gateway has accepted the frame. [rl] still means you heard your own frame on the radio. In radio mode a gateway leaves the frame on the radio. radio and radio-plus both post map data (callsign, grid, and tx/rx ids) and never message text. That forward flag is the only difference.
+
+A closed group keeps retrying until every stored member has acknowledged, then shows [all]. The first [ok] does not stop that. The hub holds a direct message for an offline internet station for 10 minutes, up to 32 per callsign, and delivers it on the next hello. It does not hold groups or #bulletin.
+
+The map draws an arc only between two station pins that addressed each other. A #bulletin or a closed group does not draw a line to every other pin.
+
+Known issue. With another station's signal on the channel, modem73 can hold frames indefinitely, so [x2], [x3], and [no] may show before a copy actually airs.</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>v0.1.83</p>
           <p>Wed, 14 Oct 2026</p>
         </h3>
