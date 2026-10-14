@@ -837,6 +837,52 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
         IrcEventKind::Part { channel } => {
             let _ = leave_channel(rt, &channel).await;
         }
+        IrcEventKind::Invite { target, channel } => {
+            let target = target.trim().to_ascii_uppercase();
+            let radio = rt.cfg.lock().mode.uses_radio();
+            let reply = if crate::slash::is_bulletin(&channel) {
+                crate::slash::invite_over_air_reply(&channel, &target, radio, false)
+            } else if target.is_empty() || Callsign::parse(&target).is_err() {
+                format!("no over-air notice: '{target}' is not a callsign")
+            } else {
+                let name = crate::slash::group_name(&channel);
+                let us = rt.cfg.lock().callsign.clone();
+                let _ = rt.store.group_create(&name, &[us.clone(), target.clone()]);
+                publish_hub_membership(rt).await;
+                let notice = crate::slash::invite_notice(&channel, &target);
+                match send_chat(rt, &target, &notice).await {
+                    Ok(()) => {
+                        if let Ok(origin) = Callsign::parse(&us) {
+                            if let Ok(dest) = Callsign::parse(&target) {
+                                if let Ok(Some(id)) = rt.store.msgid_of_body(
+                                    origin.as_str(),
+                                    dest.as_str(),
+                                    notice.as_bytes(),
+                                ) {
+                                    rt.irc
+                                        .broadcast_privmsg(
+                                            origin.as_str(),
+                                            &target,
+                                            &notice,
+                                            Some(&id.hex()),
+                                            None,
+                                        )
+                                        .await;
+                                    let tries = rt.store.rf_tx_of(&id).ok().filter(|n| *n > 0);
+                                    rt.irc.tagmsg_progress(&id.hex(), "sent", tries).await;
+                                }
+                            }
+                        }
+                        crate::slash::invite_over_air_reply(&channel, &target, radio, true)
+                    }
+                    Err(e) => format!(
+                        "{}: {e}",
+                        crate::slash::invite_over_air_reply(&channel, &target, radio, false)
+                    ),
+                }
+            };
+            rt.irc.send_radio_reply(ev.client_id, &reply).await;
+        }
         IrcEventKind::Join { channel } => {
             if !dest_is_bulletin(&channel) {
                 publish_hub_membership(rt).await;
@@ -1247,12 +1293,20 @@ async fn dispatch_with(rt: &Runtime, env: &Envelope, force_inet: bool) -> Result
         env.flags.set(FLAG_NO_INET, false);
         env.flags.set(FLAG_INET_OK, true);
     }
-    if cfg.mode.uses_radio() {
-        let _ = dispatch_rf_rung(rt, &env, 0).await;
+    let foreign = !env
+        .origin
+        .as_str()
+        .eq_ignore_ascii_case(&rt.engine.our_call);
+    let mut relayed = false;
+    if cfg.mode.uses_radio() && dispatch_rf_rung(rt, &env, 0).await.unwrap_or(false) && foreign {
+        relayed = true;
     }
     let via_inet =
         force_inet || (cfg.mode.uses_internet() && env.flags.inet_ok() && inet_gap_for(rt, &env));
     if via_inet {
+        if foreign {
+            relayed = true;
+        }
         if force_inet && !cfg.mode.uses_internet() {
             if let Some(h) = rt.hub() {
                 let _ = h.send(&env).await;
@@ -1267,7 +1321,29 @@ async fn dispatch_with(rt: &Runtime, env: &Envelope, force_inet: bool) -> Result
             let _ = l.send(env.clone()).await;
         }
     }
+    if relayed {
+        note_relayed(rt, &env);
+    }
     Ok(())
+}
+
+fn note_relayed(rt: &Runtime, env: &Envelope) {
+    tracing::info!("{}", relay_log_line(env));
+    let mut snap = rt.snap.lock();
+    snap.relayed = snap.relayed.saturating_add(1);
+}
+
+/// One line per frame this station forwards for someone else.
+pub(crate) fn relay_log_line(env: &Envelope) -> String {
+    let body = env.body_text();
+    let preview: String = body.chars().take(80).collect();
+    format!(
+        "relayed {} {} -> {} id {} {preview}",
+        env.kind.as_str(),
+        env.origin,
+        env.dest,
+        env.msg_id
+    )
 }
 
 async fn offer_hub(rt: &Runtime, env: &Envelope) {
@@ -2396,7 +2472,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
             };
             let now = crate::status::unix_now_f64();
             format!(
-                "{} | {} | {} {} | {} | SNR {:.1} | tx {} | retry {} | audio {} | q {}/{} | occ {}% air {} | beacon {} | hold {} | hub {}{}",
+                "{} | {} | {} {} | {} | SNR {:.1} | tx {} | retry {} | audio {} | q {}/{} | occ {}% air {} | beacon {} | hold {} | relayed {} | groups {} | hub {}{}",
                 s.mode.display_name(),
                 if s.deferred { "wait" } else { &s.channel },
                 if s.frequency.is_empty() { "—" } else { s.frequency.trim_end_matches(" MHz") },
@@ -2412,6 +2488,8 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                 s.queue_air,
                 s.beacon_lane(now).label,
                 s.hold_lane(now).label,
+                s.relayed,
+                crate::status::group_prio_summary(&s.group_prios),
                 if s.hub_ok { "up" } else { "down" },
                 tnc
             )
@@ -2723,7 +2801,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
             }
         }
         "" | "help" => {
-            "RADIO commands: mode preset tower status form group queue trace history freq qsy prio ptt checkin net mute theme activity update. Channels: /join #name  /invite CALL /part /prio"
+            "RADIO commands: mode preset tower status form group queue trace history freq qsy prio ptt checkin net mute theme activity update. Channels: /join #name (closed, +i)  /invite CALL (over-air notice)  /part /prio. /radio status shows relayed and groups (group_prios)."
                 .into()
         }
         other => format!("unknown RADIO subcommand '{other}'. Try /radio help"),
@@ -2733,6 +2811,25 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relay_log_names_the_forwarded_frame() {
+        let env = Envelope::new_msg(
+            Callsign::parse("~RFSIMA").unwrap(),
+            Callsign::parse("~RFSIMC").unwrap(),
+            1,
+            b"hello from A".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        let line = relay_log_line(&env);
+        assert!(line.contains("~RFSIMA"));
+        assert!(line.contains("~RFSIMC"));
+        assert!(line.contains(&env.msg_id.hex()));
+        assert!(line.contains("hello from A"));
+        assert!(line.starts_with("relayed msg "));
+    }
 
     #[test]
     fn rx_does_not_swallow_a_due_retry() {
