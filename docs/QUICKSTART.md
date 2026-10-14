@@ -49,10 +49,17 @@ The status bar at the bottom shows your callsign and mode. After you send, a mar
 
 - `[..]` waiting to go out
 - `[tx]` sent
-- `[rl]` you heard your own frame come back (a speaker echo, or someone relaying it). Not a receipt.
-- `[ok]` delivered — they sent an ACK. A direct message and `#bulletin` stop here. `#bulletin` is public, so one ACK is enough and the mark does not repeat for every listener.
-- `[all]` every member of a closed group ACKed
-- `[no]` the send was refused (for example the hub said the callsign is already claimed)
+- `[rl]` you heard your own frame come back (a speaker echo, or someone relaying it). Not a receipt. A noisy path can skip it.
+- `[ok]` delivered — they sent an ACK. A direct message and `#bulletin` stop here. `#bulletin` is public, so one ACK is enough and the mark does not go on to `[all]`.
+- `[all]` every member of a closed group ACKed. A `#bulletin` post cannot reach this.
+- `[no]` the send was refused (for example the hub said the callsign is already claimed), or the retries are used up
+- `[xN]` how many times the line was keyed. `[x1]` is the first send. The default is 3 retries, so the last copy is `[x4]` before `[no]`.
+
+Routine retries wait 45s, then 90s, then 180s, each ±25% (`retry_jitter`). Emergency is 8s / 16s / 32s. Priority is 20s / 40s / 80s.
+
+## Closed groups
+
+`/join #net` creates a closed group (`MODE #net` shows `+i`). `#bulletin` stays public (`+`). `/invite CALL` adds that callsign and keys a direct over-air notice; the reply says whether the notice was sent. The invitee is notified only when that direct message arrives. `/radio status` shows `relayed` (frames forwarded for someone else) and `groups` (each closed group's priority). That list is `group_prios` on the status page. `/prio emergency` on the channel sets it. `#bulletin` is always routine and is omitted.
 
 The window and the TUI use these same marks.
 
