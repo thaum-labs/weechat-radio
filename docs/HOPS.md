@@ -71,13 +71,13 @@ Lisbon calls Bucharest. This is one station calling another. Lisbon has not hear
 ```
 
 1. Lisbon transmits on 14.070 with 3 hops left, and sends the same line to the hub.
-2. Barcelona hears Lisbon on the air and sends it on with 2 hops left. Barcelona does not talk to the hub.
+2. Barcelona hears Lisbon on the air and sends it on with 2 hops left. Barcelona is in `radio` mode, so Barcelona does not send the chat to the hub.
 3. Munich hears Barcelona and sends it on with 1 hop left. That would reach Bucharest, about 1,200 km. Bucharest's radio is off, so it is not heard.
 4. Bucharest reads the line from the hub and does not transmit.
 
 Barcelona and Munich have the copy from the air. Bucharest has the copy from the hub. Lisbon and Bucharest still do not hear each other on 20m.
 
-In `radio` mode the line is marked to stay off the internet. The air hops would run the same way and stop in the same place, and the hub would not have a copy for Bucharest.
+In `radio` mode the line is marked to stay off the internet. The air hops would run the same way and stop in the same place, and the hub would not have a copy for Bucharest. `radio-plus` is the same on this computer: Lisbon would still key the line and would still not open the hub. The only difference is the flag on the frame. An internet-radio gateway that hears a radio-plus frame may forward it (and email) to the internet. Both modes still post map data when `[telemetry] url` is set: callsign, grid, and tx/rx ids, never message text.
 
 What a hop is not
 

@@ -58,7 +58,7 @@
           <li>A private group goes on the air when a listed member was heard on that dial over RF in the last 10 minutes.</li>
           <li><code>#bulletin</code> goes on the air when anyone was heard on that dial over RF in the last 10 minutes. A gateway that has heard nobody stays quiet.</li>
         </ul>
-        <p>Same-frequency hops still need no hub. A station in <code>radio</code> mode keeps its <code>#bulletin</code> lines on its own dial. A gateway that hears them may carry them onward when the frame allows internet (<code>INET_OK</code>).</p>
+        <p>Same-frequency hops still need no hub. A station in <code>radio</code> mode keeps its <code>#bulletin</code> on the radio. The frame says do not forward, so a gateway that hears it leaves it there. A <code>radio-plus</code> <code>#bulletin</code> may be forwarded. That is the only chat difference between the two modes.</p>
         <p><strong>Hub routing today:</strong> the hub keeps a <code>serves</code> set per connected station. Your own callsign is always included. RF stations heard on your dial are added from the periodic <code>{&quot;heard&quot;:[...],&quot;freq_khz&quot;:…}</code> JSON your node sends after <code>hub_ok</code> (the WebSocket hello starts with an empty <code>heard</code> list). Private 1:1 and closed-group frames are delivered only to sessions whose <code>serves</code> contains the destination callsign. Internet-only stations with nobody heard on RF therefore rely on the public <code>#bulletin</code> path until a member appears in <code>heard</code> or you are the destination.</p>
       </div>
 
@@ -193,7 +193,8 @@
       </figure>
 
       <h2>Radio-plus (you stay offline)</h2>
-      <p><code>radio-plus</code> never uploads chat. A nearby gateway that hears you on RF forwards that frame to the hub for any destination, including a direct message, a closed group, and <code>#bulletin</code>. <code>radio</code> mode is marked <code>NO_INET</code>, so the same gateway keeps those frames on the radio. Your line shows <code>[gw]</code> when the gateway has accepted the frame onto the hub. <code>[rl]</code> only means you heard your own frame on RF again. Map metadata still POSTs if <code>[telemetry] url</code> is set. The hub holds an offline station's direct messages for 10 minutes (32 per callsign) and delivers them on the next hello. It does not hold groups or <code>#bulletin</code>.</p>
+      <p><code>radio</code> and <code>radio-plus</code> both post map telemetry when <code>[telemetry] url</code> is set, and that post never contains message text. Neither mode sends chat to the hub or the LAN from this computer. The only difference is whether an internet-radio gateway that hears you may forward your messages (and email) to the internet.</p>
+      <p><code>radio-plus</code> never uploads chat from this computer. A nearby gateway that hears you on RF forwards that frame to the hub for any destination, including a direct message, a closed group, and <code>#bulletin</code>. <code>radio</code> mode says do not forward, so the same gateway keeps those frames on the radio. Your line shows <code>[gw]</code> when the gateway has accepted the frame onto the hub. <code>[rl]</code> only means you heard your own frame on RF again. The hub holds an offline station's direct messages for 10 minutes (32 per callsign) and delivers them on the next hello. It does not hold groups or <code>#bulletin</code>.</p>
       <figure class="diagram">
         <div class="dgm-wrap">
           <svg class="dgm" viewBox="0 0 720 200" role="img" aria-labelledby="d4t d4d">
@@ -287,7 +288,7 @@
       </figure>
       <p>Heard means on RF on this frequency, not a map pin or a LAN/hub sighting. A group flag alone does not key the radio; at least one listed member must have been heard here in the last ten minutes. <code>#bulletin</code> keys only if someone was heard on this dial over RF.</p>
       <ul>
-        <li>RF → internet: the message must allow internet (<code>INET_OK</code>). <code>radio</code> mode never forwards chat to the hub.</li>
+        <li>RF → internet: the frame has to say it may go to the internet. <code>radio</code> says do not forward, so a gateway leaves it on the radio. <code>radio-plus</code> may be forwarded. This computer does not upload chat in either mode.</li>
         <li>Internet → RF: <code>[gateway] rf_egress = true</code> in <code>wcr.toml</code>. Guest names starting with <code>~</code> stay off RF unless <code>third_party = "allow"</code>.</li>
         <li>Same LAN: nodes on your local network can pass frames without the public hub. The same gateway rules still apply.</li>
       </ul>
@@ -312,8 +313,8 @@ third_party = "deny"      # guest (~nick) traffic on RF</pre>
             <tr><td>Two radios, same calling spot</td><td>yes</td><td>nobody (RF hops if needed)</td></tr>
             <tr><td>2m station ↔ 40m station</td><td>no</td><td>two <code>internet-radio</code> gateways + hub</td></tr>
             <tr><td>RF station ↔ internet-only</td><td>—</td><td>one gateway on the RF station’s band</td></tr>
-            <tr><td><code>radio</code> mode</td><td>RF only</td><td>never the hub</td></tr>
-            <tr><td><code>radio-plus</code></td><td>RF here</td><td>a gateway that hears you</td></tr>
+            <tr><td><code>radio</code></td><td>RF chat from this computer</td><td>nobody. A gateway must leave it on the radio. Map data can still post.</td></tr>
+            <tr><td><code>radio-plus</code></td><td>RF chat from this computer</td><td>an internet-radio gateway that hears you. This computer still does not open the hub.</td></tr>
           </tbody>
         </table>
       </div>
