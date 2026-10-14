@@ -34,6 +34,7 @@ declare global {
       seedLinksFromEvents(events: unknown[]): void;
       linkSnapshot(a: string, b: string): { at: number; inet: boolean; mail: boolean } | null;
       LIVE_MS: number;
+      ACTIVE_MS: number;
       HOLD_MS: number;
     };
   }
@@ -284,32 +285,39 @@ test("bulletin and group traffic do not draw arcs to every station", async ({ pa
   expect(links.self).toBe("~RFSIMA");
 });
 
-test("lines pulse while live, stay faint through 48h, then go", async ({ page }) => {
+test("lines glow for a few seconds, settle, stay faint through 48h, then go", async ({ page }) => {
   await page.goto("/");
   const fade = await page.evaluate(() => {
-    const live = window.WCR.LIVE_MS;
+    const active = window.WCR.ACTIVE_MS;
     const hold = window.WCR.HOLD_MS;
     const alpha = window.WCR.linkAlpha;
     const hour = 60 * 60 * 1000;
-    const early = alpha(1_000, 0);
-    const lateLive = alpha(live - 1, 600);
-    const settled = alpha(live + 1, 0);
+    const glowLow = alpha(1_000, 900);
+    const glowHigh = alpha(1_000, 300);
+    const settledA = alpha(active + 1, 0);
+    const settledB = alpha(active + 1, 900);
     const at47 = alpha(47 * hour, 0);
     const at48 = alpha(hold, 0);
     const after = alpha(hold + 1, 0);
-    return { early, lateLive, settled, at47, at48, after, live, hold };
+    const calmA = alpha(1_000, 0, true);
+    const calmB = alpha(1_000, 300, true);
+    return { glowLow, glowHigh, settledA, settledB, at47, at48, after, calmA, calmB, active, hold };
   });
-  expect(fade.early).toBeGreaterThanOrEqual(0.55);
-  expect(fade.early).toBeLessThanOrEqual(0.95);
-  expect(fade.lateLive).toBeGreaterThanOrEqual(0.55);
-  expect(fade.lateLive).toBeLessThanOrEqual(0.95);
-  expect(fade.settled).toBeLessThan(0.55);
-  expect(fade.settled).toBeGreaterThan(0.5);
+  expect(fade.active).toBe(8_000);
+  expect(fade.glowLow).toBeGreaterThanOrEqual(0.55);
+  expect(fade.glowLow).toBeLessThanOrEqual(0.6);
+  expect(fade.glowHigh).toBeCloseTo(0.95, 5);
+  expect(fade.glowHigh).toBeGreaterThan(fade.glowLow);
+  expect(fade.settledA).toBeCloseTo(fade.settledB, 5);
+  expect(fade.settledA).toBeLessThan(0.55);
+  expect(fade.settledA).toBeGreaterThan(0.5);
   expect(fade.at47).toBeGreaterThan(0.12);
   expect(fade.at47).toBeLessThan(0.25);
   expect(fade.at48).toBeGreaterThan(0.11);
   expect(fade.at48).toBeLessThanOrEqual(0.13);
   expect(fade.after).toBe(0);
+  expect(fade.calmA).toBeCloseTo(0.55, 2);
+  expect(fade.calmB).toBeCloseTo(fade.calmA, 5);
 });
 
 test("station pins dim with age and the sidebar lists who is reporting first", async ({ page }) => {
