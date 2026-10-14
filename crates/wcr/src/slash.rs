@@ -27,19 +27,19 @@ pub struct Suggestion {
 const MODE_ARGS: &[Arg] = &[
     Arg {
         value: "internet",
-        hint: "Internet only — radio idle",
+        hint: "Chat with no radio. This computer talks to the hub.",
     },
     Arg {
         value: "internet-radio",
-        hint: "Radio plus hub (this node is a gateway)",
+        hint: "Radio plus the hub. This computer is a gateway.",
     },
     Arg {
         value: "radio",
-        hint: "RF chat only — hub chat off (needs confirm)",
+        hint: "Radio chat only. A gateway must leave it on the radio. Asks to confirm.",
     },
     Arg {
         value: "radio-plus",
-        hint: "RF here; a gateway may forward you",
+        hint: "Radio chat only. A gateway that hears you may forward it.",
     },
 ];
 
