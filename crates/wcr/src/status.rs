@@ -99,8 +99,12 @@ pub struct StatusSnapshot {
     #[serde(default)]
     pub tower: bool,
     /// Frames this process has relayed for another station (not our own sends).
+    /// Repeats of the same message each count.
     #[serde(default)]
     pub relayed: u64,
+    /// Distinct message ids included in `relayed` this process.
+    #[serde(default)]
+    pub relayed_unique: u64,
 }
 
 fn default_version() -> String {
@@ -355,6 +359,7 @@ impl Default for StatusSnapshot {
             hold_kind: String::new(),
             tower: false,
             relayed: 0,
+            relayed_unique: 0,
         }
     }
 }
@@ -453,8 +458,11 @@ mod tests {
         assert_eq!(group_prio_summary(&rows), "net=routine,ops=emergency");
         let mut s = StatusSnapshot::default();
         assert_eq!(s.relayed, 0);
+        assert_eq!(s.relayed_unique, 0);
         s.relayed = s.relayed.saturating_add(1);
+        s.relayed_unique = s.relayed_unique.saturating_add(1);
         assert_eq!(s.relayed, 1);
+        assert_eq!(s.relayed_unique, 1);
     }
 
     #[test]
