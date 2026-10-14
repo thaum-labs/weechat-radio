@@ -403,6 +403,92 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   border: 1px solid var(--line);
 }
 
+.map-key {
+  position: absolute;
+  z-index: 5;
+  left: 20px;
+  bottom: 36px;
+  width: max-content;
+  max-width: min(360px, calc(100% - 40px));
+  background: rgba(7, 7, 10, 0.92);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.35;
+  pointer-events: auto;
+}
+.map-key summary {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 10px;
+  cursor: pointer;
+  color: var(--fg);
+  list-style: none;
+}
+.map-key summary::-webkit-details-marker { display: none; }
+.map-key summary::marker { content: ""; }
+.map-key summary::before {
+  content: "▸";
+  margin-right: 6px;
+  color: var(--orange);
+}
+.map-key[open] summary::before { content: "▾"; }
+.map-key summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.map-key-body {
+  display: grid;
+  grid-template-columns: auto auto;
+  column-gap: 16px;
+  align-items: start;
+  max-height: min(240px, 42dvh);
+  overflow: auto;
+  padding: 0 10px 8px;
+}
+.map-key-lines,
+.map-key-modes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.map-key li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.map-key-line {
+  width: 36px;
+  height: 12px;
+  flex: none;
+  display: block;
+}
+.map-key-pin {
+  width: 16px;
+  height: 15px;
+  flex: none;
+  display: block;
+}
+.map-key-pin .map-key-mark {
+  width: 16px;
+  height: 15px;
+  display: block;
+  overflow: visible;
+}
+.map-key-note {
+  grid-column: 1 / -1;
+  margin: 6px 0 0;
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
 .map-tools {
   display: flex;
   align-items: center;
@@ -1128,6 +1214,16 @@ details.maplibregl-ctrl-attrib:not([open]) {
     height: 52dvh;
     min-height: 280px;
   }
+  .map-key summary {
+    min-height: 44px;
+    padding: 0 12px;
+    font-size: 15px;
+  }
+  .map-key-body,
+  .map-key-note {
+    font-size: 13px;
+  }
+  .map-key-note { white-space: normal; }
   .log-panel { flex: none; min-height: 0; }
   .status-grid { grid-template-columns: 1fr; }
   .page-wrap {
@@ -1277,6 +1373,11 @@ details.maplibregl-ctrl-attrib:not([open]) {
     padding: 0 4px;
   }
   body.nav-ready .topbar nav a.on::before { content: "▸ "; }
+}
+
+@media (max-width: 420px) {
+  .map-key-body { grid-template-columns: 1fr; }
+  .map-key li { white-space: normal; }
 }
 
 @media (max-width: 380px) {

@@ -9,6 +9,57 @@ const MODE_COLOR = {
 };
 /** Email traffic overlay. Not an operating mode. */
 const MAIL_COLOR = "#ff7a3d";
+/** Canvas line styles. The map key paints these same colours and dash patterns. */
+const LINK_PAINT = {
+  rf: { color: "#39ff14", dash: [6, 4] },
+  inet: { color: "#7d9bff", dash: [] },
+  mail: { color: MAIL_COLOR, dash: [3, 3] },
+};
+
+function linkPaint(link) {
+  if (link && link.mail) return LINK_PAINT.mail;
+  if (link && link.inet) return LINK_PAINT.inet;
+  return LINK_PAINT.rf;
+}
+
+function hexRgba(hex, alpha) {
+  const n = parseInt(String(hex).replace("#", ""), 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function paintMapKey() {
+  const root = document.getElementById("map-key");
+  if (!root) return;
+  for (const kind of Object.keys(LINK_PAINT)) {
+    const line = root.querySelector(`[data-link="${kind}"] line`);
+    const paint = LINK_PAINT[kind];
+    if (!line || !paint) continue;
+    line.setAttribute("stroke", paint.color);
+    line.setAttribute("stroke-width", "2.5");
+    line.setAttribute("stroke-linecap", "round");
+    if (paint.dash.length) line.setAttribute("stroke-dasharray", paint.dash.join(" "));
+    else line.removeAttribute("stroke-dasharray");
+  }
+  const mark = window.WCR && window.WCR.markSvg;
+  if (!mark) return;
+  for (const [mode, color] of Object.entries(MODE_COLOR)) {
+    const slot = root.querySelector(`[data-mode="${mode}"] .map-key-pin`);
+    if (slot) slot.innerHTML = mark(color, "map-key-mark");
+  }
+}
+
+function initMapKey() {
+  const key = document.getElementById("map-key");
+  if (!key) return;
+  const narrow = window.matchMedia("(max-width: 900px), (max-height: 560px)").matches;
+  key.open = !narrow;
+  paintMapKey();
+}
+
+initMapKey();
 
 const CARTO_KEY = "cb1_3nxz_1_dba340f0a1c8450af09da179";
 const MAP_STYLE_KEY = "wcr-map-style-v2";
@@ -446,12 +497,9 @@ function drawArcs() {
     if (glowing) pulsing = true;
     const s1 = map.project([p1.lon, p1.lat]);
     const s2 = map.project([p2.lon, p2.lat]);
-    const color = link.mail
-      ? `rgba(255,122,61,${alpha})`
-      : link.inet
-        ? `rgba(125,155,255,${alpha})`
-        : `rgba(57,255,20,${alpha})`;
-    const dash = link.mail ? [3, 3] : link.inet ? [] : [6, 4];
+    const paint = linkPaint(link);
+    const color = hexRgba(paint.color, alpha);
+    const dash = paint.dash;
     if (glowing) {
       arcCtx.shadowColor = color;
       arcCtx.shadowBlur = 10;
@@ -1354,6 +1402,9 @@ function connectLive() {
   };
 }
 
+window.WCR.MODE_COLOR = MODE_COLOR;
+window.WCR.MAIL_COLOR = MAIL_COLOR;
+window.WCR.LINK_PAINT = LINK_PAINT;
 window.WCR.linkIsInet = linkIsInet;
 window.WCR.stationLinkCall = stationLinkCall;
 window.WCR.linkAlpha = linkAlpha;
