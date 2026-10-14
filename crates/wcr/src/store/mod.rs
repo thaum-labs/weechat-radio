@@ -326,22 +326,38 @@ impl Store {
             .unwrap_or(0)
     }
 
+    /// Next per-callsign sequence. One statement so two sends cannot be
+    /// handed the same counter (ACK tracking is per `msg_id`, and the id
+    /// includes this counter).
     pub fn next_seq(&self, callsign: &str) -> Result<u32> {
         let conn = self.conn.lock().unwrap();
-        let next: u32 = conn
+        // Stored value is the next counter to issue, then we advance it.
+        // INSERT 2 / RETURNING 2 → issue 1. Conflict adds 1 and returns the
+        // new stored value, so the issued counter is that minus one.
+        let stored: i64 = conn.query_row(
+            "INSERT INTO seq(callsign, next_seq) VALUES(?1, 2)
+             ON CONFLICT(callsign) DO UPDATE SET next_seq = seq.next_seq + 1
+             RETURNING next_seq",
+            params![callsign],
+            |r| r.get(0),
+        )?;
+        Ok((stored as u32).saturating_sub(1).max(1))
+    }
+
+    /// Latest stored id for this origin, dest, and body. Used to tag the
+    /// local echo of a send that `send_chat` already stored.
+    pub fn msgid_of_body(&self, origin: &str, dest: &str, body: &[u8]) -> Result<Option<MsgId>> {
+        let conn = self.conn.lock().unwrap();
+        let hex: Option<String> = conn
             .query_row(
-                "SELECT next_seq FROM seq WHERE callsign = ?1",
-                params![callsign],
+                "SELECT msg_id FROM messages
+                 WHERE origin = ?1 AND dest = ?2 AND body = ?3
+                 ORDER BY seq DESC LIMIT 1",
+                params![origin, dest, body],
                 |r| r.get(0),
             )
-            .optional()?
-            .unwrap_or(1);
-        conn.execute(
-            "INSERT INTO seq(callsign, next_seq) VALUES(?1, ?2)
-             ON CONFLICT(callsign) DO UPDATE SET next_seq = excluded.next_seq",
-            params![callsign, next + 1],
-        )?;
-        Ok(next)
+            .optional()?;
+        Ok(hex.as_deref().and_then(MsgId::parse_hex))
     }
 
     pub fn insert(&self, env: &Envelope, delivery: Delivery) -> Result<bool> {
@@ -1263,6 +1279,7 @@ mod tests {
         assert_eq!(tries_bracket(0), "");
         assert_eq!(tries_bracket(1), "[x1]");
         assert_eq!(tries_bracket(3), "[x3]");
+        assert_eq!(tries_bracket(4), "[x4]");
         assert!(Delivery::Relayed.can_advance(Delivery::Delivered));
         assert!(!Delivery::Delivered.can_advance(Delivery::Relayed));
         assert!(Delivery::Delivered.can_advance(Delivery::Delivered));
@@ -1276,6 +1293,36 @@ mod tests {
         assert!(stamp.chars().nth(10) == Some(' '));
         assert!(stamp.chars().nth(13) == Some(':'));
         assert!(stamp.chars().nth(16) == Some(':'));
+    }
+
+    #[test]
+    fn two_sends_get_distinct_seqs_and_ids() {
+        use crate::proto::{Callsign, Flags};
+        let s = Store::open_memory().unwrap();
+        let origin = Callsign::parse("~RFSIMB").unwrap();
+        let a = Callsign::parse("~RFSIMA").unwrap();
+        let c = Callsign::parse("~RFSIMC").unwrap();
+        let seq1 = s.next_seq(origin.as_str()).unwrap();
+        let seq2 = s.next_seq(origin.as_str()).unwrap();
+        assert_eq!(seq1, 1);
+        assert_eq!(seq2, 2);
+        let e1 =
+            Envelope::new_msg(origin.clone(), a, seq1, b"for A".to_vec(), 3, Flags::new()).unwrap();
+        let e2 =
+            Envelope::new_msg(origin.clone(), c, seq2, b"for C".to_vec(), 3, Flags::new()).unwrap();
+        assert_ne!(e1.msg_id, e2.msg_id);
+        s.insert(&e1, Delivery::Sent).unwrap();
+        s.insert(&e2, Delivery::Sent).unwrap();
+        assert_eq!(
+            s.msgid_of_body(origin.as_str(), e1.dest.as_str(), &e1.body)
+                .unwrap(),
+            Some(e1.msg_id)
+        );
+        assert_eq!(
+            s.msgid_of_body(origin.as_str(), e2.dest.as_str(), &e2.body)
+                .unwrap(),
+            Some(e2.msg_id)
+        );
     }
 
     #[test]

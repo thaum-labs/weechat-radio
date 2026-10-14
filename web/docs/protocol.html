@@ -50,7 +50,7 @@
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> wire protocol</h1>
       <p class="lead">For people writing software. If you only want to chat, see <a href="/docs/weak.html">weak signals</a> instead.</p>
 
-      <p>This hub build (17 Sep 2026, <code>ce4a108</code>) uses version 2 on radio (KISS) and internet (WebSocket). Version 1 frames are still decoded. <code>msg_id</code> is not sent on v2: the receiver recomputes it from origin, dest, seq, and the uncompressed body.</p>
+      <p>This hub build (17 Sep 2026, <code>ce4a108</code>) uses version 2 on radio (KISS) and internet (WebSocket). Version 1 frames are still decoded. <code>msg_id</code> is not sent on v2: the receiver recomputes BLAKE3 of origin, dest, seq, and the uncompressed body. The timestamp is not part of the id. Two messages in the same second differ when the destination, the text, or the per-origin sequence differs.</p>
 
       <figure class="diagram">
         <div class="dgm-wrap">
@@ -152,7 +152,7 @@
       <p>Guests: <code>~ALICE</code>. Amateur callsigns must look like a callsign (letter and digit).</p>
 
       <h2 id="delivery-marks">Delivery marks</h2>
-      <p>These marks are on <strong>your</strong> line in live chat. They only move forward: <code>[..]</code> then <code>[tx]</code>, then maybe <code>[rl]</code>, then <code>[ok]</code>, then <code>[all]</code> for a group. A later mark never slides back to an earlier one.</p>
+      <p>These marks are on <strong>your</strong> line in live chat. They only move forward: <code>[..]</code> then <code>[tx]</code>, then maybe <code>[rl]</code>, then <code>[ok]</code>, then <code>[all]</code> for a closed group. A later mark never slides back to an earlier one. <code>#bulletin</code> is public and has no member list, so it stops at <code>[ok]</code> and never shows <code>[all]</code>. <code>[rl]</code> can be skipped when you do not hear your own frame. <code>[xN]</code> is how many times the line was keyed: <code>[x1]</code> is the first send, and with the default of 3 retries the last copy is <code>[x4]</code>.</p>
       <figure class="diagram">
         <div class="dgm-wrap">
           <svg class="dgm" viewBox="0 0 720 328" role="img" aria-labelledby="dm1t dm1d">
@@ -209,8 +209,8 @@
             <text class="sub" x="196" y="280" text-anchor="middle">each one has acknowledged</text>
             <rect class="box accent" x="422" y="244" width="88" height="48" />
             <text class="on-accent" x="466" y="272" text-anchor="middle">[all]</text>
-            <text class="sub" x="524" y="268">groups</text>
-            <text class="sub" x="524" y="282">only</text>
+            <text class="sub" x="524" y="268">closed</text>
+            <text class="sub" x="524" y="282">groups</text>
 
             <text class="sub" x="48" y="314">step 2 can be missing — their ACK still moves the line from [tx] to [ok]</text>
           </svg>
@@ -219,7 +219,7 @@
       </figure>
 
       <h2>ACK</h2>
-      <p>Type ACK. This is step 3 above: it paints <code>[ok]</code> on the sender. Body is the 8-byte <code>msg_id</code> of the original, plus an optional 9th byte: receiver SNR in dB as a signed integer. Relayed with TTL. Unacked messages are retransmitted up to <code>rf.max_retries</code> times (default 3). Retry hold times are jittered ±25% so stations that collided do not retry in lockstep. Group ACKs wait a random 0–<code>ack_dither_ms</code> (default 800 ms) before keying; direct ACKs are not dithered.</p>
+      <p>Type ACK. This is step 3 above: it paints <code>[ok]</code> on the sender. Body is the 8-byte <code>msg_id</code> of the original, plus an optional 9th byte: receiver SNR in dB as a signed integer. Relayed with TTL. Unacked messages are retransmitted up to <code>rf.max_retries</code> times (default 3). Routine waits before each extra copy are 45s, then 90s, then 180s (priority 20/40/80, emergency 8/16/32). Each wait is multiplied by 0.75–1.25 when retry jitter is on, so the routine gaps are not a fixed 45/90/180. Group ACKs wait a random 0–<code>ack_dither_ms</code> (default 800 ms) before keying; direct ACKs are not dithered.</p>
 
       <h2>HAVE / WANT</h2>
       <p>Body is a comma-separated list of hex msg ids in a closed group window.</p>

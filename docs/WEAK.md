@@ -62,7 +62,7 @@ modem73 carrier-sense is on for every preset. On top of that, `wcr` keeps a sing
 
 ```
 [rf]
-max_retries = 3       # extra sends of your own unacked messages
+max_retries = 3       # extra sends of your own unacked messages. [x4] is the last copy
 frag_k = 2            # pieces of data
 frag_m = 1            # spare pieces; any 2 of 3 rebuild the message
 emergency_dup_ms = 400
@@ -75,7 +75,7 @@ turnaround_ms = 250
 congested_pct = 60
 ack_dither_ms = 800
 beacon_jitter_s = 15
-retry_jitter = true
+retry_jitter = true   # routine waits 45s, 90s, 180s, each × 0.75–1.25
 ```
 
 ## How you know it worked

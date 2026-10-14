@@ -98,6 +98,9 @@ pub struct StatusSnapshot {
     /// Public map draws a tower. True only in internet-radio while the switch is on.
     #[serde(default)]
     pub tower: bool,
+    /// Frames this process has relayed for another station (not our own sends).
+    #[serde(default)]
+    pub relayed: u64,
 }
 
 fn default_version() -> String {
@@ -351,8 +354,21 @@ impl Default for StatusSnapshot {
             hold_span: 0,
             hold_kind: String::new(),
             tower: false,
+            relayed: 0,
         }
     }
+}
+
+/// `group_prios` as shown on `/radio status`: `#net=routine,#ops=emergency`.
+pub fn group_prio_summary(prios: &[GroupPrioBrief]) -> String {
+    if prios.is_empty() {
+        return "—".into();
+    }
+    prios
+        .iter()
+        .map(|g| format!("{}={}", g.channel.trim_start_matches('#'), g.priority))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 pub type SharedStatus = Mutex<StatusSnapshot>;
@@ -419,6 +435,26 @@ mod tests {
         assert_eq!(s.audio_in_db, -16.0);
         assert_eq!(s.audio_out_db, AUDIO_TX_NOMINAL_DB);
         assert_eq!(s.audio_label, "good");
+    }
+
+    #[test]
+    fn group_prios_summary_and_relay_counter() {
+        assert_eq!(group_prio_summary(&[]), "—");
+        let rows = vec![
+            GroupPrioBrief {
+                channel: "#net".into(),
+                priority: "routine".into(),
+            },
+            GroupPrioBrief {
+                channel: "#ops".into(),
+                priority: "emergency".into(),
+            },
+        ];
+        assert_eq!(group_prio_summary(&rows), "net=routine,ops=emergency");
+        let mut s = StatusSnapshot::default();
+        assert_eq!(s.relayed, 0);
+        s.relayed = s.relayed.saturating_add(1);
+        assert_eq!(s.relayed, 1);
     }
 
     #[test]
