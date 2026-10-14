@@ -50,6 +50,19 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v0.1.86</p>
+          <p>Wed, 14 Oct 2026</p>
+        </h3>
+        <pre>The gateway acknowledgement is one frame that fits the slowest HF preset. After the last chunk the gateway waits through a quiet gap, then keys that acknowledgement. A second copy of the same mail gets the acknowledgement again, and the posted copy stays as it is. The sender starts its retry clock after the keyed burst should be off the air, then the usual backoff, plus one frame for the acknowledgement. Chunks are kept per total. An index outside that total is dropped, so a bad total cannot sit in the way of a real message, including pieces that arrive on a later try. Check mail with an empty inbox is answered, and the tab says "no new mail". If the radio is not running, the row fails at once with "Radio is not running." Compose returns the same airtime hint as the window, in the airtime field.
+
+Group names longer than 8 characters are refused, and the reply names that limit. Closed groups start at 6 hops, the same as #bulletin. A closed group that lists more stations than those hops can cross in a line shows a warning. After the retry budget, a closed group that is not fully acknowledged shows [no]. [all] means every stored member has acknowledged. Hearing a neighbour relay our frame shows [rl], including beside [ok]. A new key for a callsign with no live hub session replaces the old key, so the map pin takes the new grid and mode. A second live session gets "callsign already claimed".
+
+Direct messages keep their hop counts. Chat pacing, CSMA, the modem ladder, and fragment split are unchanged. VOX lead, tail, and the modem drain are unchanged.
+
+Known issue. With another station's signal on the channel, modem73 can hold frames indefinitely, so [x2], [x3], and [no] may show before a copy actually airs.</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>v0.1.85</p>
           <p>Wed, 14 Oct 2026</p>
         </h3>
