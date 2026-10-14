@@ -893,6 +893,12 @@ svg.dgm .hop-run {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  white-space: nowrap;
+}
+.page-panel td.mode-swatch,
+.page-panel td.mode-swatch code {
+  white-space: nowrap;
+  word-break: normal;
 }
 .mode-swatch .mode-mark {
   width: 20px;

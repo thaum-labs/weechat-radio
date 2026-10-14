@@ -15,6 +15,11 @@ declare global {
         getZoom(): number;
         jumpTo(camera: { center: [number, number]; zoom: number }): void;
       };
+      linkIsInet(
+        event: { kind?: string; origin?: string; dest?: string; path?: string; mode?: string },
+        nodes?: { callsign: string; mode: string }[],
+      ): boolean;
+      stationLinkCall(dest: string, knownCalls: string[]): string | null;
     };
   }
 }
@@ -236,4 +241,30 @@ test("radio and radio-plus contacts draw the RF line", async ({ page }) => {
   expect(style.pathRf).toBe(false);
   expect(style.pathInet).toBe(true);
   expect(style.gateway).toBe(true);
+});
+
+test("bulletin and group traffic do not draw arcs to every station", async ({ page }) => {
+  await page.goto("/");
+  const links = await page.evaluate(() => {
+    const pins = ["~RFSIMA", "M7TJF", "TF101", "~QATST10", "~NHTEST"];
+    const link = window.WCR.stationLinkCall;
+    return {
+      bulletin: link("BULLETIN", pins),
+      hashBulletin: link("#bulletin", pins),
+      beacon: link("BEACON", pins),
+      group: link("QARP", pins),
+      hashGroup: link("#qarp", pins),
+      direct: link("M7TJF", pins),
+      absent: link("G0ZZZ", pins),
+      self: link("~RFSIMA", pins),
+    };
+  });
+  expect(links.bulletin).toBeNull();
+  expect(links.hashBulletin).toBeNull();
+  expect(links.beacon).toBeNull();
+  expect(links.group).toBeNull();
+  expect(links.hashGroup).toBeNull();
+  expect(links.direct).toBe("M7TJF");
+  expect(links.absent).toBeNull();
+  expect(links.self).toBe("~RFSIMA");
 });

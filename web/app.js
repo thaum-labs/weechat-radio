@@ -283,16 +283,32 @@ function linkPairKey(a, b) {
   return `${x}|${y}`;
 }
 
+/** Callsign pin this destination names, or null.
+ *
+ * `#bulletin`, `BEACON`, and a closed-group name are not a station. A tx/rx
+ * event for those used to fall through and draw an arc to every other pin.
+ */
+function stationLinkCall(dest, knownCalls) {
+  const raw = String(dest || "").trim();
+  if (!raw) return null;
+  const stripped = raw.replace(/^[#&]/, "");
+  const upper = stripped.toUpperCase();
+  if (!upper || upper === "BULLETIN" || upper === "BEACON") return null;
+  const calls = knownCalls || [];
+  for (const call of calls) {
+    if (String(call).toUpperCase() === upper) return String(call);
+  }
+  return null;
+}
+
 function arcTargets(from, to) {
   const fromKey = nodeKey(from);
   if (!fromKey) return [];
-  const toKey = nodeKey(to);
-  if (toKey && toKey !== fromKey) return [toKey];
-  const out = [];
-  for (const call of nodePos.keys()) {
-    if (call.toUpperCase() !== fromKey.toUpperCase()) out.push(call);
-  }
-  return out;
+  const toKey = stationLinkCall(to, nodePos.keys());
+  if (!toKey) return [];
+  const resolved = nodeKey(toKey);
+  if (!resolved || resolved.toUpperCase() === fromKey.toUpperCase()) return [];
+  return [resolved];
 }
 
 function rememberLink(from, to, inet, draw, mail) {
@@ -1183,6 +1199,7 @@ function connectLive() {
 }
 
 window.WCR.linkIsInet = linkIsInet;
+window.WCR.stationLinkCall = stationLinkCall;
 
 setInterval(renderConn, 1000);
 renderModes([]);

@@ -9,14 +9,14 @@ use std::str::FromStr;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum Mode {
-    /// Hub/peers only. Radio idle.
+    /// Chat with no radio. This computer talks to the hub.
     Internet,
-    /// Radio primary, internet fills gaps. This node is a gateway.
+    /// Radio plus the hub. This computer is a gateway.
     #[default]
     InternetRadio,
-    /// Pure RF. Frames carry NO_INET so gateways never forward them.
+    /// Radio chat only. Frames carry NO_INET so a gateway must leave them on the radio.
     Radio,
-    /// RF locally; frames flagged INET_OK so a gateway may carry them onward.
+    /// Radio chat only. Frames carry INET_OK so a gateway that hears you may forward them.
     RadioPlus,
 }
 
