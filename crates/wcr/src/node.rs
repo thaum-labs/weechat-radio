@@ -586,10 +586,16 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         if !still_awaiting_ack(&rt_r.store, &m.env.msg_id) {
                             continue;
                         }
-                        // At least one member ACKed. Stay on [ok]; do not paint [no].
+                        // Retries are spent and someone ACKed, but not every
+                        // member. [ok] is not the end of a closed group.
                         if m.delivery == Delivery::Delivered
                             && group_still_waiting(&rt_r.store, &m.env)
                         {
+                            if rt_r.store.conclude_group(&m.env.msg_id).unwrap_or(false) {
+                                rt_r.irc
+                                    .tagmsg_delivery(&m.env.msg_id.hex(), "failed")
+                                    .await;
+                            }
                             continue;
                         }
                         if rt_r
@@ -886,6 +892,17 @@ fn stamp_own_mode_flags(env: &mut Envelope, our_call: &str, mode: Mode) {
 async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
     match ev.kind {
         IrcEventKind::Privmsg { target, text, .. } => {
+            if (target.starts_with('#') || target.starts_with('&')) && !dest_is_bulletin(&target) {
+                if let Some(err) = crate::slash::channel_limit_error(&target) {
+                    rt.irc.notice_all(&err).await;
+                    return Ok(());
+                }
+                let name = crate::slash::group_name(&target);
+                let members = rt.store.group_members(&name).map(|m| m.len()).unwrap_or(0);
+                if let Some(warn) = crate::slash::group_hop_warning(members, BULLETIN_TTL) {
+                    rt.irc.notice_all(&warn).await;
+                }
+            }
             rt.irc.begin_origin(ev.client_id, &target);
             let sent = send_chat(rt, &target, &text).await;
             rt.irc.end_origin();
@@ -904,7 +921,9 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
         IrcEventKind::Invite { target, channel } => {
             let target = target.trim().to_ascii_uppercase();
             let radio = rt.cfg.lock().mode.uses_radio();
-            let reply = if crate::slash::is_bulletin(&channel) {
+            let reply = if let Some(err) = crate::slash::channel_limit_error(&channel) {
+                err
+            } else if crate::slash::is_bulletin(&channel) {
                 crate::slash::invite_over_air_reply(&channel, &target, radio, false)
             } else if target.is_empty() || Callsign::parse(&target).is_err() {
                 format!("no over-air notice: '{target}' is not a callsign")
@@ -949,6 +968,10 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
             rt.irc.send_radio_reply(ev.client_id, &reply).await;
         }
         IrcEventKind::Join { channel } => {
+            if let Some(err) = crate::slash::channel_limit_error(&channel) {
+                rt.irc.notice_all(&err).await;
+                return Ok(());
+            }
             if !dest_is_bulletin(&channel) {
                 let name = crate::slash::group_name(&channel);
                 let us = rt.cfg.lock().callsign.to_ascii_uppercase();
@@ -1058,7 +1081,11 @@ async fn send_form(rt: &Runtime, target: &str, form: Form) -> Result<String> {
     if is_group {
         flags.set(FLAG_GROUP, true);
     }
-    let hops = Priority::Routine.default_ttl();
+    let hops = if is_group {
+        BULLETIN_TTL
+    } else {
+        Priority::Routine.default_ttl()
+    };
     let body = form.encode();
     let mut env = Envelope::new_msg(origin, dest, seq, body.into_bytes(), hops, flags)?;
     env.kind = MsgType::Form;
@@ -1118,7 +1145,9 @@ async fn send_chat(rt: &Runtime, target: &str, text: &str) -> Result<()> {
     if is_group {
         flags.set(FLAG_GROUP, true);
     }
-    let hops = if target.eq_ignore_ascii_case(BULLETIN_CHANNEL) {
+    // Closed groups use the bulletin hop count. A routine 3 dies before the
+    // far end of a five-station line; bulletin's 6 crosses that chain.
+    let hops = if is_group {
         BULLETIN_TTL
     } else {
         prio.default_ttl()
@@ -1635,14 +1664,17 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
         // [no], [ok], and [all] are terminal. Hearing the final copy again
         // must not paint [rl] over a failure. A real ACK is the only way
         // off [no], and that path does not come through our own origin.
-        if rt
+        let cur = rt.store.delivery_of(&env.msg_id).ok().flatten();
+        let advanced = rt
             .store
             .advance_delivery(&env.msg_id, Delivery::Relayed)
-            .unwrap_or(false)
-        {
-            if !rt.gw_marked.lock().contains(&env.msg_id) {
-                rt.irc.tagmsg_delivery(&env.msg_id.hex(), "relayed").await;
-            }
+            .unwrap_or(false);
+        let heard_after_ack = matches!(
+            cur,
+            Some(Delivery::Delivered | Delivery::All | Delivery::Relayed)
+        );
+        if !rt.gw_marked.lock().contains(&env.msg_id) && (advanced || heard_after_ack) {
+            rt.irc.tagmsg_delivery(&env.msg_id.hex(), "relayed").await;
         } else if let Some(air) = rt.air() {
             air.cancel(env.msg_id);
         }
@@ -3240,15 +3272,22 @@ mod tests {
     #[test]
     fn remote_invite_creates_group() {
         let store = Store::open_memory().unwrap();
+        assert!(record_remote_invite(
+            &store,
+            "TF101",
+            "M7TJF",
+            "You are invited to #qa85chain on WeeChat Radio. Join that channel to talk.",
+        )
+        .is_none());
         let ch = record_remote_invite(
             &store,
             "TF101",
             "M7TJF",
-            "You are invited to #compatriots on WeeChat Radio. Join that channel to talk.",
+            "You are invited to #qa85chai on WeeChat Radio. Join that channel to talk.",
         )
         .unwrap();
-        assert_eq!(ch, "#compatri");
-        let members = store.group_members("compatriots").unwrap();
+        assert_eq!(ch, "#qa85chai");
+        let members = store.group_members("qa85chai").unwrap();
         assert!(members.iter().any(|m| m == "TF101"));
         assert!(members.iter().any(|m| m == "M7TJF"));
         assert!(record_remote_invite(&store, "TF101", "M7TJF", "hello").is_none());

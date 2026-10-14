@@ -1021,6 +1021,10 @@ impl GuiApp {
         if text.is_empty() {
             return;
         }
+        if let Some(err) = crate::slash::line_error(text, &self.active_channel) {
+            self.error = err;
+            return;
+        }
         let wires = crate::slash::to_wire(text, &self.active_channel);
         if wires.is_empty() {
             self.error = "need a channel name or callsign".into();
@@ -4538,10 +4542,23 @@ fn apply_line_delivery(
     tries: u32,
     state: &str,
 ) {
-    if state == "failed" {
-        if !matches!(line.ticks.as_str(), "[ok]" | "[all]") {
-            line.ticks = "[no]".into();
+    if state == "relayed" {
+        if line.ticks.contains("[no]") || line.ticks.contains("[rl]") {
+            return;
         }
+        if line.ticks.contains("[ok]")
+            || line.ticks.contains("[all]")
+            || line.ticks.contains("[gw]")
+        {
+            line.ticks = format!("[rl] {}", line.ticks);
+            return;
+        }
+    }
+    if state == "failed" {
+        if line.ticks.contains("[all]") {
+            return;
+        }
+        line.ticks = "[no]".into();
         return;
     }
     // "retry-*" parses as Queued. That rank cannot advance a line already on
@@ -4563,23 +4580,40 @@ fn apply_line_delivery(
             return;
         }
     }
-    line.ticks = ticks.into();
+    let had_rl = line.ticks.contains("[rl]");
+    line.ticks = if had_rl && ticks != "[rl]" {
+        format!("[rl] {ticks}")
+    } else {
+        ticks.into()
+    };
     if tries > 0 {
         line.tries = tries;
     }
 }
 
 fn ticks_delivery(ticks: &str) -> Option<crate::store::Delivery> {
-    match ticks {
-        "[..]" => Some(crate::store::Delivery::Queued),
-        "[tx]" => Some(crate::store::Delivery::Sent),
-        "[rl]" => Some(crate::store::Delivery::Relayed),
-        "[gw]" => Some(crate::store::Delivery::Gateway),
-        "[no]" => Some(crate::store::Delivery::Failed),
-        "[ok]" => Some(crate::store::Delivery::Delivered),
-        "[all]" => Some(crate::store::Delivery::All),
-        _ => None,
+    if ticks.contains("[all]") {
+        return Some(crate::store::Delivery::All);
     }
+    if ticks.contains("[ok]") {
+        return Some(crate::store::Delivery::Delivered);
+    }
+    if ticks.contains("[no]") {
+        return Some(crate::store::Delivery::Failed);
+    }
+    if ticks.contains("[gw]") {
+        return Some(crate::store::Delivery::Gateway);
+    }
+    if ticks.contains("[rl]") {
+        return Some(crate::store::Delivery::Relayed);
+    }
+    if ticks.contains("[tx]") {
+        return Some(crate::store::Delivery::Sent);
+    }
+    if ticks.contains("[..]") {
+        return Some(crate::store::Delivery::Queued);
+    }
+    None
 }
 
 fn delivery_ticks(state: &str) -> Option<&'static str> {
@@ -4849,9 +4883,9 @@ mod tests {
         assert_eq!(chat[0].ticks, "[ok]");
         assert_eq!(chat[0].msgid, "cafe1234");
         apply_delivery_to(&mut chat, "M7TJF", "cafe1234", "relayed", 0);
-        assert_eq!(chat[0].ticks, "[ok]");
+        assert_eq!(chat[0].ticks, "[rl] [ok]");
         apply_delivery_to(&mut chat, "M7TJF", "cafe1234", "delivered", 0);
-        assert_eq!(chat[0].ticks, "[ok]");
+        assert_eq!(chat[0].ticks, "[rl] [ok]");
     }
 
     #[test]
@@ -4890,22 +4924,25 @@ mod tests {
         apply_delivery_to(&mut chat, "G4AAA", "036d5d15", "delivered", 0);
         assert_eq!(chat[0].ticks, "[ok]");
         apply_delivery_to(&mut chat, "G4AAA", "036d5d15", "relayed", 0);
-        assert_eq!(chat[0].ticks, "[ok]");
+        assert_eq!(chat[0].ticks, "[rl] [ok]");
+        apply_delivery_to(&mut chat, "G4AAA", "036d5d15", "failed", 0);
+        assert_eq!(chat[0].ticks, "[no]");
     }
 
     #[test]
     fn parse_irc_invite_line() {
-        let (from, ch) = parse_invite(":M7TJF INVITE TF101 #compatriots").unwrap();
+        let (from, ch) = parse_invite(":M7TJF INVITE TF101 #qa85chai").unwrap();
         assert_eq!(from, "M7TJF");
-        assert_eq!(ch, "#compatri");
+        assert_eq!(ch, "#qa85chai");
+        assert!(parse_invite(":M7TJF INVITE TF101 #qa85chain").is_none());
         assert!(parse_invite(":M7TJF PRIVMSG TF101 :hello").is_none());
     }
 
     #[test]
     fn parse_irc_part_line() {
-        let (nick, ch) = parse_part(":M7TJF PART #compatriots").unwrap();
+        let (nick, ch) = parse_part(":M7TJF PART #qa85chai").unwrap();
         assert_eq!(nick, "M7TJF");
-        assert_eq!(ch, "#compatri");
+        assert_eq!(ch, "#qa85chai");
         let (nick, ch) = parse_part(":M7TJF PART #ops :goodbye").unwrap();
         assert_eq!(nick, "M7TJF");
         assert_eq!(ch, "#ops");

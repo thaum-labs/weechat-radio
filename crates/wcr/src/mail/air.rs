@@ -36,6 +36,24 @@ pub fn mail_airtime_secs(preset: Preset, body_len: usize, turnaround_ms: u32) ->
     (secs, n.max(1))
 }
 
+/// Airtime of the frames actually keyed, including preset overhead.
+pub fn keyed_airtime_secs(
+    preset: Preset,
+    frame_lens: impl IntoIterator<Item = usize>,
+    turnaround_ms: u32,
+) -> f64 {
+    let mut bytes = 0usize;
+    let mut n = 0usize;
+    for len in frame_lens {
+        bytes += len;
+        n += 1;
+    }
+    let n = n.max(1);
+    let bps = preset.bitrate_bps().max(1) as f64;
+    let tx = (bytes as f64) * 8.0 / bps;
+    tx + n as f64 * (preset.overhead_ms() + turnaround_ms) as f64 / 1000.0
+}
+
 pub fn humanize_airtime(secs: f64) -> String {
     if secs < 10.0 {
         format!("{secs:.1} s")
@@ -91,13 +109,17 @@ struct TxCtx {
     tel: broadcast::Sender<crate::telemetry::TelemetryEvent>,
     waits: Mutex<HashMap<String, u64>>,
     checks: Mutex<u64>,
+    quiet: Mutex<u64>,
 }
 
 struct Assembler {
     slices: HashMap<String, Vec<Option<String>>>,
-    parts: HashMap<String, Vec<MailWire>>,
+    /// op+mail id → chunk total → index → wire. Totals do not share a bucket.
+    buckets: HashMap<String, HashMap<u16, HashMap<u16, MailWire>>>,
     from: HashMap<String, String>,
     to: HashMap<String, String>,
+    /// Complete messages waiting out the quiet gap before the gateway keys.
+    ready: Vec<(MailMeta, String, MailOp)>,
 }
 
 pub(super) fn spawn(
@@ -120,6 +142,7 @@ pub(super) fn spawn(
         tel,
         waits: Mutex::new(HashMap::new()),
         checks: Mutex::new(0),
+        quiet: Mutex::new(0),
     };
     tokio::spawn(run(rx, ctx));
 }
@@ -127,9 +150,10 @@ pub(super) fn spawn(
 async fn run(mut rx: mpsc::Receiver<MailCmd>, ctx: TxCtx) {
     let mut asm = Assembler {
         slices: HashMap::new(),
-        parts: HashMap::new(),
+        buckets: HashMap::new(),
         from: HashMap::new(),
         to: HashMap::new(),
+        ready: Vec::new(),
     };
     let mut tick = tokio::time::interval(Duration::from_secs(30));
     loop {
@@ -193,6 +217,7 @@ async fn dispatch(ctx: &TxCtx, asm: &mut Assembler, cmd: MailCmd) {
             }
         }
         MailCmd::TxStuck { id, gen } => on_tx_stuck(ctx, &id, gen),
+        MailCmd::Quiet { gen } => on_quiet(ctx, asm, gen).await,
     }
 }
 
@@ -313,6 +338,9 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
     ctx.store.set_state(&row.id, "outbox", "tx")?;
     arm_tx_stuck(ctx, &row.id);
     let cap = gateway::mail_attempt_cap(cfg.rf.max_retries);
+    let airtime = keyed_airtime_secs(preset, frames.iter().map(Vec::len), cfg.rf.turnaround_ms);
+    let frame_secs = keyed_airtime_secs(preset, std::iter::once(mtu), cfg.rf.turnaround_ms);
+    let started = std::time::Instant::now();
     if let Err(e) = burst(
         ctx,
         &frames,
@@ -325,6 +353,10 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
     .await
     {
         tracing::warn!("mail key {} failed: {e}", row.id);
+        if let Some(text) = gateway::radio_down_text(&e.to_string()) {
+            fail_mail(ctx, &row.id, text);
+            return Err(e);
+        }
         let n = ctx
             .store
             .bump_retry(&row.id)
@@ -351,11 +383,9 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
         wires.len(),
         row.retries + 1
     );
-    arm_wait(
-        ctx,
-        &row.id,
-        Duration::from_secs(gateway::ack_backoff_secs(row.retries)),
-    );
+    let spent = started.elapsed().as_secs_f64();
+    let wait = gateway::retry_after_secs(airtime, spent, row.retries, frame_secs);
+    arm_wait(ctx, &row.id, Duration::from_secs_f64(wait.max(1.0)));
     Ok(())
 }
 
@@ -465,18 +495,17 @@ async fn send_control(ctx: &TxCtx, op: MailOp, mut meta: MailMeta, payload: &str
         payload.to_string()
     };
     let id = proto::compute_mail_id(&meta.from, &meta.to, &meta.subject, &payload, false);
-    let wire = MailWire {
-        op,
-        mail_id: id,
-        idx: 0,
-        count: 1,
-        meta,
-        payload,
-    };
     let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor);
     let rung = mail_rung(preset, 0);
     let mtu = rung.payload_bytes() as usize;
-    let frames = proto::frames_for_mtu(&proto::encode_chunk(&wire), mtu)?;
+    let mut wires = proto::chunk_to_limit(&id, &meta, &payload, mtu.min(crate::proto::MAX_BODY));
+    for w in &mut wires {
+        w.op = op;
+    }
+    let mut frames = Vec::new();
+    for w in &wires {
+        frames.extend(proto::frames_for_mtu(&proto::encode_chunk(w), mtu)?);
+    }
     burst(
         ctx,
         &frames,
@@ -591,8 +620,120 @@ async fn on_incoming(ctx: &TxCtx, asm: &mut Assembler, incoming: Incoming) {
     };
     let Some(wire) = wire else { return };
     remember_party(asm, &wire);
-    maybe_chunk_ack(ctx, asm, &wire).await;
-    if let Some((meta, body, op)) = finish_wire(asm, wire) {
+    log_chunk(ctx, asm, &wire);
+    let gateway_reply = ctx.cfg.lock().mode == Mode::InternetRadio
+        && matches!(
+            wire.op,
+            MailOp::Data | MailOp::VoxData | MailOp::ListReq | MailOp::GetReq
+        );
+    match absorb(asm, wire) {
+        Absorb::Rejected {
+            mail_id,
+            idx,
+            count,
+        } => {
+            tracing::warn!("mail drop chunk {mail_id} {idx}/{count} (bad total)");
+            if gateway_reply {
+                arm_quiet(ctx);
+            }
+        }
+        Absorb::Pending => {
+            if gateway_reply {
+                arm_quiet(ctx);
+            }
+        }
+        Absorb::Ready(meta, body, op) => {
+            if gateway_reply {
+                push_ready(asm, (meta, body, op));
+                arm_quiet(ctx);
+            } else if let Err(e) = apply_mail(ctx, meta, body, op).await {
+                tracing::warn!("mail inbound: {e}");
+            }
+        }
+    }
+}
+
+enum Absorb {
+    Rejected {
+        mail_id: String,
+        idx: u16,
+        count: u16,
+    },
+    Pending,
+    Ready(MailMeta, String, MailOp),
+}
+
+fn absorb(asm: &mut Assembler, wire: MailWire) -> Absorb {
+    if !proto::chunk_acceptable(wire.idx, wire.count) {
+        return Absorb::Rejected {
+            mail_id: wire.mail_id,
+            idx: wire.idx,
+            count: wire.count,
+        };
+    }
+    let mail_id = wire.mail_id.clone();
+    let key = format!("{:?}:{}", wire.op, wire.mail_id);
+    let buckets = asm.buckets.entry(key).or_default();
+    match proto::put_chunk(buckets, wire) {
+        proto::ChunkPut::Rejected => Absorb::Rejected {
+            mail_id,
+            idx: 0,
+            count: 0,
+        },
+        proto::ChunkPut::Pending => Absorb::Pending,
+        proto::ChunkPut::Ready(parts) => match proto::assemble_chunks(parts) {
+            Ok((mut meta, body, op)) => {
+                if meta.ids.is_empty() {
+                    meta.ids.push(mail_id);
+                }
+                Absorb::Ready(meta, body, op)
+            }
+            Err(e) => {
+                tracing::warn!("mail assemble {mail_id}: {e}");
+                Absorb::Pending
+            }
+        },
+    }
+}
+
+fn push_ready(asm: &mut Assembler, item: (MailMeta, String, MailOp)) {
+    let id = item.0.ids.first().cloned();
+    if let Some(id) = id {
+        if asm
+            .ready
+            .iter()
+            .any(|(meta, _, op)| *op == item.2 && meta.ids.first() == Some(&id))
+        {
+            return;
+        }
+    }
+    asm.ready.push(item);
+}
+
+fn arm_quiet(ctx: &TxCtx) {
+    let gen = {
+        let mut n = ctx.quiet.lock();
+        *n = n.wrapping_add(1);
+        *n
+    };
+    let cfg = ctx.cfg.lock().clone();
+    let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor);
+    let mtu = Rung::from_index(preset.ladder_start()).payload_bytes() as usize;
+    let frame = keyed_airtime_secs(preset, std::iter::once(mtu), cfg.rf.turnaround_ms);
+    let gap = Duration::from_secs_f64(gateway::quiet_gap_secs(frame));
+    let tx = ctx.cmd_tx.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(gap).await;
+        let _ = tx.send(MailCmd::Quiet { gen }).await;
+    });
+}
+
+async fn on_quiet(ctx: &TxCtx, asm: &mut Assembler, gen: u64) {
+    if *ctx.quiet.lock() != gen {
+        return;
+    }
+    let ready = std::mem::take(&mut asm.ready);
+    for (meta, body, op) in ready {
         if let Err(e) = apply_mail(ctx, meta, body, op).await {
             tracing::warn!("mail inbound: {e}");
         }
@@ -640,7 +781,7 @@ fn remember_party(asm: &mut Assembler, wire: &MailWire) {
     }
 }
 
-async fn maybe_chunk_ack(ctx: &TxCtx, asm: &Assembler, wire: &MailWire) {
+fn log_chunk(ctx: &TxCtx, asm: &Assembler, wire: &MailWire) {
     if !matches!(wire.op, MailOp::Data | MailOp::VoxData) {
         return;
     }
@@ -667,31 +808,6 @@ async fn maybe_chunk_ack(ctx: &TxCtx, asm: &Assembler, wire: &MailWire) {
         wire.idx + 1,
         wire.count
     );
-    let ack = MailMeta {
-        dest: origin,
-        ids: vec![wire.mail_id.clone()],
-        ..MailMeta::default()
-    };
-    if let Err(e) = reply_wire(ctx, MailOp::ChunkAck, ack, &wire.idx.to_string()).await {
-        tracing::warn!("mail chunk ack {}: {e}", wire.mail_id);
-    }
-}
-
-fn finish_wire(asm: &mut Assembler, wire: MailWire) -> Option<(MailMeta, String, MailOp)> {
-    let id = format!("{:?}:{}", wire.op, wire.mail_id);
-    let count = wire.count as usize;
-    if count == 0 {
-        return None;
-    }
-    let entry = asm.parts.entry(id.clone()).or_default();
-    if !entry.iter().any(|e| e.idx == wire.idx) {
-        entry.push(wire);
-    }
-    if entry.len() < count {
-        return None;
-    }
-    let parts = asm.parts.remove(&id).unwrap_or_default();
-    proto::assemble_chunks(parts).ok()
 }
 
 async fn apply_mail(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Result<()> {
@@ -884,7 +1000,13 @@ async fn deliver(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Resul
 
 async fn answer_list(ctx: &TxCtx, req: &MailMeta, auth: &str) -> Result<()> {
     let who = requester(req);
-    let headers = fetch_for(ctx, &who, auth, &[]).await?;
+    let headers = match fetch_for(ctx, &who, auth, &[]).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::warn!("mail list {who}: {e}");
+            Vec::new()
+        }
+    };
     let payload = serde_json::to_string(&headers).unwrap_or_else(|_| "[]".into());
     let meta = MailMeta {
         dest: who,
@@ -1099,7 +1221,12 @@ async fn reply_chunks(
     let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor);
     let rung = mail_rung(preset, 0);
     let mtu = rung.payload_bytes() as usize;
-    let mut wires = proto::chunk_to_limit(id, meta, payload, mtu.min(crate::proto::MAX_BODY));
+    // The wire id is the mail id. Leaving it out of the JSON keeps a
+    // CompleteAck inside one hf-poor frame. The receiver copies it back.
+    let mut on_air = meta.clone();
+    on_air.ids.clear();
+    on_air.ack = false;
+    let mut wires = proto::chunk_to_limit(id, &on_air, payload, mtu.min(crate::proto::MAX_BODY));
     for w in &mut wires {
         w.op = op;
     }

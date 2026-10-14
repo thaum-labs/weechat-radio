@@ -372,16 +372,78 @@ pub fn to_radio_args(raw: &str) -> Option<String> {
 /// silently became a different room on the air (`compatriots` → `compatri`).
 pub const CHANNEL_NAME_MAX: usize = 8;
 
-pub fn normalize_channel(raw: &str) -> String {
-    let t: String = raw
-        .trim()
+/// Letters, digits, and `-`, lowercased, without a length cut.
+pub fn channel_stem(raw: &str) -> String {
+    raw.trim()
         .trim_start_matches('#')
+        .trim_start_matches('&')
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
-        .take(CHANNEL_NAME_MAX)
         .collect::<String>()
-        .to_ascii_lowercase();
-    format!("#{t}")
+        .to_ascii_lowercase()
+}
+
+/// Packed group dests are 8 characters. A longer name used to be cut on the
+/// air, so receivers were sitting in a different room.
+pub fn channel_limit_error(raw: &str) -> Option<String> {
+    let stem = channel_stem(raw);
+    if stem.len() > CHANNEL_NAME_MAX {
+        Some(format!(
+            "Group names are at most {CHANNEL_NAME_MAX} characters ({stem} is {}).",
+            stem.len()
+        ))
+    } else {
+        None
+    }
+}
+
+/// A line of `members` stations needs `members - 1` hops to reach the far end.
+pub fn group_hop_warning(members: usize, hops: u8) -> Option<String> {
+    if members >= 2 && members - 1 > hops as usize {
+        Some(format!(
+            "This group lists {members} stations and only travels {hops} hops, so the far end of a line may not hear it."
+        ))
+    } else {
+        None
+    }
+}
+
+/// Eight-character form used only to fold rows written before names were refused.
+pub fn legacy_packed_name(raw: &str) -> String {
+    channel_stem(raw).chars().take(CHANNEL_NAME_MAX).collect()
+}
+
+pub fn legacy_packed_dest(raw: &str) -> String {
+    legacy_packed_name(raw).to_ascii_uppercase()
+}
+
+/// Shown by the GUI before a line is turned into IRC.
+pub fn line_error(raw: &str, channel: &str) -> Option<String> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return None;
+    }
+    if !t.starts_with('/') {
+        return channel_limit_error(channel);
+    }
+    let rest = t[1..].trim();
+    let rest = rest
+        .strip_prefix("radio ")
+        .or_else(|| rest.strip_prefix("RADIO "))
+        .unwrap_or(rest);
+    let (head, tail) = match rest.split_once(char::is_whitespace) {
+        Some((h, a)) => (h.to_ascii_lowercase(), a.trim().to_string()),
+        None => (rest.to_ascii_lowercase(), String::new()),
+    };
+    match head.as_str() {
+        "join" | "j" => channel_limit_error(&tail),
+        "invite" | "prio" | "priority" | "part" | "leave" => channel_limit_error(channel),
+        _ => None,
+    }
+}
+
+pub fn normalize_channel(raw: &str) -> String {
+    format!("#{}", channel_stem(raw))
 }
 
 /// Wire dest for a `#channel` (uppercase, at most [`CHANNEL_NAME_MAX`]).
@@ -457,7 +519,11 @@ pub fn parse_irc_invite(line: &str) -> Option<(String, String)> {
     let rest = cmd.strip_prefix("INVITE ")?;
     let mut bits = rest.split_whitespace();
     bits.next()?;
-    let ch = normalize_channel(bits.next()?);
+    let raw = bits.next()?;
+    if channel_limit_error(raw).is_some() {
+        return None;
+    }
+    let ch = normalize_channel(raw);
     if ch.len() < 3 || is_bulletin(&ch) {
         return None;
     }
@@ -476,6 +542,9 @@ pub fn parse_invite_text(text: &str) -> Option<String> {
     }
     let rest = t.strip_prefix("You are invited to ")?;
     let raw = rest.split_whitespace().next()?;
+    if channel_limit_error(raw).is_some() {
+        return None;
+    }
     let ch = normalize_channel(raw);
     if ch.len() < 3 || is_bulletin(&ch) {
         return None;
@@ -525,6 +594,9 @@ pub fn to_wire(raw: &str, channel: &str) -> Vec<String> {
         return Vec::new();
     }
     if !t.starts_with('/') {
+        if channel_limit_error(channel).is_some() {
+            return Vec::new();
+        }
         let target = if channel.starts_with('#') || channel.starts_with('&') {
             normalize_channel(channel)
         } else {
@@ -543,6 +615,9 @@ pub fn to_wire(raw: &str, channel: &str) -> Vec<String> {
     };
     match head.as_str() {
         "join" | "j" => {
+            if channel_limit_error(&tail).is_some() {
+                return Vec::new();
+            }
             let ch = normalize_channel(&tail);
             if ch.len() < 2 {
                 return Vec::new();
@@ -566,7 +641,7 @@ pub fn to_wire(raw: &str, channel: &str) -> Vec<String> {
             vec![format!("RADIO clear {target}")]
         }
         "part" | "leave" => {
-            if is_bulletin(channel) {
+            if is_bulletin(channel) || channel_limit_error(channel).is_some() {
                 return Vec::new();
             }
             vec![format!("PART {}", normalize_channel(channel))]
@@ -577,7 +652,7 @@ pub fn to_wire(raw: &str, channel: &str) -> Vec<String> {
                 .next()
                 .unwrap_or("")
                 .to_ascii_uppercase();
-            if nick.is_empty() {
+            if nick.is_empty() || channel_limit_error(channel).is_some() {
                 return Vec::new();
             }
             let ch = normalize_channel(channel);
@@ -725,12 +800,16 @@ mod tests {
     }
 
     #[test]
-    fn long_channel_names_fit_the_radio_dest() {
-        assert_eq!(normalize_channel("#compatriots"), "#compatri");
+    fn long_channel_names_are_refused() {
         assert_eq!(normalize_channel("friends"), "#friends");
-        assert_eq!(channel_dest("#compatriots"), "COMPATRI");
-        assert_eq!(group_name("#compatriots"), "compatri");
+        assert_eq!(channel_dest("#friends"), "FRIENDS");
         assert_eq!(CHANNEL_NAME_MAX, 8);
+        let err = channel_limit_error("#qa85chain").unwrap();
+        assert!(err.contains("at most 8"));
+        assert!(err.contains("qa85chain"));
+        assert!(channel_limit_error("#qa85chai").is_none());
+        assert!(group_hop_warning(5, 6).is_none());
+        assert!(group_hop_warning(8, 6).unwrap().contains("8 stations"));
     }
 
     #[test]
@@ -741,20 +820,22 @@ mod tests {
             vec!["JOIN #ops".to_string()]
         );
         assert!(to_wire("hello", "#ops")[0].starts_with("PRIVMSG #ops"));
-        assert_eq!(
-            to_wire("hello", "#compatriots")[0],
-            "PRIVMSG #compatri :hello"
-        );
+        assert!(to_wire("hello", "#qa85chain").is_empty());
+        assert!(line_error("hello", "#qa85chain")
+            .unwrap()
+            .contains("at most 8"));
+        assert!(to_wire("/join #qa85chain", "#bulletin").is_empty());
     }
 
     #[test]
     fn invite_sends_group_and_irc_invite() {
-        let wires = to_wire("/invite TF101", "#compatriots");
+        assert!(to_wire("/invite TF101", "#qa85chain").is_empty());
+        let wires = to_wire("/invite TF101", "#qa85chai");
         assert_eq!(
             wires,
             vec![
-                "RADIO group invite compatri TF101".to_string(),
-                "INVITE TF101 #compatri".to_string(),
+                "RADIO group invite qa85chai TF101".to_string(),
+                "INVITE TF101 #qa85chai".to_string(),
             ]
         );
         assert_eq!(channel_mode("#bulletin"), "+");
@@ -767,16 +848,13 @@ mod tests {
         assert!(invite_over_air_reply("#ops", "TF101", true, false).starts_with("no over-air"));
         assert!(invite_over_air_reply("#ops", "TF101", false, true).contains("internet"));
         assert_eq!(
-            parse_invite_text(&invite_notice("#compatriots", "TF101")).as_deref(),
-            Some("#compatri")
+            parse_invite_text(&invite_notice("#qa85chai", "TF101")).as_deref(),
+            Some("#qa85chai")
         );
-        assert_eq!(
-            parse_invite_text(
-                "You are invited to #compatriots on WeeChat Radio. Join that channel to talk."
-            )
-            .as_deref(),
-            Some("#compatri")
-        );
+        assert!(parse_invite_text(
+            "You are invited to #qa85chain on WeeChat Radio. Join that channel to talk."
+        )
+        .is_none());
         assert_eq!(
             parse_invite_text(
                 "[rf] You are invited to #ops on WeeChat Radio. Join that channel to talk."
@@ -786,26 +864,31 @@ mod tests {
         );
         assert!(parse_invite_text("hello there").is_none());
         assert!(parse_invite_text("You are invited to #bulletin on WeeChat Radio.").is_none());
-        let (from, ch) = parse_irc_invite(":M7TJF INVITE TF101 #compatriots").unwrap();
+        assert!(parse_irc_invite(":M7TJF INVITE TF101 #compatriots").is_none());
+        let (from, ch) = parse_irc_invite(":M7TJF INVITE TF101 #qa85chai").unwrap();
         assert_eq!(from, "M7TJF");
-        assert_eq!(ch, "#compatri");
+        assert_eq!(ch, "#qa85chai");
     }
 
     #[test]
     fn part_and_leave_are_irc_part() {
-        assert_eq!(to_wire("/part", "#compatriots"), vec!["PART #compatri"]);
+        assert!(to_wire("/part", "#compatriots").is_empty());
+        assert_eq!(
+            to_wire("/part", "#qa85chai"),
+            vec!["PART #qa85chai".to_string()]
+        );
         assert_eq!(to_wire("/leave", "#ops"), vec!["PART #ops"]);
         assert!(to_wire("/part", "#bulletin").is_empty());
         assert_eq!(
-            parse_leave_text("left #compatriots").as_deref(),
-            Some("#compatri")
+            parse_leave_text("left #qa85chai").as_deref(),
+            Some("#qa85chai")
         );
         assert_eq!(parse_leave_text("[rf] left #ops").as_deref(), Some("#ops"));
         assert!(parse_leave_text("hello").is_none());
         assert!(parse_leave_text("left #bulletin").is_none());
-        let (nick, ch) = parse_peer_left_notice("M7TJF left #compatriots").unwrap();
+        let (nick, ch) = parse_peer_left_notice("M7TJF left #qa85chai").unwrap();
         assert_eq!(nick, "M7TJF");
-        assert_eq!(ch, "#compatri");
+        assert_eq!(ch, "#qa85chai");
         assert!(parse_peer_left_notice("channel default left alone").is_none());
     }
 

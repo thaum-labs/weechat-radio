@@ -35,6 +35,7 @@ pub fn resend_accepted(http_ok: bool) -> bool {
 
 pub const NO_GATEWAY_ACK: &str =
     "Gateway did not acknowledge. The message may not have been heard.";
+pub const RADIO_NOT_RUNNING: &str = "Radio is not running.";
 pub const GATEWAY_NOT_ACCEPTED: &str = "Gateway has the message, but it was not accepted.";
 pub const TX_STUCK: &str = "Timed out while transmitting. The message stayed at tx.";
 
@@ -59,9 +60,31 @@ pub fn mail_attempt_cap(max_retries: u32) -> u32 {
     }
 }
 
-/// 8s, 16s, 32s, 64s, then 128s.
+/// 8s, 16s, 32s, 64s, then 128s. Added after the keyed burst has finished.
 pub fn ack_backoff_secs(retries: u32) -> u64 {
     8u64.saturating_mul(1u64 << retries.min(4))
+}
+
+/// Wait until the keyed audio should be over, then the backoff, then one
+/// frame so the gateway's ack can land before the next key-up.
+pub fn retry_after_secs(airtime_secs: f64, spent_secs: f64, retries: u32, frame_secs: f64) -> f64 {
+    let remain = (airtime_secs - spent_secs).max(0.0);
+    remain + ack_backoff_secs(retries) as f64 + frame_secs.max(0.0)
+}
+
+/// Gateway stays quiet this long after the last chunk before it keys an ack.
+/// Longer than one frame, so a chunk still on the air resets the wait.
+pub fn quiet_gap_secs(frame_secs: f64) -> f64 {
+    (frame_secs * 2.0).max(3.0)
+}
+
+/// The modem never opened. Say so immediately instead of burning the retries.
+pub fn radio_down_text(err: &str) -> Option<&'static str> {
+    if err.contains("Radio is not running") {
+        Some(RADIO_NOT_RUNNING)
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,6 +172,15 @@ mod tests {
         assert_eq!(ack_backoff_secs(0), 8);
         assert_eq!(ack_backoff_secs(1), 16);
         assert_eq!(ack_backoff_secs(3), 64);
+        assert!((retry_after_secs(22.0, 1.0, 0, 4.0) - 33.0).abs() < 0.01);
+        assert!((retry_after_secs(5.0, 9.0, 1, 4.0) - 20.0).abs() < 0.01);
+        assert!((quiet_gap_secs(3.6) - 7.2).abs() < 0.01);
+        assert!((quiet_gap_secs(1.0) - 3.0).abs() < 0.01);
+        assert_eq!(
+            radio_down_text("modem: Radio is not running."),
+            Some(RADIO_NOT_RUNNING)
+        );
+        assert_eq!(radio_down_text("Chat is still using the radio."), None);
         assert_eq!(mail_attempt_cap(0), 3);
         assert_eq!(check_notice(0), "no new mail");
         assert_eq!(check_notice(2), "");
