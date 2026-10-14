@@ -80,6 +80,12 @@ struct Runtime {
     relay_again: Arc<Mutex<HashMap<MsgId, u32>>>,
     /// Message ids already counted in `relayed_unique` this process.
     relayed_ids: Arc<Mutex<HashSet<MsgId>>>,
+    /// Frames already handed to the hub socket or the pending queue.
+    hub_offered: Arc<Mutex<HashSet<MsgId>>>,
+    /// Origins already told that this frame reached the hub.
+    hub_marked: Arc<Mutex<HashSet<MsgId>>>,
+    /// Msgids whose sender already has [gw], so a later RF echo does not paint [rl].
+    gw_marked: Arc<Mutex<HashSet<MsgId>>>,
 }
 
 impl Runtime {
@@ -217,12 +223,32 @@ fn channel_blocks_own_retry(state: Option<ChannelState>) -> bool {
     }
 }
 
-/// Queued / sent / relayed still need an ACK. Failed, delivered, and [all] do not.
+/// Queued / sent / relayed still need an ACK. A closed group that has [ok]
+/// from only some members still needs one too. Failed, [all], and a direct
+/// or bulletin [ok] do not.
 fn still_awaiting_ack(store: &Store, id: &crate::proto::MsgId) -> bool {
-    matches!(
-        store.delivery_of(id).ok().flatten(),
-        Some(Delivery::Queued | Delivery::Sent | Delivery::Relayed)
-    )
+    let Ok(Some(m)) = store.get(id) else {
+        return false;
+    };
+    match m.delivery {
+        Delivery::Queued | Delivery::Sent | Delivery::Relayed | Delivery::Gateway => true,
+        Delivery::Delivered => group_still_waiting(store, &m.env),
+        Delivery::Failed | Delivery::All => false,
+    }
+}
+
+fn group_still_waiting(store: &Store, env: &Envelope) -> bool {
+    let Some(name) = closed_group_name(env) else {
+        return false;
+    };
+    !store.group_all_received(&name, &env.msg_id).unwrap_or(true)
+}
+
+fn closed_group_name(env: &Envelope) -> Option<String> {
+    if !env.flags.group() || dest_is_bulletin(env.dest.as_str()) {
+        return None;
+    }
+    Some(env.dest.as_str().to_ascii_lowercase())
 }
 
 pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
@@ -388,6 +414,9 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         ack_again: Arc::new(Mutex::new(HashMap::new())),
         relay_again: Arc::new(Mutex::new(HashMap::new())),
         relayed_ids: Arc::new(Mutex::new(HashSet::new())),
+        hub_offered: Arc::new(Mutex::new(HashSet::new())),
+        hub_marked: Arc::new(Mutex::new(HashSet::new())),
+        gw_marked: Arc::new(Mutex::new(HashSet::new())),
     };
     refresh_group_prios(&rt);
 
@@ -557,6 +586,12 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         if !still_awaiting_ack(&rt_r.store, &m.env.msg_id) {
                             continue;
                         }
+                        // At least one member ACKed. Stay on [ok]; do not paint [no].
+                        if m.delivery == Delivery::Delivered
+                            && group_still_waiting(&rt_r.store, &m.env)
+                        {
+                            continue;
+                        }
                         if rt_r
                             .store
                             .advance_delivery(&m.env.msg_id, Delivery::Failed)
@@ -620,7 +655,9 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     if rt_hub.cfg.lock().mode.uses_internet() {
                         for env in batch {
                             if let Some(h) = rt_hub.hub() {
-                                let _ = h.send(&env).await;
+                                if h.send(&env).await.is_ok() {
+                                    mark_hub_forward(&rt_hub, &env).await;
+                                }
                             }
                         }
                     }
@@ -837,6 +874,10 @@ fn apply_mode_flags(flags: &mut Flags, mode: Mode, third: bool) {
 
 fn stamp_own_mode_flags(env: &mut Envelope, our_call: &str, mode: Mode) {
     if env.origin.as_str() != our_call {
+        return;
+    }
+    // The hub-forward notice is RF-only. Restamping it INET_OK would upload it.
+    if hub_forward_notice(env).is_some() {
         return;
     }
     apply_mode_flags(&mut env.flags, mode, env.origin.is_guest());
@@ -1363,13 +1404,16 @@ async fn dispatch_with(rt: &Runtime, env: &Envelope, force_inet: bool) -> Result
         }
         if force_inet && !cfg.mode.uses_internet() {
             if let Some(h) = rt.hub() {
-                let _ = h.send(&env).await;
+                if h.send(&env).await.is_ok() {
+                    rt.hub_offered.lock().insert(env.msg_id);
+                    mark_hub_forward(rt, &env).await;
+                }
             }
             if let Some(p) = rt.peers_tx() {
                 let _ = p.send(env.clone()).await;
             }
-        } else {
-            offer_hub(rt, &env).await;
+        } else if offer_hub(rt, &env).await {
+            mark_hub_forward(rt, &env).await;
         }
         if let Some(l) = &rt.lan {
             let _ = l.send(env.clone()).await;
@@ -1428,20 +1472,114 @@ fn relay_preview(env: &Envelope) -> String {
     }
 }
 
-async fn offer_hub(rt: &Runtime, env: &Envelope) {
+/// Hand `env` to the hub once. True only when this call's send succeeded.
+/// A failed send is not recorded, so a later copy can try again. A down hub
+/// queues the frame and returns false; the flush marks it when the socket accepts.
+async fn offer_hub(rt: &Runtime, env: &Envelope) -> bool {
     if !rt.cfg.lock().mode.uses_internet() {
-        return;
+        return false;
     }
-    if rt.hub_flag.get() {
+    if rt.hub_offered.lock().contains(&env.msg_id) {
+        return false;
+    }
+    let sent = if rt.hub_flag.get() {
         if let Some(h) = rt.hub() {
-            let _ = h.send(env).await;
+            match h.send(env).await {
+                Ok(()) => true,
+                Err(e) => {
+                    tracing::warn!(
+                        "hub send {} {} -> {} failed: {e}",
+                        env.kind.as_str(),
+                        env.origin,
+                        env.dest
+                    );
+                    false
+                }
+            }
+        } else {
+            false
         }
     } else {
+        false
+    };
+    if sent {
+        rt.hub_offered.lock().insert(env.msg_id);
+    } else if !rt.hub_flag.get() || rt.hub().is_none() {
         rt.pending_inet.lock().push(env.clone());
+        rt.hub_offered.lock().insert(env.msg_id);
     }
     if let Some(p) = rt.peers_tx() {
         let _ = p.send(env.clone()).await;
     }
+    sent
+}
+
+/// `gw <msgid hex>` on a NO_INET status frame. The gateway keys this at the
+/// originator so a radio-plus sender can show [gw]. It is not chat.
+fn hub_forward_notice(env: &Envelope) -> Option<MsgId> {
+    if env.kind != MsgType::Status || env.flags.req_ack() || !env.flags.no_inet() {
+        return None;
+    }
+    let text = std::str::from_utf8(&env.body).ok()?;
+    let hex = text.strip_prefix("gw ")?;
+    if hex.len() != 16 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    MsgId::parse_hex(hex)
+}
+
+async fn mark_hub_forward(rt: &Runtime, env: &Envelope) {
+    if !matches!(
+        env.kind,
+        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status
+    ) || hub_forward_notice(env).is_some()
+    {
+        return;
+    }
+    if !rt.hub_marked.lock().insert(env.msg_id) {
+        return;
+    }
+    tracing::info!(
+        "forwarded to hub {} {} -> {} id {}",
+        env.kind.as_str(),
+        env.origin,
+        env.dest,
+        env.msg_id
+    );
+    if env
+        .origin
+        .as_str()
+        .eq_ignore_ascii_case(&rt.engine.our_call)
+    {
+        rt.gw_marked.lock().insert(env.msg_id);
+        rt.irc.tagmsg_delivery(&env.msg_id.hex(), "gateway").await;
+        return;
+    }
+    send_hub_forward_notice(rt, env).await;
+}
+
+/// One RF hop back to the station that wrote `env`. NO_INET so a gateway does
+/// not upload the notice, and no ACK so it does not start its own retry.
+async fn send_hub_forward_notice(rt: &Runtime, env: &Envelope) {
+    let Ok(seq) = rt.store.next_seq(&rt.engine.our_call) else {
+        return;
+    };
+    let Ok(origin) = Callsign::parse(&rt.engine.our_call) else {
+        return;
+    };
+    let body = format!("gw {}", env.msg_id.hex());
+    let Ok(mut notice) = Envelope::new_msg(
+        origin,
+        env.origin.clone(),
+        seq,
+        body.into_bytes(),
+        1,
+        Flags::new().with(FLAG_NO_INET),
+    ) else {
+        return;
+    };
+    notice.kind = MsgType::Status;
+    let _ = dispatch_rf_at(rt, &notice, 0, Duration::ZERO, 0).await;
 }
 
 fn dest_is_bulletin(dest: &str) -> bool {
@@ -1502,7 +1640,9 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
             .advance_delivery(&env.msg_id, Delivery::Relayed)
             .unwrap_or(false)
         {
-            rt.irc.tagmsg_delivery(&env.msg_id.hex(), "relayed").await;
+            if !rt.gw_marked.lock().contains(&env.msg_id) {
+                rt.irc.tagmsg_delivery(&env.msg_id.hex(), "relayed").await;
+            }
         } else if let Some(air) = rt.air() {
             air.cancel(env.msg_id);
         }
@@ -1559,56 +1699,97 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
     }
     match env.kind {
         MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status => {
-            let target = if env.flags.group() {
-                if dest_is_bulletin(env.dest.as_str()) {
-                    BULLETIN_CHANNEL.to_string()
-                } else {
-                    format!("#{}", env.dest.to_string().to_ascii_lowercase())
+            if let Some(id) = hub_forward_notice(&env) {
+                if env.dest.as_str().eq_ignore_ascii_case(&rt.engine.our_call) {
+                    rt.gw_marked.lock().insert(id);
+                    rt.irc.tagmsg_delivery(&id.hex(), "gateway").await;
                 }
-            } else if env.dest.as_str().eq_ignore_ascii_case(&rt.engine.our_call) {
-                // Incoming DM is `:<sender> PRIVMSG <our nick> :text`. Addressing it
-                // to the sender drops it: the local client nick is ours.
-                rt.engine.our_call.clone()
             } else {
-                env.origin.to_string()
-            };
-            let text = if env.kind == MsgType::Form {
-                Form::decode(&env.body_text())
-                    .map(|f| f.render_text())
-                    .unwrap_or_else(|| env.body_text())
-            } else {
-                env.body_text()
-            };
-            let name = env.dest.to_string().to_ascii_lowercase();
-            let leave_meta = env.kind == MsgType::Status
-                && env.flags.group()
-                && parse_chan_meta_leave(&text).is_some();
-            let closed = env.flags.group() && !dest_is_bulletin(env.dest.as_str());
-            let member = rt
-                .store
-                .is_group_member(&name, &rt.engine.our_call)
-                .unwrap_or(false);
-            let mute_closed = closed && !member && !leave_meta;
-            if leave_meta {
-                apply_remote_leave(&rt.store, &name, env.origin.as_str());
-                rt.irc
-                    .notice_all(&format!("{} left #{name}", env.origin))
-                    .await;
-            } else if mute_closed {
-                // Closed room we already left: relay only, do not show or ACK.
-            } else if env.kind == MsgType::Status {
-                if let Some(prio) = parse_chan_meta_prio(&text) {
-                    if env.flags.group() {
-                        let name = env.dest.to_string().to_ascii_lowercase();
-                        let _ = rt.store.group_set_prio(&name, prio as u8);
-                        refresh_group_prios(rt);
-                        let note =
-                            format!("channel #{} default priority → {}", name, prio.as_str());
-                        rt.irc.notice_all(&note).await;
+                let target = if env.flags.group() {
+                    if dest_is_bulletin(env.dest.as_str()) {
+                        BULLETIN_CHANNEL.to_string()
+                    } else {
+                        format!("#{}", env.dest.to_string().to_ascii_lowercase())
                     }
-                } else if let Some(w) = Welfare::parse(&text) {
-                    let _ = rt.store.welfare(env.origin.as_str(), w.as_str());
-                    refresh_heard(rt);
+                } else if env.dest.as_str().eq_ignore_ascii_case(&rt.engine.our_call) {
+                    // Incoming DM is `:<sender> PRIVMSG <our nick> :text`. Addressing it
+                    // to the sender drops it: the local client nick is ours.
+                    rt.engine.our_call.clone()
+                } else {
+                    env.origin.to_string()
+                };
+                let text = if env.kind == MsgType::Form {
+                    Form::decode(&env.body_text())
+                        .map(|f| f.render_text())
+                        .unwrap_or_else(|| env.body_text())
+                } else {
+                    env.body_text()
+                };
+                let name = env.dest.to_string().to_ascii_lowercase();
+                let leave_meta = env.kind == MsgType::Status
+                    && env.flags.group()
+                    && parse_chan_meta_leave(&text).is_some();
+                let closed = env.flags.group() && !dest_is_bulletin(env.dest.as_str());
+                let member = rt
+                    .store
+                    .is_group_member(&name, &rt.engine.our_call)
+                    .unwrap_or(false);
+                let mute_closed = closed && !member && !leave_meta;
+                if leave_meta {
+                    apply_remote_leave(&rt.store, &name, env.origin.as_str());
+                    rt.irc
+                        .notice_all(&format!("{} left #{name}", env.origin))
+                        .await;
+                } else if mute_closed {
+                    // Closed room we already left: relay only, do not show or ACK.
+                } else if env.kind == MsgType::Status {
+                    if let Some(prio) = parse_chan_meta_prio(&text) {
+                        if env.flags.group() {
+                            let name = env.dest.to_string().to_ascii_lowercase();
+                            let _ = rt.store.group_set_prio(&name, prio as u8);
+                            refresh_group_prios(rt);
+                            let note =
+                                format!("channel #{} default priority → {}", name, prio.as_str());
+                            rt.irc.notice_all(&note).await;
+                        }
+                    } else if let Some(w) = Welfare::parse(&text) {
+                        let _ = rt.store.welfare(env.origin.as_str(), w.as_str());
+                        refresh_heard(rt);
+                        rt.irc
+                            .broadcast_privmsg(
+                                env.origin.as_str(),
+                                &target,
+                                &text,
+                                Some(&env.msg_id.hex()),
+                                Some(medium),
+                            )
+                            .await;
+                    } else {
+                        rt.irc
+                            .broadcast_privmsg(
+                                env.origin.as_str(),
+                                &target,
+                                &text,
+                                Some(&env.msg_id.hex()),
+                                Some(medium),
+                            )
+                            .await;
+                    }
+                } else {
+                    if env.kind == MsgType::Msg
+                        && !env.flags.group()
+                        && env.dest.as_str() == rt.engine.our_call
+                    {
+                        if let Some(ch) = record_remote_invite(
+                            &rt.store,
+                            &rt.engine.our_call,
+                            env.origin.as_str(),
+                            &text,
+                        ) {
+                            publish_hub_membership(rt).await;
+                            rt.irc.send_invite(env.origin.as_str(), &ch).await;
+                        }
+                    }
                     rt.irc
                         .broadcast_privmsg(
                             env.origin.as_str(),
@@ -1618,78 +1799,38 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                             Some(medium),
                         )
                         .await;
-                } else {
-                    rt.irc
-                        .broadcast_privmsg(
-                            env.origin.as_str(),
-                            &target,
-                            &text,
-                            Some(&env.msg_id.hex()),
-                            Some(medium),
-                        )
-                        .await;
                 }
-            } else {
-                if env.kind == MsgType::Msg
-                    && !env.flags.group()
-                    && env.dest.as_str() == rt.engine.our_call
+                if env.kind == MsgType::Checkin {
+                    let _ = rt
+                        .store
+                        .checkin(env.origin.as_str(), &env.body_text(), None, None);
+                }
+                if !mute_closed
+                    && env.flags.req_ack()
+                    && (env.dest.as_str() == rt.engine.our_call || env.flags.group())
                 {
-                    if let Some(ch) = record_remote_invite(
-                        &rt.store,
-                        &rt.engine.our_call,
+                    let _ = acknowledge(rt, &env, snr).await;
+                }
+                if !mute_closed && env.flags.group() {
+                    let _ = rt.store.receipt(
+                        &env.dest.to_string().to_ascii_lowercase(),
+                        &env.msg_id,
                         env.origin.as_str(),
-                        &text,
-                    ) {
-                        publish_hub_membership(rt).await;
-                        rt.irc.send_invite(env.origin.as_str(), &ch).await;
+                    );
+                    if rt
+                        .store
+                        .group_all_received(&env.dest.to_string().to_ascii_lowercase(), &env.msg_id)
+                        .unwrap_or(false)
+                    {
+                        let _ = rt.store.set_delivery(&env.msg_id, Delivery::All);
+                        rt.irc.tagmsg_delivery(&env.msg_id.hex(), "all").await;
                     }
-                }
-                rt.irc
-                    .broadcast_privmsg(
-                        env.origin.as_str(),
-                        &target,
-                        &text,
-                        Some(&env.msg_id.hex()),
-                        Some(medium),
-                    )
-                    .await;
-            }
-            if env.kind == MsgType::Checkin {
-                let _ = rt
-                    .store
-                    .checkin(env.origin.as_str(), &env.body_text(), None, None);
-            }
-            if !mute_closed
-                && env.flags.req_ack()
-                && (env.dest.as_str() == rt.engine.our_call || env.flags.group())
-            {
-                let _ = acknowledge(rt, &env, snr).await;
-            }
-            if !mute_closed && env.flags.group() {
-                let _ = rt.store.receipt(
-                    &env.dest.to_string().to_ascii_lowercase(),
-                    &env.msg_id,
-                    env.origin.as_str(),
-                );
-                if rt
-                    .store
-                    .group_all_received(&env.dest.to_string().to_ascii_lowercase(), &env.msg_id)?
-                {
-                    rt.store.set_delivery(&env.msg_id, Delivery::All)?;
-                    rt.irc.tagmsg_delivery(&env.msg_id.hex(), "all").await;
                 }
             }
         }
         MsgType::Ack => {
             if let Some(id) = env.acked_id() {
                 let already = matches!(acked_prior, Some(Delivery::Delivered | Delivery::All));
-                // Stop ARQ even when this ACK is a duplicate. A retry that is
-                // already keying re-checks `still_awaiting_ack` before the next hold.
-                let _ = rt.store.set_hold(&id, 0, 0);
-                if let Some(air) = rt.air() {
-                    air.cancel(id);
-                }
-                rt.snap.lock().retries = 0;
                 if !already
                     && rt
                         .store
@@ -1698,9 +1839,11 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                 {
                     rt.irc.tagmsg_delivery(&id.hex(), "delivered").await;
                 }
+                // A closed group is not done on the first ACK. Keep the retry
+                // and the gateway's RF relay until every stored member has
+                // ACKed, or the retry count runs out.
+                let mut keep = false;
                 if let Ok(Some(orig)) = rt.store.get(&id) {
-                    // #bulletin has no member list, so the first ACK is [ok] and
-                    // there is no [all]. Closed groups record each member.
                     if orig.env.flags.group() && !dest_is_bulletin(orig.env.dest.as_str()) {
                         let group = orig.env.dest.to_string().to_ascii_lowercase();
                         let _ = rt.store.receipt(&group, &id, env.origin.as_str());
@@ -1713,7 +1856,15 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                         {
                             rt.irc.tagmsg_delivery(&id.hex(), "all").await;
                         }
+                        keep = group_still_waiting(&rt.store, &orig.env);
                     }
+                }
+                if !keep {
+                    let _ = rt.store.set_hold(&id, 0, 0);
+                    if let Some(air) = rt.air() {
+                        air.cancel(id);
+                    }
+                    rt.snap.lock().retries = 0;
                 }
             }
             if let Some(snr_db) = env.acked_snr() {
@@ -1848,16 +1999,22 @@ async fn maybe_answer_retry(rt: &Runtime, env: &Envelope, snr: Option<f32>) {
 
 async fn forward_gateway(rt: &Runtime, env: &Envelope, medium: &str) -> Result<()> {
     let cfg_g = rt.cfg.lock().clone();
-    if medium == "rf"
-        && relay::may_inet_forward(
-            cfg_g.mode.is_gateway(),
-            env.flags.inet_ok(),
-            env.flags.no_inet(),
-        )
-    {
-        if let Some(h) = rt.hub() {
-            let _ = h.send(env).await;
+    let upload = relay::may_inet_forward(
+        cfg_g.mode.is_gateway(),
+        env.flags.inet_ok(),
+        env.flags.no_inet(),
+    );
+    if medium == "rf" && upload {
+        if offer_hub(rt, env).await {
+            mark_hub_forward(rt, env).await;
         }
+    } else if medium == "rf" && cfg_g.mode.is_gateway() && dest_is_bulletin(env.dest.as_str()) {
+        tracing::info!(
+            "bulletin {} stays on RF (inet_ok={} no_inet={})",
+            env.msg_id,
+            env.flags.inet_ok(),
+            env.flags.no_inet()
+        );
     }
     if medium == "inet" || medium == "lan" {
         let freq = rt.snap.lock().freq_khz;

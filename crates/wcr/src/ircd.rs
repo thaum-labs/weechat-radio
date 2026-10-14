@@ -777,7 +777,7 @@ impl IrcServer {
             "/mode #chan — 324 reply. +i means a closed group.",
             "/msg CALL text — direct message.",
             "/radio help — mode, preset, status, group, prio.",
-            "Marks: [tx] sent, [rl] heard own frame, [ok] delivered, [all] closed group, [no] one wait after the last copy, [xN] radio copies.",
+            "Marks: [tx] sent, [rl] heard own frame on RF, [gw] a gateway accepted it onto the hub, [ok] delivered, [all] every closed-group member, [no] one wait after the last copy, [xN] radio copies.",
             "/radio flush — mark this station's unacked outbound [no] and drop relay holds.",
             "#bulletin stops at [ok]. It has no member list, so it never shows [all].",
         ];

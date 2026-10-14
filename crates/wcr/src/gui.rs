@@ -4536,6 +4536,7 @@ fn ticks_delivery(ticks: &str) -> Option<crate::store::Delivery> {
         "[..]" => Some(crate::store::Delivery::Queued),
         "[tx]" => Some(crate::store::Delivery::Sent),
         "[rl]" => Some(crate::store::Delivery::Relayed),
+        "[gw]" => Some(crate::store::Delivery::Gateway),
         "[no]" => Some(crate::store::Delivery::Failed),
         "[ok]" => Some(crate::store::Delivery::Delivered),
         "[all]" => Some(crate::store::Delivery::All),
@@ -4546,7 +4547,7 @@ fn ticks_delivery(ticks: &str) -> Option<crate::store::Delivery> {
 fn delivery_ticks(state: &str) -> Option<&'static str> {
     let d = crate::store::Delivery::parse(state);
     match state {
-        "queued" | "sent" | "relayed" | "delivered" | "all" => Some(d.ticks_bracket()),
+        "queued" | "sent" | "relayed" | "gateway" | "delivered" | "all" => Some(d.ticks_bracket()),
         "failed" => Some("[no]"),
         s if s.starts_with("retry") => Some(crate::store::Delivery::Queued.ticks_bracket()),
         _ => None,
@@ -4722,6 +4723,7 @@ mod tests {
         assert_eq!(delivery_ticks("queued"), Some("[..]"));
         assert_eq!(delivery_ticks("sent"), Some("[tx]"));
         assert_eq!(delivery_ticks("relayed"), Some("[rl]"));
+        assert_eq!(delivery_ticks("gateway"), Some("[gw]"));
         assert_eq!(delivery_ticks("delivered"), Some("[ok]"));
         assert_eq!(delivery_ticks("all"), Some("[all]"));
     }

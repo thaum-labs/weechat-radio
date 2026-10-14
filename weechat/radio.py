@@ -47,6 +47,7 @@ TICKS = {
     "queued": "[..]",
     "sent": "[tx]",
     "relayed": "[rl]",
+    "gateway": "[gw]",
     "delivered": "[ok]",
     "all": "[all]",
     "failed": "[no]",

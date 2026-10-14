@@ -193,7 +193,7 @@
       </figure>
 
       <h2>Radio-plus (you stay offline)</h2>
-      <p><code>radio-plus</code> never uploads chat. A nearby gateway that hears you on RF may forward your traffic to the hub, then on to internet stations or another band. Map metadata still POSTs if <code>[telemetry] url</code> is set.</p>
+      <p><code>radio-plus</code> never uploads chat. A nearby gateway that hears you on RF forwards that frame to the hub for any destination, including a direct message, a closed group, and <code>#bulletin</code>. <code>radio</code> mode is marked <code>NO_INET</code>, so the same gateway keeps those frames on the radio. Your line shows <code>[gw]</code> when the gateway has accepted the frame onto the hub. <code>[rl]</code> only means you heard your own frame on RF again. Map metadata still POSTs if <code>[telemetry] url</code> is set. The hub holds an offline station's direct messages for 10 minutes (32 per callsign) and delivers them on the next hello. It does not hold groups or <code>#bulletin</code>.</p>
       <figure class="diagram">
         <div class="dgm-wrap">
           <svg class="dgm" viewBox="0 0 720 200" role="img" aria-labelledby="d4t d4d">

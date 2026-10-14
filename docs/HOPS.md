@@ -3,7 +3,7 @@ On the web: https://weechatradio.com/docs/hops.html
 WeeChat Radio — hops
 A group on one frequency can all take part, even when some stations cannot hear some of the others. A station that hears a message keeps a copy and sends it again. That extra send is a hop (a relay).
 
-The maps on the web page are radio only. The hub is not in the path. The program does not change the dial. Two different bands use a gateway and the hub: `wcr help bridging`.
+The first hop diagrams are same-frequency radio. The hub is not in that path. The later section, “Same 20m map, with the hub”, is the internet path: an internet-radio station can hand the line to the hub, and an internet station can read it there. The program does not change the dial. Two different bands use a gateway and the hub: `wcr help bridging`.
 
 What the program does
 
