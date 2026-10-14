@@ -48,13 +48,13 @@
     <main class="page-panel">
       <p class="crumb"><a href="/docs.html">docs</a> / modes</p>
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> modes</h1>
-      <p class="lead">Four ways to chat. Switch with <code>/radio mode &lt;name&gt;</code> or press F2 in the TUI.</p>
+      <p class="lead">Four ways to chat. Switch with <code>/radio mode &lt;name&gt;</code> or press F2 in the TUI. <code>radio</code> and <code>radio-plus</code> both post map telemetry when <code>[telemetry] url</code> is set, and that post never contains message text. Neither mode sends chat to the hub or the LAN from this computer. The only difference is whether an internet-radio gateway that hears you may forward your messages (and email) to the internet.</p>
 
       <figure class="diagram">
         <div class="dgm-wrap">
           <svg class="dgm" viewBox="0 0 720 302" role="img" aria-labelledby="m1t m1d">
             <title id="m1t">What each mode connects to</title>
-            <desc id="m1d">Internet mode uses the hub only. Internet-radio uses both and acts as a gateway. Radio keeps chat on RF only. Radio-plus transmits on RF and reaches internet chat only through someone else's gateway. Map metadata can still upload when a telemetry URL is set.</desc>
+            <desc id="m1d">Internet mode uses the hub only. Internet-radio uses both and acts as a gateway. Radio and radio-plus both keep chat on RF and can still post map data. The only difference is that a gateway may forward radio-plus messages and email.</desc>
             <defs>
               <marker id="mrfM" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
@@ -84,7 +84,7 @@
             <line class="net" marker-start="url(#mnetM)" marker-end="url(#mnetM)" x1="512" y1="130" x2="584" y2="130" />
             <rect class="box gw" x="212" y="108" width="298" height="44" />
             <text class="on-gw" x="361" y="127" text-anchor="middle">internet-radio</text>
-            <text class="sub" x="361" y="143" text-anchor="middle">radio first · this station is a gateway</text>
+            <text class="sub" x="361" y="143" text-anchor="middle">radio plus the hub · this station is a gateway</text>
 
             <line class="rf" marker-start="url(#mrfM)" marker-end="url(#mrfM)" x1="136" y1="194" x2="210" y2="194" />
             <path class="none" d="M512 194 H 584" />
@@ -100,7 +100,7 @@
             <text class="sub" x="548" y="250" text-anchor="middle">gateway</text>
             <rect class="box rplus" x="212" y="236" width="298" height="44" />
             <text class="on-rplus" x="361" y="255" text-anchor="middle">radio-plus</text>
-            <text class="sub" x="361" y="271" text-anchor="middle">you never upload chat · someone may relay</text>
+            <text class="sub" x="361" y="271" text-anchor="middle">you never upload chat · a gateway may forward</text>
 
             <text class="sub" x="16" y="296">mode decides where chat may go; map telemetry is a separate URL</text>
           </svg>
@@ -111,35 +111,105 @@
       <div class="mode-grid-docs">
         <article class="mode-card cyan">
           <h3><img class="mode-mark" src="/icons/mark-internet.svg" alt="">internet</h3>
-          <p>Radio off. You talk to the hub only. Fine for trying the program with no hardware.</p>
+          <p>Chat with no radio. This computer talks to the hub.</p>
         </article>
         <article class="mode-card green">
           <h3><img class="mode-mark" src="/icons/mark-internet-radio.svg" alt="">internet-radio</h3>
-          <p>Radio is primary. Internet fills gaps. This station is a gateway for others.</p>
+          <p>Your radio plus the internet. This computer is a gateway: it keys the dial and also talks to the hub, and it can carry other stations' radio-plus traffic onward.</p>
         </article>
         <article class="mode-card amber">
           <h3><img class="mode-mark" src="/icons/mark-radio.svg" alt="">radio</h3>
-          <p>Radio chat only. Frames never go on the hub or the LAN mesh. The map still updates if telemetry is on. Switching here asks you to confirm.</p>
+          <p>Chat on the radio only. A gateway that hears you must leave the message on the radio.</p>
         </article>
         <article class="mode-card magenta">
           <h3><img class="mode-mark" src="/icons/mark-radio-plus.svg" alt="">radio-plus</h3>
-          <p>Chat stays off the hub from this computer. A nearby gateway that hears you may forward. Map metadata still POSTs if telemetry is on.</p>
+          <p>Chat on the radio only, from this computer. The one difference from radio is that a gateway that hears you may carry the message, and email, onto the internet.</p>
         </article>
       </div>
 
+      <h2>internet</h2>
+      <p><strong>What it's for.</strong> Chat with no radio. This computer talks to the hub.</p>
       <div class="table-wrap">
         <table>
-          <thead>
-            <tr><th>Mode</th><th>Radio</th><th>Chat on the hub / LAN</th><th>Map colour</th></tr>
-          </thead>
           <tbody>
-            <tr><td><code>internet</code></td><td>off</td><td>hub only</td><td class="mode-swatch"><img class="mode-mark" src="/icons/mark-internet.svg" alt="">cyan</td></tr>
-            <tr><td><code>internet-radio</code></td><td>on, primary</td><td>fills gaps</td><td class="mode-swatch"><img class="mode-mark" src="/icons/mark-internet-radio.svg" alt="">green</td></tr>
-            <tr><td><code>radio</code></td><td>on</td><td>never</td><td class="mode-swatch"><img class="mode-mark" src="/icons/mark-radio.svg" alt="">amber</td></tr>
-            <tr><td><code>radio-plus</code></td><td>on</td><td>never from this computer</td><td class="mode-swatch"><img class="mode-mark" src="/icons/mark-radio-plus.svg" alt="">magenta</td></tr>
+            <tr><th>Chat over RF?</th><td>No. The radio stays off.</td></tr>
+            <tr><th>Chat over hub/LAN from this computer?</th><td>Yes. This computer sends chat to the hub and the LAN.</td></tr>
+            <tr><th>Can a gateway forward my messages to the internet?</th><td>This computer already sends them to the hub. It does not key a radio, so a gateway has nothing of yours to hear.</td></tr>
+            <tr><th>Map data (callsign/grid/tx-rx, never text) sent if <code>[telemetry]</code> url set?</th><td>Yes, if the URL is set. Callsign, grid, and tx/rx ids. Never message text.</td></tr>
+            <tr><th>Receipts from internet stations?</th><td>Yes. They come back on the hub. A receipt is the other station's ACK, shown as <code>[ok]</code>.</td></tr>
+            <tr><th>Email?</th><td>Yes. This computer posts mail to the hub.</td></tr>
+            <tr><th>Map colour</th><td class="mode-swatch"><img class="mode-mark" src="/icons/mark-internet.svg" alt="">Cyan (<code>#00e5ff</code>)</td></tr>
           </tbody>
         </table>
       </div>
+
+      <h2>internet-radio</h2>
+      <p><strong>What it's for.</strong> Your radio plus the internet. This computer is a gateway: it keys the dial and also talks to the hub, and it can carry other stations' radio-plus traffic onward.</p>
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr><th>Chat over RF?</th><td>Yes. Every chat line is keyed on the radio.</td></tr>
+            <tr><th>Chat over hub/LAN from this computer?</th><td>Yes, when the station you are calling was not heard on this dial. A closed group uses the hub when no member was heard here. <code>#bulletin</code> always goes to the hub and the LAN as well as the radio.</td></tr>
+            <tr><th>Can a gateway forward my messages to the internet?</th><td>You are the gateway. You upload radio-plus frames you hear, and your own chat when the radio will not reach the other station.</td></tr>
+            <tr><th>Map data (callsign/grid/tx-rx, never text) sent if <code>[telemetry]</code> url set?</th><td>Yes, if the URL is set. Callsign, grid, and tx/rx ids. Never message text.</td></tr>
+            <tr><th>Receipts from internet stations?</th><td>Yes. They come back on the hub. Stations you can hear also ACK on the radio.</td></tr>
+            <tr><th>Email?</th><td>Yes. Your own mail goes to the hub. You also post radio-plus mail you hear.</td></tr>
+            <tr><th>Map colour</th><td class="mode-swatch"><img class="mode-mark" src="/icons/mark-internet-radio.svg" alt="">Green (<code>#39ff14</code>)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>radio</h2>
+      <p><strong>What it's for.</strong> Chat on the radio only. A gateway that hears you must leave the message on the radio.</p>
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr><th>Chat over RF?</th><td>Yes.</td></tr>
+            <tr><th>Chat over hub/LAN from this computer?</th><td>No.</td></tr>
+            <tr><th>Can a gateway forward my messages to the internet?</th><td>No. The frame says do not forward. A gateway that hears you leaves it on the radio.</td></tr>
+            <tr><th>Map data (callsign/grid/tx-rx, never text) sent if <code>[telemetry]</code> url set?</th><td>Yes, if the URL is set. Callsign, grid, and tx/rx ids. Never message text.</td></tr>
+            <tr><th>Receipts from internet stations?</th><td>No. Only a station that hears you on the radio can ACK.</td></tr>
+            <tr><th>Email?</th><td>No. Email stays grey.</td></tr>
+            <tr><th>Map colour</th><td class="mode-swatch"><img class="mode-mark" src="/icons/mark-radio.svg" alt="">Amber (<code>#ffbf00</code>)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>radio-plus</h2>
+      <p><strong>What it's for.</strong> Chat on the radio only, from this computer. The one difference from radio is that a gateway that hears you may carry the message, and email, onto the internet.</p>
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr><th>Chat over RF?</th><td>Yes.</td></tr>
+            <tr><th>Chat over hub/LAN from this computer?</th><td>No.</td></tr>
+            <tr><th>Can a gateway forward my messages to the internet?</th><td>Yes, if an internet-radio gateway hears you. It may forward a direct message, a closed group, <code>#bulletin</code>, and email.</td></tr>
+            <tr><th>Map data (callsign/grid/tx-rx, never text) sent if <code>[telemetry]</code> url set?</th><td>Yes, if the URL is set. Callsign, grid, and tx/rx ids. Never message text.</td></tr>
+            <tr><th>Receipts from internet stations?</th><td>Not on a hub socket from this computer. The gateway can bring an internet station's ACK back on the radio if it has heard you on this dial.</td></tr>
+            <tr><th>Email?</th><td>Yes, by radio to the Mail gateway callsign in setup. That station posts it. This computer does not open the hub.</td></tr>
+            <tr><th>Map colour</th><td class="mode-swatch"><img class="mode-mark" src="/icons/mark-radio-plus.svg" alt="">Magenta (<code>#ff4dff</code>)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>Which mode should I pick</h2>
+      <ul>
+        <li>No radio, and you only want the hub: <code>internet</code>.</li>
+        <li>You have a radio and an internet link, and you want to be the station others use to reach the hub: <code>internet-radio</code>.</li>
+        <li>You have a radio, and you want the message to stay on the air even if a gateway hears it: <code>radio</code>.</li>
+        <li>You have a radio, no internet on this computer, and you want a nearby gateway to carry the line to internet stations: <code>radio-plus</code>.</li>
+      </ul>
+
+      <h2>Worked example: radio-plus</h2>
+      <p>You are in <code>radio-plus</code> on 144.950. You send a direct message. <code>#bulletin</code> and a closed group use this same path.</p>
+      <ol>
+        <li>This computer keys the message on the radio. It does not open the hub.</li>
+        <li>An <code>internet-radio</code> gateway on 144.950 hears the frame and sees that it may go to the internet.</li>
+        <li>The gateway sends it to the hub.</li>
+        <li>The hub delivers it to the internet station.</li>
+        <li>That station's receipt comes back to the gateway. The gateway keys the receipt on the radio if it has heard you on this dial.</li>
+        <li>Your line can show <code>[gw]</code> when the gateway accepted the frame, then <code>[ok]</code> when the receipt comes back on the radio. <code>[rl]</code> only means you heard your own frame on the radio again.</li>
+      </ol>
+      <p>In <code>radio</code> mode the same air path runs. The gateway does not upload the frame, and there is no receipt from the internet station.</p>
 
       <h2>If the hub dies</h2>
       <figure class="diagram">
@@ -171,11 +241,11 @@
         </div>
         <figcaption>Messages wait. Nobody has to leave a radio on all night.</figcaption>
       </figure>
-      <p>Changing mode starts or stops hub chat and the radio path immediately. In <code>internet-radio</code> every chat still goes on RF; the hub and LAN mesh are used only when the destination is not recently heard on this dial over radio (groups: no member heard here). <code>#bulletin</code> always offers the hub and LAN. The live map still gets signed metadata (not message text) whenever <code>[telemetry] url</code> is set, including in <code>radio</code>. Clear that URL to stay off the map. An arc is only drawn between two station pins. <code>#bulletin</code> and a closed group are not a callsign, so they do not draw a line to every other station.</p>
+      <p>Switching to <code>radio</code> asks for confirmation: it drops hub and LAN chat. Changing mode starts or stops hub chat and the radio path immediately. Switching between <code>radio</code> and <code>radio-plus</code> leaves both paths as they are: radio stays on, and this computer still does not open hub chat. Clear <code>[telemetry] url</code> to stay off the map. An arc is drawn only between two station pins that addressed each other. A <code>#bulletin</code> or closed-group destination is not a callsign, so it does not draw a line to every other pin.</p>
       <p>If you are in <code>internet-radio</code> and the hub goes away, radio keeps working. The status bar says <strong>Internet down, radio only</strong>. Traffic that still needed the hub waits in an internet hold and goes out when the hub returns. That is separate from the RF retry hold queue.</p>
 
       <h2>Email</h2>
-      <p>Email is not another operating mode. The map pin keeps its mode colour, and an <strong>e</strong> beside that logo means mail moved recently. You can send from <code>internet</code>, <code>internet-radio</code>, or <code>radio-plus</code> with a gateway callsign in setup. <code>radio</code> has no path to the internet, so Email stays grey. <a href="/docs/email.html">Email</a>.</p>
+      <p>Email is not another operating mode. The map pin keeps its mode colour, and an <strong>e</strong> beside that logo means mail moved recently. <code>internet</code> and <code>internet-radio</code> post their own mail to the hub. <code>radio-plus</code> sends mail by radio to the Mail gateway callsign in setup, and that station posts it. <code>radio</code> has no path, so Email stays grey. <a href="/docs/email.html">Email</a>.</p>
 
       <h2>Weak-signal behaviour</h2>
       <p>On a faint or fading path the program retries your message and asks modem73 for a slower waveform. The status bar shows <strong>TX</strong> (current waveform) and <strong>RETRY</strong>. Presets: <code>hf-good</code>, <code>hf-poor</code>, <code>hf-weak</code>, <code>hf-deep</code>, <code>vox-safe</code> (always MFSK-32R).</p>
