@@ -650,7 +650,7 @@ fn apply_own_retry(app: &mut App, tries: u32) {
 fn tui_delivery_mark(state: &str, unicode: bool) -> Option<String> {
     let text = match state {
         "failed" => "[no]",
-        "queued" | "sent" | "relayed" | "delivered" | "all" => {
+        "queued" | "sent" | "relayed" | "gateway" | "delivered" | "all" => {
             let d = crate::store::Delivery::parse(state);
             if unicode {
                 d.ticks(true)
@@ -672,8 +672,9 @@ fn tui_delivery_mark(state: &str, unicode: bool) -> Option<String> {
 
 fn tui_mark_rank(ticks: &str) -> u8 {
     match ticks {
-        "[ok]" | "VV" | "[all]" | "VVV" => 4,
-        "[no]" => 3,
+        "[ok]" | "VV" | "[all]" | "VVV" => 5,
+        "[no]" => 4,
+        "[gw]" => 3,
         "[rl]" | "vv" => 2,
         "[tx]" | "v" => 1,
         _ => 0,
