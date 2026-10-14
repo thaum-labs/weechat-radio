@@ -86,7 +86,7 @@ In `radio` mode the same air path runs. The gateway does not upload the frame, a
 
 Switching to `radio` asks for confirmation: it drops hub and LAN chat. Changing mode starts or stops the hub chat path and the radio path immediately. You do not need to restart the station. Switching between `radio` and `radio-plus` leaves both paths as they are: radio stays on, and this computer still does not open hub chat.
 
-Clear `[telemetry] url` to stay off the map. An arc is drawn only between two station pins that addressed each other. That line pulses while the contact is live, then fades and stays faintly visible until 48 hours after the last contact. A station pin stays bright in its mode colour while the station is reporting, then dims, and drops off the map 48 hours after it was last heard. A `#bulletin` or closed-group destination is not a callsign, so it does not draw a line to every other pin.
+Clear `[telemetry] url` to stay off the map. An arc is drawn only between two station pins that addressed each other. That line glows for a few seconds after the contact, settles to a dimmer line, then fades and stays faintly visible until 48 hours after the last contact. Reduced motion skips the glow. A station pin stays bright in its mode colour while the station is reporting, then dims, and drops off the map 48 hours after it was last heard. A `#bulletin` or closed-group destination is not a callsign, so it does not draw a line to every other pin.
 
 If the hub goes away while you are in `internet-radio`, radio keeps working. The status bar says **Internet down, radio only**. Messages that still needed the hub wait in an internet hold (`pending_inet`) and go out when the hub returns. That is separate from the RF ARQ hold queue used for retries.
 
