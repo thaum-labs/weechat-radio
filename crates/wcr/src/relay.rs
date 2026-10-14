@@ -66,6 +66,16 @@ pub fn decide(store: &Store, env: &Envelope, we_are_waiting: bool) -> Result<Rel
 /// handle it). A message that already reached `[ok]` or `[all]` is not
 /// relayed again. An ACK toward another station still is: that is how a
 /// receipt gets back through a middle station.
+/// A second copy on RF means someone already relayed it, so cancel ours.
+/// A hub or LAN echo of a closed group is the upload coming back. It must
+/// not cancel the RF copy for members who only hear this gateway.
+pub fn duplicate_cancels_relay(medium: &str, group: bool, bulletin: bool) -> bool {
+    if group && !bulletin && !medium.eq_ignore_ascii_case("rf") {
+        return false;
+    }
+    true
+}
+
 pub fn may_rebroadcast(our_call: &str, env: &Envelope, delivery: Option<Delivery>) -> bool {
     if env.hops_left == 0 || env.origin.as_str().eq_ignore_ascii_case(our_call) {
         return false;
@@ -299,10 +309,17 @@ impl Engine {
                 }
             }
             Action::Suppress => {
-                self.store.suppress(&env.msg_id)?;
-                let _ = self
-                    .store
-                    .advance_delivery(&env.msg_id, Delivery::Relayed)?;
+                // A hub echo of a closed group is not another RF relay.
+                if duplicate_cancels_relay(
+                    medium,
+                    env.flags.group(),
+                    crate::slash::is_bulletin(env.dest.as_str()),
+                ) {
+                    self.store.suppress(&env.msg_id)?;
+                    let _ = self
+                        .store
+                        .advance_delivery(&env.msg_id, Delivery::Relayed)?;
+                }
             }
             Action::Ignore => {}
             Action::DropRelay => {
@@ -334,6 +351,15 @@ mod tests {
         assert!(!is_own_origin("M0BBB", &env));
         assert!(!may_rebroadcast("G4AAA", &env, Some(Delivery::Sent)));
         assert!(!may_rebroadcast("G4AAA", &env, Some(Delivery::Relayed)));
+    }
+
+    #[test]
+    fn hub_echo_keeps_a_closed_group_relay() {
+        assert!(!duplicate_cancels_relay("inet", true, false));
+        assert!(!duplicate_cancels_relay("lan", true, false));
+        assert!(duplicate_cancels_relay("rf", true, false));
+        assert!(duplicate_cancels_relay("inet", false, false));
+        assert!(duplicate_cancels_relay("inet", true, true));
     }
 
     #[test]

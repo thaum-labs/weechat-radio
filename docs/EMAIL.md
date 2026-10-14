@@ -17,15 +17,20 @@ The address is `{callsign}@mail.weechatradio.com`. There is no domain setting. G
 
 ## Sent
 
-- **Hub:** Sent after the hub says Resend accepted the message.
-- **VOX:** Sent after the gateway's `CompleteAck`. Finishing the local transmit is still Outbox.
-- **Other PTT** (digirig, CM108, rigctl, TNC): Sent when this station's mail burst has finished.
+- **Hub:** Sent after the hub says Resend accepted the message. A rejection is Failed.
+- **Radio-plus, every PTT:** Keying the burst is Outbox `[tx]`. A chunk ack from the gateway is `[gw]` (the gateway has the bytes). Sent is only the gateway's `CompleteAck`, after Resend accepted it. Until then the line stays in the outbox.
+- Missing acks are retried with backoff (8s, then 16s, 32s, …) up to `[rf] max_retries` (at least 3). Then the row is Failed, with the reason: the gateway never acknowledged, or it has the message but it was not accepted.
+- A transmit that does not finish (VOX never keys, or the modem stops answering) uses the same backoff, then Failed with the modem error. The wait grows with the burst so a long message is not cut off at 90 seconds.
 
-A toast timer does not mark Sent.
+A toast timer does not mark Sent. The compose hint and the send confirm both show the estimated airtime. A long message says it is not Sent until the gateway accepts it.
+
+## Log
+
+The station log records `mail keyed`, `mail gateway ack`, `mail at gateway`, `mail accepted`, `mail failed`, and `mail retry`. The gateway records `mail received`, `mail posted … resend`, and `mail rejected`. Check mail with nothing waiting logs `mail check: no new mail` and the Email tab says the same.
 
 ## On the air
 
-Mail frames are `WCRM` text, not chat envelopes. If a frame is wider than the rung, it is sliced as `WCRP` and rebuilt before decode.
+Mail frames are `WCRM` text, not chat envelopes. A message wider than the rung is split into chunks. The gateway acks each chunk. A retry sends only the chunks it has not acked. If a chunk is wider than the rung, it is sliced as `WCRP` and rebuilt before decode.
 
 The rung starts at the preset's `ladder_start` and only steps more robust. On an HF or VOX preset that means it never moves onto QPSK or OFDM. The rung is chosen from the frames that will actually be keyed.
 
@@ -39,7 +44,7 @@ The pin keeps its mode colour. An e beside that logo means mail moved in the las
 
 ## Check mail
 
-Internet and internet-radio pull waiting mail from the hub as themselves. Radio-plus asks the gateway over RF (list, then get). The gateway pulls that station's inbox, and only when the station signed the request. Nothing arrives on RF unless this station asked.
+Internet and internet-radio pull waiting mail from the hub as themselves. Radio-plus asks the gateway over RF (list, then get). The gateway pulls that station's inbox, and only when the station signed the request. Nothing arrives on RF unless this station asked. If the list comes back empty, the tab says `no new mail`. If the gateway does not answer, it says `No reply from the gateway.`
 
 ## Copy-to
 

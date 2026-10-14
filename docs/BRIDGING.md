@@ -54,7 +54,7 @@ Radio-plus (you stay offline)
 
 `radio` and `radio-plus` both post map telemetry when `[telemetry] url` is set, and that post never contains message text. Neither mode sends chat to the hub or the LAN from this computer. The only difference is whether an internet-radio gateway that hears you may forward your messages (and email) to the internet.
 
-You never upload chat from this computer. A gateway that hears a radio-plus frame forwards it to the hub for any destination: a direct message, a closed group, and `#bulletin`. The frame says it may go to the internet. `radio` mode says do not forward, so a gateway keeps that frame on the radio.
+You never upload chat from this computer. A gateway that hears a radio-plus frame forwards it to the hub for any destination: a direct message, a closed group, and `#bulletin`. The frame says it may go to the internet. `radio` mode says do not forward, so a gateway keeps that frame on the radio. A closed group is also relayed on RF, so a member who only hears the gateway still gets it. A copy of that frame coming back from the hub does not cancel that relay, and one member's ACK does not either.
 
 `[gateway] rf_egress` is the other direction. It puts hub traffic on the air. It does not decide the upload.
 
