@@ -20,9 +20,19 @@ declare global {
         nodes?: { callsign: string; mode: string }[],
       ): boolean;
       stationLinkCall(dest: string, knownCalls: string[]): string | null;
-      linkAlpha(ageMs: number, nowMs: number): number;
+      linkAlpha(ageMs: number, nowMs: number, reduceMotion?: boolean): number;
       pinAgeOpacity(ageMs: number): number;
       lastHeardLabel(ageMs: number): string;
+      rememberLink(
+        from: string,
+        to: string,
+        inet: boolean,
+        draw: boolean,
+        mail: boolean,
+        atMs: number,
+      ): void;
+      seedLinksFromEvents(events: unknown[]): void;
+      linkSnapshot(a: string, b: string): { at: number; inet: boolean; mail: boolean } | null;
       LIVE_MS: number;
       HOLD_MS: number;
     };
@@ -406,4 +416,67 @@ test("station pins dim with age and the sidebar lists who is reporting first", a
   await page.locator("#map").screenshot({
     path: "/opt/cursor/artifacts/map-pins-48h.png",
   });
+});
+
+test("a live line is kept when the events cache has not caught up", async ({ page }) => {
+  await page.route("**/api/v1/**", async (route) => {
+    const url = route.request().url();
+    if (url.includes("/api/v1/links")) {
+      await route.fulfill({ json: { links: [], since: 1 } });
+      return;
+    }
+    if (url.includes("/api/v1/nodes") && /[?&]since=/.test(url)) {
+      await route.fulfill({ json: { since: 1, trail: [] } });
+      return;
+    }
+    if (url.includes("/api/v1/nodes")) {
+      await route.fulfill({
+        json: {
+          nodes: [
+            { callsign: "G4AAA", lat: 51.5, lon: -0.12, mode: "radio", band: "40m", last_seen: Math.floor(Date.now() / 1000) },
+            { callsign: "G4BBB", lat: 52.2, lon: 0.12, mode: "radio-plus", band: "2m", last_seen: Math.floor(Date.now() / 1000) },
+          ],
+        },
+      });
+      return;
+    }
+    if (url.includes("/events")) {
+      await route.fulfill({ json: { events: [] } });
+      return;
+    }
+    if (url.includes("/bands")) {
+      await route.fulfill({ json: { bands: [] } });
+      return;
+    }
+    if (url.includes("/hubs")) {
+      await route.fulfill({ json: { hubs: [] } });
+      return;
+    }
+    if (url.includes("/stats")) {
+      await route.fulfill({ json: { forwarded: 0 } });
+      return;
+    }
+    await route.fulfill({ json: {} });
+  });
+
+  await page.goto("/");
+  await expect(page.locator(".map-mark-wrap")).toHaveCount(2, { timeout: 15_000 });
+  const kept = await page.evaluate(() => {
+    const at = Date.now() - 60_000;
+    window.WCR.rememberLink("G4AAA", "G4BBB", false, false, false, at);
+    const before = window.WCR.linkSnapshot("G4AAA", "G4BBB");
+    window.WCR.seedLinksFromEvents([]);
+    const afterEmpty = window.WCR.linkSnapshot("G4AAA", "G4BBB");
+    const hour = 60 * 60 * 1000;
+    const calm = window.WCR.linkAlpha(1_000, 0, true);
+    const faint = window.WCR.linkAlpha(47 * hour, 0, true);
+    const gone = window.WCR.linkAlpha(window.WCR.HOLD_MS + 1, 0, true);
+    return { before, afterEmpty, calm, faint, gone };
+  });
+  expect(kept.before).not.toBeNull();
+  expect(kept.afterEmpty).toEqual(kept.before);
+  expect(kept.calm).toBeCloseTo(0.55, 2);
+  expect(kept.faint).toBeGreaterThan(0.12);
+  expect(kept.faint).toBeLessThan(0.25);
+  expect(kept.gone).toBe(0);
 });
