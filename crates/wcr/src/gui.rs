@@ -4478,15 +4478,15 @@ fn apply_delivery_to(chat: &mut [ChatLine], me: &str, msgid: &str, state: &str, 
             return;
         }
     }
-    if let Some(line) = chat
-        .iter_mut()
-        .rev()
-        .find(|l| !l.sys && l.nick.eq_ignore_ascii_case(me))
-    {
-        if !line.msgid.is_empty() && !msgid.is_empty() && !line.msgid.eq_ignore_ascii_case(msgid) {
-            return;
-        }
-        if line.msgid.is_empty() {
+    // Two sends in flight both start with an empty id. Stamp the latest
+    // unmarked line, and skip a line that already carries a different id so
+    // the two receipts cannot collapse onto one message.
+    if let Some(line) = chat.iter_mut().rev().find(|l| {
+        !l.sys
+            && l.nick.eq_ignore_ascii_case(me)
+            && (l.msgid.is_empty() || (!msgid.is_empty() && l.msgid.eq_ignore_ascii_case(msgid)))
+    }) {
+        if line.msgid.is_empty() && !msgid.is_empty() {
             line.msgid = msgid.to_string();
         }
         apply_line_delivery(line, ticks, next, tries, state);
@@ -4781,6 +4781,22 @@ mod tests {
         assert_eq!(parse_privmsg(net).unwrap().via, "inet");
         let lan = "@+radio/via=lan :M0XYZ PRIVMSG #bulletin :mesh";
         assert_eq!(parse_privmsg(lan).unwrap().via, "lan");
+    }
+
+    #[test]
+    fn two_own_lines_keep_distinct_msgids() {
+        let mut chat = vec![
+            ChatLine::user("M7TJF", "for A", "~RFSIMA"),
+            ChatLine::user("M7TJF", "for C", "~RFSIMC"),
+        ];
+        apply_delivery_to(&mut chat, "M7TJF", "aaaaaaaaaaaaaaaa", "sent", 1);
+        apply_delivery_to(&mut chat, "M7TJF", "bbbbbbbbbbbbbbbb", "sent", 1);
+        assert_eq!(chat[1].msgid, "aaaaaaaaaaaaaaaa");
+        assert_eq!(chat[0].msgid, "bbbbbbbbbbbbbbbb");
+        assert_ne!(chat[0].msgid, chat[1].msgid);
+        apply_delivery_to(&mut chat, "M7TJF", "aaaaaaaaaaaaaaaa", "delivered", 0);
+        assert_eq!(chat[1].ticks, "[ok]");
+        assert_eq!(chat[0].ticks, "[tx]");
     }
 
     #[test]
