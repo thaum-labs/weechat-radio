@@ -73,8 +73,16 @@ pub fn may_rebroadcast(our_call: &str, env: &Envelope, delivery: Option<Delivery
     if env.dest.as_str().eq_ignore_ascii_case(our_call) {
         return false;
     }
-    if env.kind != MsgType::Ack && matches!(delivery, Some(Delivery::Delivered | Delivery::All)) {
-        return false;
+    if env.kind != MsgType::Ack {
+        if matches!(delivery, Some(Delivery::All)) {
+            return false;
+        }
+        // One member ACK is [ok], not done. Keep the RF copy until [all],
+        // or a station that only hears this gateway never sees the line.
+        let closed = env.flags.group() && !crate::slash::is_bulletin(env.dest.as_str());
+        if matches!(delivery, Some(Delivery::Delivered)) && !closed {
+            return false;
+        }
     }
     true
 }
@@ -326,6 +334,23 @@ mod tests {
         assert!(!is_own_origin("M0BBB", &env));
         assert!(!may_rebroadcast("G4AAA", &env, Some(Delivery::Sent)));
         assert!(!may_rebroadcast("G4AAA", &env, Some(Delivery::Relayed)));
+    }
+
+    #[test]
+    fn closed_group_still_relays_after_one_member_ack() {
+        let mut env = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::from_raw("QARP"),
+            1,
+            b"group".to_vec(),
+            3,
+            Flags::new().with(crate::proto::FLAG_GROUP),
+        )
+        .unwrap();
+        assert!(may_rebroadcast("M0BBB", &env, Some(Delivery::Delivered)));
+        assert!(!may_rebroadcast("M0BBB", &env, Some(Delivery::All)));
+        env.dest = Callsign::from_raw("BULLETIN");
+        assert!(!may_rebroadcast("M0BBB", &env, Some(Delivery::Delivered)));
     }
 
     #[test]

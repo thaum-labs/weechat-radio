@@ -49,9 +49,10 @@ The status bar at the bottom shows your callsign and mode. After you send, a mar
 
 - `[..]` waiting to go out
 - `[tx]` sent
-- `[rl]` you heard your own frame come back (a speaker echo, or someone relaying it). Not a receipt. A noisy path can skip it.
+- `[rl]` you heard your own frame on the radio again (a speaker echo, or someone relaying it). Not a receipt. A noisy path can skip it. In `radio` mode the frame is marked to stay off the internet, so `[rl]` is as far as it goes.
+- `[gw]` a gateway accepted the frame onto the hub. Not an ACK. The line can still move on to `[ok]` or `[all]`.
 - `[ok]` delivered — they sent an ACK. A direct message and `#bulletin` stop here. `#bulletin` is public, so one ACK is enough and the mark does not go on to `[all]`.
-- `[all]` every member of a closed group ACKed. A `#bulletin` post cannot reach this.
+- `[all]` every member of a closed group ACKed. The first ACK paints `[ok]` and retries continue until every stored member has ACKed, or the retries run out. A `#bulletin` post cannot reach this.
 - `[no]` the send was refused (for example the hub said the callsign is already claimed), or the last copy waited out its interval with no ACK
 - `[xN]` how many times the line was keyed. `[x1]` is the first send. The default is 3 retries, so the last copy is `[x4]`. `[no]` waits one more full interval after that copy.
 

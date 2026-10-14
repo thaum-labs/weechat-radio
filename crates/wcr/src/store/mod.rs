@@ -16,6 +16,9 @@ pub enum Delivery {
     Queued,
     Sent,
     Relayed,
+    /// A gateway accepted the frame onto the hub. Display rank only; the
+    /// retry rows stay `sent` or `relayed` until an ACK.
+    Gateway,
     /// Retries are used up. Terminal, except a real ACK may move it to
     /// [`Delivery::Delivered`].
     Failed,
@@ -29,6 +32,7 @@ impl Delivery {
             Self::Queued => "queued",
             Self::Sent => "sent",
             Self::Relayed => "relayed",
+            Self::Gateway => "gateway",
             Self::Failed => "failed",
             Self::Delivered => "delivered",
             Self::All => "all",
@@ -39,6 +43,7 @@ impl Delivery {
         match s {
             "sent" => Self::Sent,
             "relayed" => Self::Relayed,
+            "gateway" => Self::Gateway,
             "failed" => Self::Failed,
             "delivered" => Self::Delivered,
             "all" => Self::All,
@@ -51,6 +56,7 @@ impl Delivery {
             Self::Queued => "[..]",
             Self::Sent => "[tx]",
             Self::Relayed => "[rl]",
+            Self::Gateway => "[gw]",
             Self::Failed => "[no]",
             Self::Delivered => "[ok]",
             Self::All => "[all]",
@@ -63,6 +69,7 @@ impl Delivery {
                 Self::Queued => "·",
                 Self::Sent => "[tx]",
                 Self::Relayed => "[rl]",
+                Self::Gateway => "[gw]",
                 Self::Failed => "[no]",
                 Self::Delivered => "[ok]",
                 Self::All => "[all]",
@@ -72,6 +79,7 @@ impl Delivery {
                 Self::Queued => "-",
                 Self::Sent => "v",
                 Self::Relayed => "vv",
+                Self::Gateway => "[gw]",
                 Self::Failed => "[no]",
                 Self::Delivered => "VV",
                 Self::All => "VVV",
@@ -88,11 +96,14 @@ impl Delivery {
             Self::Queued => 0,
             Self::Sent => 1,
             Self::Relayed => 2,
+            // Above relayed, so an RF echo cannot paint [rl] over [gw].
+            // Below failed, so giving up can still replace [gw].
+            Self::Gateway => 3,
             // Above relayed, so an echo cannot walk a failure back to [rl].
             // Below delivered, so a real ACK can still move failed -> delivered.
-            Self::Failed => 3,
-            Self::Delivered => 4,
-            Self::All => 5,
+            Self::Failed => 4,
+            Self::Delivered => 5,
+            Self::All => 6,
         }
     }
 
@@ -577,7 +588,7 @@ impl Store {
              WHERE hold_until > 0 AND suppressed = 0
                AND (
                     (upper(origin) != upper(?1) AND hops_left > 0)
-                 OR (upper(origin) = upper(?1) AND delivery IN ('sent','relayed') AND retries <= ?2)
+                 OR (upper(origin) = upper(?1) AND delivery IN ('sent','relayed','delivered') AND retries <= ?2)
                )
              ORDER BY hold_until ASC
              LIMIT 1",
@@ -693,7 +704,7 @@ impl Store {
             "SELECT msg_id, kind, origin, dest, flags, hops_left, ts, seq, body, signature, rx_time, delivery, retries
              FROM messages
              WHERE origin = ?1
-               AND delivery IN ('sent', 'relayed')
+               AND delivery IN ('sent', 'relayed', 'delivered')
                AND hold_until > 0 AND hold_until <= ?2
                AND retries < ?3",
         )?;
@@ -731,7 +742,7 @@ impl Store {
             "SELECT msg_id, kind, origin, dest, flags, hops_left, ts, seq, body, signature, rx_time, delivery
              FROM messages
              WHERE upper(origin) = upper(?1)
-               AND delivery IN ('sent', 'relayed')
+               AND delivery IN ('sent', 'relayed', 'delivered')
                AND hold_until > 0 AND hold_until <= ?2
                AND retries >= ?3",
         )?;
@@ -1582,8 +1593,11 @@ mod tests {
         // Hearing our own frame paints [rl] but the ACK is still outstanding.
         s.set_delivery(&env.msg_id, Delivery::Relayed).unwrap();
         assert_eq!(s.retry_due(10, "G4ABC", 3).unwrap().len(), 1);
+        // [ok] with the hold still set stays due. A closed group is waiting
+        // on the other members. A direct message clears the hold in the ACK
+        // handler, and the ARQ loop drops it via still_awaiting_ack.
         s.set_delivery(&env.msg_id, Delivery::Delivered).unwrap();
-        assert!(s.retry_due(10, "G4ABC", 3).unwrap().is_empty());
+        assert_eq!(s.retry_due(10, "G4ABC", 3).unwrap().len(), 1);
         s.set_delivery(&env.msg_id, Delivery::Sent).unwrap();
         assert!(s.advance_delivery(&env.msg_id, Delivery::Failed).unwrap());
         assert!(s.retry_due(100, "G4ABC", 3).unwrap().is_empty());

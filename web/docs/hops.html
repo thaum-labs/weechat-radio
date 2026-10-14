@@ -475,12 +475,12 @@
       </figure>
       <ol class="steps">
         <li>Lisbon transmits on 14.070 with 3 hops left, and sends the same line to the hub.</li>
-        <li>Barcelona hears Lisbon on the air and sends it on with 2 hops left. Barcelona is radio only, so Barcelona does not talk to the hub.</li>
+        <li>Barcelona hears Lisbon on the air and sends it on with 2 hops left. Barcelona is in <code>radio</code> mode, so Barcelona does not send the chat to the hub.</li>
         <li>Munich hears Barcelona and sends it on with 1 hop left. That transmission would reach Bucharest, about 1,200 km. Bucharest's radio is off, so it is not heard.</li>
         <li>Bucharest reads the line from the hub. An internet station does not transmit, so Bucharest does not send it on.</li>
       </ol>
       <p>Barcelona and Munich have the copy from the air. Bucharest has the copy from the hub. Lisbon and Bucharest still do not hear each other on 20m.</p>
-      <p>In <code>radio</code> mode the line is marked to stay off the internet. The air hops would run the same way and stop in the same place, and the hub would not have a copy for Bucharest.</p>
+      <p>In <code>radio</code> mode the line is marked to stay off the internet. The air hops would run the same way and stop in the same place, and the hub would not have a copy for Bucharest. <code>radio-plus</code> is the same on this computer: Lisbon would still key the line and would still not open the hub. The only difference is the flag on the frame. An internet-radio gateway that hears a radio-plus frame may forward it (and email) to the internet. Both modes still post map data when <code>[telemetry] url</code> is set: callsign, grid, and tx/rx ids, never message text.</p>
 
       <h2>What a hop is not</h2>
       <p>A hop stays on the frequency you are already using. It is not a voice repeater you have to set up, and it does not move a message from 2m to 20m. On one dial, an internet-radio station can also hand the same line to the hub when the other station has not been heard on the air. Crossing from one band to another still needs a gateway and the hub.</p>
