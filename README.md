@@ -68,7 +68,19 @@ Open **WeeChat Radio** from the Start menu. First launch is setup; then you chat
 wcr gui
 ```
 
-How you know it worked: the status bar shows your callsign. Send a line in `#bulletin`. Marks on your own lines: `[..]` waiting, `[tx]` sent, `[rl]` you heard your own frame come back (echo or a relay, not a receipt), `[ok]` delivered, `[all]` every station in a group.
+How you know it worked: the status bar shows your callsign. Send a line in `#bulletin`. Marks on your own lines:
+
+- `[..]` waiting
+- `[tx]` sent
+- `[rl]` you heard your own frame come back (a speaker echo or a relay, not a receipt). A noisy path can skip this.
+- `[ok]` delivered. A direct message stops here. `#bulletin` stops here too: it is public and has no member list, so it never reaches `[all]`.
+- `[all]` every member of a closed group has acknowledged. Only a closed group can show this.
+- `[no]` the hub refused the send, or the retries are used up
+- `[xN]` how many times this line was keyed. `[x1]` is the first send. With the default of 3 retries the last copy is `[x4]` (`retry-3/3`), then `[no]` if nobody acknowledged.
+
+Routine retry waits are 45s, then 90s, then 180s. Each wait is multiplied by a random factor from 0.75 to 1.25 when `retry_jitter` is on (the default), so a run can look like about 40s, then 100s, then 210s. Emergency waits are 8s, 16s, 32s with the same jitter. Priority waits are 20s, 40s, 80s.
+
+A closed group is any channel except `#bulletin`. `/join #net` creates it. `MODE #net` replies with `+i`. `/invite CALL` adds that station and keys a direct notice to them; the reply says whether that notice was sent. They are notified only if that direct message arrives. `/radio status` includes `relayed` (frames this station forwarded) and `groups` (the `group_prios` list: each closed group's default priority, `routine`, `priority`, or `emergency`). `#bulletin` is always routine and is not in that list. Set a default with `/prio emergency` on the channel.
 
 Radio guides: [VR-N76 / UV-PRO over Bluetooth](https://weechatradio.com/guides/vr-n76.html) · [handheld + Digirig](https://weechatradio.com/guides/handheld.html) · [VOX cable](https://weechatradio.com/guides/vox.html) · [HF + CAT](https://weechatradio.com/guides/hf.html)
 

@@ -8,7 +8,7 @@ This hub build (17 Sep 2026, commit `ce4a108`) speaks v2. Operator guide: https:
 
 ## Version 2 header (variable, typically 16–22 bytes before body)
 
-`msg_id` is not on the wire. The receiver recomputes `BLAKE3(origin, dest, seq, body)` (uncompressed body).
+`msg_id` is not on the wire. The receiver recomputes `BLAKE3(origin || dest || seq || body)` (uncompressed body), first 8 bytes. The timestamp is not part of the id. Two messages in the same second get different ids when the destination, the text, or the per-origin `seq` differs. `seq` is one counter per callsign and advances on every send, including two at once.
 
 | Field | Size | Notes |
 |-------|------|-------|
@@ -86,7 +86,9 @@ Diagram: https://weechatradio.com/docs/protocol.html#delivery-marks
 
 Type ACK. This is what paints `[ok]` on the sender. Body is the 8-byte `msg_id` of the original, plus an optional 9th byte: receiver SNR in dB as a signed integer (`-32`…`31`). Relayed with TTL.
 
-Unacked messages originated by this station are retransmitted up to `rf.max_retries` times (default 3), stepping the modem73 mode down the robustness ladder each try. That includes a line sitting on `[rl]`: hearing your own frame is not an ACK, so the retry timer keeps running until an ACK arrives or the retry count is used up. When the count is used up the line is marked `[no]`. A later ACK can still move it to `[ok]`. Retry hold times are jittered ±25% (`[rf] retry_jitter`) so stations that collided do not retry in lockstep. Once an ACK is in, the hold is cleared and a copy that was already keying does not schedule the next try.
+Unacked messages originated by this station are retransmitted up to `rf.max_retries` times (default 3), stepping the modem73 mode down the robustness ladder each try. That includes a line sitting on `[rl]`: hearing your own frame is not an ACK, so the retry timer keeps running until an ACK arrives or the retry count is used up. When the count is used up the line is marked `[no]`. A later ACK can still move it to `[ok]`. `[xN]` is how many times that line was keyed. The first send is `[x1]`. With `max_retries` 3 the last copy is `[x4]` (the `retry-3/3` transmission) and then `[no]`.
+
+Retry hold before each extra copy, counted from when that copy was keyed: routine 45s, then 90s, then 180s; priority 20s, 40s, 80s; emergency 8s, 16s, 32s. Each wait is multiplied by a random factor from 0.75 to 1.25 when `[rf] retry_jitter` is on, so the routine gaps can look like about 34–56s, 68–113s, and 135–225s rather than the bare 45/90/180. The jitter keeps stations that collided from retrying in lockstep. Once an ACK is in, the hold is cleared and a copy that was already keying does not schedule the next try.
 
 Group ACKs wait a random 0–`ack_dither_ms` (default 800 ms) before keying so every member of a net does not ACK at once. Direct (point-to-point) ACKs are not dithered.
 
