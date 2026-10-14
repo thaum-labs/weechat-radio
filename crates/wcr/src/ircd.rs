@@ -641,8 +641,12 @@ impl IrcServer {
         let ch = normalize_irc_channel(channel);
         let body = nicks.join(" ");
         self.send_numeric(id, 353, &format!("= {ch} :{body}")).await;
-        self.send_numeric(id, 366, &format!("{ch} :End of /NAMES"))
-            .await;
+        self.send_numeric(
+            id,
+            366,
+            &format!("{ch} :End of /NAMES. Members stored on this station, not the whole chain."),
+        )
+        .await;
     }
 
     pub async fn tagmsg_delivery(&self, msgid: &str, state: &str) {

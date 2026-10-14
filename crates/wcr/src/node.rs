@@ -78,6 +78,9 @@ struct Runtime {
     /// When we last relayed `msg_id`. Same gap, so an echo does not loop and
     /// a sender retry still gets forwarded if the receipt never came back.
     relay_again: Arc<Mutex<HashMap<MsgId, u32>>>,
+    /// Ids we have heard from a station further along, or an ACK from
+    /// someone else. A sender retry is not relayed again after that.
+    downstream_heard: Arc<Mutex<HashSet<MsgId>>>,
     /// Message ids already counted in `relayed_unique` this process.
     relayed_ids: Arc<Mutex<HashSet<MsgId>>>,
     /// Frames already handed to the hub socket or the pending queue.
@@ -413,6 +416,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         mail,
         ack_again: Arc::new(Mutex::new(HashMap::new())),
         relay_again: Arc::new(Mutex::new(HashMap::new())),
+        downstream_heard: Arc::new(Mutex::new(HashSet::new())),
         relayed_ids: Arc::new(Mutex::new(HashSet::new())),
         hub_offered: Arc::new(Mutex::new(HashSet::new())),
         hub_marked: Arc::new(Mutex::new(HashSet::new())),
@@ -591,11 +595,11 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         if m.delivery == Delivery::Delivered
                             && group_still_waiting(&rt_r.store, &m.env)
                         {
-                            if rt_r.store.conclude_group(&m.env.msg_id).unwrap_or(false) {
-                                rt_r.irc
-                                    .tagmsg_delivery(&m.env.msg_id.hex(), "failed")
-                                    .await;
-                            }
+                            // Some members confirmed. [no] would say the line
+                            // failed after it had already been acknowledged.
+                            rt_r.irc
+                                .tagmsg_delivery(&m.env.msg_id.hex(), "waiting")
+                                .await;
                             continue;
                         }
                         if rt_r
@@ -932,6 +936,7 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
                 let us = rt.cfg.lock().callsign.clone();
                 let _ = rt.store.group_create(&name, &[us.clone(), target.clone()]);
                 publish_hub_membership(rt).await;
+                publish_member_roster(rt, &name).await;
                 let notice = crate::slash::invite_notice(&channel, &us);
                 rt.irc.begin_origin(ev.client_id, &target);
                 let sent = send_chat(rt, &target, &notice).await;
@@ -1773,6 +1778,9 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                 let leave_meta = env.kind == MsgType::Status
                     && env.flags.group()
                     && parse_chan_meta_leave(&text).is_some();
+                let members_meta = env.kind == MsgType::Status
+                    && env.flags.group()
+                    && parse_chan_meta_members(&text).is_some();
                 let closed = env.flags.group() && !dest_is_bulletin(env.dest.as_str());
                 let member = rt
                     .store
@@ -1784,6 +1792,10 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                     rt.irc
                         .notice_all(&format!("{} left #{name}", env.origin))
                         .await;
+                } else if members_meta {
+                    if let Some(members) = parse_chan_meta_members(&text) {
+                        let _ = rt.store.group_create(&name, &members);
+                    }
                 } else if mute_closed {
                     // Closed room we already left: relay only, do not show or ACK.
                 } else if env.kind == MsgType::Status {
@@ -1874,6 +1886,13 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
         }
         MsgType::Ack => {
             if let Some(id) = env.acked_id() {
+                if !env
+                    .origin
+                    .as_str()
+                    .eq_ignore_ascii_case(&rt.engine.our_call)
+                {
+                    rt.downstream_heard.lock().insert(id);
+                }
                 let already = matches!(acked_prior, Some(Delivery::Delivered | Delivery::All));
                 if !already
                     && rt
@@ -1967,6 +1986,11 @@ async fn acknowledge(rt: &Runtime, env: &Envelope, snr: Option<f32>) -> Result<(
         seq,
         snr,
     );
+    // A routine ACK starts at 3 hops and dies before it walks back along a
+    // five-station line. Groups use the same 6 hops as the message.
+    if env.flags.group() {
+        ack.hops_left = ack.hops_left.max(BULLETIN_TTL);
+    }
     // Mode flags (including THIRD_PARTY on ~guest) must be set before the
     // signature. dispatch() stamps them again; a later mutation makes the hub
     // drop the ACK as unverified.
@@ -2026,7 +2050,6 @@ async fn maybe_answer_retry(rt: &Runtime, env: &Envelope, snr: Option<f32>) {
         || (env.flags.group() && (!closed || member));
     if for_us && rt.ack_due(&env.msg_id, now) {
         let _ = acknowledge(rt, env, snr).await;
-        return;
     }
     if closed && !member {
         return;
@@ -2034,6 +2057,16 @@ async fn maybe_answer_retry(rt: &Runtime, env: &Envelope, snr: Option<f32>) {
     let Ok(Some(stored)) = rt.store.get(&env.msg_id) else {
         return;
     };
+    if relay::heard_further(env.hops_left, stored.env.hops_left) {
+        rt.downstream_heard.lock().insert(env.msg_id);
+        return;
+    }
+    if !relay::origin_retry(env.hops_left, stored.env.hops_left) {
+        return;
+    }
+    if rt.downstream_heard.lock().contains(&env.msg_id) {
+        return;
+    }
     if relay::may_rebroadcast(&rt.engine.our_call, &stored.env, Some(stored.delivery))
         && rt.relay_due(&env.msg_id, now)
     {
@@ -2281,6 +2314,50 @@ fn forget_channel_locally(store: &Store, name: &str, our_call: &str) {
     let _ = store.group_forget(name);
 }
 
+fn chan_meta_members_body(members: &[String]) -> String {
+    let mut list: Vec<String> = members
+        .iter()
+        .map(|m| m.trim().to_ascii_uppercase())
+        .filter(|m| !m.is_empty())
+        .collect();
+    list.sort();
+    list.dedup();
+    format!("WCRMETA members={}", list.join(","))
+}
+
+fn parse_chan_meta_members(body: &str) -> Option<Vec<String>> {
+    let rest = body.strip_prefix("WCRMETA ")?;
+    for part in rest.split_whitespace() {
+        if let Some(v) = part.strip_prefix("members=") {
+            let list: Vec<String> = v
+                .split(',')
+                .map(|s| s.trim().to_ascii_uppercase())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if list.is_empty() {
+                return None;
+            }
+            return Some(list);
+        }
+    }
+    None
+}
+
+async fn publish_member_roster(rt: &Runtime, name: &str) {
+    let members = rt.store.group_members(name).unwrap_or_default();
+    if members.len() < 2 {
+        return;
+    }
+    let _ = send_group_status(
+        rt,
+        name,
+        chan_meta_members_body(&members),
+        false,
+        BULLETIN_TTL,
+    )
+    .await;
+}
+
 fn chan_meta_leave_body(callsign: &str) -> String {
     format!("WCRMETA leave={}", callsign.trim().to_ascii_uppercase())
 }
@@ -2298,7 +2375,13 @@ fn parse_chan_meta_leave(body: &str) -> Option<String> {
     None
 }
 
-async fn send_group_status(rt: &Runtime, name: &str, body: String, force_inet: bool) -> Result<()> {
+async fn send_group_status(
+    rt: &Runtime,
+    name: &str,
+    body: String,
+    force_inet: bool,
+    hops: u8,
+) -> Result<()> {
     let cfg_g = rt.cfg.lock().clone();
     let origin = Callsign::parse(&cfg_g.callsign)?;
     let dest = Callsign::from_raw(crate::slash::channel_dest(name));
@@ -2306,14 +2389,7 @@ async fn send_group_status(rt: &Runtime, name: &str, body: String, force_inet: b
     let mut flags = Flags::new().with(FLAG_GROUP);
     apply_mode_flags(&mut flags, cfg_g.mode, origin.is_guest());
     flags.set_priority(Priority::Priority);
-    let mut env = Envelope::new_msg(
-        origin,
-        dest,
-        seq,
-        body.into_bytes(),
-        Priority::Priority.default_ttl(),
-        flags,
-    )?;
+    let mut env = Envelope::new_msg(origin, dest, seq, body.into_bytes(), hops.max(1), flags)?;
     env.kind = MsgType::Status;
     if cfg_g.mode.uses_internet() || force_inet {
         let _ = rt.keys.sign_envelope(&mut env);
@@ -2333,7 +2409,14 @@ async fn leave_channel(rt: &Runtime, channel: &str) -> String {
         return "usage: /part".into();
     }
     let us = rt.cfg.lock().callsign.clone();
-    let _ = send_group_status(rt, &name, chan_meta_leave_body(&us), true).await;
+    let _ = send_group_status(
+        rt,
+        &name,
+        chan_meta_leave_body(&us),
+        true,
+        Priority::Priority.default_ttl(),
+    )
+    .await;
     forget_channel_locally(&rt.store, &name, &us);
     format!("left #{name}")
 }
@@ -2789,6 +2872,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                     }
                     let _ = store.group_create(&name, &members);
                     publish_hub_membership(rt).await;
+                    publish_member_roster(rt, &name).await;
                     format!("group {name} created")
                 }
                 "invite" | "add" => {
@@ -2799,6 +2883,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                     }
                     let _ = store.group_create(&name, &members);
                     publish_hub_membership(rt).await;
+                    publish_member_roster(rt, &name).await;
                     format!("invited {} to {name}", members.join(", "))
                 }
                 "list" => store.group_list().unwrap_or_default().join(", "),
@@ -3303,6 +3388,18 @@ mod tests {
             parse_chan_meta_leave("WCRMETA leave=M7TJF").as_deref(),
             Some("M7TJF")
         );
+        assert_eq!(
+            parse_chan_meta_members("WCRMETA members=M7TJF,TF101,G4ABC").as_deref(),
+            Some(
+                [
+                    "M7TJF".to_string(),
+                    "TF101".to_string(),
+                    "G4ABC".to_string()
+                ]
+                .as_slice()
+            )
+        );
+        assert!(parse_chan_meta_members("WCRMETA leave=M7TJF").is_none());
         apply_remote_leave(&store, "compatriots", "M7TJF");
         assert!(!store.is_group_member("compatriots", "M7TJF").unwrap());
         assert!(store.is_group_member("compatriots", "TF101").unwrap());

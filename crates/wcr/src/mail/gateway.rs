@@ -60,6 +60,16 @@ pub fn mail_attempt_cap(max_retries: u32) -> u32 {
     }
 }
 
+/// `try 1/4` .. `try 4/4` when the cap is 3: the first key plus that many retries.
+/// `retries` is the 0-based count stored on the row at key time.
+pub fn mail_try_label(retries: u32, cap: u32) -> String {
+    format!(
+        "try {}/{}",
+        retries.saturating_add(1),
+        cap.saturating_add(1)
+    )
+}
+
 /// 8s, 16s, 32s, 64s, then 128s. Added after the keyed burst has finished.
 pub fn ack_backoff_secs(retries: u32) -> u64 {
     8u64.saturating_mul(1u64 << retries.min(4))
@@ -182,6 +192,8 @@ mod tests {
         );
         assert_eq!(radio_down_text("Chat is still using the radio."), None);
         assert_eq!(mail_attempt_cap(0), 3);
+        assert_eq!(mail_try_label(0, 3), "try 1/4");
+        assert_eq!(mail_try_label(3, 3), "try 4/4");
         assert_eq!(check_notice(0), "no new mail");
         assert_eq!(check_notice(2), "");
         assert!(failure_text("ok").is_none());
