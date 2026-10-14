@@ -381,28 +381,42 @@ def connected_cb(_data, _signal, _signal_data):
     return weechat.WEECHAT_RC_OK
 
 
+def _tag_value(line, key):
+    token = key + "="
+    if token not in line:
+        return ""
+    return line.split(token, 1)[1].split(";")[0].split(" ")[0].strip()
+
+
+def _buffer_for_target(target):
+    target = (target or "").strip()
+    if not target or target == "*":
+        return ""
+    return weechat.buffer_search("irc", "radio.%s" % target) or ""
+
+
 def tagmsg_cb(data, signal, signal_data):
     line = signal_data or ""
     if "radio/delivery=" not in line:
         return weechat.WEECHAT_RC_OK
-    state = "sent"
-    try:
-        state = line.split("radio/delivery=")[1].split(";")[0].split(" ")[0]
-    except Exception:
-        pass
-    tick = TICKS.get(state, "")
+    state = _tag_value(line, "+radio/delivery") or _tag_value(line, "radio/delivery") or "sent"
+    msgid = _tag_value(line, "+radio/msgid") or _tag_value(line, "msgid")
+    tries_n = _tag_value(line, "+radio/tries") or _tag_value(line, "radio/tries")
+    target = ""
+    if " TAGMSG " in line:
+        target = line.split(" TAGMSG ", 1)[1].strip().split(" ")[0]
+    buf = _buffer_for_target(target)
+    if not buf:
+        return weechat.WEECHAT_RC_OK
+    tick = "[tx]" if state.startswith("retry") else TICKS.get(state, "")
     tries = ""
-    if "radio/tries=" in line:
-        try:
-            n = line.split("radio/tries=")[1].split(";")[0].split(" ")[0]
-            if n.isdigit() and int(n) > 0:
-                tries = " x%s" % n
-        except Exception:
-            pass
+    if tries_n.isdigit() and int(tries_n) > 0:
+        tries = " x%s" % tries_n
+    label = (tick or state) + tries
+    extra = (" " + msgid) if msgid else ""
     weechat.prnt(
-        "",
-        "%s%s delivery %s"
-        % (weechat.prefix("network"), _col(ACCENT), tick + " " + state + tries),
+        buf,
+        "%s%s %s%s" % (weechat.prefix("network"), _col(ACCENT), label, extra),
     )
     return weechat.WEECHAT_RC_OK
 

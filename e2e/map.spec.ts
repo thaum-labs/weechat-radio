@@ -208,3 +208,32 @@ test("internet-radio tower pin shows the dial frequency", async ({ page }, testI
     path: testInfo.outputPath("map-tower-pin.png"),
   });
 });
+
+test("radio and radio-plus contacts draw the RF line", async ({ page }) => {
+  await page.goto("/");
+  const style = await page.evaluate(() => {
+    const nodes = [
+      { callsign: "RFSIMA", mode: "radio" },
+      { callsign: "RFSIMB", mode: "internet" },
+      { callsign: "RFSIMC", mode: "radio-plus" },
+      { callsign: "RFSIMD", mode: "internet-radio" },
+    ];
+    const inet = window.WCR.linkIsInet;
+    return {
+      radioTx: inet({ kind: "tx", origin: "RFSIMA", dest: "RFSIMB" }, nodes),
+      inetTx: inet({ kind: "tx", origin: "RFSIMB", dest: "RFSIMA" }, nodes),
+      plusRx: inet({ kind: "rx", origin: "RFSIMC", dest: "RFSIMA" }, nodes),
+      relay: inet({ kind: "relay", origin: "RFSIMB", dest: "RFSIMA" }, nodes),
+      pathRf: inet({ kind: "tx", origin: "RFSIMB", dest: "RFSIMA", path: "rf" }, nodes),
+      pathInet: inet({ kind: "tx", origin: "RFSIMA", dest: "RFSIMB", path: "inet" }, nodes),
+      gateway: inet({ kind: "tx", origin: "RFSIMD", dest: "RFSIMA" }, nodes),
+    };
+  });
+  expect(style.radioTx).toBe(false);
+  expect(style.inetTx).toBe(true);
+  expect(style.plusRx).toBe(false);
+  expect(style.relay).toBe(false);
+  expect(style.pathRf).toBe(false);
+  expect(style.pathInet).toBe(true);
+  expect(style.gateway).toBe(true);
+});

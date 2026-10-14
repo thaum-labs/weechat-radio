@@ -434,13 +434,14 @@ pub fn is_hub_broadcast(dest: &str) -> bool {
 }
 
 /// Human + wire body for a channel invite (also sent as a 1:1 PRIVMSG).
-pub fn invite_notice(channel: &str, nick: &str) -> String {
+/// `inviter` is the station sending the invite, not the station being invited.
+pub fn invite_notice(channel: &str, inviter: &str) -> String {
     let ch = normalize_channel(channel);
-    let nick = nick.trim();
-    if nick.is_empty() {
+    let inviter = inviter.trim();
+    if inviter.is_empty() {
         format!("You are invited to {ch} on WeeChat Radio. Join that channel to talk.")
     } else {
-        format!("You are invited to {ch} ({nick}) on WeeChat Radio. Join that channel to talk.")
+        format!("You are invited to {ch} ({inviter}) on WeeChat Radio. Join that channel to talk.")
     }
 }
 

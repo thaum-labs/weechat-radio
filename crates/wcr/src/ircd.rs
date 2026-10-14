@@ -39,6 +39,9 @@ pub enum IrcEventKind {
         target: String,
         channel: String,
     },
+    Names {
+        channel: String,
+    },
     Nick {
         nick: String,
     },
@@ -82,6 +85,13 @@ struct Inner {
     next_id: u64,
     clients: HashMap<u64, Client>,
     server_name: String,
+    /// Client currently inside `send_chat`, so the `[tx]` mark can be scoped
+    /// before the handler returns.
+    origin_client: Option<u64>,
+    origin_target: String,
+    /// msgid → (client that sent it, IRC target of that send).
+    outbound: HashMap<String, (u64, String)>,
+    outbound_order: VecDeque<String>,
 }
 
 const OFFERED_CAPS: &[&str] = &[
@@ -100,6 +110,10 @@ impl IrcServer {
                 next_id: 1,
                 clients: HashMap::new(),
                 server_name: "wcr.local".into(),
+                origin_client: None,
+                origin_target: String::new(),
+                outbound: HashMap::new(),
+                outbound_order: VecDeque::new(),
             })),
             events,
         }
@@ -264,9 +278,6 @@ impl IrcServer {
                         self.send_raw(id, &format!(":{nick} JOIN {ch}")).await;
                         self.send_numeric(id, 332, &format!("{ch} :WeeChat Radio"))
                             .await;
-                        self.send_numeric(id, 353, &format!("= {ch} :{nick}")).await;
-                        self.send_numeric(id, 366, &format!("{ch} :End of /NAMES"))
-                            .await;
                         let _ = self
                             .events
                             .send(IrcEvent {
@@ -368,8 +379,15 @@ impl IrcServer {
             "NAMES" => {
                 if let Some(ch) = parts.get(1) {
                     let nick = self.nick(id);
-                    self.send_numeric(id, 353, &format!("= {ch} :{nick}")).await;
-                    self.send_numeric(id, 366, &format!("{ch} :End of /NAMES"))
+                    let _ = self
+                        .events
+                        .send(IrcEvent {
+                            client_id: id,
+                            nick,
+                            kind: IrcEventKind::Names {
+                                channel: ch.clone(),
+                            },
+                        })
                         .await;
                 }
             }
@@ -587,35 +605,89 @@ impl IrcServer {
         }
     }
 
+    /// Remember which client is inside a send, so the mark can name that client
+    /// and the channel or nick the line was addressed to.
+    pub fn begin_origin(&self, client_id: u64, target: &str) {
+        let mut g = self.inner.lock();
+        g.origin_client = Some(client_id);
+        g.origin_target = normalize_irc_channel(target);
+    }
+
+    pub fn end_origin(&self) {
+        let mut g = self.inner.lock();
+        g.origin_client = None;
+        g.origin_target.clear();
+    }
+
+    pub async fn reply_names(&self, id: u64, channel: &str, nicks: &[String]) {
+        let ch = normalize_irc_channel(channel);
+        let body = nicks.join(" ");
+        self.send_numeric(id, 353, &format!("= {ch} :{body}")).await;
+        self.send_numeric(id, 366, &format!("{ch} :End of /NAMES"))
+            .await;
+    }
+
     pub async fn tagmsg_delivery(&self, msgid: &str, state: &str) {
         self.tagmsg_progress(msgid, state, None).await;
     }
 
     pub async fn tagmsg_progress(&self, msgid: &str, state: &str, tries: Option<u32>) {
-        let mut tags = format!("+radio/delivery={state};+radio/msgid={msgid}");
+        let Some((id, target)) = self.bind_delivery(msgid) else {
+            return;
+        };
+        let mut tags = format!("msgid={msgid};+radio/delivery={state};+radio/msgid={msgid}");
         if let Some(n) = tries.filter(|n| *n > 0) {
             tags.push_str(&format!(";+radio/tries={n}"));
         }
-        let line = format!("@{tags} TAGMSG *");
-        let notice = if let Some(n) = tries.filter(|n| *n > 0) {
-            format!(":wcr.local NOTICE * :[{state} x{n}] {msgid}")
-        } else {
-            format!(":wcr.local NOTICE * :[{state}] {msgid}")
-        };
-        let ids: Vec<(u64, bool)> = {
+        let line = format!("@{tags} TAGMSG {target}");
+        let (has_tags, nick) = {
             let g = self.inner.lock();
-            g.clients
-                .values()
-                .map(|c| (c.id, c.caps.contains("message-tags")))
-                .collect()
-        };
-        for (id, tags) in ids {
-            if tags {
-                self.send_raw(id, &line).await;
-            } else {
-                self.send_raw(id, &notice).await;
+            match g.clients.get(&id) {
+                Some(c) => (c.caps.contains("message-tags"), c.nick.clone()),
+                None => return,
             }
+        };
+        if has_tags {
+            self.send_raw(id, &line).await;
+        } else if !nick.is_empty() {
+            let notice = if let Some(n) = tries.filter(|n| *n > 0) {
+                format!(":wcr.local NOTICE {nick} :[{state} x{n}] {msgid}")
+            } else {
+                format!(":wcr.local NOTICE {nick} :[{state}] {msgid}")
+            };
+            self.send_raw(id, &notice).await;
         }
+    }
+
+    /// Scope a delivery mark to the client that sent `msgid`.
+    /// Returns nothing when this station did not originate the line.
+    fn bind_delivery(&self, msgid: &str) -> Option<(u64, String)> {
+        if msgid.is_empty() {
+            return None;
+        }
+        let mut g = self.inner.lock();
+        if let Some(id) = g.origin_client {
+            let target = if g.origin_target.is_empty() {
+                g.clients
+                    .get(&id)
+                    .map(|c| c.nick.clone())
+                    .unwrap_or_default()
+            } else {
+                g.origin_target.clone()
+            };
+            if target.is_empty() {
+                return None;
+            }
+            g.outbound.insert(msgid.to_string(), (id, target.clone()));
+            g.outbound_order.push_back(msgid.to_string());
+            while g.outbound_order.len() > DELIVERED_MSGID_CAP {
+                if let Some(old) = g.outbound_order.pop_front() {
+                    g.outbound.remove(&old);
+                }
+            }
+            return Some((id, target));
+        }
+        g.outbound.get(msgid).cloned()
     }
 
     pub async fn replay_history(
@@ -705,7 +777,8 @@ impl IrcServer {
             "/mode #chan — 324 reply. +i means a closed group.",
             "/msg CALL text — direct message.",
             "/radio help — mode, preset, status, group, prio.",
-            "Marks: [tx] sent, [rl] heard own frame, [ok] delivered, [all] closed group, [no] gave up, [xN] radio copies.",
+            "Marks: [tx] sent, [rl] heard own frame, [ok] delivered, [all] closed group, [no] one wait after the last copy, [xN] radio copies.",
+            "/radio flush — mark this station's unacked outbound [no] and drop relay holds.",
             "#bulletin stops at [ok]. It has no member list, so it never shows [all].",
         ];
         self.send_numeric(id, 704, ":wcr HELP").await;

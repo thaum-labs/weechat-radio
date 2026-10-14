@@ -278,3 +278,102 @@ async fn mode_help_and_invite_get_replies() {
     }
     assert_eq!(invites, 2);
 }
+
+#[tokio::test]
+async fn delivery_mark_goes_only_to_the_sending_client() {
+    let (events_tx, _events_rx) = mpsc::channel(8);
+    let server = IrcServer::new(events_tx);
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let accept = server.clone();
+    tokio::spawn(async move {
+        let _ = accept.accept_loop(listener).await;
+    });
+
+    let mut sender = TcpStream::connect(addr).await.expect("sender");
+    sender
+        .write_all(b"CAP REQ :message-tags\r\nNICK G4AAA\r\nUSER G4AAA 0 * :t\r\nCAP END\r\n")
+        .await
+        .expect("write");
+    let mut id = None;
+    for _ in 0..50 {
+        id = server.first_client_id();
+        if id.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let id = id.expect("sender connected");
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    server.begin_origin(id, "#ops");
+    server.tagmsg_progress("abc123", "sent", Some(1)).await;
+    server.end_origin();
+
+    let mut other = TcpStream::connect(addr).await.expect("other");
+    other
+        .write_all(b"CAP REQ :message-tags\r\nNICK M0BBB\r\nUSER M0BBB 0 * :t\r\nCAP END\r\n")
+        .await
+        .expect("write");
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    server.tagmsg_delivery("abc123", "delivered").await;
+    server.tagmsg_delivery("someoneelse", "all").await;
+
+    let mut sender_buf = String::new();
+    let mut reader = tokio::io::BufReader::new(sender);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    while tokio::time::Instant::now() < deadline {
+        let mut line = String::new();
+        match tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            reader.read_line(&mut line),
+        )
+        .await
+        {
+            Err(_) => continue,
+            Ok(Ok(0)) => break,
+            Ok(Ok(_)) => sender_buf.push_str(&line),
+            Ok(Err(e)) => panic!("read sender: {e}"),
+        }
+    }
+    assert!(
+        sender_buf.contains("msgid=abc123"),
+        "mark keeps the id: {sender_buf}"
+    );
+    assert!(
+        sender_buf.contains("TAGMSG #ops"),
+        "mark names the channel: {sender_buf}"
+    );
+    assert!(
+        sender_buf.contains("+radio/delivery=sent"),
+        "first mark: {sender_buf}"
+    );
+    assert!(
+        sender_buf.contains("+radio/delivery=delivered"),
+        "later mark still reaches the sender: {sender_buf}"
+    );
+    assert!(
+        !sender_buf.contains("someoneelse"),
+        "another station's mark is not delivered: {sender_buf}"
+    );
+
+    let mut other_buf = String::new();
+    let mut other_reader = tokio::io::BufReader::new(other);
+    let other_deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(400);
+    while tokio::time::Instant::now() < other_deadline {
+        let mut line = String::new();
+        match tokio::time::timeout(
+            std::time::Duration::from_millis(150),
+            other_reader.read_line(&mut line),
+        )
+        .await
+        {
+            Ok(Ok(0)) | Err(_) => break,
+            Ok(Ok(_)) => other_buf.push_str(&line),
+            Ok(Err(e)) => panic!("read other: {e}"),
+        }
+    }
+    assert!(
+        !other_buf.contains("TAGMSG"),
+        "other client must not see delivery marks: {other_buf}"
+    );
+}
