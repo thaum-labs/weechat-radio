@@ -184,8 +184,14 @@ if (mapStyleSelect) {
 }
 
 const SPAN = 1440;
-/** Bright pin, pulsing line, and the mail "e" badge. */
+/** Bright pin and the mail "e" badge. Line glow uses ACTIVE_MS. */
 const LIVE_MS = 10 * 60 * 1000;
+/**
+ * Glow after a tx/rx/mail event. The hub does not send tx-end or rx-end.
+ * A `tx` is published once the frame has finished keying, and an `rx` when
+ * the frame is decoded, so this is the short "just on the air" window.
+ */
+const ACTIVE_MS = 8 * 1000;
 /** Lines and station pins stay until this long after the last contact, then drop. */
 const HOLD_MS = 48 * 60 * 60 * 1000;
 const markers = new Map();
@@ -339,17 +345,18 @@ function prefersReducedMotion() {
   return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 }
 
-/** Pulse while the contact is live, then a steady fade that is still visible at 48h. */
+/** Glow for a few seconds after the contact, then a steady fade that is still visible at 48h. */
 function linkAlpha(ageMs, nowMs, reduceMotion) {
   const age = Math.max(0, ageMs);
   const reduce = reduceMotion == null ? prefersReducedMotion() : !!reduceMotion;
   if (age > HOLD_MS) return 0;
-  if (age <= LIVE_MS) {
-    if (reduce) return 0.55;
+  if (!reduce && age < ACTIVE_MS) {
     const wave = 0.5 + 0.5 * Math.sin(((nowMs || 0) / 1200) * Math.PI * 2);
     return 0.55 + wave * 0.4;
   }
-  const t = (age - LIVE_MS) / (HOLD_MS - LIVE_MS);
+  const start = reduce ? 0 : ACTIVE_MS;
+  const span = Math.max(1, HOLD_MS - start);
+  const t = Math.min(1, Math.max(0, (age - start) / span));
   return 0.55 + (0.12 - 0.55) * t;
 }
 
@@ -435,7 +442,8 @@ function drawArcs() {
     const age = now - link.at;
     const alpha = linkAlpha(age, now);
     if (alpha <= 0) continue;
-    if (age <= LIVE_MS && !prefersReducedMotion()) pulsing = true;
+    const glowing = age < ACTIVE_MS && !prefersReducedMotion();
+    if (glowing) pulsing = true;
     const s1 = map.project([p1.lon, p1.lat]);
     const s2 = map.project([p2.lon, p2.lat]);
     const color = link.mail
@@ -444,7 +452,12 @@ function drawArcs() {
         ? `rgba(125,155,255,${alpha})`
         : `rgba(57,255,20,${alpha})`;
     const dash = link.mail ? [3, 3] : link.inet ? [] : [6, 4];
+    if (glowing) {
+      arcCtx.shadowColor = color;
+      arcCtx.shadowBlur = 10;
+    }
     strokePinLink(s1, s2, color, dash);
+    arcCtx.shadowBlur = 0;
   }
   syncArcPulse(pulsing);
 }
@@ -1347,6 +1360,7 @@ window.WCR.linkAlpha = linkAlpha;
 window.WCR.pinAgeOpacity = pinAgeOpacity;
 window.WCR.lastHeardLabel = lastHeardLabel;
 window.WCR.LIVE_MS = LIVE_MS;
+window.WCR.ACTIVE_MS = ACTIVE_MS;
 window.WCR.HOLD_MS = HOLD_MS;
 window.WCR.rememberLink = rememberLink;
 window.WCR.seedLinksFromEvents = seedLinksFromEvents;
