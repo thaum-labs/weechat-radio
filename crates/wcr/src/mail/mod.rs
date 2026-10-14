@@ -16,7 +16,7 @@ use crate::presets::Preset;
 use crate::proto::IdentityKeys;
 use crate::status::SharedStatus;
 pub use air::confirm_air_line;
-pub use gateway::{local_send_path as gateway_path, SendPath};
+pub use gateway::{local_send_path as gateway_path, state_mark, SendPath};
 pub use lease::RadioPorts;
 
 pub fn airtime_parts(bytes: usize, preset: Preset, turnaround_ms: u32) -> (f64, usize) {
@@ -99,11 +99,27 @@ pub struct MailHandle {
 }
 
 pub enum MailCmd {
-    Send { id: String },
+    Send {
+        id: String,
+    },
     CheckList,
-    CheckGet { ids: Vec<String> },
+    CheckGet {
+        ids: Vec<String>,
+    },
+    CheckQuiet {
+        gen: u64,
+    },
     Inbound(Incoming),
     SyncHub,
+    AckWait {
+        id: String,
+        gen: u64,
+    },
+    /// The outbox row is still `tx` and nothing has moved it on.
+    TxStuck {
+        id: String,
+        gen: u64,
+    },
 }
 
 pub fn db_path(cfg: &Config) -> PathBuf {
@@ -152,6 +168,7 @@ impl MailHandle {
             "address": proto::wcr_address(&cfg.callsign),
             "unread": unread,
             "waiting": waiting,
+            "notice": self.store.notice(),
             "gateway": cfg.mail.gateway,
             "block": email_block_reason(&cfg.callsign, cfg.mode, &cfg.mail.gateway, snap.hub_ok, true),
         })
@@ -172,7 +189,7 @@ impl MailHandle {
             return Err(Error::config("Set a mail gateway callsign in setup."));
         }
         let from = proto::wcr_address(&cfg.callsign);
-        let ack = cfg.modem.is_vox() && matches!(gateway::local_send_path(cfg.mode), SendPath::Rf);
+        let ack = matches!(gateway::local_send_path(cfg.mode), SendPath::Rf);
         let id = proto::compute_mail_id(&from, to.trim(), subject.trim(), &body, ack);
         self.store.insert(&MailRow {
             id: id.clone(),
@@ -186,6 +203,9 @@ impl MailHandle {
             unread: false,
             ack,
             retries: 0,
+            detail: String::new(),
+            chunks: 0,
+            got: String::new(),
         })?;
         let _ = self.cmd.send(MailCmd::Send { id: id.clone() }).await;
         let path = match gateway::local_send_path(cfg.mode) {
@@ -487,6 +507,53 @@ mod tests {
         let live = store.copy("M7TJF").expect("copy");
         assert!(live.confirmed && live.enabled);
         assert_eq!(live.address, "tj@example.com");
+    }
+
+    #[test]
+    fn a_long_mail_warns_before_it_is_sent() {
+        let hint = hint_line(3900, Mode::RadioPlus, Preset::HfPoor, 250);
+        assert!(
+            hint.contains("not Sent until the gateway accepts it"),
+            "{hint}"
+        );
+        assert!(hint.contains("bursts"), "{hint}");
+        let line = confirm_air_line(120.0, 23, "hf-poor");
+        assert!(line.contains("Not Sent until the gateway accepts it"));
+        assert!(air::missing_chunk_idxs(4, "0,2").is_empty() == false);
+        assert_eq!(air::missing_chunk_idxs(4, "0,2"), vec![1, 3]);
+    }
+
+    #[test]
+    fn gateway_chunk_acks_are_stored() {
+        let store = store::MailStore::open_memory().expect("store");
+        store
+            .insert(&store::MailRow {
+                id: "m1".into(),
+                folder: "outbox".into(),
+                from_addr: "M7TJF@mail.weechatradio.com".into(),
+                to_addr: "a@b.co".into(),
+                subject: "s".into(),
+                body: "hello".into(),
+                ts: 1,
+                state: "tx".into(),
+                unread: false,
+                ack: true,
+                retries: 0,
+                detail: String::new(),
+                chunks: 2,
+                got: String::new(),
+            })
+            .unwrap();
+        assert_eq!(store.note_chunk("m1", 0).unwrap(), Some((1, 2)));
+        assert_eq!(store.note_chunk("m1", 1).unwrap(), Some((2, 2)));
+        store
+            .set_outcome("m1", "outbox", "failed", gateway::NO_GATEWAY_ACK)
+            .unwrap();
+        let row = store.get("m1").unwrap().unwrap();
+        assert_eq!(row.state, "failed");
+        assert_eq!(row.detail, gateway::NO_GATEWAY_ACK);
+        store.set_notice("no new mail");
+        assert_eq!(store.notice(), "no new mail");
     }
 
     #[test]

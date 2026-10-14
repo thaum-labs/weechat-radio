@@ -1383,6 +1383,11 @@ mod tests {
         assert_eq!(tries_bracket(4), "[x4]");
         assert!(Delivery::Relayed.can_advance(Delivery::Delivered));
         assert!(!Delivery::Delivered.can_advance(Delivery::Relayed));
+        assert!(Delivery::Sent.can_advance(Delivery::Gateway));
+        assert!(Delivery::Gateway.can_advance(Delivery::Delivered));
+        assert!(!Delivery::Delivered.can_advance(Delivery::Gateway));
+        assert!(!Delivery::All.can_advance(Delivery::Gateway));
+        assert!(!Delivery::Failed.can_advance(Delivery::Gateway));
         assert!(Delivery::Delivered.can_advance(Delivery::Delivered));
         assert!(Delivery::Relayed.can_advance(Delivery::Failed));
         assert!(!Delivery::Failed.can_advance(Delivery::Relayed));
