@@ -19,18 +19,19 @@ The address is `{callsign}@mail.weechatradio.com`. There is no domain setting. G
 
 - **Hub:** Sent after the hub says Resend accepted the message. A rejection is Failed.
 - **Radio-plus, every PTT:** Keying the burst is Outbox `[tx]`. A chunk ack from the gateway is `[gw]` (the gateway has the bytes). Sent is only the gateway's `CompleteAck`, after Resend accepted it. Until then the line stays in the outbox.
-- Missing acks are retried with backoff (8s, then 16s, 32s, …) up to `[rf] max_retries` (at least 3). Then the row is Failed, with the reason: the gateway never acknowledged, or it has the message but it was not accepted.
+- Missing acks are retried after the keyed burst should have finished, then with backoff (8s, then 16s, 32s, …) up to `[rf] max_retries` (at least 3). The clock starts at the end of that airtime, not at key-up. Then the row is Failed, with the reason: the gateway never acknowledged, or it has the message but it was not accepted.
+- If the radio is not running, the row is Failed at once with `Radio is not running.`
 - If the row is still `[tx]` five minutes after this attempt started, and nothing has moved it on, it is Failed. VOX lead, tail, and the modem drain are unchanged.
 
-A toast timer does not mark Sent. The compose hint and the send confirm both show the estimated airtime. A long message says it is not Sent until the gateway accepts it.
+A toast timer does not mark Sent. The compose hint and the send confirm both show the estimated airtime. `POST /api/v1/mail/compose` returns that same hint as `airtime`. A long message says it is not Sent until the gateway accepts it.
 
 ## Log
 
-The station log records `mail keyed`, `mail gateway ack`, `mail at gateway`, `mail accepted`, `mail failed`, and `mail retry`. The gateway records `mail received`, `mail posted … resend`, and `mail rejected`. Check mail with nothing waiting logs `mail check: no new mail` and the Email tab says the same.
+The station log records `mail keyed`, `mail gateway ack`, `mail at gateway`, `mail accepted`, `mail failed`, and `mail retry`. The gateway records `mail received`, `mail posted … resend`, `mail rejected`, and `already accepted; repeating the ack` when the same mail arrives again. Check mail with nothing waiting logs `mail check: no new mail` and the Email tab says the same.
 
 ## On the air
 
-Mail frames are `WCRM` text, not chat envelopes. A message wider than the rung is split into chunks. The gateway acks each chunk. A retry sends only the chunks it has not acked. If a chunk is wider than the rung, it is sliced as `WCRP` and rebuilt before decode.
+Mail frames are `WCRM` text, not chat envelopes. A message wider than the rung is split into chunks. The gateway keeps those chunks across retries and ignores a chunk whose index is outside its total, so a corrupt total cannot block a complete set. It waits out a quiet gap after the last chunk, longer than one frame, then keys one `CompleteAck`. A second complete copy gets that ack again and is not posted twice. If a chunk is wider than the rung, it is sliced as `WCRP` and rebuilt before decode. A list request is split the same way, and an empty inbox is answered with `[]`.
 
 The rung starts at the preset's `ladder_start` and only steps more robust. On an HF or VOX preset that means it never moves onto QPSK or OFDM. The rung is chosen from the frames that will actually be keyed.
 

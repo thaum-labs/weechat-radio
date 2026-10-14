@@ -604,10 +604,29 @@ fn apply_own_delivery(app: &mut App, state: &str, tries: u32) {
             if !line.from.eq_ignore_ascii_case(&nick) {
                 continue;
             }
+            if state == "relayed"
+                && !line.ticks.contains("[rl]")
+                && !line.ticks.contains("[no]")
+                && (line.ticks.contains("[ok]")
+                    || line.ticks.contains("[all]")
+                    || line.ticks.contains("VV"))
+            {
+                line.ticks = format!("[rl] {}", line.ticks);
+                return;
+            }
+            if state == "failed" && !line.ticks.contains("[all]") && line.ticks != "VVV" {
+                line.ticks = "[no]".into();
+                return;
+            }
             if !tui_mark_advances(&line.ticks, &mark) {
                 return;
             }
-            line.ticks = mark;
+            let had_rl = line.ticks.contains("[rl]");
+            line.ticks = if had_rl && mark != "[rl]" && mark != "vv" {
+                format!("[rl] {mark}")
+            } else {
+                mark
+            };
             if tries > 0 {
                 line.tries = tries;
             }
@@ -683,8 +702,13 @@ fn tui_mark_rank(ticks: &str) -> u8 {
 
 /// `[ok]` and `[all]` stay put. A later retry must not walk the mark backwards.
 fn tui_mark_advances(current: &str, next: &str) -> bool {
-    if matches!(current, "[ok]" | "VV" | "[all]" | "VVV") {
-        return matches!(next, "[ok]" | "VV" | "[all]" | "VVV");
+    if matches!(current, "[all]" | "VVV") || current.contains("[all]") {
+        return matches!(next, "[all]" | "VVV") || next.contains("[all]");
+    }
+    if matches!(current, "[ok]" | "VV") || current.contains("[ok]") {
+        return matches!(next, "[ok]" | "VV" | "[all]" | "VVV" | "[no]")
+            || next.contains("[ok]")
+            || next.contains("[all]");
     }
     if current == "[no]" {
         return matches!(next, "[ok]" | "VV" | "[all]" | "VVV" | "[no]");
