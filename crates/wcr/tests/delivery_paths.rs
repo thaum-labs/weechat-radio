@@ -1086,14 +1086,28 @@ async fn radio_plus_bulletin_reaches_internet_via_gateway() {
     );
 
     let mut send_reader = tokio::io::BufReader::new(&mut sender);
-    let sent = read_lines_until(&mut send_reader, 40, |lines| {
-        lines.iter().any(|l| l.contains("+radio/delivery=gateway"))
+    // [ok] can beat the gateway notice. A later [gw] is ignored, so the
+    // sender must reach [ok], and any [gw] in the log has to come first.
+    let mut sent = read_lines_until(&mut send_reader, 40, |lines| {
+        lines
+            .iter()
+            .any(|l| l.contains("+radio/delivery=delivered"))
     })
     .await;
+    sent.extend(read_lines_until(&mut send_reader, 3, |_| false).await);
+    let ok_at = sent
+        .iter()
+        .position(|l| l.contains("+radio/delivery=delivered"));
     assert!(
-        sent.iter().any(|l| l.contains("+radio/delivery=gateway")),
-        "radio-plus sender never saw [gw]: {sent:?}"
+        ok_at.is_some(),
+        "radio-plus sender never saw [ok]: {sent:?}"
     );
+    if let Some(gw_at) = sent
+        .iter()
+        .position(|l| l.contains("+radio/delivery=gateway"))
+    {
+        assert!(gw_at < ok_at.unwrap(), "[gw] arrived after [ok]: {sent:?}");
+    }
 
     let radio_body = "radio-only-bulletin";
     radio
