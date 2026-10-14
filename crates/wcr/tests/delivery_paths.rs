@@ -28,9 +28,20 @@ fn scratch(name: &str) -> PathBuf {
     p
 }
 
-async fn port() -> u16 {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    listener.local_addr().unwrap().port()
+/// Ports chosen while every probe socket is still held. A later `bind(0)`
+/// cannot be given one of these until the probes are dropped, which is why
+/// a test reserves the whole set before it starts nodes.
+async fn reserve_ports(n: usize) -> Vec<u16> {
+    let mut held = Vec::with_capacity(n);
+    for _ in 0..n {
+        held.push(tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap());
+    }
+    let ports = held
+        .iter()
+        .map(|l| l.local_addr().unwrap().port())
+        .collect();
+    drop(held);
+    ports
 }
 
 async fn wait_tcp(port: u16, secs: u64) {
@@ -139,7 +150,7 @@ fn gateway_cfg(
 }
 
 async fn start_hub() -> u16 {
-    let hub_port = port().await;
+    let hub_port = reserve_ports(1).await[0];
     let hub_bind = format!("127.0.0.1:{hub_port}");
     let store = std::sync::Arc::new(wcr::store::Store::open_memory().unwrap());
     let tel = std::sync::Arc::new(wcr::telemetry::TelemetryDb::open_memory().unwrap());
@@ -273,10 +284,8 @@ async fn hub_dm_one_line_and_sender_ack() {
         let hub_ws = format!("ws://127.0.0.1:{hub_port}/ws");
         let home_a = scratch("dm-a");
         let home_b = scratch("dm-b");
-        let irc_a = port().await;
-        let irc_b = port().await;
-        let status_a = port().await;
-        let status_b = port().await;
+        let ports = reserve_ports(4).await;
+        let (irc_a, irc_b, status_a, status_b) = (ports[0], ports[1], ports[2], ports[3]);
         let cfg_a = internet_cfg(from, &home_a, &hub_ws, irc_a, status_a);
         let cfg_b = internet_cfg(to, &home_b, &hub_ws, irc_b, status_b);
         let node_a = tokio::spawn(async move { wcr::node::run_node(cfg_a, false).await });
@@ -340,10 +349,11 @@ async fn internet_bulletin_acks_once_and_not_all() {
     let mut nodes = Vec::new();
     let mut irc_ports = Vec::new();
     let mut status_ports = Vec::new();
-    for call in ["G4AAA", "M0BBB", "2E0CCC"] {
+    let ports = reserve_ports(6).await;
+    for (i, call) in ["G4AAA", "M0BBB", "2E0CCC"].into_iter().enumerate() {
         let home = scratch(call);
-        let irc = port().await;
-        let status = port().await;
+        let irc = ports[i * 2];
+        let status = ports[i * 2 + 1];
         let cfg = internet_cfg(call, &home, &hub_ws, irc, status);
         nodes.push(tokio::spawn(async move {
             wcr::node::run_node(cfg, false).await
@@ -437,11 +447,16 @@ async fn radio_bulletin_reaches_ok_and_dm_ack_cancels_retry() {
     let mut nodes = Vec::new();
     let mut irc = Vec::new();
     let mut status = Vec::new();
+    let mut prep = Vec::new();
     for call in ["G4AAA", "M0BBB"] {
         let home = scratch(call);
         let (kiss, ctrl) = wcr::sim::mock_modem73_free(air.clone()).await.unwrap();
-        let irc_p = port().await;
-        let status_p = port().await;
+        prep.push((call, home, kiss, ctrl));
+    }
+    let ports = reserve_ports(prep.len() * 2).await;
+    for (i, (call, home, kiss, ctrl)) in prep.into_iter().enumerate() {
+        let irc_p = ports[i * 2];
+        let status_p = ports[i * 2 + 1];
         let cfg = radio_cfg(call, &home, kiss, ctrl, irc_p, status_p);
         nodes.push(tokio::spawn(async move {
             wcr::node::run_node(cfg, false).await
@@ -548,6 +563,7 @@ async fn radio_group_reaches_all() {
     let mut nodes = Vec::new();
     let mut irc = Vec::new();
     let mut status = Vec::new();
+    let mut prep = Vec::new();
     for call in members {
         let home = scratch(call);
         let db = home.join("store.db");
@@ -557,8 +573,12 @@ async fn radio_group_reaches_all() {
             .unwrap();
         drop(store);
         let (kiss, ctrl) = wcr::sim::mock_modem73_free(air.clone()).await.unwrap();
-        let irc_p = port().await;
-        let status_p = port().await;
+        prep.push((call, home, kiss, ctrl));
+    }
+    let ports = reserve_ports(prep.len() * 2).await;
+    for (i, (call, home, kiss, ctrl)) in prep.into_iter().enumerate() {
+        let irc_p = ports[i * 2];
+        let status_p = ports[i * 2 + 1];
         let cfg = radio_cfg(call, &home, kiss, ctrl, irc_p, status_p);
         nodes.push(tokio::spawn(async move {
             wcr::node::run_node(cfg, false).await
@@ -607,13 +627,18 @@ async fn relay_through_middle_station_acks_sender() {
     let mut nodes = Vec::new();
     let mut irc = Vec::new();
     let mut status = Vec::new();
+    let mut prep = Vec::new();
     for (call, station, hear) in plan {
         let home = scratch(call);
         let (kiss, ctrl) = wcr::sim::mock_modem73_linked_free(air.clone(), station, hear)
             .await
             .unwrap();
-        let irc_p = port().await;
-        let status_p = port().await;
+        prep.push((call, home, kiss, ctrl));
+    }
+    let ports = reserve_ports(prep.len() * 2).await;
+    for (i, (call, home, kiss, ctrl)) in prep.into_iter().enumerate() {
+        let irc_p = ports[i * 2];
+        let status_p = ports[i * 2 + 1];
         let cfg = radio_cfg(call, &home, kiss, ctrl, irc_p, status_p);
         nodes.push(tokio::spawn(async move {
             wcr::node::run_node(cfg, false).await
@@ -684,13 +709,18 @@ async fn dm_to_the_relay_is_not_copied_onward() {
     let mut nodes = Vec::new();
     let mut irc = Vec::new();
     let mut status = Vec::new();
+    let mut prep = Vec::new();
     for (call, station, hear) in plan {
         let home = scratch(call);
         let (kiss, ctrl) = wcr::sim::mock_modem73_linked_free(air.clone(), station, hear)
             .await
             .unwrap();
-        let irc_p = port().await;
-        let status_p = port().await;
+        prep.push((call, home, kiss, ctrl));
+    }
+    let ports = reserve_ports(prep.len() * 2).await;
+    for (i, (call, home, kiss, ctrl)) in prep.into_iter().enumerate() {
+        let irc_p = ports[i * 2];
+        let status_p = ports[i * 2 + 1];
         let cfg = radio_cfg(call, &home, kiss, ctrl, irc_p, status_p);
         nodes.push(tokio::spawn(async move {
             wcr::node::run_node(cfg, false).await
@@ -761,6 +791,7 @@ async fn internet_closed_group_reaches_all() {
     let mut nodes = Vec::new();
     let mut irc = Vec::new();
     let mut status = Vec::new();
+    let mut homes = Vec::new();
     for call in members {
         let home = scratch(call);
         let db = home.join("store.db");
@@ -769,8 +800,12 @@ async fn internet_closed_group_reaches_all() {
             .group_create("net", &members.map(|s| s.to_string()))
             .unwrap();
         drop(store);
-        let irc_p = port().await;
-        let status_p = port().await;
+        homes.push((call, home));
+    }
+    let ports = reserve_ports(homes.len() * 2).await;
+    for (i, (call, home)) in homes.into_iter().enumerate() {
+        let irc_p = ports[i * 2];
+        let status_p = ports[i * 2 + 1];
         let cfg = internet_cfg(call, &home, &hub_ws, irc_p, status_p);
         nodes.push(tokio::spawn(async move {
             wcr::node::run_node(cfg, false).await
@@ -818,10 +853,11 @@ async fn hub_claim_is_a_failed_send_not_sent() {
     let mut nodes = Vec::new();
     let mut irc_ports = Vec::new();
     let mut status_ports = Vec::new();
-    for name in ["first", "second"] {
-        let home = scratch(name);
-        let irc = port().await;
-        let status = port().await;
+    let homes = ["first", "second"].map(scratch);
+    let ports = reserve_ports(4).await;
+    for (i, home) in homes.into_iter().enumerate() {
+        let irc = ports[i * 2];
+        let status = ports[i * 2 + 1];
         let cfg = internet_cfg("~QAONE1", &home, &hub_ws, irc, status);
         nodes.push(tokio::spawn(async move {
             wcr::node::run_node(cfg, false).await
@@ -887,7 +923,7 @@ async fn irc_port_in_use_fails_fast() {
     let home = scratch("irc-busy");
     let mut cfg = base_cfg("G4ABC", &home, Mode::Internet);
     cfg.irc.bind = format!("127.0.0.1:{p}");
-    cfg.status.bind = format!("127.0.0.1:{}", port().await);
+    cfg.status.bind = format!("127.0.0.1:{}", reserve_ports(1).await[0]);
     let err = wcr::node::run_node(cfg, false)
         .await
         .expect_err("node should refuse a busy IRC port");
@@ -905,8 +941,8 @@ async fn own_message_retries_while_the_relay_loop_runs() {
     let air = wcr::sim::SharedAir::new(0.0);
     let home = scratch("retry-own");
     let (kiss, ctrl) = wcr::sim::mock_modem73_free(air).await.unwrap();
-    let irc_p = port().await;
-    let status_p = port().await;
+    let ports = reserve_ports(2).await;
+    let (irc_p, status_p) = (ports[0], ports[1]);
     let cfg = radio_cfg("G4AAA", &home, kiss, ctrl, irc_p, status_p);
     let node = tokio::spawn(async move { wcr::node::run_node(cfg, false).await });
     wait_tcp(irc_p, 20).await;
@@ -946,10 +982,11 @@ async fn hub_group_created_at_runtime_is_routable() {
     let mut nodes = Vec::new();
     let mut irc = Vec::new();
     let mut status = Vec::new();
-    for call in members {
-        let home = scratch(call);
-        let irc_p = port().await;
-        let status_p = port().await;
+    let homes = members.map(scratch);
+    let ports = reserve_ports(homes.len() * 2).await;
+    for (i, (call, home)) in members.into_iter().zip(homes).enumerate() {
+        let irc_p = ports[i * 2];
+        let status_p = ports[i * 2 + 1];
         let cfg = internet_cfg(call, &home, &hub_ws, irc_p, status_p);
         nodes.push(tokio::spawn(async move {
             wcr::node::run_node(cfg, false).await
@@ -1012,34 +1049,28 @@ async fn radio_plus_bulletin_reaches_internet_via_gateway() {
 
     let home_a = scratch("plus");
     let (kiss_a, ctrl_a) = wcr::sim::mock_modem73_free(air.clone()).await.unwrap();
-    let irc_a = port().await;
-    let status_a = port().await;
+    let home_b = scratch("gw");
+    let (kiss_b, ctrl_b) = wcr::sim::mock_modem73_free(air.clone()).await.unwrap();
+    let home_c = scratch("radio");
+    let (kiss_c, ctrl_c) = wcr::sim::mock_modem73_free(air).await.unwrap();
+    let home_d = scratch("inet");
+    let ports = reserve_ports(8).await;
+    let (irc_a, status_a) = (ports[0], ports[1]);
+    let (irc_b, status_b) = (ports[2], ports[3]);
+    let (irc_c, status_c) = (ports[4], ports[5]);
+    let (irc_d, status_d) = (ports[6], ports[7]);
     let cfg_a = radio_plus_cfg("~RFSIMA", &home_a, kiss_a, ctrl_a, irc_a, status_a);
     nodes.push(tokio::spawn(async move {
         wcr::node::run_node(cfg_a, false).await
     }));
-
-    let home_b = scratch("gw");
-    let (kiss_b, ctrl_b) = wcr::sim::mock_modem73_free(air.clone()).await.unwrap();
-    let irc_b = port().await;
-    let status_b = port().await;
     let cfg_b = gateway_cfg("M0BBB", &home_b, kiss_b, ctrl_b, irc_b, status_b, &hub_ws);
     nodes.push(tokio::spawn(async move {
         wcr::node::run_node(cfg_b, false).await
     }));
-
-    let home_c = scratch("radio");
-    let (kiss_c, ctrl_c) = wcr::sim::mock_modem73_free(air).await.unwrap();
-    let irc_c = port().await;
-    let status_c = port().await;
     let cfg_c = radio_cfg("G4CCC", &home_c, kiss_c, ctrl_c, irc_c, status_c);
     nodes.push(tokio::spawn(async move {
         wcr::node::run_node(cfg_c, false).await
     }));
-
-    let home_d = scratch("inet");
-    let irc_d = port().await;
-    let status_d = port().await;
     let cfg_d = internet_cfg("G0DDD", &home_d, &hub_ws, irc_d, status_d);
     nodes.push(tokio::spawn(async move {
         wcr::node::run_node(cfg_d, false).await
@@ -1148,6 +1179,7 @@ async fn radio_plus_closed_group_reaches_rf_member_and_all() {
     let mut nodes = Vec::new();
     let mut irc = Vec::new();
     let mut status = Vec::new();
+    let mut prep = Vec::new();
     for (call, station, hear, mode) in plan {
         let home = scratch(call);
         if members.contains(&call) {
@@ -1160,8 +1192,19 @@ async fn radio_plus_closed_group_reaches_rf_member_and_all() {
         let (kiss, ctrl) = wcr::sim::mock_modem73_linked_free(air.clone(), station, hear)
             .await
             .unwrap();
-        let irc_p = port().await;
-        let status_p = port().await;
+        prep.push((call, home, kiss, ctrl, mode));
+    }
+    let home_d = scratch("inet-member");
+    {
+        let store = wcr::store::Store::open(&home_d.join("store.db"), 72, 10_000).unwrap();
+        store
+            .group_create("qarp", &members.map(|s| s.to_string()))
+            .unwrap();
+    }
+    let ports = reserve_ports(prep.len() * 2 + 2).await;
+    for (i, (call, home, kiss, ctrl, mode)) in prep.into_iter().enumerate() {
+        let irc_p = ports[i * 2];
+        let status_p = ports[i * 2 + 1];
         let mut cfg = radio_cfg(call, &home, kiss, ctrl, irc_p, status_p);
         cfg.mode = mode;
         if mode == Mode::InternetRadio {
@@ -1175,15 +1218,8 @@ async fn radio_plus_closed_group_reaches_rf_member_and_all() {
         irc.push(irc_p);
         status.push(status_p);
     }
-    let home_d = scratch("inet-member");
-    {
-        let store = wcr::store::Store::open(&home_d.join("store.db"), 72, 10_000).unwrap();
-        store
-            .group_create("qarp", &members.map(|s| s.to_string()))
-            .unwrap();
-    }
-    let irc_d = port().await;
-    let status_d = port().await;
+    let irc_d = ports[6];
+    let status_d = ports[7];
     let cfg_d = internet_cfg("G0DDD", &home_d, &hub_ws, irc_d, status_d);
     nodes.push(tokio::spawn(async move {
         wcr::node::run_node(cfg_d, false).await
