@@ -46,4 +46,4 @@ Manual steps, if you installed WeeChat yourself:
 
 ## How you know it worked
 
-The `radio` bar at the bottom of WeeChat shows your mode and SNR, separated like `INTERNET-RADIO │ IDLE │ VHF-FM │ SNR 12`. Sending a message adds the same marks as the node: `[tx]`, then `[ok]` when an ACK arrives. A closed group can go on to `[all]`.
+The `radio` bar at the bottom of WeeChat shows your mode and SNR, separated like `INTERNET-RADIO │ IDLE │ VHF-FM │ SNR 12`. Sending a message adds the same marks as the node: `[tx]`, then `[ok]` when an ACK arrives. `[xN]` is how many times the line was keyed; with 3 retries the last copy is `[x4]`. `#bulletin` stops at `[ok]` and does not show `[all]`. A closed group (`/join #net`, `MODE #net` replies `+i`) shows `[all]` when every member this station has stored has ACKed. `/invite CALL` adds them and keys a direct notice; the reply says whether that notice was sent. `HELP` lists these commands. `/radio status` includes `relayed` (frames this station forwarded) and `groups` (the `group_prios` priorities). Routine retries wait 45s, 90s, then 180s, each ±25%.
