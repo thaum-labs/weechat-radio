@@ -11,7 +11,7 @@ Four modes. Switch with `/radio mode <name>` or `F2` in the TUI.
 | `radio` | on | never. Frames stay off the hub and the LAN mesh | amber |
 | `radio-plus` | on | never from this computer; a gateway that hears you may forward | magenta |
 
-Switching to `radio` asks for confirmation: it drops hub and LAN chat. The live map still gets signed metadata (callsign, grid, mode, tx/rx ids — not message text) whenever `[telemetry] url` is set. Clear that URL to stay off the map. Changing mode starts or stops the hub chat path immediately — you do not need to restart the station.
+Switching to `radio` asks for confirmation: it drops hub and LAN chat. The live map still gets signed metadata (callsign, grid, mode, tx/rx ids — not message text) whenever `[telemetry] url` is set. Clear that URL to stay off the map. An arc is drawn only between two station pins that addressed each other. A `#bulletin` or closed-group destination is not a callsign, so it does not draw a line to every other pin. Changing mode starts or stops the hub chat path immediately — you do not need to restart the station.
 
 In `internet-radio`, every chat still goes on RF. The hub and the LAN mesh are used only when the destination is not recently heard on this dial over radio (or, for a group, when no member was heard here). `#bulletin` always offers the hub and LAN because the audience is not a local RF list.
 
