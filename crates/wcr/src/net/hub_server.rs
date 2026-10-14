@@ -117,6 +117,7 @@ pub async fn run_hub(
         .route("/api/v1/report", post(telemetry::ingest_report))
         .route("/api/v1/nodes", get(telemetry::get_nodes))
         .route("/api/v1/events", get(get_events))
+        .route("/api/v1/links", get(get_links))
         .route("/api/v1/hubs", get(get_hubs))
         .route("/api/v1/bands", get(get_bands))
         .route("/api/v1/stats", get(get_stats))
@@ -648,6 +649,20 @@ async fn get_events(
         .telemetry
         .events(q.since.unwrap_or(0), q.limit.unwrap_or(200));
     Json(serde_json::json!({ "events": events }))
+}
+
+#[derive(Deserialize)]
+struct LinksQ {
+    since: Option<i64>,
+    limit: Option<i64>,
+}
+
+/// Latest contact per station pair. The map uses this for the 48-hour line fade
+/// so it does not download every tx/rx in that window.
+async fn get_links(State(st): State<HubState>, Query(q): Query<LinksQ>) -> Json<serde_json::Value> {
+    let since = q.since.unwrap_or(0);
+    let links = st.telemetry.links(since, q.limit.unwrap_or(2000));
+    Json(serde_json::json!({ "links": links, "since": since }))
 }
 
 async fn get_hubs(State(st): State<HubState>) -> Json<serde_json::Value> {
