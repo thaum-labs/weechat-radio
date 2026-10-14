@@ -51,6 +51,7 @@ TICKS = {
     "delivered": "[ok]",
     "all": "[all]",
     "failed": "[no]",
+    "waiting": "waiting on acks",
 }
 
 ACCENT = "111"

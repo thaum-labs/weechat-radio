@@ -118,6 +118,18 @@ pub fn answer_again(now: u32, last: Option<u32>, gap: u32) -> bool {
     }
 }
 
+/// A copy with fewer hops than the one we stored was relayed by a station
+/// further from the origin. Our own echo has the same hop count.
+pub fn heard_further(incoming_hops: u8, stored_hops: u8) -> bool {
+    incoming_hops < stored_hops
+}
+
+/// The originator keyed this id again. The stored copy already had one hop
+/// removed, so a fresh send still has more hops left than that copy.
+pub fn origin_retry(incoming_hops: u8, stored_hops: u8) -> bool {
+    incoming_hops > stored_hops
+}
+
 pub fn jitter_ms(priority: Priority) -> u64 {
     let range = priority.jitter_ms();
     rand::thread_rng().gen_range(range)
@@ -351,6 +363,16 @@ mod tests {
         assert!(!is_own_origin("M0BBB", &env));
         assert!(!may_rebroadcast("G4AAA", &env, Some(Delivery::Sent)));
         assert!(!may_rebroadcast("G4AAA", &env, Some(Delivery::Relayed)));
+    }
+
+    #[test]
+    fn origin_retry_is_a_higher_hop_count() {
+        assert!(origin_retry(6, 5));
+        assert!(!origin_retry(5, 5));
+        assert!(!origin_retry(4, 5));
+        assert!(heard_further(4, 5));
+        assert!(!heard_further(5, 5));
+        assert!(!heard_further(6, 5));
     }
 
     #[test]

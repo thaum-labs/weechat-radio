@@ -449,17 +449,16 @@ impl Store {
         let Some(cur) = self.delivery_of(id)? else {
             return Ok(false);
         };
-        if !cur.can_advance(next) {
+        if !cur.can_advance(next) || cur == next {
             return Ok(false);
         }
-        if cur != next {
-            self.set_delivery(id, next)?;
-        }
+        self.set_delivery(id, next)?;
         Ok(true)
     }
 
-    /// Closed-group retries are done and not every member ACKed.
-    /// `[ok]` becomes `[no]`. A later real ACK can still move it forward.
+    /// Force `[no]` when a closed group is not already `[all]` or `[no]`.
+    /// The ack-wait path leaves a partial confirmation at Delivered and paints
+    /// `waiting on acks` instead of calling this.
     pub fn conclude_group(&self, id: &MsgId) -> Result<bool> {
         let Some(cur) = self.delivery_of(id)? else {
             return Ok(false);
@@ -1619,6 +1618,7 @@ mod tests {
         s.set_delivery(&env.msg_id, Delivery::Sent).unwrap();
         assert!(s.advance_delivery(&env.msg_id, Delivery::Failed).unwrap());
         assert!(s.retry_due(100, "G4ABC", 3).unwrap().is_empty());
+        assert!(!s.advance_delivery(&env.msg_id, Delivery::Failed).unwrap());
         assert!(!s.advance_delivery(&env.msg_id, Delivery::Relayed).unwrap());
         assert_eq!(s.delivery_of(&env.msg_id).unwrap(), Some(Delivery::Failed));
         s.set_delivery(&env.msg_id, Delivery::Sent).unwrap();

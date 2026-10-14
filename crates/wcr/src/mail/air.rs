@@ -28,12 +28,39 @@ pub fn mail_rung(preset: Preset, retries: u32) -> Rung {
 
 pub fn mail_airtime_secs(preset: Preset, body_len: usize, turnaround_ms: u32) -> (f64, usize) {
     let mtu = Rung::from_index(preset.ladder_start()).payload_bytes() as usize;
-    let chunk = mtu.clamp(1, crate::proto::MAX_BODY);
-    let n = body_len.max(1).div_ceil(chunk);
-    let bytes = n.saturating_mul(chunk.min(body_len.max(1))) + n.saturating_mul(48);
-    let tx = (bytes as f64) * 8.0 / preset.bitrate_bps() as f64;
-    let secs = tx + n as f64 * (preset.overhead_ms() + turnaround_ms) as f64 / 1000.0;
-    (secs, n.max(1))
+    let limit = mtu.min(crate::proto::MAX_BODY);
+    // A real mail id is 64 hex chars, and the first chunk carries the header.
+    // Dividing the body by the rung size ignores that and under-counts by about half.
+    let id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let meta = MailMeta {
+        from: "M7TJF@mail.weechatradio.com".into(),
+        to: "operator@example.com".into(),
+        subject: "subject".into(),
+        dest: "GATEWAY".into(),
+        via: "GATEWAY".into(),
+        ack: true,
+        ..MailMeta::default()
+    };
+    let body = "x".repeat(body_len);
+    let wires = proto::chunk_to_limit(id, &meta, &body, limit);
+    let mut lens = Vec::new();
+    for w in &wires {
+        if let Ok(parts) = proto::frames_for_mtu(&proto::encode_chunk(w), mtu) {
+            lens.extend(parts.into_iter().map(|p| p.len()));
+        }
+    }
+    // The hint's burst count is the chunk count the send log prints. Airtime
+    // still uses every keyed frame, including a header that had to be sliced.
+    let n = wires.len().max(1);
+    (keyed_airtime_secs(preset, lens, turnaround_ms), n)
+}
+
+pub fn burst_label(n: usize) -> String {
+    if n == 1 {
+        "1 burst".to_string()
+    } else {
+        format!("{n} bursts")
+    }
 }
 
 /// Airtime of the frames actually keyed, including preset overhead.
@@ -76,17 +103,19 @@ pub fn airtime_hint(bytes: usize, preset: Preset, hub_only: bool, turnaround_ms:
             ""
         };
         format!(
-            "{bytes} B · ~{} on {} ({n} bursts){warn}",
+            "{bytes} B · ~{} on {} ({}){warn}",
             humanize_airtime(secs),
-            preset.as_str()
+            preset.as_str(),
+            burst_label(n)
         )
     }
 }
 
 pub fn confirm_air_line(secs: f64, bursts: usize, preset: &str) -> String {
     format!(
-        "About {} on the air ({bursts} bursts @ {preset}). Not Sent until the gateway accepts it. Retries can take longer.",
-        humanize_airtime(secs)
+        "About {} on the air ({} @ {preset}). Not Sent until the gateway accepts it. Retries can take longer.",
+        humanize_airtime(secs),
+        burst_label(bursts)
     )
 }
 
@@ -372,16 +401,16 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
                 tokio::time::sleep(wait).await;
                 let _ = tx.send(MailCmd::Send { id }).await;
             });
-            tracing::info!("mail retry {} try {n}/{cap}", row.id);
+            tracing::info!("mail retry {} {}", row.id, gateway::mail_try_label(n, cap));
         }
         return Err(e);
     }
     note_mail(ctx, &cfg.callsign, &gateway_cs);
     tracing::info!(
-        "mail keyed {} to {gateway_cs} ({} chunks, try {}/{cap})",
+        "mail keyed {} to {gateway_cs} ({} chunks, {})",
         row.id,
         wires.len(),
-        row.retries + 1
+        gateway::mail_try_label(row.retries, cap)
     );
     let spent = started.elapsed().as_secs_f64();
     let wait = gateway::retry_after_secs(airtime, spent, row.retries, frame_secs);
@@ -468,7 +497,7 @@ async fn on_ack_wait(ctx: &TxCtx, id: &str, gen: u64) -> Result<()> {
                 .store
                 .bump_retry(id)
                 .unwrap_or(row.retries.saturating_add(1));
-            tracing::info!("mail retry {id} try {n}/{cap}");
+            tracing::info!("mail retry {id} {}", gateway::mail_try_label(n, cap));
             let Some(row) = ctx.store.get(id)? else {
                 return Ok(());
             };
@@ -733,11 +762,90 @@ async fn on_quiet(ctx: &TxCtx, asm: &mut Assembler, gen: u64) {
         return;
     }
     let ready = std::mem::take(&mut asm.ready);
+    let mut completed = std::collections::HashSet::new();
     for (meta, body, op) in ready {
+        if let Some(id) = meta.ids.first() {
+            completed.insert(id.clone());
+        }
         if let Err(e) = apply_mail(ctx, meta, body, op).await {
             tracing::warn!("mail inbound: {e}");
         }
     }
+    if ctx.cfg.lock().mode != Mode::InternetRadio {
+        return;
+    }
+    for report in pending_have_reports(asm, &completed) {
+        let payload = proto::have_bitmap(report.count, &report.indexes);
+        let meta = MailMeta {
+            dest: report.origin,
+            ids: vec![report.mail_id.clone()],
+            ..MailMeta::default()
+        };
+        if let Err(e) = reply_wire(ctx, MailOp::ChunkAck, meta, &payload).await {
+            tracing::warn!("mail have {}: {e}", report.mail_id);
+        } else {
+            tracing::info!(
+                "mail have {} {}/{}",
+                report.mail_id,
+                report.indexes.len(),
+                report.count
+            );
+        }
+    }
+}
+
+struct HaveReport {
+    mail_id: String,
+    origin: String,
+    count: u16,
+    indexes: Vec<u16>,
+}
+
+/// Incomplete Data/VoxData buckets. The fullest total is the one the sender
+/// is filling; a finished set has already left the bucket.
+fn pending_have_reports(
+    asm: &Assembler,
+    completed: &std::collections::HashSet<String>,
+) -> Vec<HaveReport> {
+    let mut out = Vec::new();
+    for (key, totals) in &asm.buckets {
+        let Some((op_name, mail_id)) = key.split_once(':') else {
+            continue;
+        };
+        if op_name != "Data" && op_name != "VoxData" {
+            continue;
+        }
+        if completed.contains(mail_id) {
+            continue;
+        }
+        let Some((count, slot)) = totals
+            .iter()
+            .max_by_key(|(count, slot)| (slot.len(), *count))
+        else {
+            continue;
+        };
+        if slot.is_empty() || slot.len() >= usize::from(*count) {
+            continue;
+        }
+        let Some(from) = asm.from.get(mail_id) else {
+            continue;
+        };
+        let Some(origin) = proto::callsign_from_wcr(from) else {
+            continue;
+        };
+        let mut indexes: Vec<u16> = slot.keys().copied().filter(|i| i < count).collect();
+        indexes.sort_unstable();
+        if indexes.is_empty() {
+            continue;
+        }
+        out.push(HaveReport {
+            mail_id: mail_id.to_string(),
+            origin,
+            count: *count,
+            indexes,
+        });
+    }
+    out
 }
 
 fn finish_slice(
@@ -829,30 +937,50 @@ async fn apply_mail(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Re
             Ok(())
         }
         MailOp::ChunkAck => {
-            let Some(id) = meta.ids.first() else {
+            let Some(id) = meta.ids.first().cloned() else {
                 return Ok(());
             };
-            let Ok(idx) = body.trim().parse::<u16>() else {
+            let indexes = if let Some((count, bits)) = proto::parse_have_bitmap(&body) {
+                let Some(row) = ctx.store.get(&id)? else {
+                    return Ok(());
+                };
+                if row.chunks != 0 && row.chunks != u32::from(count) {
+                    tracing::info!(
+                        "mail gateway ack {id} ignored bitmap for {count} (row {})",
+                        row.chunks
+                    );
+                    return Ok(());
+                }
+                tracing::info!("mail gateway ack {id} has {}/{} chunks", bits.len(), count);
+                bits
+            } else if let Ok(idx) = body.trim().parse::<u16>() {
+                tracing::info!("mail gateway ack {id} chunk {idx}");
+                vec![idx]
+            } else {
                 return Ok(());
             };
-            tracing::info!("mail gateway ack {id} chunk {idx}");
-            let Some((have, total)) = ctx.store.note_chunk(id, idx)? else {
-                return Ok(());
-            };
-            let Some(row) = ctx.store.get(id)? else {
+            let mut have = 0u32;
+            let mut total = 0u32;
+            for idx in &indexes {
+                if let Some((h, t)) = ctx.store.note_chunk(&id, *idx)? {
+                    have = h;
+                    total = t;
+                }
+            }
+            let Some(row) = ctx.store.get(&id)? else {
                 return Ok(());
             };
             if row.state == "sent" || row.state == "failed" {
                 return Ok(());
             }
             if total > 0 && have >= total {
-                ctx.store.set_outcome(id, "outbox", "gateway", "")?;
+                ctx.store.set_outcome(&id, "outbox", "gateway", "")?;
                 tracing::info!("mail at gateway {id}");
-                arm_wait(ctx, id, Duration::from_secs(45));
-            } else {
+                arm_wait(ctx, &id, Duration::from_secs(45));
+            } else if !indexes.is_empty() {
                 arm_wait(
                     ctx,
-                    id,
+                    &id,
                     Duration::from_secs(gateway::ack_backoff_secs(row.retries)),
                 );
             }
@@ -1244,4 +1372,49 @@ async fn reply_chunks(
         cfg.modem.vox_tail_ms,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wire(idx: u16, count: u16) -> MailWire {
+        MailWire {
+            op: MailOp::VoxData,
+            mail_id: "abc".into(),
+            idx,
+            count,
+            meta: MailMeta::default(),
+            payload: String::new(),
+        }
+    }
+
+    #[test]
+    fn have_report_uses_the_fullest_incomplete_total() {
+        let mut asm = Assembler {
+            slices: HashMap::new(),
+            buckets: HashMap::new(),
+            from: HashMap::new(),
+            to: HashMap::new(),
+            ready: Vec::new(),
+        };
+        let mut short = HashMap::new();
+        short.insert(0u16, wire(0, 3));
+        let mut long = HashMap::new();
+        long.insert(0u16, wire(0, 46));
+        long.insert(2u16, wire(2, 46));
+        asm.buckets.insert(
+            "VoxData:abc".into(),
+            HashMap::from([(3u16, short), (46u16, long)]),
+        );
+        asm.from
+            .insert("abc".into(), "M7TJF@mail.weechatradio.com".into());
+        let reports = pending_have_reports(&asm, &std::collections::HashSet::new());
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].origin, "M7TJF");
+        assert_eq!(reports[0].count, 46);
+        assert_eq!(reports[0].indexes, vec![0, 2]);
+        let done = std::collections::HashSet::from(["abc".to_string()]);
+        assert!(pending_have_reports(&asm, &done).is_empty());
+    }
 }
