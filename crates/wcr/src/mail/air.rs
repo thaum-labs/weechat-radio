@@ -51,9 +51,14 @@ pub fn airtime_hint(bytes: usize, preset: Preset, hub_only: bool, turnaround_ms:
     if hub_only {
         format!("{bytes} B · hub only")
     } else {
-        let (secs, _) = mail_airtime_secs(preset, bytes, turnaround_ms);
+        let (secs, n) = mail_airtime_secs(preset, bytes, turnaround_ms);
+        let warn = if secs >= 20.0 || bytes >= 1500 {
+            " · not Sent until the gateway accepts it"
+        } else {
+            ""
+        };
         format!(
-            "{bytes} B · ~{} on {}",
+            "{bytes} B · ~{} on {} ({n} bursts){warn}",
             humanize_airtime(secs),
             preset.as_str()
         )
@@ -62,9 +67,18 @@ pub fn airtime_hint(bytes: usize, preset: Preset, hub_only: bool, turnaround_ms:
 
 pub fn confirm_air_line(secs: f64, bursts: usize, preset: &str) -> String {
     format!(
-        "About {} on the air ({bursts} bursts @ {preset}). Retries can take longer.",
+        "About {} on the air ({bursts} bursts @ {preset}). Not Sent until the gateway accepts it. Retries can take longer.",
         humanize_airtime(secs)
     )
+}
+
+/// Chunk indexes still waiting for a gateway ack. Empty `got` means none yet.
+pub fn missing_chunk_idxs(total: u32, got: &str) -> Vec<u16> {
+    let have: std::collections::HashSet<u16> = got
+        .split(',')
+        .filter_map(|s| s.parse::<u16>().ok())
+        .collect();
+    (0..total as u16).filter(|i| !have.contains(i)).collect()
 }
 
 struct TxCtx {
@@ -75,11 +89,15 @@ struct TxCtx {
     ports: Arc<dyn Fn() -> RadioPorts + Send + Sync>,
     cmd_tx: mpsc::Sender<MailCmd>,
     tel: broadcast::Sender<crate::telemetry::TelemetryEvent>,
+    waits: Mutex<HashMap<String, u64>>,
+    checks: Mutex<u64>,
 }
 
 struct Assembler {
     slices: HashMap<String, Vec<Option<String>>>,
     parts: HashMap<String, Vec<MailWire>>,
+    from: HashMap<String, String>,
+    to: HashMap<String, String>,
 }
 
 pub(super) fn spawn(
@@ -100,6 +118,8 @@ pub(super) fn spawn(
         ports,
         cmd_tx,
         tel,
+        waits: Mutex::new(HashMap::new()),
+        checks: Mutex::new(0),
     };
     tokio::spawn(run(rx, ctx));
 }
@@ -108,6 +128,8 @@ async fn run(mut rx: mpsc::Receiver<MailCmd>, ctx: TxCtx) {
     let mut asm = Assembler {
         slices: HashMap::new(),
         parts: HashMap::new(),
+        from: HashMap::new(),
+        to: HashMap::new(),
     };
     let mut tick = tokio::time::interval(Duration::from_secs(30));
     loop {
@@ -131,7 +153,28 @@ async fn dispatch(ctx: &TxCtx, asm: &mut Assembler, cmd: MailCmd) {
             }
         }
         MailCmd::CheckList => {
+            ctx.store.set_notice("");
+            let gen = {
+                let mut n = ctx.checks.lock();
+                *n = n.wrapping_add(1);
+                *n
+            };
+            let tx = ctx.cmd_tx.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(45)).await;
+                let _ = tx.send(MailCmd::CheckQuiet { gen }).await;
+            });
+            tracing::info!("mail check asked");
             let _ = send_control(ctx, MailOp::ListReq, MailMeta::default(), "").await;
+        }
+        MailCmd::CheckQuiet { gen } => {
+            if *ctx.checks.lock() != gen {
+                return;
+            }
+            if ctx.store.notice().is_empty() {
+                ctx.store.set_notice("No reply from the gateway.");
+                tracing::info!("mail check: no reply from the gateway");
+            }
         }
         MailCmd::CheckGet { ids } => {
             let meta = MailMeta {
@@ -144,6 +187,12 @@ async fn dispatch(ctx: &TxCtx, asm: &mut Assembler, cmd: MailCmd) {
         MailCmd::SyncHub => {
             let _ = sync_hub(ctx).await;
         }
+        MailCmd::AckWait { id, gen } => {
+            if let Err(e) = on_ack_wait(ctx, &id, gen).await {
+                tracing::warn!("mail ack wait {id}: {e}");
+            }
+        }
+        MailCmd::TxStuck { id, gen } => on_tx_stuck(ctx, &id, gen),
     }
 }
 
@@ -206,11 +255,15 @@ async fn hub_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
     );
     let v = hub::signed_post(&base, "/api/v1/mail/send", &ctx.keys, &cfg.callsign, &body).await?;
     if gateway::resend_accepted(v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false)) {
-        ctx.store.set_state(&row.id, "sent", "sent")?;
+        ctx.store.set_outcome(&row.id, "sent", "sent", "")?;
+        tracing::info!("mail accepted {}", row.id);
         note_mail(ctx, &cfg.callsign, "");
         Ok(())
     } else {
-        Err(Error::Net("Hub did not accept the message.".into()))
+        let err = "Hub did not accept the message.";
+        ctx.store.set_outcome(&row.id, "outbox", "failed", err)?;
+        tracing::info!("mail failed {}: {err}", row.id);
+        Err(Error::Net(err.into()))
     }
 }
 
@@ -230,19 +283,36 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
         subject: row.subject.clone(),
         dest: gateway_cs.clone(),
         via: gateway_cs.clone(),
-        ack: vox,
+        // Same flag `compose` hashed into the id. PTT does not change it.
+        ack: row.ack,
         ..MailMeta::default()
     };
-    let wires = proto::chunk_to_limit(&row.id, &meta, &row.body, mtu.min(crate::proto::MAX_BODY));
+    let wires_all =
+        proto::chunk_to_limit(&row.id, &meta, &row.body, mtu.min(crate::proto::MAX_BODY));
+    let total = wires_all.len().max(1) as u32;
+    if row.chunks == 0 {
+        ctx.store.set_chunks(&row.id, total)?;
+    }
+    let total = if row.chunks == 0 { total } else { row.chunks };
+    let missing = missing_chunk_idxs(total, &row.got);
+    let wires: Vec<_> = wires_all
+        .into_iter()
+        .filter(|w| missing.contains(&w.idx))
+        .collect();
+    if wires.is_empty() {
+        return Ok(());
+    }
     let mut frames = Vec::new();
-    for w in wires {
-        frames.extend(proto::frames_for_mtu(&proto::encode_chunk(&w), mtu)?);
+    for w in &wires {
+        frames.extend(proto::frames_for_mtu(&proto::encode_chunk(w), mtu)?);
     }
     let widest = frames.iter().map(Vec::len).max().unwrap_or(0);
     if widest > mtu {
         return Err(Error::protocol("mail frame wider than the rung"));
     }
     ctx.store.set_state(&row.id, "outbox", "tx")?;
+    arm_tx_stuck(ctx, &row.id);
+    let cap = gateway::mail_attempt_cap(cfg.rf.max_retries);
     if let Err(e) = burst(
         ctx,
         &frames,
@@ -254,25 +324,127 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
     )
     .await
     {
+        tracing::warn!("mail key {} failed: {e}", row.id);
         let n = ctx
             .store
             .bump_retry(&row.id)
             .unwrap_or(row.retries.saturating_add(1));
-        if n <= cfg.rf.max_retries {
+        if n >= cap {
+            fail_mail(ctx, &row.id, gateway::NO_GATEWAY_ACK);
+        } else {
+            silence_wait(ctx, &row.id);
             let tx = ctx.cmd_tx.clone();
             let id = row.id.clone();
+            let wait = Duration::from_secs(gateway::ack_backoff_secs(n));
             tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_secs(8)).await;
+                tokio::time::sleep(wait).await;
                 let _ = tx.send(MailCmd::Send { id }).await;
             });
+            tracing::info!("mail retry {} try {n}/{cap}", row.id);
         }
         return Err(e);
     }
     note_mail(ctx, &cfg.callsign, &gateway_cs);
-    if !vox {
-        ctx.store.set_state(&row.id, "sent", "sent")?;
-    }
+    tracing::info!(
+        "mail keyed {} to {gateway_cs} ({} chunks, try {}/{cap})",
+        row.id,
+        wires.len(),
+        row.retries + 1
+    );
+    arm_wait(
+        ctx,
+        &row.id,
+        Duration::from_secs(gateway::ack_backoff_secs(row.retries)),
+    );
     Ok(())
+}
+
+fn silence_wait(ctx: &TxCtx, id: &str) {
+    let mut waits = ctx.waits.lock();
+    let n = waits.get(id).copied().unwrap_or(0).wrapping_add(1);
+    waits.insert(id.to_string(), n);
+}
+
+fn arm_tx_stuck(ctx: &TxCtx, id: &str) {
+    let gen = {
+        let mut waits = ctx.waits.lock();
+        let n = waits.get(id).copied().unwrap_or(0).wrapping_add(1);
+        waits.insert(id.to_string(), n);
+        n
+    };
+    let tx = ctx.cmd_tx.clone();
+    let id = id.to_string();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(gateway::TX_STUCK_AFTER_SECS)).await;
+        let _ = tx.send(MailCmd::TxStuck { id, gen }).await;
+    });
+}
+
+fn on_tx_stuck(ctx: &TxCtx, id: &str, gen: u64) {
+    if ctx.waits.lock().get(id).copied() != Some(gen) {
+        return;
+    }
+    let Ok(Some(row)) = ctx.store.get(id) else {
+        return;
+    };
+    if let Some(error) = gateway::tx_stuck_error(&row.state) {
+        fail_mail(ctx, id, error);
+    }
+}
+
+fn arm_wait(ctx: &TxCtx, id: &str, after: Duration) {
+    let gen = {
+        let mut waits = ctx.waits.lock();
+        let n = waits.get(id).copied().unwrap_or(0).wrapping_add(1);
+        waits.insert(id.to_string(), n);
+        n
+    };
+    let tx = ctx.cmd_tx.clone();
+    let id = id.to_string();
+    tokio::spawn(async move {
+        tokio::time::sleep(after).await;
+        let _ = tx.send(MailCmd::AckWait { id, gen }).await;
+    });
+}
+
+fn fail_mail(ctx: &TxCtx, id: &str, error: &str) {
+    silence_wait(ctx, id);
+    let _ = ctx.store.set_outcome(id, "outbox", "failed", error);
+    tracing::info!("mail failed {id}: {error}");
+}
+
+fn accept_mail(ctx: &TxCtx, id: &str) {
+    silence_wait(ctx, id);
+    let _ = ctx.store.set_outcome(id, "sent", "sent", "");
+    tracing::info!("mail accepted {id}");
+}
+
+async fn on_ack_wait(ctx: &TxCtx, id: &str, gen: u64) -> Result<()> {
+    if ctx.waits.lock().get(id).copied() != Some(gen) {
+        return Ok(());
+    }
+    let Some(row) = ctx.store.get(id)? else {
+        return Ok(());
+    };
+    let cap = gateway::mail_attempt_cap(ctx.cfg.lock().rf.max_retries);
+    match gateway::on_ack_timeout(&row.state, row.retries, cap) {
+        None => Ok(()),
+        Some(gateway::AckTimeout::GiveUp { error }) => {
+            fail_mail(ctx, id, error);
+            Ok(())
+        }
+        Some(gateway::AckTimeout::Retry) => {
+            let n = ctx
+                .store
+                .bump_retry(id)
+                .unwrap_or(row.retries.saturating_add(1));
+            tracing::info!("mail retry {id} try {n}/{cap}");
+            let Some(row) = ctx.store.get(id)? else {
+                return Ok(());
+            };
+            rf_send(ctx, &row).await
+        }
+    }
 }
 
 async fn send_control(ctx: &TxCtx, op: MailOp, mut meta: MailMeta, payload: &str) -> Result<()> {
@@ -418,6 +590,8 @@ async fn on_incoming(ctx: &TxCtx, asm: &mut Assembler, incoming: Incoming) {
         } => finish_slice(asm, &group, part, parts, data),
     };
     let Some(wire) = wire else { return };
+    remember_party(asm, &wire);
+    maybe_chunk_ack(ctx, asm, &wire).await;
     if let Some((meta, body, op)) = finish_wire(asm, wire) {
         if let Err(e) = apply_mail(ctx, meta, body, op).await {
             tracing::warn!("mail inbound: {e}");
@@ -456,6 +630,53 @@ fn finish_slice(
     proto::decode_chunk(&bytes).ok()
 }
 
+fn remember_party(asm: &mut Assembler, wire: &MailWire) {
+    if !wire.meta.from.is_empty() {
+        asm.from
+            .insert(wire.mail_id.clone(), wire.meta.from.clone());
+    }
+    if !wire.meta.to.is_empty() {
+        asm.to.insert(wire.mail_id.clone(), wire.meta.to.clone());
+    }
+}
+
+async fn maybe_chunk_ack(ctx: &TxCtx, asm: &Assembler, wire: &MailWire) {
+    if !matches!(wire.op, MailOp::Data | MailOp::VoxData) {
+        return;
+    }
+    let cfg = ctx.cfg.lock().clone();
+    if cfg.mode != Mode::InternetRadio {
+        return;
+    }
+    let Some(from) = asm.from.get(&wire.mail_id) else {
+        return;
+    };
+    let to = asm.to.get(&wire.mail_id).map(String::as_str).unwrap_or("");
+    if proto::validate_internet_addr(to).is_err() {
+        return;
+    }
+    let Some(origin) = proto::callsign_from_wcr(from) else {
+        return;
+    };
+    if origin.eq_ignore_ascii_case(&cfg.callsign) {
+        return;
+    }
+    tracing::info!(
+        "mail received chunk {} {}/{} from {origin}",
+        wire.mail_id,
+        wire.idx + 1,
+        wire.count
+    );
+    let ack = MailMeta {
+        dest: origin,
+        ids: vec![wire.mail_id.clone()],
+        ..MailMeta::default()
+    };
+    if let Err(e) = reply_wire(ctx, MailOp::ChunkAck, ack, &wire.idx.to_string()).await {
+        tracing::warn!("mail chunk ack {}: {e}", wire.mail_id);
+    }
+}
+
 fn finish_wire(asm: &mut Assembler, wire: MailWire) -> Option<(MailMeta, String, MailOp)> {
     let id = format!("{:?}:{}", wire.op, wire.mail_id);
     let count = wire.count as usize;
@@ -482,13 +703,59 @@ async fn apply_mail(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Re
     match op {
         MailOp::CompleteAck => {
             if let Some(id) = meta.ids.first() {
-                ctx.store.set_state(id, "sent", "sent")?;
+                if let Some(err) = gateway::failure_text(&body) {
+                    fail_mail(ctx, id, &err);
+                } else {
+                    accept_mail(ctx, id);
+                    note_mail(ctx, &cfg.callsign, "");
+                }
             }
             Ok(())
         }
-        MailOp::ChunkAck | MailOp::HubSync => Ok(()),
+        MailOp::ChunkAck => {
+            let Some(id) = meta.ids.first() else {
+                return Ok(());
+            };
+            let Ok(idx) = body.trim().parse::<u16>() else {
+                return Ok(());
+            };
+            tracing::info!("mail gateway ack {id} chunk {idx}");
+            let Some((have, total)) = ctx.store.note_chunk(id, idx)? else {
+                return Ok(());
+            };
+            let Some(row) = ctx.store.get(id)? else {
+                return Ok(());
+            };
+            if row.state == "sent" || row.state == "failed" {
+                return Ok(());
+            }
+            if total > 0 && have >= total {
+                ctx.store.set_outcome(id, "outbox", "gateway", "")?;
+                tracing::info!("mail at gateway {id}");
+                arm_wait(ctx, id, Duration::from_secs(45));
+            } else {
+                arm_wait(
+                    ctx,
+                    id,
+                    Duration::from_secs(gateway::ack_backoff_secs(row.retries)),
+                );
+            }
+            Ok(())
+        }
+        MailOp::HubSync => Ok(()),
         MailOp::ListHdr => {
             let rows: Vec<WaitHeader> = serde_json::from_str(&body).unwrap_or_default();
+            {
+                let mut n = ctx.checks.lock();
+                *n = n.wrapping_add(1);
+            }
+            let notice = gateway::check_notice(rows.len());
+            ctx.store.set_notice(notice);
+            if notice.is_empty() {
+                tracing::info!("mail check: {} waiting", rows.len());
+            } else {
+                tracing::info!("mail check: {notice}");
+            }
             ctx.store.replace_waiting(&rows)
         }
         MailOp::ListReq if cfg.mode == Mode::InternetRadio => answer_list(ctx, &meta, &body).await,
@@ -506,40 +773,78 @@ async fn deliver(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Resul
         && internet_to
         && from_call.as_deref() != Some(cfg.callsign.as_str());
     if gateway_hop && gateway::gateway_may_post(cfg.mode, cfg.gateway.third_party_allow()) {
+        let mail_id = proto::compute_mail_id(&meta.from, &meta.to, &meta.subject, &body, meta.ack);
+        tracing::info!(
+            "mail received {mail_id} from {} to {} ({} B)",
+            meta.from,
+            meta.to,
+            body.len()
+        );
+        if let Some(prev) = ctx.store.get(&mail_id)? {
+            if prev.folder == "relay" && prev.state == "sent" {
+                tracing::info!("mail {mail_id} already accepted; repeating the ack");
+                if let Some(origin) = from_call {
+                    send_complete(ctx, &origin, &mail_id, "ok").await?;
+                }
+                return Ok(());
+            }
+        }
         let base = hub::http_base_from_hub(&cfg.hub.url);
         // Relayed mail is not ours. The hub adds the sender's copy-to, if any.
         let payload = hub::send_body(&meta.from, &meta.to, &meta.subject, &body, None);
-        let v = hub::signed_post(
+        let posted = hub::signed_post(
             &base,
             "/api/v1/mail/send",
             &ctx.keys,
             &cfg.callsign,
             &payload,
         )
-        .await?;
-        if gateway::resend_accepted(v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false)) {
+        .await;
+        let accepted = gateway::resend_accepted(
+            posted
+                .as_ref()
+                .ok()
+                .and_then(|v| v.get("ok").and_then(|x| x.as_bool()))
+                .unwrap_or(false),
+        );
+        if accepted {
+            let resend_id = posted
+                .as_ref()
+                .ok()
+                .and_then(|v| v.get("id").and_then(|x| x.as_str()))
+                .unwrap_or("");
+            tracing::info!("mail posted {mail_id} to hub resend {resend_id}");
+            let _ = ctx.store.insert(&MailRow {
+                id: mail_id.clone(),
+                folder: "relay".into(),
+                from_addr: meta.from.clone(),
+                to_addr: meta.to.clone(),
+                subject: meta.subject.clone(),
+                body: body.clone(),
+                ts: chrono::Utc::now().timestamp(),
+                state: "sent".into(),
+                unread: false,
+                ack: meta.ack,
+                retries: 0,
+                detail: String::new(),
+                chunks: 0,
+                got: String::new(),
+            });
             if let Some(origin) = from_call.as_deref() {
                 note_mail(ctx, origin, &cfg.callsign);
             }
-        }
-        if meta.ack
-            && gateway::resend_accepted(v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false))
-        {
             if let Some(origin) = from_call {
-                let ack = MailMeta {
-                    dest: origin,
-                    ids: vec![proto::compute_mail_id(
-                        &meta.from,
-                        &meta.to,
-                        &meta.subject,
-                        &body,
-                        true,
-                    )],
-                    ack: true,
-                    ..MailMeta::default()
-                };
-                let _ =
-                    reply_wire(ctx, MailOp::CompleteAck, ack, &meta_id_body(&meta, &body)).await;
+                send_complete(ctx, &origin, &mail_id, "ok").await?;
+            }
+        } else {
+            let err = posted
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "Hub did not accept the message.".into());
+            tracing::info!("mail rejected {mail_id}: {err}");
+            if let Some(origin) = from_call {
+                let payload = format!("fail {err}");
+                send_complete(ctx, &origin, &mail_id, &payload).await?;
             }
         }
         return Ok(());
@@ -563,6 +868,9 @@ async fn deliver(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Resul
         unread: true,
         ack: meta.ack,
         retries: 0,
+        detail: String::new(),
+        chunks: 0,
+        got: String::new(),
     };
     ctx.store.insert(&row)?;
     let us = cfg.callsign.to_ascii_uppercase();
@@ -753,13 +1061,22 @@ async fn sync_hub(ctx: &TxCtx) -> Result<()> {
             unread: true,
             ack: false,
             retries: 0,
+            detail: String::new(),
+            chunks: 0,
+            got: String::new(),
         })?;
     }
     Ok(())
 }
 
-fn meta_id_body(meta: &MailMeta, body: &str) -> String {
-    proto::compute_mail_id(&meta.from, &meta.to, &meta.subject, body, meta.ack)
+async fn send_complete(ctx: &TxCtx, origin: &str, mail_id: &str, payload: &str) -> Result<()> {
+    let ack = MailMeta {
+        dest: origin.to_string(),
+        ids: vec![mail_id.to_string()],
+        ack: true,
+        ..MailMeta::default()
+    };
+    reply_wire(ctx, MailOp::CompleteAck, ack, payload).await
 }
 
 async fn reply_wire(ctx: &TxCtx, op: MailOp, meta: MailMeta, payload: &str) -> Result<()> {
