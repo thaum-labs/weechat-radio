@@ -120,6 +120,10 @@ pub enum MailCmd {
         id: String,
         gen: u64,
     },
+    /// Gateway quiet gap elapsed. Key any ack that was held back.
+    Quiet {
+        gen: u64,
+    },
 }
 
 pub fn db_path(cfg: &Config) -> PathBuf {
@@ -190,6 +194,7 @@ impl MailHandle {
         }
         let from = proto::wcr_address(&cfg.callsign);
         let ack = matches!(gateway::local_send_path(cfg.mode), SendPath::Rf);
+        let bytes = body.len();
         let id = proto::compute_mail_id(&from, to.trim(), subject.trim(), &body, ack);
         self.store.insert(&MailRow {
             id: id.clone(),
@@ -213,7 +218,10 @@ impl MailHandle {
             SendPath::Rf => "rf",
             SendPath::Blocked => "blocked",
         };
-        Ok(json!({ "id": id, "path": path }))
+        let preset = crate::presets::Preset::parse(&cfg.modem.preset)
+            .unwrap_or(crate::presets::Preset::HfPoor);
+        let airtime = hint_line(bytes, cfg.mode, preset, cfg.rf.turnaround_ms);
+        Ok(json!({ "id": id, "path": path, "airtime": airtime }))
     }
 
     pub async fn check_list(&self) -> Result<()> {

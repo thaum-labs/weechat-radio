@@ -274,7 +274,7 @@ impl Store {
             rows.filter_map(|r| r.ok()).collect()
         };
         for old in names {
-            let new = Self::group_key(&old);
+            let new = crate::slash::legacy_packed_name(&old);
             if new.is_empty() || new == old {
                 continue;
             }
@@ -324,7 +324,7 @@ impl Store {
             rows.filter_map(|r| r.ok()).collect()
         };
         for dest in dests {
-            let packed = crate::slash::channel_dest(&dest);
+            let packed = crate::slash::legacy_packed_dest(&dest);
             if packed.is_empty() || packed.eq_ignore_ascii_case(&dest) {
                 continue;
             }
@@ -455,6 +455,19 @@ impl Store {
         if cur != next {
             self.set_delivery(id, next)?;
         }
+        Ok(true)
+    }
+
+    /// Closed-group retries are done and not every member ACKed.
+    /// `[ok]` becomes `[no]`. A later real ACK can still move it forward.
+    pub fn conclude_group(&self, id: &MsgId) -> Result<bool> {
+        let Some(cur) = self.delivery_of(id)? else {
+            return Ok(false);
+        };
+        if matches!(cur, Delivery::All | Delivery::Failed) {
+            return Ok(false);
+        }
+        self.set_delivery(id, Delivery::Failed)?;
         Ok(true)
     }
 
@@ -1749,7 +1762,7 @@ mod tests {
         assert!(!s.is_group_member("compatri", "M7TJF").unwrap());
         s.pack_group_names().unwrap();
         assert!(s.is_group_member("compatri", "M7TJF").unwrap());
-        assert!(s.is_group_member("compatriots", "TF101").unwrap());
+        assert!(s.is_group_member("compatri", "TF101").unwrap());
         assert_eq!(s.group_list().unwrap(), vec!["compatri".to_string()]);
         let dest: String = {
             let conn = s.conn.lock().unwrap();
