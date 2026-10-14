@@ -80,36 +80,38 @@ pub async fn wait_idle(ports: &RadioPorts, cap: Duration) -> bool {
     }
 }
 
-pub async fn wait_tx_count(control: &ControlClient, target: u64, cap: Duration) {
+/// `true` when `tx_frame_count` reaches `target` before `cap`.
+/// A status poll that never returns does not hold the lease past `cap`.
+pub async fn wait_tx_count(control: &ControlClient, target: u64, cap: Duration) -> bool {
     let start = Instant::now();
     loop {
-        match control.get_status().await {
-            Ok(st) if tx_drained(st.tx_frame_count, target) => return,
-            Err(_) => return,
-            _ => {}
+        if let Ok(Ok(st)) = tokio::time::timeout(Duration::from_secs(5), control.get_status()).await
+        {
+            if tx_drained(st.tx_frame_count, target) {
+                return true;
+            }
         }
         if start.elapsed() >= cap {
-            return;
+            return false;
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 }
 
 /// Wait until `tx_frame_count` stops climbing, so a mode change cannot strand a queued frame.
+async fn tx_frame_count(control: &ControlClient) -> Option<u64> {
+    match tokio::time::timeout(Duration::from_secs(5), control.get_status()).await {
+        Ok(Ok(st)) => Some(st.tx_frame_count),
+        _ => None,
+    }
+}
+
 pub async fn wait_tx_stable(control: &ControlClient, cap: Duration) -> u64 {
     let start = Instant::now();
-    let mut last = control
-        .get_status()
-        .await
-        .map(|s| s.tx_frame_count)
-        .unwrap_or(0);
+    let mut last = tx_frame_count(control).await.unwrap_or(0);
     loop {
         tokio::time::sleep(Duration::from_millis(200)).await;
-        let now = control
-            .get_status()
-            .await
-            .map(|s| s.tx_frame_count)
-            .unwrap_or(last);
+        let now = tx_frame_count(control).await.unwrap_or(last);
         if now == last {
             return now;
         }

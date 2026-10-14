@@ -58,7 +58,7 @@ pub struct MailMeta {
     /// Gateway callsign on the RF hop.
     #[serde(default, alias = "v")]
     pub via: String,
-    /// True when the sender is waiting for `CompleteAck` (VOX).
+    /// True when the sender is waiting for `CompleteAck`. Radio-plus always sets this.
     #[serde(default, alias = "a")]
     pub ack: bool,
 }
