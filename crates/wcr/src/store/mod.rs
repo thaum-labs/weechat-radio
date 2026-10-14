@@ -125,6 +125,12 @@ pub fn via_bracket(medium: &str) -> &'static str {
     }
 }
 
+/// True when an unacked row has been waiting longer than `max_age_secs`.
+/// `0` disables the limit.
+pub fn outbound_expired(rx_time: u32, now: u32, max_age_secs: u32) -> bool {
+    max_age_secs > 0 && rx_time > 0 && now.saturating_sub(rx_time) >= max_age_secs
+}
+
 pub fn tries_bracket(n: u32) -> String {
     if n == 0 {
         String::new()
@@ -571,7 +577,7 @@ impl Store {
              WHERE hold_until > 0 AND suppressed = 0
                AND (
                     (upper(origin) != upper(?1) AND hops_left > 0)
-                 OR (upper(origin) = upper(?1) AND delivery IN ('sent','relayed') AND retries < ?2)
+                 OR (upper(origin) = upper(?1) AND delivery IN ('sent','relayed') AND retries <= ?2)
                )
              ORDER BY hold_until ASC
              LIMIT 1",
@@ -715,6 +721,84 @@ impl Store {
             out.push(r?);
         }
         Ok(out)
+    }
+
+    /// Last keyed copy is out. The hold is one more retry interval; when it
+    /// fires, mark `[no]` without keying again.
+    pub fn ack_wait_due(&self, now: u32, origin: &str, max_retries: u32) -> Result<Vec<StoredMsg>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT msg_id, kind, origin, dest, flags, hops_left, ts, seq, body, signature, rx_time, delivery
+             FROM messages
+             WHERE upper(origin) = upper(?1)
+               AND delivery IN ('sent', 'relayed')
+               AND hold_until > 0 AND hold_until <= ?2
+               AND retries >= ?3",
+        )?;
+        let rows = stmt.query_map(
+            params![origin, now as i64, max_retries as i64],
+            map_full_row,
+        )?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /// Own unacked rows older than `max_age_secs` become `[no]` and leave the
+    /// retry queue. `0` disables the limit.
+    pub fn expire_outbound(&self, origin: &str, now: u32, max_age_secs: u32) -> Result<Vec<MsgId>> {
+        if max_age_secs == 0 {
+            return Ok(Vec::new());
+        }
+        let cutoff = now.saturating_sub(max_age_secs);
+        self.fail_outbound(
+            "AND rx_time > 0 AND rx_time <= ?2",
+            params![origin, cutoff as i64],
+        )
+    }
+
+    /// Drop every unacked message this station originated. Used by `/radio flush`.
+    pub fn flush_outbound(&self, origin: &str) -> Result<Vec<MsgId>> {
+        self.fail_outbound("", params![origin])
+    }
+
+    fn fail_outbound(
+        &self,
+        extra_and: &str,
+        query_params: impl rusqlite::Params,
+    ) -> Result<Vec<MsgId>> {
+        let conn = self.conn.lock().unwrap();
+        let sql = format!(
+            "SELECT msg_id FROM messages
+             WHERE upper(origin) = upper(?1)
+               AND delivery IN ('queued','sent','relayed')
+               {extra_and}"
+        );
+        let ids: Vec<String> = {
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(query_params, |r| r.get::<_, String>(0))?;
+            rows.filter_map(|r| r.ok()).collect()
+        };
+        for id in &ids {
+            conn.execute(
+                "UPDATE messages SET delivery = 'failed', hold_until = 0 WHERE msg_id = ?1",
+                params![id],
+            )?;
+        }
+        Ok(ids.iter().filter_map(|hex| MsgId::parse_hex(hex)).collect())
+    }
+
+    /// Stop holding other stations' frames. Does not change their delivery mark.
+    pub fn clear_relay_holds(&self, origin: &str) -> Result<u64> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "UPDATE messages SET hold_until = 0
+             WHERE hold_until > 0 AND upper(origin) != upper(?1)",
+            params![origin],
+        )?;
+        Ok(n as u64)
     }
 
     pub fn queue_depth(&self) -> Result<(u64, u64)> {
@@ -1017,6 +1101,10 @@ impl Store {
 
     pub fn receipt(&self, group: &str, msg_id: &MsgId, callsign: &str) -> Result<()> {
         let group = Self::group_key(group);
+        let callsign = callsign.trim().to_ascii_uppercase();
+        if callsign.is_empty() {
+            return Ok(());
+        }
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT OR IGNORE INTO group_receipts(group_name, msg_id, callsign, seen_at)
@@ -1041,7 +1129,9 @@ impl Store {
             return Ok(false);
         }
         let got = self.receipts_for(group, msg_id)?;
-        Ok(members.iter().all(|m| got.iter().any(|g| g == m)))
+        Ok(members
+            .iter()
+            .all(|m| got.iter().any(|g| g.eq_ignore_ascii_case(m))))
     }
 
     pub fn have_digest(
@@ -1553,7 +1643,7 @@ mod tests {
         s.insert(&env, Delivery::Sent).unwrap();
         s.receipt("net", &env.msg_id, "G4ABC").unwrap();
         assert!(!s.group_all_received("net", &env.msg_id).unwrap());
-        s.receipt("net", &env.msg_id, "M0XYZ").unwrap();
+        s.receipt("net", &env.msg_id, "m0xyz").unwrap();
         assert!(s.group_all_received("net", &env.msg_id).unwrap());
         assert!(s.is_group_member("net", "G4ABC").unwrap());
         s.group_remove_member("net", "G4ABC").unwrap();
@@ -1562,6 +1652,52 @@ mod tests {
         s.group_forget("net").unwrap();
         assert!(s.group_members("net").unwrap().is_empty());
         assert!(!s.group_list().unwrap().iter().any(|n| n == "net"));
+    }
+
+    #[test]
+    fn old_outbound_expires_and_flush_clears_the_rest() {
+        let s = Store::open_memory().unwrap();
+        let env = Envelope::new_msg(
+            Callsign::parse("G4ABC").unwrap(),
+            Callsign::parse("M0XYZ").unwrap(),
+            1,
+            b"old".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        s.insert(&env, Delivery::Sent).unwrap();
+        s.set_hold(&env.msg_id, 1, 3).unwrap();
+        let now = crate::proto::now_ts();
+        assert!(s.expire_outbound("G4ABC", now, 3600).unwrap().is_empty());
+        let expired = s.expire_outbound("G4ABC", now + 7200, 3600).unwrap();
+        assert_eq!(expired, vec![env.msg_id]);
+        assert_eq!(s.delivery_of(&env.msg_id).unwrap(), Some(Delivery::Failed));
+
+        let fresh = Envelope::new_msg(
+            Callsign::parse("G4ABC").unwrap(),
+            Callsign::parse("M0XYZ").unwrap(),
+            2,
+            b"fresh".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        s.insert(&fresh, Delivery::Relayed).unwrap();
+        s.bump_retry(&fresh.msg_id, now.saturating_sub(1)).unwrap();
+        s.bump_retry(&fresh.msg_id, now.saturating_sub(1)).unwrap();
+        s.bump_retry(&fresh.msg_id, now.saturating_sub(1)).unwrap();
+        let waiting = s.ack_wait_due(now, "G4ABC", 3).unwrap();
+        assert_eq!(waiting.len(), 1);
+        assert_eq!(waiting[0].env.msg_id, fresh.msg_id);
+        assert!(s.retry_due(now, "G4ABC", 3).unwrap().is_empty());
+
+        let flushed = s.flush_outbound("g4abc").unwrap();
+        assert_eq!(flushed, vec![fresh.msg_id]);
+        assert_eq!(
+            s.delivery_of(&fresh.msg_id).unwrap(),
+            Some(Delivery::Failed)
+        );
     }
 
     #[test]
