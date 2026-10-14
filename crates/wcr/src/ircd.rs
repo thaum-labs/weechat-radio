@@ -35,6 +35,10 @@ pub enum IrcEventKind {
     Radio {
         args: String,
     },
+    Invite {
+        target: String,
+        channel: String,
+    },
     Nick {
         nick: String,
     },
@@ -306,6 +310,17 @@ impl IrcServer {
                         self.send_raw(tid, &format!(":{from} INVITE {target} {ch}"))
                             .await;
                     }
+                    let _ = self
+                        .events
+                        .send(IrcEvent {
+                            client_id: id,
+                            nick: from,
+                            kind: IrcEventKind::Invite {
+                                target,
+                                channel: ch,
+                            },
+                        })
+                        .await;
                 }
             }
             "PRIVMSG" => {
@@ -358,7 +373,9 @@ impl IrcServer {
                         .await;
                 }
             }
-            "MODE" | "WHOIS" => {}
+            "WHOIS" => {}
+            "MODE" => self.reply_mode(id, &parts).await,
+            "HELP" => self.reply_help(id).await,
             other => {
                 self.send_numeric(id, 421, &format!("{other} :Unknown command"))
                     .await;
@@ -647,6 +664,55 @@ impl IrcServer {
 
     pub fn first_client_id(&self) -> Option<u64> {
         self.inner.lock().clients.keys().next().copied()
+    }
+
+    async fn reply_mode(&self, id: u64, parts: &[String]) {
+        let target = parts
+            .get(1)
+            .map(|s| s.trim_start_matches(':'))
+            .unwrap_or("");
+        if target.is_empty() {
+            self.send_numeric(id, 461, "MODE :Not enough parameters")
+                .await;
+            return;
+        }
+        if target.starts_with('#') || target.starts_with('&') {
+            let ch = normalize_irc_channel(target);
+            let modes = crate::slash::channel_mode(&ch);
+            self.send_numeric(id, 324, &format!("{ch} {modes}")).await;
+            if parts.len() > 2 {
+                let note = if crate::slash::is_bulletin(&ch) {
+                    "#bulletin is public. Channel mode stays +."
+                } else {
+                    "Closed group. Channel mode stays +i (invite only). Use /invite CALL."
+                };
+                let nick = self.nick(id);
+                let srv = self.inner.lock().server_name.clone();
+                self.send_raw(id, &format!(":{srv} NOTICE {nick} :{note}"))
+                    .await;
+            }
+        } else {
+            self.send_numeric(id, 221, "+").await;
+        }
+    }
+
+    async fn reply_help(&self, id: u64) {
+        let lines = [
+            "WeeChat Radio commands:",
+            "/join #name — closed group. #bulletin is the public channel.",
+            "/invite CALL — add them and send an over-air notice.",
+            "/part — leave the current closed group.",
+            "/mode #chan — 324 reply. +i means a closed group.",
+            "/msg CALL text — direct message.",
+            "/radio help — mode, preset, status, group, prio.",
+            "Marks: [tx] sent, [rl] heard own frame, [ok] delivered, [all] closed group, [no] gave up, [xN] radio copies.",
+            "#bulletin stops at [ok]. It has no member list, so it never shows [all].",
+        ];
+        self.send_numeric(id, 704, ":wcr HELP").await;
+        for line in lines {
+            self.send_numeric(id, 705, &format!(":{line}")).await;
+        }
+        self.send_numeric(id, 706, ":End of /HELP").await;
     }
 
     pub async fn send_radio_reply(&self, id: u64, text: &str) {

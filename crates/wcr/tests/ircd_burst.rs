@@ -208,3 +208,73 @@ async fn privmsg_body_exact_crlf_lf_and_burst() {
         vec!["one".to_string(), "two".to_string(), "three".to_string()]
     );
 }
+
+#[tokio::test]
+async fn mode_help_and_invite_get_replies() {
+    let (events_tx, mut events_rx) = mpsc::channel(32);
+    let server = IrcServer::new(events_tx);
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = server.accept_loop(listener).await;
+    });
+    let mut stream = TcpStream::connect(addr).await.expect("connect");
+    let burst = concat!(
+        "NICK G4ABC\r\n",
+        "USER G4ABC 0 * :wcr test\r\n",
+        "MODE #ops\r\n",
+        "MODE #bulletin\r\n",
+        "MODE #ops +i\r\n",
+        "HELP\r\n",
+        "INVITE M0XYZ #ops\r\n",
+        "INVITE M0XYZ #bulletin\r\n",
+    );
+    stream.write_all(burst.as_bytes()).await.expect("write");
+    stream.flush().await.expect("flush");
+
+    let mut reader = tokio::io::BufReader::new(stream);
+    let mut lines = String::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    let mut line_buf = String::new();
+    while tokio::time::Instant::now() < deadline {
+        line_buf.clear();
+        let read = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            reader.read_line(&mut line_buf),
+        )
+        .await;
+        match read {
+            Ok(Ok(0)) => break,
+            Ok(Err(e)) => panic!("read: {e}"),
+            Err(_) => {
+                if lines.contains(" 706 ") && lines.matches(" 341 ").count() >= 2 {
+                    break;
+                }
+                continue;
+            }
+            Ok(Ok(_)) => lines.push_str(&line_buf),
+        }
+    }
+    assert!(lines.contains(" 324 "), "mode query: {lines}");
+    assert!(lines.contains("#ops +i"), "closed group: {lines}");
+    assert!(lines.contains("#bulletin +"), "bulletin mode: {lines}");
+    assert!(
+        lines.contains("Channel mode stays +i"),
+        "set mode notice: {lines}"
+    );
+    assert!(lines.contains(" 705 "), "help: {lines}");
+    assert!(lines.contains("/invite CALL"), "help lists invite: {lines}");
+    assert!(
+        !lines.contains(" 421 "),
+        "help must not be unknown: {lines}"
+    );
+    assert_eq!(lines.matches(" 341 ").count(), 2, "invite: {lines}");
+
+    let mut invites = 0;
+    while let Ok(ev) = events_rx.try_recv() {
+        if matches!(ev.kind, wcr::ircd::IrcEventKind::Invite { .. }) {
+            invites += 1;
+        }
+    }
+    assert_eq!(invites, 2);
+}
