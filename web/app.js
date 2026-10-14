@@ -257,6 +257,27 @@ function isTrafficKind(kind, type) {
   );
 }
 
+function nodeMode(origin, nodes) {
+  const key = String(origin || "").toUpperCase();
+  if (!key) return "";
+  const list = nodes || lastNodes;
+  const n = (list || []).find((x) => String(x.callsign || "").toUpperCase() === key);
+  return String((n && n.mode) || "").toLowerCase();
+}
+
+/** Blue solid line when true, green dashed RF line when false. */
+function linkIsInet(event, nodes) {
+  const ev = event || {};
+  const path = String(ev.path || ev.medium || "").toLowerCase();
+  if (path === "rf" || path === "radio") return false;
+  if (path === "inet" || path === "internet" || path === "lan" || path === "net") return true;
+  const mode = String(ev.mode || nodeMode(ev.origin || ev.callsign, nodes) || "").toLowerCase();
+  if (mode === "radio" || mode === "radio-plus") return false;
+  const kind = String(ev.kind || ev.type || "").toLowerCase();
+  if (kind === "relay") return false;
+  return true;
+}
+
 function linkPairKey(a, b) {
   const [x, y] = [a.toUpperCase(), b.toUpperCase()].sort();
   return `${x}|${y}`;
@@ -374,7 +395,7 @@ function seedLinksFromEvents(events) {
       return;
     }
     if (!isTrafficKind(kind, x.type) || !x.origin || !x.dest) return;
-    rememberLink(x.origin, x.dest, kind !== "relay", false, false);
+    rememberLink(x.origin, x.dest, linkIsInet(x), false, false);
   });
   updateMailOverlays();
   if (qsoLinks.size) {
@@ -940,8 +961,8 @@ function nodesFromTrail(cutoff) {
 }
 
 function paintHistory(cutoff) {
+  const nodes = trailLoadedAt ? nodesFromTrail(cutoff) : lastNodes;
   if (trailLoadedAt) {
-    const nodes = nodesFromTrail(cutoff);
     dropMarkersExcept(nodes);
     renderStations(nodes);
   }
@@ -958,7 +979,7 @@ function paintHistory(cutoff) {
       return;
     }
     if (!isTrafficKind(kind, x.type) || !x.origin || !x.dest) return;
-    rememberLink(x.origin, x.dest, kind !== "relay", false, false);
+    rememberLink(x.origin, x.dest, linkIsInet(x, nodes), false, false);
   });
   ensureArcLayer();
   drawArcs();
@@ -1149,7 +1170,7 @@ function connectLive() {
       if (kind === "tx" || kind === "msg" || m.type === "hub_forward") pulseMarker(origin, "tx");
       if (kind === "rx" || kind === "relay") pulseMarker(origin, "rx");
       if (m.dest && isTrafficKind(kind, m.type)) {
-        rememberLink(origin, m.dest, kind !== "relay");
+        rememberLink(origin, m.dest, linkIsInet(m));
       }
       tick(eventLine(m));
     } catch (_) {}
@@ -1160,6 +1181,8 @@ function connectLive() {
     setTimeout(connectLive, 4000);
   };
 }
+
+window.WCR.linkIsInet = linkIsInet;
 
 setInterval(renderConn, 1000);
 renderModes([]);
