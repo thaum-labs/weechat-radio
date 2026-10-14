@@ -99,13 +99,27 @@ pub struct MailHandle {
 }
 
 pub enum MailCmd {
-    Send { id: String },
+    Send {
+        id: String,
+    },
     CheckList,
-    CheckGet { ids: Vec<String> },
-    CheckQuiet { gen: u64 },
+    CheckGet {
+        ids: Vec<String>,
+    },
+    CheckQuiet {
+        gen: u64,
+    },
     Inbound(Incoming),
     SyncHub,
-    AckWait { id: String, gen: u64 },
+    AckWait {
+        id: String,
+        gen: u64,
+    },
+    /// The outbox row is still `tx` and nothing has moved it on.
+    TxStuck {
+        id: String,
+        gen: u64,
+    },
 }
 
 pub fn db_path(cfg: &Config) -> PathBuf {
@@ -507,10 +521,6 @@ mod tests {
         assert!(line.contains("Not Sent until the gateway accepts it"));
         assert!(air::missing_chunk_idxs(4, "0,2").is_empty() == false);
         assert_eq!(air::missing_chunk_idxs(4, "0,2"), vec![1, 3]);
-        let short = air::tx_drain_cap(Preset::HfPoor, &[vec![0u8; 20]]);
-        let long = air::tx_drain_cap(Preset::HfPoor, &[vec![0u8; 3900]]);
-        assert_eq!(short, std::time::Duration::from_secs(90));
-        assert!(long > short, "a 3.9 KB burst must not be cut off at 90s");
     }
 
     #[test]
