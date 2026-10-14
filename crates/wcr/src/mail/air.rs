@@ -74,8 +74,10 @@ pub fn confirm_air_line(secs: f64, bursts: usize, preset: &str) -> String {
 
 /// Chunk indexes still waiting for a gateway ack. Empty `got` means none yet.
 pub fn missing_chunk_idxs(total: u32, got: &str) -> Vec<u16> {
-    let have: std::collections::HashSet<u16> =
-        got.split(',').filter_map(|s| s.parse().ok()).collect();
+    let have: std::collections::HashSet<u16> = got
+        .split(',')
+        .filter_map(|s| s.parse::<u16>().ok())
+        .collect();
     (0..total as u16).filter(|i| !have.contains(i)).collect()
 }
 

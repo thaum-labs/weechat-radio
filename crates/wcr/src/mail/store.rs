@@ -203,7 +203,11 @@ impl MailStore {
         let Some(row) = self.get(id)? else {
             return Ok(None);
         };
-        let mut have: Vec<u16> = row.got.split(',').filter_map(|s| s.parse().ok()).collect();
+        let mut have: Vec<u16> = row
+            .got
+            .split(',')
+            .filter_map(|s| s.parse::<u16>().ok())
+            .collect();
         if !have.contains(&idx) {
             have.push(idx);
             have.sort_unstable();
