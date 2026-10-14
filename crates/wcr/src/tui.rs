@@ -618,6 +618,10 @@ fn apply_own_delivery(app: &mut App, state: &str, tries: u32) {
                 line.ticks = "[no]".into();
                 return;
             }
+            if state == "waiting" && !line.ticks.contains("[all]") && line.ticks != "VVV" {
+                line.ticks = "waiting on acks".into();
+                return;
+            }
             if !tui_mark_advances(&line.ticks, &mark) {
                 return;
             }

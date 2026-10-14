@@ -228,6 +228,49 @@ pub fn chunk_acceptable(idx: u16, count: u16) -> bool {
     count > 0 && idx < count
 }
 
+/// `b:<total>:<hex>` lists the chunk indexes already stored for that total.
+/// Bit 0 of the first byte is index 0. A comma list of 46 indexes does not
+/// fit one hf-poor frame; the bitmap does.
+pub fn have_bitmap(total: u16, indexes: &[u16]) -> String {
+    let nbytes = ((total as usize) + 7) / 8;
+    let mut bits = vec![0u8; nbytes.max(1)];
+    for &idx in indexes {
+        if idx >= total {
+            continue;
+        }
+        let byte = (idx / 8) as usize;
+        bits[byte] |= 1 << (idx % 8);
+    }
+    format!("b:{total}:{}", hex::encode(bits))
+}
+
+/// `None` when `body` is a single chunk index, not a have-report.
+pub fn parse_have_bitmap(body: &str) -> Option<(u16, Vec<u16>)> {
+    let rest = body.trim().strip_prefix("b:")?;
+    let (total_s, hexpart) = rest.split_once(':')?;
+    let total: u16 = total_s.parse().ok()?;
+    if total == 0 || hexpart.is_empty() || hexpart.len() > 64 || hexpart.len() % 2 != 0 {
+        return None;
+    }
+    if !hexpart.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let bytes = hex::decode(hexpart).ok()?;
+    let mut out = Vec::new();
+    for (i, byte) in bytes.iter().enumerate() {
+        for bit in 0..8u16 {
+            if byte & (1 << bit) == 0 {
+                continue;
+            }
+            let idx = (i as u16).saturating_mul(8).saturating_add(bit);
+            if idx < total {
+                out.push(idx);
+            }
+        }
+    }
+    Some((total, out))
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum ChunkPut {
     /// `count` is 0 or `idx` is past the total. Do not store it.
@@ -343,12 +386,15 @@ pub fn chunk_to_limit(mail_id: &str, meta: &MailMeta, body: &str, limit: usize) 
     }
     while !rest.is_empty() || pieces.is_empty() {
         let meta_now = if first { meta.clone() } else { empty.clone() };
+        // Reserve three digits for the index and the total. Stamping the real
+        // count afterwards used to push the frame past the rung, and each
+        // chunk was then sliced into two.
         let (head, leftover) = take_fitting(rest, limit, |p| {
             encode_chunk(&MailWire {
                 op,
                 mail_id: mail_id.to_string(),
-                idx: 0,
-                count: 1,
+                idx: 999,
+                count: 999,
                 meta: meta_now.clone(),
                 payload: p.to_string(),
             })
@@ -510,6 +556,29 @@ mod tests {
             meta: MailMeta::default(),
             payload: payload.into(),
         }
+    }
+
+    #[test]
+    fn have_bitmap_round_trips_and_fits_one_hf_poor_frame() {
+        let indexes: Vec<u16> = (0..46).filter(|i| i % 2 == 0).collect();
+        let body = have_bitmap(46, &indexes);
+        let (total, got) = parse_have_bitmap(&body).expect("bitmap");
+        assert_eq!(total, 46);
+        assert_eq!(got, indexes);
+        assert!(parse_have_bitmap("12").is_none());
+        assert!(parse_have_bitmap("b:46:zz").is_none());
+        let frame = encode_chunk(&MailWire {
+            op: MailOp::ChunkAck,
+            mail_id: "ab".repeat(32),
+            idx: 0,
+            count: 1,
+            meta: MailMeta {
+                dest: "QA85A".into(),
+                ..MailMeta::default()
+            },
+            payload: body,
+        });
+        assert!(frame.len() <= 170, "have report is {} bytes", frame.len());
     }
 
     #[test]

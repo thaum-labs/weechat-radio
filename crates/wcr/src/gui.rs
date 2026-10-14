@@ -4561,6 +4561,13 @@ fn apply_line_delivery(
         line.ticks = "[no]".into();
         return;
     }
+    if state == "waiting" {
+        if line.ticks.contains("[all]") {
+            return;
+        }
+        line.ticks = "waiting on acks".into();
+        return;
+    }
     // "retry-*" parses as Queued. That rank cannot advance a line already on
     // [tx] or [rl], so the try count never moved and a keyed retry stayed [x1].
     if state.starts_with("retry") {
@@ -4621,6 +4628,7 @@ fn delivery_ticks(state: &str) -> Option<&'static str> {
     match state {
         "queued" | "sent" | "relayed" | "gateway" | "delivered" | "all" => Some(d.ticks_bracket()),
         "failed" => Some("[no]"),
+        "waiting" => Some("waiting on acks"),
         s if s.starts_with("retry") => Some(crate::store::Delivery::Queued.ticks_bracket()),
         _ => None,
     }
@@ -4798,6 +4806,40 @@ mod tests {
         assert_eq!(delivery_ticks("gateway"), Some("[gw]"));
         assert_eq!(delivery_ticks("delivered"), Some("[ok]"));
         assert_eq!(delivery_ticks("all"), Some("[all]"));
+        assert_eq!(delivery_ticks("waiting"), Some("waiting on acks"));
+    }
+
+    #[test]
+    fn waiting_on_acks_replaces_ok_and_not_all() {
+        let mut line = ChatLine {
+            nick: "G4ABC".into(),
+            text: "hi".into(),
+            sys: false,
+            channel: "#g".into(),
+            msgid: "abc".into(),
+            ticks: "[ok]".into(),
+            via: String::new(),
+            tries: 0,
+            when: String::new(),
+        };
+        apply_line_delivery(
+            &mut line,
+            "",
+            crate::store::Delivery::Delivered,
+            0,
+            "waiting",
+        );
+        assert_eq!(line.ticks, "waiting on acks");
+        apply_line_delivery(&mut line, "[all]", crate::store::Delivery::All, 0, "all");
+        assert_eq!(line.ticks, "[all]");
+        apply_line_delivery(
+            &mut line,
+            "",
+            crate::store::Delivery::Delivered,
+            0,
+            "waiting",
+        );
+        assert_eq!(line.ticks, "[all]");
     }
 
     #[test]
