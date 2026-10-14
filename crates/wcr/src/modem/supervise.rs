@@ -157,6 +157,16 @@ mod tests {
             .stderr(Stdio::from(err))
             .spawn()
             .unwrap();
+        // A busy runner can take longer than the 400 ms grace to schedule
+        // `sh`. Wait until it has actually exited, then check the report.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while child.try_wait().ok().flatten().is_none() {
+            if tokio::time::Instant::now() > deadline {
+                let _ = child.kill().await;
+                panic!("shell did not exit");
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
         let err = confirm_still_running(&mut child, &log_path)
             .await
             .expect_err("exited child");
