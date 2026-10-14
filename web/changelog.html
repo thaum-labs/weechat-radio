@@ -50,6 +50,21 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v0.1.83</p>
+          <p>Wed, 14 Oct 2026</p>
+        </h3>
+        <pre>Two direct messages sent in the same second no longer share a message id. The id is a hash of the sender, the recipient, a per-station counter, and the text, so acknowledgements stay on the right line.
+
+#bulletin stops at [ok]. It has no member list, so it does not show [all]. A closed group shows [all] when every member stored on this station has acknowledged. [rl] only appears when you hear your own frame.
+
+[xN] is how many times the line was keyed. With 3 retries the last copy is [x4]. Routine retry waits are 45s, then 90s, then 180s, each varied by ±25%.
+
+MODE #channel replies with the channel mode (+i for a closed group, + for #bulletin). HELP lists the station commands. INVITE says whether a notice was sent to the other station. /radio status shows how many frames this station has relayed, and the priority of each closed group.
+
+Known issue. With another station's signal on the channel, modem73 can hold frames indefinitely, so [x2], [x3], and [no] may show before a copy actually airs.</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>v0.1.82</p>
           <p>Tue, 13 Oct 2026</p>
         </h3>
