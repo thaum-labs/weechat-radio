@@ -24,7 +24,7 @@
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" />
-  <link rel="stylesheet" href="/styles.css?v=30" />
+  <link rel="stylesheet" href="/styles.css?v=31" />
 </head>
 <body class="page-map">
   <div id="scan"></div>
@@ -92,6 +92,38 @@
           </div>
         </h3>
         <div id="map"></div>
+        <details id="map-key" class="map-key">
+          <summary>Map key</summary>
+          <div class="map-key-body">
+            <ul class="map-key-lines" aria-label="Lines between stations">
+              <li data-link="rf">
+                <svg class="map-key-line" viewBox="0 0 36 12" aria-hidden="true" focusable="false">
+                  <line x1="1" y1="6" x2="35" y2="6" />
+                </svg>
+                <span>dashed RF</span>
+              </li>
+              <li data-link="inet">
+                <svg class="map-key-line" viewBox="0 0 36 12" aria-hidden="true" focusable="false">
+                  <line x1="1" y1="6" x2="35" y2="6" />
+                </svg>
+                <span>solid internet</span>
+              </li>
+              <li data-link="mail">
+                <svg class="map-key-line" viewBox="0 0 36 12" aria-hidden="true" focusable="false">
+                  <line x1="1" y1="6" x2="35" y2="6" />
+                </svg>
+                <span>dotted mail</span>
+              </li>
+            </ul>
+            <ul class="map-key-modes" aria-label="Station colours">
+              <li data-mode="internet"><span class="map-key-pin" aria-hidden="true"></span><span>cyan internet</span></li>
+              <li data-mode="internet-radio"><span class="map-key-pin" aria-hidden="true"></span><span>green internet-radio</span></li>
+              <li data-mode="radio"><span class="map-key-pin" aria-hidden="true"></span><span>amber radio</span></li>
+              <li data-mode="radio-plus"><span class="map-key-pin" aria-hidden="true"></span><span>magenta radio-plus</span></li>
+            </ul>
+            <p class="map-key-note">Lines glow while live, then fade faintly over 48h.</p>
+          </div>
+        </details>
         <div id="card" class="station-pop" hidden></div>
       </article>
       <article class="log-panel">
@@ -123,6 +155,6 @@
   </div>
   <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
   <script src="/shell.js?v=9"></script>
-  <script src="/app.js?v=31"></script>
+  <script src="/app.js?v=32"></script>
 </body>
 </html>
