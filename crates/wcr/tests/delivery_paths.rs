@@ -923,7 +923,8 @@ async fn own_message_retries_while_the_relay_loop_runs() {
         .await
         .unwrap();
     let mut reader = tokio::io::BufReader::new(&mut sender);
-    let got = read_lines_until(&mut reader, 20, |lines| {
+    // 8 s hold, then up to max_defer_ms (15 s) if the mock air queue is busy.
+    let got = read_lines_until(&mut reader, 45, |lines| {
         lines.iter().any(|l| l.contains("+radio/delivery=retry-"))
     })
     .await;
