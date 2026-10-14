@@ -335,11 +335,17 @@ function rememberLink(from, to, inet, draw, mail, atMs) {
   drawArcs();
 }
 
+function prefersReducedMotion() {
+  return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+}
+
 /** Pulse while the contact is live, then a steady fade that is still visible at 48h. */
-function linkAlpha(ageMs, nowMs) {
+function linkAlpha(ageMs, nowMs, reduceMotion) {
   const age = Math.max(0, ageMs);
+  const reduce = reduceMotion == null ? prefersReducedMotion() : !!reduceMotion;
   if (age > HOLD_MS) return 0;
   if (age <= LIVE_MS) {
+    if (reduce) return 0.55;
     const wave = 0.5 + 0.5 * Math.sin(((nowMs || 0) / 1200) * Math.PI * 2);
     return 0.55 + wave * 0.4;
   }
@@ -429,7 +435,7 @@ function drawArcs() {
     const age = now - link.at;
     const alpha = linkAlpha(age, now);
     if (alpha <= 0) continue;
-    if (age <= LIVE_MS) pulsing = true;
+    if (age <= LIVE_MS && !prefersReducedMotion()) pulsing = true;
     const s1 = map.project([p1.lon, p1.lat]);
     const s2 = map.project([p2.lon, p2.lat]);
     const color = link.mail
@@ -1033,8 +1039,21 @@ function drawSpark(events) {
   ctx.stroke();
 }
 
+const liveEvents = [];
+
+function noteLiveEvent(ev) {
+  if (!ev || ev.type === "node") return;
+  liveEvents.push(ev);
+  const now = Date.now();
+  for (let i = liveEvents.length - 1; i >= 0; i--) {
+    if (now - eventAtMs(liveEvents[i], now) > HOLD_MS) liveEvents.splice(i, 1);
+  }
+  while (liveEvents.length > 400) liveEvents.shift();
+}
+
 function historyEvents() {
-  return linkCache.length ? linkCache : replayCache;
+  const base = linkCache.length ? linkCache : replayCache;
+  return base.concat(liveEvents);
 }
 
 async function ensureLinkHistory() {
@@ -1261,8 +1280,6 @@ async function refresh() {
     document.getElementById("n-tx").textContent = stats.forwarded ?? "—";
     await ensureReplay();
     if (isLive()) {
-      qsoLinks.clear();
-      mailRecent.clear();
       seedLinksFromEvents(historyEvents());
     } else {
       paintHistory(replayCutoff());
@@ -1298,6 +1315,7 @@ function connectLive() {
         scheduleRefresh();
         return;
       }
+      noteLiveEvent(m);
       const origin = m.origin || m.callsign || "?";
       const kind = (m.kind || m.type || "").toLowerCase();
       if (kind === "mail") {
@@ -1330,6 +1348,12 @@ window.WCR.pinAgeOpacity = pinAgeOpacity;
 window.WCR.lastHeardLabel = lastHeardLabel;
 window.WCR.LIVE_MS = LIVE_MS;
 window.WCR.HOLD_MS = HOLD_MS;
+window.WCR.rememberLink = rememberLink;
+window.WCR.seedLinksFromEvents = seedLinksFromEvents;
+window.WCR.linkSnapshot = (a, b) => {
+  const row = qsoLinks.get(linkPairKey(a, b));
+  return row ? { at: row.at, inet: row.inet, mail: row.mail } : null;
+};
 
 setInterval(renderConn, 1000);
 renderModes([]);
