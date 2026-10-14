@@ -125,6 +125,18 @@ impl TelemetryDb {
         Ok(())
     }
 
+    /// A cleared station mints a new key. The callsign row takes that key.
+    pub fn replace_callsign(&self, call: &str, pk: &[u8; 32]) -> Result<()> {
+        let now = now();
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO keys(callsign, pubkey, first_seen) VALUES(?1,?2,?3)
+             ON CONFLICT(callsign) DO UPDATE SET pubkey = excluded.pubkey",
+            params![call.to_ascii_uppercase(), pk.as_slice(), now as i64],
+        )?;
+        Ok(())
+    }
+
     pub fn get_pubkey(&self, call: &str) -> Option<[u8; 32]> {
         let conn = self.conn.lock();
         let v: Option<Vec<u8>> = conn
@@ -494,6 +506,29 @@ pub struct TelemetryEvent {
     pub band: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallsignClaim {
+    Bind,
+    Keep,
+    /// No live session. A new key for this callsign replaces the old one.
+    Replace,
+    /// Another session is using this callsign.
+    Refuse,
+}
+
+pub fn callsign_claim(
+    bound: Option<&[u8; 32]>,
+    presented: &[u8; 32],
+    session_live: bool,
+) -> CallsignClaim {
+    match bound {
+        None => CallsignClaim::Bind,
+        Some(pk) if pk == presented => CallsignClaim::Keep,
+        Some(_) if session_live => CallsignClaim::Refuse,
+        Some(_) => CallsignClaim::Replace,
+    }
+}
+
 pub async fn ingest_report(
     State(st): State<crate::net::hub_server::HubState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -535,16 +570,25 @@ pub async fn ingest_report(
         return Err((StatusCode::FORBIDDEN, "blocked".into()));
     }
 
-    if let Some(existing) = st.telemetry.get_pubkey(&call) {
-        if existing != pk_arr {
+    let plausible = call.starts_with('~') || crate::proto::is_plausible_callsign(&call);
+    match callsign_claim(
+        st.telemetry.get_pubkey(&call).as_ref(),
+        &pk_arr,
+        st.sessions.lock().contains_key(&call),
+    ) {
+        CallsignClaim::Refuse => {
             return Err((StatusCode::CONFLICT, "callsign already claimed".into()));
         }
-    } else if call.starts_with('~') {
-        let _ = st.telemetry.bind_callsign(&call, &pk_arr);
-    } else if crate::proto::is_plausible_callsign(&call) {
-        let _ = st.telemetry.bind_callsign(&call, &pk_arr);
-    } else {
-        return Err((StatusCode::BAD_REQUEST, "callsign not plausible".into()));
+        CallsignClaim::Replace => {
+            let _ = st.telemetry.replace_callsign(&call, &pk_arr);
+        }
+        CallsignClaim::Bind if plausible => {
+            let _ = st.telemetry.bind_callsign(&call, &pk_arr);
+        }
+        CallsignClaim::Bind => {
+            return Err((StatusCode::BAD_REQUEST, "callsign not plausible".into()));
+        }
+        CallsignClaim::Keep => {}
     }
 
     let mut report: NodeReport =
@@ -715,6 +759,26 @@ async fn post_report(
 mod tests {
     use super::*;
     use crate::proto::IdentityKeys;
+
+    #[test]
+    fn a_new_key_replaces_a_quiet_callsign() {
+        let old = IdentityKeys::generate().public_bytes();
+        let new = IdentityKeys::generate().public_bytes();
+        assert_eq!(callsign_claim(Some(&old), &old, false), CallsignClaim::Keep);
+        assert_eq!(
+            callsign_claim(Some(&old), &new, true),
+            CallsignClaim::Refuse
+        );
+        assert_eq!(
+            callsign_claim(Some(&old), &new, false),
+            CallsignClaim::Replace
+        );
+        assert_eq!(callsign_claim(None, &new, false), CallsignClaim::Bind);
+        let db = TelemetryDb::open_memory().unwrap();
+        db.bind_callsign("G4ABC", &old).unwrap();
+        db.replace_callsign("G4ABC", &new).unwrap();
+        assert_eq!(db.get_pubkey("G4ABC").unwrap(), new);
+    }
 
     #[test]
     fn bind_and_replay() {
