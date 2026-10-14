@@ -1675,7 +1675,13 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
             }
         }
     }
-    if decision.action == Action::Suppress {
+    if decision.action == Action::Suppress
+        && relay::duplicate_cancels_relay(
+            medium,
+            env.flags.group(),
+            dest_is_bulletin(env.dest.as_str()),
+        )
+    {
         if let Some(air) = rt.air() {
             air.cancel(env.msg_id);
         }
@@ -1700,7 +1706,13 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
     match env.kind {
         MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status => {
             if let Some(id) = hub_forward_notice(&env) {
-                if env.dest.as_str().eq_ignore_ascii_case(&rt.engine.our_call) {
+                // Display only. The retry row stays sent/relayed so [gw] does not
+                // stop ARQ. A later [ok], [all], or [no] is not walked back.
+                let show = env.dest.as_str().eq_ignore_ascii_case(&rt.engine.our_call)
+                    && rt.store.delivery_of(&id).ok().flatten().is_some_and(|d| {
+                        d.can_advance(Delivery::Gateway) && d != Delivery::Gateway
+                    });
+                if show {
                     rt.gw_marked.lock().insert(id);
                     rt.irc.tagmsg_delivery(&id.hex(), "gateway").await;
                 }

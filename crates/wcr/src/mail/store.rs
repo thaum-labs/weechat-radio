@@ -19,7 +19,10 @@ CREATE TABLE IF NOT EXISTS mail (
     state TEXT NOT NULL DEFAULT 'queued',
     unread INTEGER NOT NULL DEFAULT 0,
     ack INTEGER NOT NULL DEFAULT 0,
-    retries INTEGER NOT NULL DEFAULT 0
+    retries INTEGER NOT NULL DEFAULT 0,
+    detail TEXT NOT NULL DEFAULT '',
+    chunks INTEGER NOT NULL DEFAULT 0,
+    got TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS mail_wait (
     id TEXT PRIMARY KEY,
@@ -51,6 +54,12 @@ pub struct MailRow {
     pub unread: bool,
     pub ack: bool,
     pub retries: u32,
+    #[serde(default)]
+    pub detail: String,
+    #[serde(default)]
+    pub chunks: u32,
+    #[serde(default)]
+    pub got: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -69,8 +78,12 @@ pub struct CopySettings {
     pub pending: String,
 }
 
+const MAIL_COLS: &str =
+    "id, folder, from_addr, to_addr, subject, body, ts, state, unread, ack, retries, detail, chunks, got";
+
 pub struct MailStore {
     conn: Mutex<Connection>,
+    notice: Mutex<String>,
 }
 
 impl MailStore {
@@ -81,24 +94,36 @@ impl MailStore {
         let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
+            notice: Mutex::new(String::new()),
         })
     }
 
     pub fn open_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
+            notice: Mutex::new(String::new()),
         })
+    }
+
+    pub fn set_notice(&self, text: &str) {
+        *self.notice.lock() = text.to_string();
+    }
+
+    pub fn notice(&self) -> String {
+        self.notice.lock().clone()
     }
 
     pub fn insert(&self, row: &MailRow) -> Result<()> {
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT OR REPLACE INTO mail(id, folder, from_addr, to_addr, subject, body, ts, state, unread, ack, retries)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+            "INSERT OR REPLACE INTO mail(id, folder, from_addr, to_addr, subject, body, ts, state, unread, ack, retries, detail, chunks, got)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
             params![
                 row.id,
                 row.folder,
@@ -111,6 +136,9 @@ impl MailStore {
                 row.unread as i64,
                 row.ack as i64,
                 row.retries,
+                row.detail,
+                row.chunks,
+                row.got,
             ],
         )?;
         Ok(())
@@ -118,10 +146,7 @@ impl MailStore {
 
     pub fn get(&self, id: &str) -> Result<Option<MailRow>> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
-            "SELECT id, folder, from_addr, to_addr, subject, body, ts, state, unread, ack, retries
-             FROM mail WHERE id = ?1",
-        )?;
+        let mut stmt = conn.prepare(&format!("SELECT {MAIL_COLS} FROM mail WHERE id = ?1"))?;
         let mut rows = stmt.query(params![id])?;
         if let Some(r) = rows.next()? {
             Ok(Some(map_row(r)?))
@@ -132,10 +157,9 @@ impl MailStore {
 
     pub fn list(&self, folder: &str) -> Result<Vec<MailRow>> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
-            "SELECT id, folder, from_addr, to_addr, subject, body, ts, state, unread, ack, retries
-             FROM mail WHERE folder = ?1 ORDER BY ts DESC",
-        )?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {MAIL_COLS} FROM mail WHERE folder = ?1 ORDER BY ts DESC"
+        ))?;
         let rows = stmt.query_map(params![folder], map_row)?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(Error::from)
@@ -155,6 +179,48 @@ impl MailStore {
             .lock()
             .execute("UPDATE mail SET unread = 0 WHERE id = ?1", params![id])?;
         Ok(())
+    }
+
+    pub fn set_outcome(&self, id: &str, folder: &str, state: &str, detail: &str) -> Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE mail SET folder = ?2, state = ?3, detail = ?4, unread = CASE WHEN ?2 = 'inbox' THEN 1 ELSE unread END WHERE id = ?1",
+            params![id, folder, state, detail],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_chunks(&self, id: &str, chunks: u32) -> Result<()> {
+        self.conn.lock().execute(
+            "UPDATE mail SET chunks = ?2 WHERE id = ?1",
+            params![id, chunks],
+        )?;
+        Ok(())
+    }
+
+    /// Record a gateway chunk ack. Returns `(have, total)` when the row exists.
+    pub fn note_chunk(&self, id: &str, idx: u16) -> Result<Option<(u32, u32)>> {
+        let Some(row) = self.get(id)? else {
+            return Ok(None);
+        };
+        let mut have: Vec<u16> = row
+            .got
+            .split(',')
+            .filter_map(|s| s.parse::<u16>().ok())
+            .collect();
+        if !have.contains(&idx) {
+            have.push(idx);
+            have.sort_unstable();
+        }
+        let got = have
+            .iter()
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        self.conn
+            .lock()
+            .execute("UPDATE mail SET got = ?2 WHERE id = ?1", params![id, got])?;
+        Ok(Some((have.len() as u32, row.chunks)))
     }
 
     pub fn bump_retry(&self, id: &str) -> Result<u32> {
@@ -284,5 +350,35 @@ fn map_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<MailRow> {
         unread: r.get::<_, i64>(8)? != 0,
         ack: r.get::<_, i64>(9)? != 0,
         retries: r.get::<_, i64>(10)? as u32,
+        detail: r.get(11)?,
+        chunks: r.get::<_, i64>(12)? as u32,
+        got: r.get(13)?,
     })
+}
+
+fn migrate(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(mail)")?;
+    let names: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(|r| r.ok())
+        .collect();
+    if !names.iter().any(|n| n == "detail") {
+        conn.execute(
+            "ALTER TABLE mail ADD COLUMN detail TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    if !names.iter().any(|n| n == "chunks") {
+        conn.execute(
+            "ALTER TABLE mail ADD COLUMN chunks INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    if !names.iter().any(|n| n == "got") {
+        conn.execute(
+            "ALTER TABLE mail ADD COLUMN got TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    Ok(())
 }
