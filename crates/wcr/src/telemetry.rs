@@ -109,7 +109,9 @@ impl TelemetryDb {
                 snr REAL,
                 tower INTEGER NOT NULL DEFAULT 0
             );
-            CREATE INDEX IF NOT EXISTS idx_node_seen ON node_seen(callsign, ts);",
+            CREATE INDEX IF NOT EXISTS idx_node_seen ON node_seen(callsign, ts);
+            CREATE INDEX IF NOT EXISTS idx_nodes_last_seen ON nodes(last_seen);
+            CREATE INDEX IF NOT EXISTS idx_events_pair ON events(origin, dest, ts);",
         );
     }
 
@@ -331,12 +333,21 @@ impl TelemetryDb {
     }
 
     pub fn nodes(&self) -> Vec<serde_json::Value> {
+        self.nodes_heard_since(0)
+    }
+
+    /// Stations whose last report is at or after `since` (unix seconds).
+    ///
+    /// The `nodes` table is not deleted by age. `node_seen` and `events` are
+    /// kept for 7 days, so a 48-hour map window is inside retention. Callers
+    /// that want the live map pass `now - 48h` and leave older rows on disk.
+    pub fn nodes_heard_since(&self, since: i64) -> Vec<serde_json::Value> {
         let conn = self.conn.lock();
         let mut stmt = conn
-            .prepare("SELECT callsign, grid, lat, lon, mode, ptt, preset, snr, ber, queue, hub_ok, last_seen, settings, freq_khz, band FROM nodes")
+            .prepare("SELECT callsign, grid, lat, lon, mode, ptt, preset, snr, ber, queue, hub_ok, last_seen, settings, freq_khz, band FROM nodes WHERE last_seen >= ?1")
             .unwrap();
         let rows = stmt
-            .query_map([], |r| {
+            .query_map(params![since], |r| {
                 let freq_khz = r.get::<_, i64>(13).unwrap_or(0) as u32;
                 let band: Option<String> = r.get(14)?;
                 let frequency = if freq_khz == 0 {
@@ -378,6 +389,38 @@ impl TelemetryDb {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare("SELECT payload FROM events WHERE ts >= ?1 ORDER BY ts DESC LIMIT ?2")
+            .unwrap();
+        let rows = stmt
+            .query_map(params![since, limit], |r| r.get::<_, String>(0))
+            .unwrap();
+        rows.filter_map(|r| r.ok())
+            .filter_map(|s| serde_json::from_str(&s).ok())
+            .collect()
+    }
+
+    /// One row per origin/dest pair: the newest traffic or mail event at or after `since`.
+    ///
+    /// The map draws a line from that timestamp. Shipping every tx/rx for 48 hours
+    /// would redraw the same pair thousands of times. The cap is a few thousand pairs.
+    pub fn links(&self, since: i64, limit: i64) -> Vec<serde_json::Value> {
+        let limit = limit.clamp(1, 4000);
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT e.payload
+                 FROM events e
+                 INNER JOIN (
+                    SELECT origin, dest, MAX(ts) AS ts
+                    FROM events
+                    WHERE ts >= ?1
+                      AND origin IS NOT NULL AND origin != ''
+                      AND dest IS NOT NULL AND dest != ''
+                      AND kind IN ('tx','rx','msg','relay','hub_forward','gateway_forward','mail')
+                    GROUP BY origin, dest
+                 ) m ON e.origin = m.origin AND e.dest = m.dest AND e.ts = m.ts
+                 ORDER BY m.ts DESC
+                 LIMIT ?2",
+            )
             .unwrap();
         let rows = stmt
             .query_map(params![since, limit], |r| r.get::<_, String>(0))
@@ -538,6 +581,9 @@ pub async fn ingest_report(
 pub struct NodesQuery {
     pub at: Option<i64>,
     pub since: Option<i64>,
+    /// Unix seconds. Live map: stations with `last_seen` at or after this time.
+    /// `since` still means the replay trail and wins when both are set.
+    pub heard_since: Option<i64>,
 }
 
 pub async fn get_nodes(
@@ -548,6 +594,11 @@ pub async fn get_nodes(
         return Json(serde_json::json!({
             "trail": st.telemetry.nodes_since(since),
             "since": since,
+        }));
+    }
+    if let Some(heard_since) = q.heard_since {
+        return Json(serde_json::json!({
+            "nodes": st.telemetry.nodes_heard_since(heard_since),
         }));
     }
     match q.at {
@@ -695,6 +746,67 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["origin"], "G4ABC");
         assert_eq!(rows[0]["kind"], "tx");
+    }
+
+    #[test]
+    fn links_keep_the_latest_contact_per_pair() {
+        let db = TelemetryDb::open_memory().unwrap();
+        let t = now();
+        let pair = |ts: u64, kind: &str, dest: &str| TelemetryEvent {
+            ts,
+            kind: kind.into(),
+            origin: Some("G4ABC".into()),
+            dest: Some(dest.into()),
+            hops: Some(1),
+            snr: None,
+            msgid: None,
+            band: None,
+        };
+        db.add_event(&pair(t - 3_600, "tx", "M7TJF")).unwrap();
+        db.add_event(&pair(t - 60, "rx", "M7TJF")).unwrap();
+        db.add_event(&pair(t - 30, "status", "M7TJF")).unwrap();
+        db.add_event(&pair(t - 600, "mail", "M0XYZ")).unwrap();
+        db.add_event(&pair(t - 50 * 3600, "tx", "G0OLD")).unwrap();
+        let rows = db.links((t as i64) - 48 * 3600, 100);
+        assert_eq!(rows.len(), 2);
+        let m7 = rows.iter().find(|r| r["dest"] == "M7TJF").unwrap();
+        assert_eq!(m7["kind"], "rx");
+        assert_eq!(m7["ts"], t - 60);
+        assert!(rows
+            .iter()
+            .any(|r| r["dest"] == "M0XYZ" && r["kind"] == "mail"));
+        assert_eq!(db.links((t as i64) - 48 * 3600, 1).len(), 1);
+    }
+
+    #[test]
+    fn nodes_heard_since_drops_stations_quiet_for_two_days() {
+        let db = TelemetryDb::open_memory().unwrap();
+        let t = now();
+        let mut report = NodeReport {
+            callsign: "G4NEW".into(),
+            ts: t - 600,
+            grid: "IO91".into(),
+            mode: "radio-plus".into(),
+            ptt: String::new(),
+            preset: "hf-poor".into(),
+            snr: 0.0,
+            ber: 0.0,
+            queue: 0,
+            hub_ok: true,
+            settings: serde_json::json!({}),
+            events: Vec::new(),
+            freq_khz: 0,
+            band: String::new(),
+        };
+        db.upsert_node(&report).unwrap();
+        report.callsign = "G4OLD".into();
+        report.ts = t - 49 * 3600;
+        report.mode = "radio".into();
+        db.upsert_node(&report).unwrap();
+        assert_eq!(db.nodes().len(), 2);
+        let live = db.nodes_heard_since((t as i64) - 48 * 3600);
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0]["callsign"], "G4NEW");
     }
 
     #[test]

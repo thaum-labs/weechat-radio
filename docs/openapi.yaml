@@ -40,9 +40,13 @@ paths:
           name: at
           schema: { type: integer, format: int64 }
           description: Unix seconds. Returns the stations heard in the prior 30 minutes, with the mode they had then.
+        - in: query
+          name: heard_since
+          schema: { type: integer, format: int64 }
+          description: Unix seconds. Returns `{ "nodes" }` whose last_seen is at or after this time. The nodes table is not aged out; the map asks for the last 48 hours.
       responses:
         "200":
-          description: JSON `{ "nodes": [ … ] }` with band, freq_khz, grid, mode, tower. With `since`, `{ "trail", "since" }` instead.
+          description: JSON `{ "nodes": [ … ] }` with band, freq_khz, grid, mode, tower, last_seen. With `since`, `{ "trail", "since" }` instead.
   /api/v1/events:
     get:
       summary: Recent TX/RX/relay events
@@ -56,6 +60,22 @@ paths:
       responses:
         "200":
           description: JSON `{ "events": [ … ] }`
+  /api/v1/links:
+    get:
+      summary: Latest contact per station pair
+      description: |
+        One payload per origin/dest pair, the newest tx, rx, relay, hub forward, or mail event at or after `since`.
+        Events are retained for 7 days. The map requests the last 48 hours and caps the pair count.
+      parameters:
+        - in: query
+          name: since
+          schema: { type: integer, format: int64 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 2000, maximum: 4000 }
+      responses:
+        "200":
+          description: JSON `{ "links": [ … ], "since" }`
   /api/v1/hubs:
     get:
       summary: Hub status and band rollup

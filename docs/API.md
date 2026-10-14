@@ -45,8 +45,10 @@ Body is JSON metadata only. Never send message text.
 
 ## Read
 
-- `GET /api/v1/nodes` — live stations and settings (`band`, `freq_khz`, `frequency`)
-- `GET /api/v1/events?since=&limit=` — TX/RX/relay events
+- `GET /api/v1/nodes` — live stations and settings (`band`, `freq_khz`, `frequency`). `?heard_since=` keeps stations whose `last_seen` is at or after that unix time. The `nodes` table itself is not aged out; `node_seen` samples are kept for 7 days.
+- `GET /api/v1/nodes?since=` — replay trail of position samples (not the live list)
+- `GET /api/v1/events?since=&limit=` — TX/RX/relay events, kept for 7 days
+- `GET /api/v1/links?since=&limit=` — one row per origin/dest pair, the newest traffic or mail event since `since` (map line history)
 - `GET /api/v1/hubs` — hub/relay status, including `bands`
 - `GET /api/v1/bands` — stations grouped by band (`band`, `freq_khz`, `gateways`, `stations`)
 - `GET /api/v1/stats` — totals
