@@ -23,7 +23,7 @@ use crate::store::{Delivery, Store};
 use crate::telemetry::{self, TelemetryEvent};
 use parking_lot::Mutex;
 use rand::Rng;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
@@ -78,6 +78,8 @@ struct Runtime {
     /// When we last relayed `msg_id`. Same gap, so an echo does not loop and
     /// a sender retry still gets forwarded if the receipt never came back.
     relay_again: Arc<Mutex<HashMap<MsgId, u32>>>,
+    /// Message ids already counted in `relayed_unique` this process.
+    relayed_ids: Arc<Mutex<HashSet<MsgId>>>,
 }
 
 impl Runtime {
@@ -385,6 +387,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         mail,
         ack_again: Arc::new(Mutex::new(HashMap::new())),
         relay_again: Arc::new(Mutex::new(HashMap::new())),
+        relayed_ids: Arc::new(Mutex::new(HashSet::new())),
     };
     refresh_group_prios(&rt);
 
@@ -455,6 +458,11 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         if relay::is_own_origin(&our, &m.env) {
                             continue;
                         }
+                        let max_age = rt_h.cfg.lock().rf.outbound_max_age_secs;
+                        if crate::store::outbound_expired(m.rx_time, now, max_age) {
+                            let _ = rt_h.store.set_hold(&m.env.msg_id, 0, 0);
+                            continue;
+                        }
                         if !relay::may_rebroadcast(&our, &m.env, Some(m.delivery)) {
                             let _ = rt_h.store.set_hold(&m.env.msg_id, 0, 0);
                             if let Some(air) = rt_h.air() {
@@ -495,6 +503,15 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     let cfg = rt_r.cfg.lock();
                     (cfg.rf.max_retries, rt_r.engine.our_call.clone())
                 };
+                let max_age = rt_r.cfg.lock().rf.outbound_max_age_secs;
+                if let Ok(expired) = rt_r.store.expire_outbound(&our, now, max_age) {
+                    for id in expired {
+                        if let Some(air) = rt_r.air() {
+                            air.cancel(id);
+                        }
+                        rt_r.irc.tagmsg_delivery(&id.hex(), "failed").await;
+                    }
+                }
                 if let Ok(due) = rt_r.store.retry_due(now, &our, max) {
                     for (m, retries) in due {
                         if !still_awaiting_ack(&rt_r.store, &m.env.msg_id) {
@@ -526,26 +543,29 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                                 tries,
                             )
                             .await;
-                        if relay::retries_exhausted(n, max) {
-                            // Last copy is out. Do not leave the line on [rl]
-                            // with a hold that will never fire. A later echo
-                            // must not walk this back to relayed.
-                            let _ = rt_r.store.bump_retry(&m.env.msg_id, 0);
-                            if rt_r
-                                .store
-                                .advance_delivery(&m.env.msg_id, Delivery::Failed)
-                                .unwrap_or(false)
-                            {
-                                rt_r.irc
-                                    .tagmsg_delivery(&m.env.msg_id.hex(), "failed")
-                                    .await;
-                            }
-                            continue;
-                        }
+                        // The last copy (n == max) still waits one full interval
+                        // for an ACK. [no] is the ack-wait below, not this key.
                         let jitter = rt_r.cfg.lock().rf.retry_jitter;
                         let next =
                             relay::next_retry_hold_jittered(n, now, m.env.priority(), jitter);
                         let _ = rt_r.store.bump_retry(&m.env.msg_id, next);
+                    }
+                }
+                if let Ok(due) = rt_r.store.ack_wait_due(now, &our, max) {
+                    for m in due {
+                        let _ = rt_r.store.set_hold(&m.env.msg_id, 0, 0);
+                        if !still_awaiting_ack(&rt_r.store, &m.env.msg_id) {
+                            continue;
+                        }
+                        if rt_r
+                            .store
+                            .advance_delivery(&m.env.msg_id, Delivery::Failed)
+                            .unwrap_or(false)
+                        {
+                            rt_r.irc
+                                .tagmsg_delivery(&m.env.msg_id.hex(), "failed")
+                                .await;
+                        }
                     }
                 }
             }
@@ -825,13 +845,16 @@ fn stamp_own_mode_flags(env: &mut Envelope, our_call: &str, mode: Mode) {
 async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
     match ev.kind {
         IrcEventKind::Privmsg { target, text, .. } => {
-            if let Err(e) = send_chat(rt, &target, &text).await {
+            rt.irc.begin_origin(ev.client_id, &target);
+            let sent = send_chat(rt, &target, &text).await;
+            rt.irc.end_origin();
+            if let Err(e) = sent {
                 rt.irc.notice_all(&e.to_string()).await;
                 return Ok(());
             }
         }
         IrcEventKind::Radio { args } => {
-            let reply = radio_cmd(rt, &args).await;
+            let reply = radio_cmd(rt, ev.client_id, &args).await;
             rt.irc.send_radio_reply(ev.client_id, &reply).await;
         }
         IrcEventKind::Part { channel } => {
@@ -849,8 +872,11 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
                 let us = rt.cfg.lock().callsign.clone();
                 let _ = rt.store.group_create(&name, &[us.clone(), target.clone()]);
                 publish_hub_membership(rt).await;
-                let notice = crate::slash::invite_notice(&channel, &target);
-                match send_chat(rt, &target, &notice).await {
+                let notice = crate::slash::invite_notice(&channel, &us);
+                rt.irc.begin_origin(ev.client_id, &target);
+                let sent = send_chat(rt, &target, &notice).await;
+                rt.irc.end_origin();
+                match sent {
                     Ok(()) => {
                         if let Ok(origin) = Callsign::parse(&us) {
                             if let Ok(dest) = Callsign::parse(&target) {
@@ -868,8 +894,6 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
                                             None,
                                         )
                                         .await;
-                                    let tries = rt.store.rf_tx_of(&id).ok().filter(|n| *n > 0);
-                                    rt.irc.tagmsg_progress(&id.hex(), "sent", tries).await;
                                 }
                             }
                         }
@@ -885,8 +909,12 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
         }
         IrcEventKind::Join { channel } => {
             if !dest_is_bulletin(&channel) {
+                let name = crate::slash::group_name(&channel);
+                let us = rt.cfg.lock().callsign.to_ascii_uppercase();
+                let _ = rt.store.group_create(&name, &[us]);
                 publish_hub_membership(rt).await;
             }
+            send_channel_names(rt, ev.client_id, &channel).await;
             let hist = rt.store.history(Some(&channel), 500)?;
             let irc_target = if channel.starts_with('#') || channel.starts_with('&') {
                 channel.clone()
@@ -943,9 +971,35 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
                 .collect();
             rt.irc.replay_history(ev.client_id, lines).await;
         }
+        IrcEventKind::Names { channel } => {
+            send_channel_names(rt, ev.client_id, &channel).await;
+        }
         _ => {}
     }
     Ok(())
+}
+
+async fn send_channel_names(rt: &Runtime, client_id: u64, channel: &str) {
+    let ch = if channel.starts_with('#') || channel.starts_with('&') {
+        channel.to_ascii_lowercase()
+    } else if dest_is_bulletin(channel) {
+        BULLETIN_CHANNEL.to_string()
+    } else {
+        format!("#{}", channel.to_ascii_lowercase())
+    };
+    let us = rt.cfg.lock().callsign.to_ascii_uppercase();
+    let mut nicks = if dest_is_bulletin(&ch) {
+        Vec::new()
+    } else {
+        let name = crate::slash::group_name(&ch);
+        rt.store.group_members(&name).unwrap_or_default()
+    };
+    if !nicks.iter().any(|n| n.eq_ignore_ascii_case(&us)) && !us.is_empty() {
+        nicks.push(us);
+    }
+    nicks.sort_by_key(|n| n.to_ascii_uppercase());
+    nicks.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    rt.irc.reply_names(client_id, &ch, &nicks).await;
 }
 
 async fn send_form(rt: &Runtime, target: &str, form: Form) -> Result<String> {
@@ -1331,19 +1385,47 @@ fn note_relayed(rt: &Runtime, env: &Envelope) {
     tracing::info!("{}", relay_log_line(env));
     let mut snap = rt.snap.lock();
     snap.relayed = snap.relayed.saturating_add(1);
+    if rt.relayed_ids.lock().insert(env.msg_id) {
+        snap.relayed_unique = snap.relayed_unique.saturating_add(1);
+    }
 }
 
 /// One line per frame this station forwards for someone else.
+/// Text frames include a short preview. ACK and other binary frames do not.
 pub(crate) fn relay_log_line(env: &Envelope) -> String {
-    let body = env.body_text();
-    let preview: String = body.chars().take(80).collect();
     format!(
-        "relayed {} {} -> {} id {} {preview}",
+        "relayed {} {} -> {} id {}{}",
         env.kind.as_str(),
         env.origin,
         env.dest,
-        env.msg_id
+        env.msg_id,
+        relay_preview(env)
     )
+}
+
+fn relay_preview(env: &Envelope) -> String {
+    let text_kind = matches!(
+        env.kind,
+        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status
+    );
+    if !text_kind {
+        return String::new();
+    }
+    let Ok(text) = std::str::from_utf8(&env.body) else {
+        return String::new();
+    };
+    if text
+        .chars()
+        .any(|c| c.is_control() && c != '\n' && c != '\t')
+    {
+        return String::new();
+    }
+    let preview: String = text.chars().take(80).collect();
+    if preview.is_empty() {
+        String::new()
+    } else {
+        format!(" {preview}")
+    }
 }
 
 async fn offer_hub(rt: &Runtime, env: &Envelope) {
@@ -2405,7 +2487,7 @@ fn set_manual_freq(rt: &Runtime, khz: u32) -> String {
     crate::band::describe(khz)
 }
 
-async fn radio_cmd(rt: &Runtime, args: &str) -> String {
+async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
     let cfg = &rt.cfg;
     let store = &rt.store;
     let snap = &rt.snap;
@@ -2472,7 +2554,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
             };
             let now = crate::status::unix_now_f64();
             format!(
-                "{} | {} | {} {} | {} | SNR {:.1} | tx {} | retry {} | audio {} | q {}/{} | occ {}% air {} | beacon {} | hold {} | relayed {} | groups {} | hub {}{}",
+                "{} | {} | {} {} | {} | SNR {:.1} | tx {} | retry {} | audio {} | q {}/{} | occ {}% air {} | beacon {} | hold {} | relayed {} unique {} | groups {} | hub {}{}",
                 s.mode.display_name(),
                 if s.deferred { "wait" } else { &s.channel },
                 if s.frequency.is_empty() { "—" } else { s.frequency.trim_end_matches(" MHz") },
@@ -2489,6 +2571,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                 s.beacon_lane(now).label,
                 s.hold_lane(now).label,
                 s.relayed,
+                s.relayed_unique,
                 crate::status::group_prio_summary(&s.group_prios),
                 if s.hub_ok { "up" } else { "down" },
                 tnc
@@ -2535,6 +2618,22 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
         "queue" => {
             let (o, h) = store.queue_depth().unwrap_or((0, 0));
             format!("outbound {o} hold {h}")
+        }
+        "flush" => {
+            let our = cfg.lock().callsign.clone();
+            let ids = store.flush_outbound(&our).unwrap_or_default();
+            let holds = store.clear_relay_holds(&our).unwrap_or(0);
+            for id in &ids {
+                if let Some(air) = rt.air() {
+                    air.cancel(*id);
+                }
+                rt.irc.tagmsg_delivery(&id.hex(), "failed").await;
+            }
+            format!(
+                "flushed {} unacked outbound, dropped {} relay holds",
+                ids.len(),
+                holds
+            )
         }
         "trace" => {
             let id = sp.next().unwrap_or("");
@@ -2716,7 +2815,10 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
                     .into();
             }
             let form = Form { kind, fields };
-            match send_form(rt, &target, form).await {
+            rt.irc.begin_origin(client_id, &target);
+            let sent = send_form(rt, &target, form).await;
+            rt.irc.end_origin();
+            match sent {
                 Ok(id) => format!("form sent {id}"),
                 Err(e) => format!("form failed: {e}"),
             }
@@ -2801,7 +2903,7 @@ async fn radio_cmd(rt: &Runtime, args: &str) -> String {
             }
         }
         "" | "help" => {
-            "RADIO commands: mode preset tower status form group queue trace history freq qsy prio ptt checkin net mute theme activity update. Channels: /join #name (closed, +i)  /invite CALL (over-air notice)  /part /prio. /radio status shows relayed and groups (group_prios)."
+            "RADIO commands: mode preset tower status form group queue flush trace history freq qsy prio ptt checkin net mute theme activity update. Channels: /join #name (closed, +i)  /invite CALL (over-air notice from you)  /part /prio. /radio status shows relayed (every forwarded frame), unique (distinct messages), and groups (group_prios). /radio flush marks unacked outbound [no]."
                 .into()
         }
         other => format!("unknown RADIO subcommand '{other}'. Try /radio help"),
@@ -2829,6 +2931,16 @@ mod tests {
         assert!(line.contains(&env.msg_id.hex()));
         assert!(line.contains("hello from A"));
         assert!(line.starts_with("relayed msg "));
+        let ack = Envelope::ack_for(&env, Callsign::parse("~RFSIMC").unwrap(), 2, Some(4.0));
+        let ack_line = relay_log_line(&ack);
+        assert_eq!(
+            ack_line,
+            format!(
+                "relayed ack {} -> {} id {}",
+                ack.origin, ack.dest, ack.msg_id
+            )
+        );
+        assert!(!ack_line.contains('\u{7}'));
     }
 
     #[test]
