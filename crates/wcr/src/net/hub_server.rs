@@ -41,7 +41,22 @@ pub struct HubState {
     /// Public map id. The production hub sets this from `WCR_DOMAIN`. A private
     /// hub must not claim to be `hub.weechatradio.com`.
     pub id: String,
+    /// Direct messages for a callsign that is not connected. Groups and
+    /// `#bulletin` are not held: those still need a live session.
+    pub pending_dm: Arc<Mutex<Vec<HeldDm>>>,
 }
+
+/// A direct message waiting for its destination to say hello.
+pub struct HeldDm {
+    pub dest: String,
+    pub raw: Vec<u8>,
+    pub expires: u64,
+}
+
+/// How long an offline direct message stays on the hub.
+pub const OFFLINE_DM_TTL_SECS: u64 = 600;
+/// Per destination. The oldest copy is dropped when this fills.
+pub const OFFLINE_DM_CAP: usize = 32;
 
 pub struct Session {
     pub callsign: String,
@@ -93,6 +108,7 @@ pub async fn run_hub(
             .unwrap_or_else(|_| crate::net::hub_mail::MailHubDb::open_memory().expect("mail db")),
         ),
         id: hub_report_id(bind, &std::env::var("WCR_DOMAIN").unwrap_or_default()),
+        pending_dm: Arc::new(Mutex::new(Vec::new())),
     };
     let app = Router::new()
         .route("/", get(ws_upgrade))
@@ -249,6 +265,12 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
             },
         );
     }
+    let call_up = hello.callsign.to_ascii_uppercase();
+    for raw in take_offline_dm(&st, &call_up) {
+        if let Some(tx) = st.sessions.lock().get(&call_up).map(|s| s.tx.clone()) {
+            let _ = tx.try_send(raw);
+        }
+    }
     let _ = socket.send(Message::Text("{\"ok\":true}".into())).await;
     let call = hello.callsign.to_ascii_uppercase();
     let (mut sink, mut stream) = socket.split();
@@ -287,7 +309,10 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
                     let _ = st.store.insert(&env, crate::store::Delivery::Queued);
                     if env.kind != MsgType::Frag {
                         *st.forwarded.lock() += 1;
-                        let (from_khz, from_band, to_bands) = route(&st, &env, &bin, &call);
+                        let (from_khz, from_band, to_bands, n) = route(&st, &env, &bin, &call);
+                        if n == 0 {
+                            hold_offline_dm(&st, &env, &bin);
+                        }
                         publish_forward(
                             &st,
                             env.origin.to_string(),
@@ -303,7 +328,10 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
                         if let Ok(raw) = full.encode() {
                             let _ = st.store.insert(&full, crate::store::Delivery::Queued);
                             *st.forwarded.lock() += 1;
-                            let (from_khz, from_band, to_bands) = route(&st, &full, &raw, &call);
+                            let (from_khz, from_band, to_bands, n) = route(&st, &full, &raw, &call);
+                            if n == 0 {
+                                hold_offline_dm(&st, &full, &raw);
+                            }
                             publish_forward(
                                 &st,
                                 full.origin.to_string(),
@@ -427,9 +455,14 @@ fn publish_forward(
     }));
 }
 
-fn route(st: &HubState, env: &Envelope, raw: &[u8], from: &str) -> (u32, String, Vec<String>) {
+fn route(
+    st: &HubState,
+    env: &Envelope,
+    raw: &[u8],
+    from: &str,
+) -> (u32, String, Vec<String>, usize) {
     if env.kind == MsgType::Frag {
-        return (0, String::new(), Vec::new());
+        return (0, String::new(), Vec::new(), 0);
     }
     let dest = env.dest.to_string().to_ascii_uppercase();
     let broadcast = crate::slash::is_hub_broadcast(&dest);
@@ -459,6 +492,7 @@ fn route(st: &HubState, env: &Envelope, raw: &[u8], from: &str) -> (u32, String,
             .collect();
         (from_khz, sessions)
     };
+    let n = sessions.len();
     let to_khz: Vec<u32> = sessions.iter().map(|(k, _)| *k).collect();
     for (_khz, tx) in sessions {
         let _ = tx.try_send(raw.to_vec());
@@ -467,7 +501,61 @@ fn route(st: &HubState, env: &Envelope, raw: &[u8], from: &str) -> (u32, String,
         from_khz,
         crate::band::band_label(from_khz),
         crate::band::to_bands(to_khz),
+        n,
     )
+}
+
+fn offline_dm_holdable(env: &Envelope) -> bool {
+    matches!(
+        env.kind,
+        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status
+    ) && !env.flags.group()
+        && !crate::slash::is_hub_broadcast(env.dest.as_str())
+}
+
+/// Keep a direct message when nobody was connected to receive it.
+pub fn hold_offline_dm(st: &HubState, env: &Envelope, raw: &[u8]) -> bool {
+    if !offline_dm_holdable(env) {
+        return false;
+    }
+    let dest = env.dest.as_str().to_ascii_uppercase();
+    let now = unix_ts();
+    let mut q = st.pending_dm.lock();
+    q.retain(|h| h.expires > now);
+    let mut count = q.iter().filter(|h| h.dest == dest).count();
+    while count >= OFFLINE_DM_CAP {
+        if let Some(i) = q.iter().position(|h| h.dest == dest) {
+            q.remove(i);
+            count -= 1;
+        } else {
+            break;
+        }
+    }
+    q.push(HeldDm {
+        dest,
+        raw: raw.to_vec(),
+        expires: now.saturating_add(OFFLINE_DM_TTL_SECS),
+    });
+    true
+}
+
+pub fn take_offline_dm(st: &HubState, dest: &str) -> Vec<Vec<u8>> {
+    let dest = dest.to_ascii_uppercase();
+    let now = unix_ts();
+    let mut q = st.pending_dm.lock();
+    let mut out = Vec::new();
+    q.retain(|h| {
+        if h.expires <= now {
+            return false;
+        }
+        if h.dest == dest {
+            out.push(h.raw.clone());
+            false
+        } else {
+            true
+        }
+    });
+    out
 }
 
 fn collect_bands(st: &HubState) -> Vec<serde_json::Value> {
@@ -611,6 +699,7 @@ pub fn test_hub_state() -> HubState {
         hello_by_call: rate_limit::per_minute(30),
         mail: Arc::new(crate::net::hub_mail::MailHubDb::open_memory().unwrap()),
         id: hub_report_id("127.0.0.1:0", ""),
+        pending_dm: Arc::new(Mutex::new(Vec::new())),
     }
 }
 
@@ -709,7 +798,8 @@ mod tests {
         env.dest = Callsign::from_raw("BULLETIN");
         env.kind = MsgType::Frag;
         let raw = env.encode().unwrap();
-        let (_khz, _band, _bands) = route(&st, &env, &raw, "G4ABC");
+        let (_khz, _band, _bands, n) = route(&st, &env, &raw, "G4ABC");
+        assert_eq!(n, 0);
         assert!(rx_b.try_recv().is_err(), "raw frag must not be routed");
     }
 
@@ -757,7 +847,9 @@ mod tests {
         let mut env = sample_msg("G4ABC");
         env.dest = Callsign::from_raw("BULLETIN");
         let raw = env.encode().unwrap();
-        let (_khz, _band, _bands) = route(&st, &env, &raw, "G4ABC");
+        let (_khz, _band, _bands, n) = route(&st, &env, &raw, "G4ABC");
+        assert_eq!(n, 1);
+        assert!(!hold_offline_dm(&st, &env, &raw));
         assert!(rx_b.try_recv().is_ok());
         assert!(rx_a.try_recv().is_err());
     }
@@ -792,7 +884,11 @@ mod tests {
         env.dest = Callsign::from_raw("NET");
         env.flags.set(crate::proto::FLAG_GROUP, true);
         let raw = env.encode().unwrap();
-        let (_khz, _band, _bands) = route(&st, &env, &raw, "G4AAA");
+        let (_khz, _band, _bands, _n) = route(&st, &env, &raw, "G4AAA");
+        assert!(
+            !hold_offline_dm(&st, &env, &raw),
+            "closed groups are not stored"
+        );
         assert!(rx_b.try_recv().is_err(), "sender is not echoed");
         assert!(rx_c.try_recv().is_ok(), "member should receive the group");
         assert!(rx_z.try_recv().is_err(), "non-member must not receive it");
@@ -834,7 +930,7 @@ mod tests {
         env.dest = Callsign::from_raw("NET");
         env.flags.set(crate::proto::FLAG_GROUP, true);
         let raw = env.encode().unwrap();
-        let (_khz, _band, _bands) = route(&st, &env, &raw, "G4AAA");
+        let (_khz, _band, _bands, _n) = route(&st, &env, &raw, "G4AAA");
         assert!(rx_m.try_recv().is_ok());
         assert!(rx_z.try_recv().is_err());
     }
@@ -880,5 +976,56 @@ mod tests {
             }
         }
         assert!(session_is_current(&st, "G4ABC", 2));
+    }
+
+    #[test]
+    fn offline_dm_is_held_until_take() {
+        let st = test_hub_state();
+        let env = sample_msg("G4ABC");
+        let raw = env.encode().unwrap();
+        let (_khz, _band, _bands, n) = route(&st, &env, &raw, "G4ABC");
+        assert_eq!(n, 0, "nobody is connected as M0XYZ");
+        assert!(hold_offline_dm(&st, &env, &raw));
+        let got = take_offline_dm(&st, "m0xyz");
+        assert_eq!(got.len(), 1);
+        assert!(take_offline_dm(&st, "M0XYZ").is_empty());
+    }
+
+    #[test]
+    fn lonely_bulletin_is_not_stored() {
+        let st = test_hub_state();
+        let mut env = sample_msg("G4ABC");
+        env.dest = Callsign::from_raw("BULLETIN");
+        env.flags.set(crate::proto::FLAG_GROUP, true);
+        let raw = env.encode().unwrap();
+        let (_khz, _band, _bands, n) = route(&st, &env, &raw, "G4ABC");
+        assert_eq!(n, 0);
+        assert!(!hold_offline_dm(&st, &env, &raw));
+        assert!(st.pending_dm.lock().is_empty());
+    }
+
+    #[test]
+    fn offline_dm_drops_expired_and_caps_per_dest() {
+        let st = test_hub_state();
+        st.pending_dm.lock().push(HeldDm {
+            dest: "M0XYZ".into(),
+            raw: b"stale".to_vec(),
+            expires: 1,
+        });
+        assert!(take_offline_dm(&st, "M0XYZ").is_empty());
+        for i in 0..(OFFLINE_DM_CAP as u32 + 1) {
+            let mut env = sample_msg("G4ABC");
+            env.seq = i;
+            env.body = format!("n{i}").into_bytes();
+            let raw = env.encode().unwrap();
+            assert!(hold_offline_dm(&st, &env, &raw));
+        }
+        assert_eq!(st.pending_dm.lock().len(), OFFLINE_DM_CAP);
+        let got = take_offline_dm(&st, "M0XYZ");
+        assert_eq!(got.len(), OFFLINE_DM_CAP);
+        let first = Envelope::decode(&got[0]).unwrap();
+        let last = Envelope::decode(got.last().unwrap()).unwrap();
+        assert_ne!(first.body, b"n0");
+        assert_eq!(last.body, format!("n{}", OFFLINE_DM_CAP).into_bytes());
     }
 }

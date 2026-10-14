@@ -52,7 +52,11 @@ Radio-plus (you stay offline)
 
    never happens:   [ you ]  --X-->  [ hub ]
 
-You never upload. A gateway that hears you may forward if the message allows internet (INET_OK) and its `[gateway] rf_egress` is on.
+You never upload. A gateway that hears a radio-plus frame forwards it to the hub for any destination: a direct message, a closed group, and `#bulletin`. The frame has to allow the internet (`INET_OK`, and not `NO_INET`). `radio` mode sets `NO_INET`, so a gateway keeps that frame on the radio.
+
+`[gateway] rf_egress` is the other direction. It puts hub traffic on the air. It does not decide the upload.
+
+The sender's line shows `[gw]` when that gateway has accepted the frame onto the hub. `[rl]` is only “I heard my own frame on the radio again”. In `radio` mode `[rl]` is as far as the frame goes: a gateway will not upload it. Both marks can appear, and neither one is an ACK.
 
 What a gateway will and will not put on the air
 
@@ -80,6 +84,10 @@ What the program never does
 Beacons carry `B|<mode>|<khz>` so peers and the map know your dial. Tell the app the dial if you have no CAT: `/radio freq 144.950`.
 
 LAN: nodes on the same local network can also pass frames without the public hub. Gateway rules still apply.
+
+Offline direct messages
+
+The hub keeps a direct message for a station that is not connected, for 10 minutes, up to 32 messages per callsign. The oldest is dropped when that fills. It is delivered when that station next says hello. Closed groups and `#bulletin` are not held: someone has to be connected to receive them. The hub does not key a radio. A station that is only on the air still depends on the RF retry while both ends can hear the path.
 
 How you know it worked
 - Nicklist: `[2m] G4ABC`, `[40m] M7TJF`, `[inet] ~ALICE`

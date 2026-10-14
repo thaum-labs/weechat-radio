@@ -98,6 +98,37 @@ fn radio_cfg(callsign: &str, home: &Path, kiss: u16, ctrl: u16, irc: u16, status
     cfg
 }
 
+fn radio_plus_cfg(
+    callsign: &str,
+    home: &Path,
+    kiss: u16,
+    ctrl: u16,
+    irc: u16,
+    status: u16,
+) -> Config {
+    let mut cfg = radio_cfg(callsign, home, kiss, ctrl, irc, status);
+    cfg.mode = Mode::RadioPlus;
+    cfg.normalize();
+    cfg
+}
+
+fn gateway_cfg(
+    callsign: &str,
+    home: &Path,
+    kiss: u16,
+    ctrl: u16,
+    irc: u16,
+    status: u16,
+    hub_ws: &str,
+) -> Config {
+    let mut cfg = radio_cfg(callsign, home, kiss, ctrl, irc, status);
+    cfg.mode = Mode::InternetRadio;
+    cfg.hub.url = hub_ws.into();
+    cfg.gateway.third_party = "allow".into();
+    cfg.normalize();
+    cfg
+}
+
 async fn start_hub() -> u16 {
     let hub_port = port().await;
     let hub_bind = format!("127.0.0.1:{hub_port}");
@@ -937,6 +968,273 @@ async fn hub_group_created_at_runtime_is_routable() {
     assert!(
         got.iter().any(|l| privmsg(l).is_some_and(|p| p.2 == body)),
         "group created at runtime was not routed before the 60 s refresh: {got:?}"
+    );
+    for n in nodes {
+        n.abort();
+    }
+}
+
+/// Radio-plus #bulletin is uploaded by the gateway. Radio mode is not.
+#[tokio::test]
+async fn radio_plus_bulletin_reaches_internet_via_gateway() {
+    let hub_port = start_hub().await;
+    let hub_ws = format!("ws://127.0.0.1:{hub_port}/ws");
+    let air = wcr::sim::SharedAir::new(0.0);
+    let mut nodes = Vec::new();
+
+    let home_a = scratch("plus");
+    let (kiss_a, ctrl_a) = wcr::sim::mock_modem73_free(air.clone()).await.unwrap();
+    let irc_a = port().await;
+    let status_a = port().await;
+    let cfg_a = radio_plus_cfg("~RFSIMA", &home_a, kiss_a, ctrl_a, irc_a, status_a);
+    nodes.push(tokio::spawn(async move {
+        wcr::node::run_node(cfg_a, false).await
+    }));
+
+    let home_b = scratch("gw");
+    let (kiss_b, ctrl_b) = wcr::sim::mock_modem73_free(air.clone()).await.unwrap();
+    let irc_b = port().await;
+    let status_b = port().await;
+    let cfg_b = gateway_cfg("M0BBB", &home_b, kiss_b, ctrl_b, irc_b, status_b, &hub_ws);
+    nodes.push(tokio::spawn(async move {
+        wcr::node::run_node(cfg_b, false).await
+    }));
+
+    let home_c = scratch("radio");
+    let (kiss_c, ctrl_c) = wcr::sim::mock_modem73_free(air).await.unwrap();
+    let irc_c = port().await;
+    let status_c = port().await;
+    let cfg_c = radio_cfg("G4CCC", &home_c, kiss_c, ctrl_c, irc_c, status_c);
+    nodes.push(tokio::spawn(async move {
+        wcr::node::run_node(cfg_c, false).await
+    }));
+
+    let home_d = scratch("inet");
+    let irc_d = port().await;
+    let status_d = port().await;
+    let cfg_d = internet_cfg("G0DDD", &home_d, &hub_ws, irc_d, status_d);
+    nodes.push(tokio::spawn(async move {
+        wcr::node::run_node(cfg_d, false).await
+    }));
+
+    for p in [irc_a, irc_b, irc_c, irc_d] {
+        wait_tcp(p, 20).await;
+    }
+    wait_radio(&[status_a, status_b, status_c]).await;
+    wait_hub_ok(&[status_b, status_d]).await;
+
+    let mut sender = TcpStream::connect(format!("127.0.0.1:{irc_a}"))
+        .await
+        .unwrap();
+    irc_register(&mut sender, "~RFSIMA").await;
+    sender.write_all(b"JOIN #bulletin\r\n").await.unwrap();
+    let mut radio = TcpStream::connect(format!("127.0.0.1:{irc_c}"))
+        .await
+        .unwrap();
+    irc_register(&mut radio, "G4CCC").await;
+    radio.write_all(b"JOIN #bulletin\r\n").await.unwrap();
+    let mut inet = TcpStream::connect(format!("127.0.0.1:{irc_d}"))
+        .await
+        .unwrap();
+    irc_register(&mut inet, "G0DDD").await;
+    inet.write_all(b"JOIN #bulletin\r\n").await.unwrap();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    let body = "plus-bulletin-body";
+    sender
+        .write_all(format!("PRIVMSG #bulletin :{body}\r\n").as_bytes())
+        .await
+        .unwrap();
+    let mut inet_reader = tokio::io::BufReader::new(&mut inet);
+    let got = read_lines_until(&mut inet_reader, 25, |lines| {
+        lines
+            .iter()
+            .any(|l| privmsg(l).is_some_and(|p| p.2 == body))
+    })
+    .await;
+    assert!(
+        got.iter().any(|l| privmsg(l).is_some_and(|p| p.2 == body)),
+        "internet station never got the radio-plus bulletin: {got:?}"
+    );
+
+    let mut send_reader = tokio::io::BufReader::new(&mut sender);
+    let sent = read_lines_until(&mut send_reader, 20, |lines| {
+        lines.iter().any(|l| l.contains("+radio/delivery=gateway"))
+    })
+    .await;
+    assert!(
+        sent.iter().any(|l| l.contains("+radio/delivery=gateway")),
+        "radio-plus sender never saw [gw]: {sent:?}"
+    );
+
+    let radio_body = "radio-only-bulletin";
+    radio
+        .write_all(format!("PRIVMSG #bulletin :{radio_body}\r\n").as_bytes())
+        .await
+        .unwrap();
+    let quiet = read_lines_until(&mut inet_reader, 8, |lines| {
+        lines
+            .iter()
+            .any(|l| privmsg(l).is_some_and(|p| p.2 == radio_body))
+    })
+    .await;
+    assert!(
+        !quiet
+            .iter()
+            .any(|l| privmsg(l).is_some_and(|p| p.2 == radio_body)),
+        "radio-mode bulletin was uploaded: {quiet:?}"
+    );
+    for n in nodes {
+        n.abort();
+    }
+}
+
+/// Closed group: one member on the hub must not cancel the RF relay or the retries.
+#[tokio::test]
+async fn radio_plus_closed_group_reaches_rf_member_and_all() {
+    let hub_port = start_hub().await;
+    let hub_ws = format!("ws://127.0.0.1:{hub_port}/ws");
+    let air = wcr::sim::SharedAir::new(0.0);
+    let members = ["G4AAA", "2E0CCC", "G0DDD"];
+    // A hears only the gateway. C hears only the gateway. The gateway hears both.
+    let plan = [
+        ("G4AAA", 1u64, HashSet::from([2u64]), Mode::RadioPlus),
+        ("M0BBB", 2, HashSet::from([1u64, 3]), Mode::InternetRadio),
+        ("2E0CCC", 3, HashSet::from([2u64]), Mode::Radio),
+    ];
+    let mut nodes = Vec::new();
+    let mut irc = Vec::new();
+    let mut status = Vec::new();
+    for (call, station, hear, mode) in plan {
+        let home = scratch(call);
+        if members.contains(&call) {
+            let store = wcr::store::Store::open(&home.join("store.db"), 72, 10_000).unwrap();
+            store
+                .group_create("qarp", &members.map(|s| s.to_string()))
+                .unwrap();
+            drop(store);
+        }
+        let (kiss, ctrl) = wcr::sim::mock_modem73_linked_free(air.clone(), station, hear)
+            .await
+            .unwrap();
+        let irc_p = port().await;
+        let status_p = port().await;
+        let mut cfg = radio_cfg(call, &home, kiss, ctrl, irc_p, status_p);
+        cfg.mode = mode;
+        if mode == Mode::InternetRadio {
+            cfg.hub.url = hub_ws.clone();
+            cfg.gateway.third_party = "allow".into();
+        }
+        cfg.normalize();
+        nodes.push(tokio::spawn(async move {
+            wcr::node::run_node(cfg, false).await
+        }));
+        irc.push(irc_p);
+        status.push(status_p);
+    }
+    let home_d = scratch("inet-member");
+    {
+        let store = wcr::store::Store::open(&home_d.join("store.db"), 72, 10_000).unwrap();
+        store
+            .group_create("qarp", &members.map(|s| s.to_string()))
+            .unwrap();
+    }
+    let irc_d = port().await;
+    let status_d = port().await;
+    let cfg_d = internet_cfg("G0DDD", &home_d, &hub_ws, irc_d, status_d);
+    nodes.push(tokio::spawn(async move {
+        wcr::node::run_node(cfg_d, false).await
+    }));
+
+    for p in irc.iter().copied().chain(std::iter::once(irc_d)) {
+        wait_tcp(p, 20).await;
+    }
+    wait_radio(&status).await;
+    wait_hub_ok(&[status[1], status_d]).await;
+
+    let mut sender = TcpStream::connect(format!("127.0.0.1:{}", irc[0]))
+        .await
+        .unwrap();
+    irc_register(&mut sender, "G4AAA").await;
+    let mut gateway = TcpStream::connect(format!("127.0.0.1:{}", irc[1]))
+        .await
+        .unwrap();
+    irc_register(&mut gateway, "M0BBB").await;
+    let mut rf_member = TcpStream::connect(format!("127.0.0.1:{}", irc[2]))
+        .await
+        .unwrap();
+    irc_register(&mut rf_member, "2E0CCC").await;
+    rf_member.write_all(b"JOIN #qarp\r\n").await.unwrap();
+    let mut inet = TcpStream::connect(format!("127.0.0.1:{irc_d}"))
+        .await
+        .unwrap();
+    irc_register(&mut inet, "G0DDD").await;
+    inet.write_all(b"JOIN #qarp\r\n").await.unwrap();
+
+    // The gateway publishes heard stations on a 60 s refresh. The internet
+    // member's ACK is routed back only after that list includes the sender.
+    sender
+        .write_all(b"PRIVMSG M0BBB :hear-a\r\n")
+        .await
+        .unwrap();
+    let mut gw_reader = tokio::io::BufReader::new(&mut gateway);
+    let heard = read_lines_until(&mut gw_reader, 20, |lines| {
+        lines
+            .iter()
+            .any(|l| privmsg(l).is_some_and(|p| p.2 == "hear-a"))
+    })
+    .await;
+    assert!(
+        heard
+            .iter()
+            .any(|l| privmsg(l).is_some_and(|p| p.2 == "hear-a")),
+        "gateway never heard the sender: {heard:?}"
+    );
+    tokio::time::sleep(Duration::from_secs(65)).await;
+
+    let body = "qarp-body";
+    sender
+        .write_all(format!("PRIVMSG #qarp :{body}\r\n").as_bytes())
+        .await
+        .unwrap();
+    let mut rf_reader = tokio::io::BufReader::new(&mut rf_member);
+    let at_c = read_lines_until(&mut rf_reader, 30, |lines| {
+        lines
+            .iter()
+            .any(|l| privmsg(l).is_some_and(|p| p.2 == body))
+    })
+    .await;
+    assert!(
+        at_c.iter().any(|l| privmsg(l).is_some_and(|p| p.2 == body)),
+        "RF member never got the closed group: {at_c:?}"
+    );
+    let mut inet_reader = tokio::io::BufReader::new(&mut inet);
+    let at_d = read_lines_until(&mut inet_reader, 20, |lines| {
+        lines
+            .iter()
+            .any(|l| privmsg(l).is_some_and(|p| p.2 == body))
+    })
+    .await;
+    assert!(
+        at_d.iter().any(|l| privmsg(l).is_some_and(|p| p.2 == body)),
+        "internet member never got the closed group: {at_d:?}"
+    );
+    let mut send_reader = tokio::io::BufReader::new(&mut sender);
+    let sent = read_lines_until(&mut send_reader, 40, |lines| {
+        lines.iter().any(|l| l.contains("+radio/delivery=all"))
+    })
+    .await;
+    assert!(
+        sent.iter().any(|l| l.contains("+radio/delivery=delivered")),
+        "sender never reached [ok]: {sent:?}"
+    );
+    assert!(
+        sent.iter().any(|l| l.contains("+radio/delivery=all")),
+        "sender never reached [all]: {sent:?}"
+    );
+    assert!(
+        !sent.iter().any(|l| l.contains("+radio/delivery=failed")),
+        "partial group ACK painted [no]: {sent:?}"
     );
     for n in nodes {
         n.abort();
