@@ -52,15 +52,15 @@ The status bar at the bottom shows your callsign and mode. After you send, a mar
 - `[rl]` you heard your own frame on the radio again (a speaker echo, or someone relaying it). Not a receipt. A noisy path can skip it. In `radio` mode the frame is marked to stay off the internet, so `[rl]` is as far as it goes.
 - `[gw]` a gateway accepted the frame onto the hub. Not an ACK. The line can still move on to `[ok]` or `[all]`.
 - `[ok]` delivered — they sent an ACK. A direct message and `#bulletin` stop here. `#bulletin` is public, so one ACK is enough and the mark does not go on to `[all]`.
-- `[all]` every member of a closed group ACKed. The first ACK paints `[ok]` and retries continue until every stored member has ACKed, or the retries run out. A `#bulletin` post cannot reach this.
-- `[no]` the send was refused (for example the hub said the callsign is already claimed), or the last copy waited out its interval with no ACK
+- `[all]` every member of a closed group ACKed. The first ACK paints `[ok]` and retries continue until every stored member has ACKed, or the retries run out. The mark is shown once. A `#bulletin` post cannot reach this.
+- `[no]` the send was refused (for example the hub said the callsign is already claimed), or the last copy waited out its interval with no ACK. If some members of a closed group have ACKed and others have not, the line says `waiting on acks` instead of `[no]`.
 - `[xN]` how many times the line was keyed. `[x1]` is the first send. The default is 3 retries, so the last copy is `[x4]`. `[no]` waits one more full interval after that copy.
 
 Routine retries wait 45s, then 90s, then 180s, then 360s with no further key, each ±25% (`retry_jitter`). Emergency is 8s / 16s / 32s / 64s. Priority is 20s / 40s / 80s / 160s. A busy channel can make the gap between copies longer than that band. `/radio flush` marks unacked outbound `[no]`. Rows older than one hour are not keyed again after a restart.
 
 ## Closed groups
 
-`/join #net` creates a closed group (`MODE #net` shows `+i`). `#bulletin` stays public (`+`). `/invite CALL` adds that callsign and keys a direct over-air notice that names you; the reply says whether the notice was sent. The invitee is notified only when that direct message arrives. `NAMES` lists the members this station has stored. `/radio status` shows `relayed` (every forwarded frame, repeats included), `unique` (distinct messages), and `groups` (each closed group's priority). That list is `group_prios` on the status page. `/prio emergency` on the channel sets it. `#bulletin` is always routine and is omitted.
+`/join #net` creates a closed group (`MODE #net` shows `+i`). `#bulletin` stays public (`+`). `/invite CALL` adds that callsign and keys a direct over-air notice that names you; the reply says whether the notice was sent. The invitee is notified only when that direct message arrives. `NAMES` lists the members stored on this station, not the whole chain. Creating the group or inviting someone keys a roster at 6 hops so a neighbour can add callsigns it missed. A station that never hears that roster still shows only its own list, and the end of `NAMES` says so. `/radio status` shows `relayed` (every forwarded frame, repeats included), `unique` (distinct messages), and `groups` (each closed group's priority). That list is `group_prios` on the status page. `/prio emergency` on the channel sets it. `#bulletin` is always routine and is omitted.
 
 The window and the TUI use these same marks.
 

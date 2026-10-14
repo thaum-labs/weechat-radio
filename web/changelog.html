@@ -53,103 +53,49 @@
           <p>v0.1.86</p>
           <p>Wed, 14 Oct 2026</p>
         </h3>
-        <pre>The gateway acknowledgement is one frame that fits the slowest HF preset. After the last chunk the gateway waits through a quiet gap, then keys that acknowledgement. A second copy of the same mail gets the acknowledgement again, and the posted copy stays as it is. The sender starts its retry clock after the keyed burst should be off the air, then the usual backoff, plus one frame for the acknowledgement. Chunks are kept per total. An index outside that total is dropped, so a bad total cannot sit in the way of a real message, including pieces that arrive on a later try. Check mail with an empty inbox is answered, and the tab says "no new mail". If the radio is not running, the row fails at once with "Radio is not running." Compose returns the same airtime hint as the window, in the airtime field.
-
-Group names longer than 8 characters are refused, and the reply names that limit. Closed groups start at 6 hops, the same as #bulletin. A closed group that lists more stations than those hops can cross in a line shows a warning. After the retry budget, a closed group that is not fully acknowledged shows [no]. [all] means every stored member has acknowledged. Hearing a neighbour relay our frame shows [rl], including beside [ok]. A new key for a callsign with no live hub session replaces the old key, so the map pin takes the new grid and mode. A second live session gets "callsign already claimed".
-
-Direct messages keep their hop counts. Chat pacing, CSMA, the modem ladder, and fragment split are unchanged. VOX lead, tail, and the modem drain are unchanged.
-
-Known issue. With another station's signal on the channel, modem73 can hold frames indefinitely, so [x2], [x3], and [no] may show before a copy actually airs.</pre>
+        <pre>The gateway mail acknowledgement is one slow frame, sent after a quiet gap. A second copy of the same mail is acknowledged again and is not posted twice. Check mail with nothing waiting says "no new mail". Group names longer than 8 characters are refused. Closed groups start at 6 hops, [all] means every stored member acknowledged, and hearing a neighbour relay shows [rl].</pre>
       </article>
       <article class="release">
         <h3 class="title">
           <p>v0.1.85</p>
           <p>Wed, 14 Oct 2026</p>
         </h3>
-        <pre>Radio-plus email is not Sent until the gateway says Resend accepted it. Keying the burst leaves the message in the outbox at [tx]. Each chunk the gateway acknowledges shows [gw]. [ok] is that acceptance. Chunks that were not acknowledged are sent again, with a longer wait each time, and then the row is Failed with the reason: the gateway never acknowledged, or it has the message but it was not accepted.
-
-If a message stays at [tx] for five minutes and nothing has moved it on, it is Failed. VOX lead, tail, and the modem drain are unchanged.
-
-A long message shows the estimated airtime before it is sent, and says it is not Sent until the gateway accepts it.
-
-The sender log records when mail is keyed, acknowledged, at the gateway, accepted, failed, or retried. The gateway log records when mail is received, posted to the hub, or rejected. Check mail with nothing waiting says "no new mail". If the gateway does not answer, it says "No reply from the gateway."
-
-A closed group that a gateway uploads is also relayed on the radio, so a member who only hears the gateway still gets it. A copy coming back from the hub does not cancel that relay, and one member's acknowledgement does not either. [gw] only moves forward. A gateway notice that arrives after [ok], [all], or [no] is ignored.
-
-Map lines glow for about 8 seconds, then settle and stay faintly visible for 48 hours after the last contact. Station pins stay bright while recently heard, then dim, and leave after 48 hours.
-
-Known issue. With another station's signal on the channel, modem73 can hold frames indefinitely, so [x2], [x3], and [no] may show before a copy actually airs.</pre>
+        <pre>Radio-plus mail stays in the outbox at [tx] until the gateway says it was accepted, then it shows [ok]. Chunks the gateway has show [gw], and the rest are sent again until the row fails with the reason. A message still at [tx] after five minutes is Failed. A closed group a gateway uploads is also relayed on the radio. Map lines glow for about 8 seconds, then stay faintly for 48 hours.</pre>
       </article>
       <article class="release">
         <h3 class="title">
           <p>v0.1.84</p>
           <p>Wed, 14 Oct 2026</p>
         </h3>
-        <pre>After the last keyed copy, the station waits one more retry interval for an acknowledgement before it shows [no]. It does not key again during that wait. A busy channel can make the gap longer than the timer. Unacked messages older than one hour are marked [no]. /radio flush marks this station's unacked lines [no] and drops relay holds that have not gone out.
-
-Delivery marks go only to the client that sent the line. Relay logs no longer print binary frames. An invite names you. NAMES after you join lists the members this station has stored. /radio status counts each forwarded frame and how many distinct messages that was.
-
-A radio-plus station still does not open the hub from this computer. An internet-radio gateway that hears it may forward a direct message, a closed group, #bulletin, and email. The sender shows [gw] when the gateway has accepted the frame. [rl] still means you heard your own frame on the radio. In radio mode a gateway leaves the frame on the radio. radio and radio-plus both post map data (callsign, grid, and tx/rx ids) and never message text. That forward flag is the only difference.
-
-A closed group keeps retrying until every stored member has acknowledged, then shows [all]. The first [ok] does not stop that. The hub holds a direct message for an offline internet station for 10 minutes, up to 32 per callsign, and delivers it on the next hello. It does not hold groups or #bulletin.
-
-The map draws an arc only between two station pins that addressed each other. A #bulletin or a closed group does not draw a line to every other pin.
-
-Known issue. With another station's signal on the channel, modem73 can hold frames indefinitely, so [x2], [x3], and [no] may show before a copy actually airs.</pre>
+        <pre>After the last copy, the station waits one more interval for an acknowledgement before it shows [no], and it does not key during that wait. Delivery marks go only to the client that sent the line. A closed group keeps retrying until every stored member has acknowledged, then shows [all]. The map draws an arc only between two stations that addressed each other.</pre>
       </article>
       <article class="release">
         <h3 class="title">
           <p>v0.1.83</p>
           <p>Wed, 14 Oct 2026</p>
         </h3>
-        <pre>Two direct messages sent in the same second no longer share a message id. The id is a hash of the sender, the recipient, a per-station counter, and the text, so acknowledgements stay on the right line.
-
-#bulletin stops at [ok]. It has no member list, so it does not show [all]. A closed group shows [all] when every member stored on this station has acknowledged. [rl] only appears when you hear your own frame.
-
-[xN] is how many times the line was keyed. With 3 retries the last copy is [x4]. Routine retry waits are 45s, then 90s, then 180s, each varied by ±25%.
-
-MODE #channel replies with the channel mode (+i for a closed group, + for #bulletin). HELP lists the station commands. INVITE says whether a notice was sent to the other station. /radio status shows how many frames this station has relayed, and the priority of each closed group.
-
-Known issue. With another station's signal on the channel, modem73 can hold frames indefinitely, so [x2], [x3], and [no] may show before a copy actually airs.</pre>
+        <pre>Two direct messages sent in the same second no longer share a message id, so each acknowledgement stays on its own line. #bulletin stops at [ok]. A closed group shows [all] when every stored member has acknowledged. [xN] is how many times the line was keyed; with 3 retries the last copy is [x4].</pre>
       </article>
       <article class="release">
         <h3 class="title">
           <p>v0.1.82</p>
           <p>Tue, 13 Oct 2026</p>
         </h3>
-        <pre>A due retry now keys when the hold reaches zero, even if the modem stays in receive on an open sound card. The countdown starts again. The line advances [x1], [x2], [x3], and shows [no] after the last try. QUEUE is still messages waiting for an acknowledgement. AIR is frames at the radio.
-
-Setup asks whether to use the detected grid with [Y/n], and the square is already filled in, so Enter keeps it. The hub, map, and service questions (steps 4, 5, and 7) show [Y/n] or [y/N]. Internet-only setup says step 6 is skipped because it is radio only.
-
-The installer prints the command to add this folder to PATH immediately before the next command, which is wcr setup. It does not also tell you to start the node. wcr update removes a leftover minttyrc on Linux and macOS and names the previous binary it keeps as a .bak file.
-
-Known issue. With another station's signal on the channel, modem73 can hold frames indefinitely, so [x2], [x3], and [no] may show before a copy actually airs.</pre>
+        <pre>A due retry now keys when its hold reaches zero, even if the modem stays in receive, and the line advances [x1], [x2], [x3], then [no]. Setup asks whether to keep the detected grid with [Y/n], and Enter keeps the square already filled in. The installer prints wcr setup as the next command.</pre>
       </article>
       <article class="release">
         <h3 class="title">
           <p>v0.1.81</p>
           <p>Tue, 13 Oct 2026</p>
         </h3>
-        <pre>The installer no longer leaves minttyrc next to wcr on Linux or macOS. That file is only for the Windows terminal.
-
-Before WeeChat is installed, the installer says what it is doing and why. On Linux it names apt or dnf and that sudo may ask for your password. On Windows it says it will download Cygwin and that this does not need an administrator password. The summary at the end says whether WeeChat was installed.
-
-If the install folder is not on PATH, Linux and macOS add it to the bash, zsh, or fish profile, with a marker comment so a second run does not add it again. The installer prints the line to run in this terminal, then the next command: wcr setup. Windows already adds the folder to the user PATH, and now says to open a new PowerShell window before wcr setup.</pre>
+        <pre>The installer no longer leaves minttyrc beside wcr on Linux or macOS. That file is only for the Windows terminal. It says what it is about to install, and if this folder is not on PATH it adds it and prints the line to run before wcr setup.</pre>
       </article>
       <article class="release">
         <h3 class="title">
           <p>v0.1.80</p>
           <p>Tue, 13 Oct 2026</p>
         </h3>
-        <pre>A direct message now shows for the station it was sent to, and the sender gets [ok] once that station confirms it. #bulletin stops at [ok] on the first confirmation. A closed group reaches [all] when every member has confirmed. After [ok], a retry that was already keying is not tagged again. A hub that refuses the callsign, including one already claimed, shows [no] instead of sent. Hearing your own frame is still [rl], not a receipt, and retries keep going until an ACK arrives or the count is used up. This station does not relay its own direct messages.
-
-A closed group created or joined here is registered with the hub straight away, so the first message does not wait for the periodic refresh. If a receipt is lost, a later copy of that unacked frame is ACKed and forwarded again.
-
-An ACK does not sit behind the rest of the queue. Under a steady noise floor it is keyed with modem carrier sense off after about 3 seconds, or sooner when the modem reports undecodable busy, and carrier sense is then turned back on. Carrier sense stays on while another station's frame is being received. When the retries are used up the line shows [no], and hearing that frame again does not put it back on [rl]. A later ACK can still move [no] to [ok].
-
-#bulletin on the hub reaches every connected station once. A burst of IRC lines is limited, and a line from the radio is no longer shown twice. wcr weechat --configure writes irc.conf. If the IRC port is already in use, the node stops and names that port. If modem73 exits at startup, the error is its log line. The Linux tray starts only where the desktop libraries are present, so a headless hub still builds. The hub image includes the modem checksums it checks while building. Installers and the modem download check a SHA-256 sidecar when one is published. The modem archive stays the v0.1.79 pin.
-
-Known issues. A relay that already saw an ACK does not send it again when the sender retries, so a sender that missed the first ACK can show a false [no]. A third station can forward an ACK again and occasionally key over the middle station. The first transmission in a fast OFDM mode is often missed and needs one retry.</pre>
+        <pre>A direct message now shows for the station it was sent to, and the sender gets [ok] once that station confirms it. #bulletin stops at [ok]. A closed group reaches [all] when every member has confirmed. An acknowledgement does not wait out a noise floor: it keys with carrier sense off after about 3 seconds, and carrier sense stays on while another frame is being received.</pre>
       </article>
       <article class="release">
         <h3 class="title">

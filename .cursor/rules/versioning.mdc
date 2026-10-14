@@ -14,4 +14,6 @@ When the user says **deploy**:
 
 Do not tag a release so that `wcr help` picks up markdown. Offline help waits for the next real app release.
 
+Changelog articles and GitHub release notes stay as short as the entries through v0.1.79: one paragraph, a few sentences, what the operator notices. Do not add a second section, a list of what stayed the same, or a known-issue trailer.
+
 v0.1.24 already exists from a docs-only ship; do not delete the tag.
