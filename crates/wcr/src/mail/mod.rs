@@ -525,7 +525,17 @@ mod tests {
             "{hint}"
         );
         assert!(hint.contains("bursts"), "{hint}");
+        let (secs, long_n) = air::mail_airtime_secs(Preset::HfPoor, 3900, 250);
+        assert!(long_n >= 46, "3900 B estimated {long_n} bursts");
+        assert!(secs > 150.0, "3900 B estimated {secs:.0}s");
+        let (_, short_n) = air::mail_airtime_secs(Preset::HfPoor, 115, 250);
+        assert!(short_n >= 3, "115 B estimated {short_n} bursts");
+        let one = hint_line(1, Mode::RadioPlus, Preset::VhfFm, 250);
+        assert!(one.contains("(1 burst)"), "{one}");
+        assert!(!one.contains("bursts"), "{one}");
         let line = confirm_air_line(120.0, 23, "hf-poor");
+        assert!(line.contains("23 bursts"));
+        assert!(confirm_air_line(4.0, 1, "hf-poor").contains("(1 burst @ hf-poor)"));
         assert!(line.contains("Not Sent until the gateway accepts it"));
         assert!(air::missing_chunk_idxs(4, "0,2").is_empty() == false);
         assert_eq!(air::missing_chunk_idxs(4, "0,2"), vec![1, 3]);
