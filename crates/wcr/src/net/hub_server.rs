@@ -230,9 +230,10 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
             .await;
         return;
     }
-    // first key wins
-    if let Some(existing) = st.telemetry.get_pubkey(&hello.callsign) {
-        if existing != pk {
+    let call_key = hello.callsign.to_ascii_uppercase();
+    let live = st.sessions.lock().contains_key(&call_key);
+    match crate::telemetry::callsign_claim(st.telemetry.get_pubkey(&call_key).as_ref(), &pk, live) {
+        crate::telemetry::CallsignClaim::Refuse => {
             let _ = socket
                 .send(Message::Text(
                     "{\"ok\":false,\"error\":\"callsign already claimed\"}".into(),
@@ -240,8 +241,13 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
                 .await;
             return;
         }
-    } else {
-        let _ = st.telemetry.bind_callsign(&hello.callsign, &pk);
+        crate::telemetry::CallsignClaim::Replace => {
+            let _ = st.telemetry.replace_callsign(&call_key, &pk);
+        }
+        crate::telemetry::CallsignClaim::Bind => {
+            let _ = st.telemetry.bind_callsign(&call_key, &pk);
+        }
+        crate::telemetry::CallsignClaim::Keep => {}
     }
     let (tx, mut rx) = mpsc::channel::<Vec<u8>>(64);
     let mut serves: HashSet<String> = hello

@@ -189,16 +189,77 @@ fn wire_unescape(s: &str) -> String {
 }
 
 fn meta_json(meta: &MailMeta) -> String {
-    serde_json::json!({
-        "f": meta.from,
-        "t": meta.to,
-        "s": meta.subject,
-        "d": meta.dest,
-        "v": meta.via,
-        "a": meta.ack,
-        "ids": meta.ids,
-    })
-    .to_string()
+    let mut m = serde_json::Map::new();
+    if !meta.from.is_empty() {
+        m.insert("f".into(), serde_json::Value::String(meta.from.clone()));
+    }
+    if !meta.to.is_empty() {
+        m.insert("t".into(), serde_json::Value::String(meta.to.clone()));
+    }
+    if !meta.subject.is_empty() {
+        m.insert("s".into(), serde_json::Value::String(meta.subject.clone()));
+    }
+    if !meta.dest.is_empty() {
+        m.insert("d".into(), serde_json::Value::String(meta.dest.clone()));
+    }
+    if !meta.via.is_empty() {
+        m.insert("v".into(), serde_json::Value::String(meta.via.clone()));
+    }
+    if meta.ack {
+        m.insert("a".into(), serde_json::Value::Bool(true));
+    }
+    if !meta.ids.is_empty() {
+        m.insert(
+            "ids".into(),
+            serde_json::Value::Array(
+                meta.ids
+                    .iter()
+                    .cloned()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
+        );
+    }
+    serde_json::Value::Object(m).to_string()
+}
+
+/// A chunk header is usable when its index is inside a non-zero total.
+pub fn chunk_acceptable(idx: u16, count: u16) -> bool {
+    count > 0 && idx < count
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ChunkPut {
+    /// `count` is 0 or `idx` is past the total. Do not store it.
+    Rejected,
+    Pending,
+    Ready(Vec<MailWire>),
+}
+
+/// Keep chunks for one mail, one total at a time. A bad total lands in its
+/// own bucket and cannot raise the wait for a consistent set. A repeated
+/// index does not replace the copy already stored.
+pub fn put_chunk(
+    buckets: &mut std::collections::HashMap<u16, std::collections::HashMap<u16, MailWire>>,
+    wire: MailWire,
+) -> ChunkPut {
+    if !chunk_acceptable(wire.idx, wire.count) {
+        return ChunkPut::Rejected;
+    }
+    let count = wire.count;
+    let slot = buckets.entry(count).or_default();
+    slot.entry(wire.idx).or_insert(wire);
+    if !(0..count).all(|i| slot.contains_key(&i)) {
+        return ChunkPut::Pending;
+    }
+    let mut parts = Vec::with_capacity(count as usize);
+    for i in 0..count {
+        if let Some(part) = slot.remove(&i) {
+            parts.push(part);
+        }
+    }
+    buckets.remove(&count);
+    ChunkPut::Ready(parts)
 }
 
 pub fn encode_chunk(w: &MailWire) -> Vec<u8> {
@@ -434,6 +495,96 @@ pub fn frames_for_mtu(wire: &[u8], mtu: usize) -> Result<Vec<Vec<u8>>> {
         .enumerate()
         .map(|(i, data)| format!("WCRP\t{group}\t{i}\t{n}\t{data}").into_bytes())
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wire(idx: u16, count: u16, payload: &str) -> MailWire {
+        MailWire {
+            op: MailOp::Data,
+            mail_id: "m1".into(),
+            idx,
+            count,
+            meta: MailMeta::default(),
+            payload: payload.into(),
+        }
+    }
+
+    #[test]
+    fn complete_ack_fits_one_hf_poor_frame() {
+        let id = "ab".repeat(32);
+        let meta = MailMeta {
+            dest: "QA85B".into(),
+            ..MailMeta::default()
+        };
+        let frame = encode_chunk(&MailWire {
+            op: MailOp::CompleteAck,
+            mail_id: id,
+            idx: 0,
+            count: 1,
+            meta,
+            payload: "ok".into(),
+        });
+        assert!(frame.len() <= 170, "complete ack is {} bytes", frame.len());
+        let empty = encode_chunk(&MailWire {
+            op: MailOp::ListHdr,
+            mail_id: "cd".repeat(32),
+            idx: 0,
+            count: 1,
+            meta: MailMeta {
+                dest: "QA85A".into(),
+                ..MailMeta::default()
+            },
+            payload: "[]".into(),
+        });
+        assert!(empty.len() <= 170, "empty list is {} bytes", empty.len());
+    }
+
+    #[test]
+    fn a_bad_total_does_not_block_a_consistent_set() {
+        let mut buckets = std::collections::HashMap::new();
+        assert_eq!(put_chunk(&mut buckets, wire(6, 6, "x")), ChunkPut::Rejected);
+        assert_eq!(put_chunk(&mut buckets, wire(0, 0, "x")), ChunkPut::Rejected);
+        // 1/121 and 3/121 on the wire (idx is zero-based). They sit in their
+        // own bucket and do not raise the wait for the real 6-chunk mail.
+        assert!(matches!(
+            put_chunk(&mut buckets, wire(0, 121, "x")),
+            ChunkPut::Pending
+        ));
+        assert!(matches!(
+            put_chunk(&mut buckets, wire(2, 121, "nope")),
+            ChunkPut::Pending
+        ));
+        for i in 0..3 {
+            assert!(matches!(
+                put_chunk(&mut buckets, wire(i, 6, "c")),
+                ChunkPut::Pending
+            ));
+        }
+        // A later try fills the holes. A repeat of an index already stored stays.
+        assert!(matches!(
+            put_chunk(&mut buckets, wire(1, 6, "other")),
+            ChunkPut::Pending
+        ));
+        assert!(matches!(
+            put_chunk(&mut buckets, wire(3, 6, "c")),
+            ChunkPut::Pending
+        ));
+        assert!(matches!(
+            put_chunk(&mut buckets, wire(4, 6, "c")),
+            ChunkPut::Pending
+        ));
+        match put_chunk(&mut buckets, wire(5, 6, "c")) {
+            ChunkPut::Ready(parts) => {
+                let (_meta, body, op) = assemble_chunks(parts).unwrap();
+                assert_eq!(op, MailOp::Data);
+                assert_eq!(body, "cccccc");
+            }
+            other => panic!("expected a full set, got {other:?}"),
+        }
+    }
 }
 
 pub fn join_slices(parts: &[(u16, String)]) -> Result<Vec<u8>> {
