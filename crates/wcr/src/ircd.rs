@@ -267,6 +267,12 @@ impl IrcServer {
             "JOIN" => {
                 if let Some(list) = parts.get(1) {
                     for ch in list.split(',') {
+                        if let Some(err) = crate::slash::channel_limit_error(ch) {
+                            let nick = self.nick(id);
+                            self.send_raw(id, &format!(":wcr.local NOTICE {nick} :{err}"))
+                                .await;
+                            continue;
+                        }
                         let ch = ch.to_string();
                         {
                             let mut g = self.inner.lock();
@@ -315,23 +321,29 @@ impl IrcServer {
                 if parts.len() >= 3 {
                     let target = parts[1].clone();
                     let ch = parts[2].clone();
-                    let from = self.nick(id);
-                    self.send_numeric(id, 341, &format!("{target} {ch}")).await;
-                    if let Some(tid) = self.id_by_nick(&target) {
-                        self.send_raw(tid, &format!(":{from} INVITE {target} {ch}"))
+                    if let Some(err) = crate::slash::channel_limit_error(&ch) {
+                        let nick = self.nick(id);
+                        self.send_raw(id, &format!(":wcr.local NOTICE {nick} :{err}"))
+                            .await;
+                    } else {
+                        let from = self.nick(id);
+                        self.send_numeric(id, 341, &format!("{target} {ch}")).await;
+                        if let Some(tid) = self.id_by_nick(&target) {
+                            self.send_raw(tid, &format!(":{from} INVITE {target} {ch}"))
+                                .await;
+                        }
+                        let _ = self
+                            .events
+                            .send(IrcEvent {
+                                client_id: id,
+                                nick: from,
+                                kind: IrcEventKind::Invite {
+                                    target,
+                                    channel: ch,
+                                },
+                            })
                             .await;
                     }
-                    let _ = self
-                        .events
-                        .send(IrcEvent {
-                            client_id: id,
-                            nick: from,
-                            kind: IrcEventKind::Invite {
-                                target,
-                                channel: ch,
-                            },
-                        })
-                        .await;
                 }
             }
             "PRIVMSG" => {
@@ -341,19 +353,25 @@ impl IrcServer {
                     if text.is_empty() {
                         return Ok(());
                     }
-                    let nick = self.nick(id);
-                    if self.has_cap(id, "echo-message") {
-                        let tagged = self.tag_privmsg(&nick, &target, &text, None, None);
-                        self.send_raw(id, &tagged).await;
+                    if let Some(err) = crate::slash::channel_limit_error(&target) {
+                        let nick = self.nick(id);
+                        self.send_raw(id, &format!(":wcr.local NOTICE {nick} :{err}"))
+                            .await;
+                    } else {
+                        let nick = self.nick(id);
+                        if self.has_cap(id, "echo-message") {
+                            let tagged = self.tag_privmsg(&nick, &target, &text, None, None);
+                            self.send_raw(id, &tagged).await;
+                        }
+                        let _ = self
+                            .events
+                            .send(IrcEvent {
+                                client_id: id,
+                                nick,
+                                kind: IrcEventKind::Privmsg { target, text, tags },
+                            })
+                            .await;
                     }
-                    let _ = self
-                        .events
-                        .send(IrcEvent {
-                            client_id: id,
-                            nick,
-                            kind: IrcEventKind::Privmsg { target, text, tags },
-                        })
-                        .await;
                 }
             }
             "RADIO" => {
