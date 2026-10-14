@@ -400,6 +400,33 @@ pub fn is_bulletin(channel: &str) -> bool {
     channel.eq_ignore_ascii_case("#bulletin") || channel.eq_ignore_ascii_case("bulletin")
 }
 
+/// IRC channel mode. `#bulletin` is public (`+`). Every other channel is a
+/// closed invite list (`+i`). Clients cannot change this.
+pub fn channel_mode(channel: &str) -> &'static str {
+    if is_bulletin(channel) {
+        "+"
+    } else {
+        "+i"
+    }
+}
+
+/// What `/invite` tells the sender about the notice.
+/// `radio` is whether this station keys RF. `sent` is whether `send_chat` accepted it.
+pub fn invite_over_air_reply(channel: &str, nick: &str, radio: bool, sent: bool) -> String {
+    let ch = normalize_channel(channel);
+    if is_bulletin(&ch) {
+        return format!("{ch} is public. No over-air invite is sent.");
+    }
+    if !sent {
+        return format!("no over-air notice sent to {nick} for {ch}");
+    }
+    if radio {
+        format!("over-air notice sent to {nick} for {ch}")
+    } else {
+        format!("notice sent to {nick} for {ch} on the internet path (radio is off)")
+    }
+}
+
 /// Hub-wide destinations: every connected session should receive these.
 pub fn is_hub_broadcast(dest: &str) -> bool {
     let n = dest.trim().trim_start_matches('#').trim_start_matches('&');
@@ -557,7 +584,6 @@ pub fn to_wire(raw: &str, channel: &str) -> Vec<String> {
             vec![
                 format!("RADIO group invite {g} {nick}"),
                 format!("INVITE {nick} {ch}"),
-                format!("PRIVMSG {nick} :{}", invite_notice(&ch, &nick)),
             ]
         }
         "prio" | "priority" => {
@@ -721,14 +747,24 @@ mod tests {
     }
 
     #[test]
-    fn invite_sends_group_and_privmsg() {
+    fn invite_sends_group_and_irc_invite() {
         let wires = to_wire("/invite TF101", "#compatriots");
-        assert_eq!(wires[0], "RADIO group invite compatri TF101");
-        assert_eq!(wires[1], "INVITE TF101 #compatri");
         assert_eq!(
-            wires[2],
-            format!("PRIVMSG TF101 :{}", invite_notice("#compatriots", "TF101"))
+            wires,
+            vec![
+                "RADIO group invite compatri TF101".to_string(),
+                "INVITE TF101 #compatri".to_string(),
+            ]
         );
+        assert_eq!(channel_mode("#bulletin"), "+");
+        assert_eq!(channel_mode("#ops"), "+i");
+        assert!(invite_over_air_reply("#bulletin", "TF101", true, true).contains("public"));
+        assert_eq!(
+            invite_over_air_reply("#ops", "TF101", true, true),
+            "over-air notice sent to TF101 for #ops"
+        );
+        assert!(invite_over_air_reply("#ops", "TF101", true, false).starts_with("no over-air"));
+        assert!(invite_over_air_reply("#ops", "TF101", false, true).contains("internet"));
         assert_eq!(
             parse_invite_text(&invite_notice("#compatriots", "TF101")).as_deref(),
             Some("#compatri")
