@@ -184,7 +184,10 @@ if (mapStyleSelect) {
 }
 
 const SPAN = 1440;
-const LINK_MS = 10 * 60 * 1000;
+/** Bright pin, pulsing line, and the mail "e" badge. */
+const LIVE_MS = 10 * 60 * 1000;
+/** Lines and station pins stay until this long after the last contact, then drop. */
+const HOLD_MS = 48 * 60 * 60 * 1000;
 const markers = new Map();
 const nodePos = new Map();
 let arcCanvas = null;
@@ -311,22 +314,72 @@ function arcTargets(from, to) {
   return [resolved];
 }
 
-function rememberLink(from, to, inet, draw, mail) {
+function rememberLink(from, to, inet, draw, mail, atMs) {
   const fromKey = nodeKey(from);
   if (!fromKey || !to) return;
-  const now = Date.now();
+  const at = Number.isFinite(atMs) ? atMs : Date.now();
   for (const dest of arcTargets(fromKey, to)) {
-    qsoLinks.set(linkPairKey(fromKey, dest), {
+    const key = linkPairKey(fromKey, dest);
+    const prev = qsoLinks.get(key);
+    if (prev && prev.at > at) continue;
+    qsoLinks.set(key, {
       a: fromKey,
       b: dest,
       inet: !!inet,
       mail: !!mail,
-      at: now,
+      at,
     });
   }
   if (draw === false) return;
   ensureArcLayer();
   drawArcs();
+}
+
+/** Pulse while the contact is live, then a steady fade that is still visible at 48h. */
+function linkAlpha(ageMs, nowMs) {
+  const age = Math.max(0, ageMs);
+  if (age > HOLD_MS) return 0;
+  if (age <= LIVE_MS) {
+    const wave = 0.5 + 0.5 * Math.sin(((nowMs || 0) / 1200) * Math.PI * 2);
+    return 0.55 + wave * 0.4;
+  }
+  const t = (age - LIVE_MS) / (HOLD_MS - LIVE_MS);
+  return 0.55 + (0.12 - 0.55) * t;
+}
+
+/** Full colour while the station is reporting. Dims with age. Gone after 48h. */
+function pinAgeOpacity(ageMs) {
+  const age = Math.max(0, ageMs);
+  if (age > HOLD_MS) return 0;
+  if (age <= LIVE_MS) return 1;
+  const t = (age - LIVE_MS) / (HOLD_MS - LIVE_MS);
+  return 1 + (0.28 - 1) * t;
+}
+
+function lastHeardLabel(ageMs) {
+  const sec = Math.max(0, Math.round(ageMs / 1000));
+  if (sec < 45) return "last heard just now";
+  if (sec < 90 * 60) return `last heard ${Math.max(1, Math.round(sec / 60))}m ago`;
+  if (sec < 36 * 3600) return `last heard ${Math.max(1, Math.round(sec / 3600))}h ago`;
+  return `last heard ${Math.max(1, Math.round(sec / 86400))}d ago`;
+}
+
+function eventAtMs(ev, fallbackMs) {
+  const ts = Number(ev && ev.ts);
+  if (!Number.isFinite(ts) || ts <= 0) return fallbackMs;
+  return ts < 1e12 ? ts * 1000 : ts;
+}
+
+/** Missing time counts as just heard, so an older hub payload still shows the pin. */
+function stationSeenMs(n, nowMs) {
+  const raw = n && (n.last_seen != null ? n.last_seen : n.ts);
+  const ts = Number(raw);
+  if (!Number.isFinite(ts) || ts <= 0) return nowMs;
+  return ts < 1e12 ? ts * 1000 : ts;
+}
+
+function stationAgeMs(n, nowMs) {
+  return Math.max(0, nowMs - stationSeenMs(n, nowMs));
 }
 
 function strokePinLink(s1, s2, color, dash) {
@@ -346,21 +399,37 @@ function strokePinLink(s1, s2, color, dash) {
   arcCtx.stroke();
 }
 
+let arcPulseTimer = 0;
+
+function syncArcPulse(pulsing) {
+  if (pulsing) {
+    if (!arcPulseTimer) arcPulseTimer = setInterval(drawArcs, 400);
+    return;
+  }
+  if (arcPulseTimer) {
+    clearInterval(arcPulseTimer);
+    arcPulseTimer = 0;
+  }
+}
+
 function drawArcs() {
   if (!arcCtx || !arcCanvas) return;
   const cssW = arcCanvas.clientWidth || 800;
   const cssH = arcCanvas.clientHeight || 600;
   arcCtx.clearRect(0, 0, cssW, cssH);
   const now = Date.now();
+  let pulsing = false;
   for (const [k, link] of [...qsoLinks]) {
-    if (now - link.at > LINK_MS) qsoLinks.delete(k);
+    if (now - link.at > HOLD_MS) qsoLinks.delete(k);
   }
   for (const link of qsoLinks.values()) {
     const p1 = nodePos.get(link.a);
     const p2 = nodePos.get(link.b);
     if (!p1 || !p2) continue;
-    const age = (now - link.at) / LINK_MS;
-    const alpha = Math.max(0.35, 0.95 - age * 0.55);
+    const age = now - link.at;
+    const alpha = linkAlpha(age, now);
+    if (alpha <= 0) continue;
+    if (age <= LIVE_MS) pulsing = true;
     const s1 = map.project([p1.lon, p1.lat]);
     const s2 = map.project([p2.lon, p2.lat]);
     const color = link.mail
@@ -371,20 +440,21 @@ function drawArcs() {
     const dash = link.mail ? [3, 3] : link.inet ? [] : [6, 4];
     strokePinLink(s1, s2, color, dash);
   }
+  syncArcPulse(pulsing);
 }
 
-function noteMailActivity(origin, dest) {
-  const now = Date.now();
+function noteMailActivity(origin, dest, atMs) {
+  const at = Number.isFinite(atMs) ? atMs : Date.now();
   const o = origin && String(origin).trim();
-  if (o) mailRecent.set(o.toUpperCase(), now);
+  if (o) mailRecent.set(o.toUpperCase(), at);
   const d = dest && String(dest).trim();
-  if (d && !d.includes("@")) mailRecent.set(d.toUpperCase(), now);
+  if (d && !d.includes("@")) mailRecent.set(d.toUpperCase(), at);
 }
 
 function updateMailOverlays() {
   const now = Date.now();
   mailRecent.forEach((t, k) => {
-    if (now - t > LINK_MS) mailRecent.delete(k);
+    if (now - t > LIVE_MS) mailRecent.delete(k);
   });
   markers.forEach((marker, call) => {
     marker.getElement().classList.toggle("mail-overlay", mailRecent.has(String(call).toUpperCase()));
@@ -395,23 +465,27 @@ function mailOverlayCount() {
   const now = Date.now();
   let n = 0;
   mailRecent.forEach((t) => {
-    if (now - t <= LINK_MS) n += 1;
+    if (now - t <= LIVE_MS) n += 1;
   });
   return n;
 }
 
-function seedLinksFromEvents(events) {
-  const cutoff = Date.now() / 1000 - LINK_MS / 1000;
+function seedLinksFromEvents(events, asOfMs, nodes) {
+  const live = asOfMs == null;
+  const now = live ? Date.now() : asOfMs;
+  const cutoff = now - HOLD_MS;
+  const future = live ? now + 120_000 : now;
   (events || []).forEach((x) => {
-    if ((x.ts || 0) < cutoff) return;
+    const at = eventAtMs(x, now);
+    if (at < cutoff || at > future) return;
     const kind = String(x.kind || x.type || "").toLowerCase();
     if (kind === "mail") {
-      noteMailActivity(x.origin, x.dest);
-      if (x.origin && x.dest) rememberLink(x.origin, x.dest, false, false, true);
+      if (now - at <= LIVE_MS) noteMailActivity(x.origin, x.dest, at);
+      if (x.origin && x.dest) rememberLink(x.origin, x.dest, false, false, true, at);
       return;
     }
     if (!isTrafficKind(kind, x.type) || !x.origin || !x.dest) return;
-    rememberLink(x.origin, x.dest, linkIsInet(x), false, false);
+    rememberLink(x.origin, x.dest, linkIsInet(x, nodes), false, false, at);
   });
   updateMailOverlays();
   if (qsoLinks.size) {
@@ -622,6 +696,8 @@ let playing = false;
 let playTimer = 0;
 let replayCache = [];
 let replayLoadedAt = 0;
+let linkCache = [];
+let linkLoadedAt = 0;
 let nodeTrail = [];
 let trailLoadedAt = 0;
 const mailRecent = new Map();
@@ -686,8 +762,32 @@ function modeMark(mode, cls) {
   return WCR.markSvg(MODE_COLOR[mode] || "#7d9bff", cls || "mode-mark");
 }
 
-function upsertNode(n) {
+function markerOpacity(n, nowMs) {
+  let opacity = pinAgeOpacity(stationAgeMs(n, nowMs));
+  if (selectedBand && nodeBand(n) !== selectedBand) opacity *= 0.25;
+  return opacity;
+}
+
+function paintMarkerFace(el, n, now, markKey) {
+  const mode = n.mode || "";
+  el.dataset.mode = mode;
+  el.dataset.band = nodeBand(n);
+  el.classList.toggle("tower", isTower(n));
+  if (el.dataset.markKey !== markKey || !el.querySelector(".map-mark-age")) {
+    el.dataset.markKey = markKey;
+    el.innerHTML = `<div class="map-mark-age">${markerInner(n)}</div>`;
+  }
+  const age = el.querySelector(".map-mark-age");
+  if (age) age.style.opacity = String(markerOpacity(n, now));
+  const heard = lastHeardLabel(stationAgeMs(n, now));
+  el.title = heard;
+  el.setAttribute("aria-label", `${n.callsign || "station"}, ${heard}`);
+  el.onclick = () => showCard(n, Date.now());
+}
+
+function upsertNode(n, nowMs) {
   if (n.lat == null || n.lon == null) return;
+  const now = nowMs == null ? Date.now() : nowMs;
   const mode = n.mode || "";
   const tower = isTower(n);
   const freq = tower ? nodeFreq(n) : "";
@@ -696,27 +796,13 @@ function upsertNode(n) {
   if (!m) {
     const el = document.createElement("div");
     el.className = "map-mark-wrap";
-    el.dataset.mode = mode;
-    el.dataset.band = nodeBand(n);
-    el.dataset.markKey = markKey;
-    el.classList.toggle("tower", tower);
-    el.style.opacity = selectedBand && nodeBand(n) !== selectedBand ? "0.25" : "";
-    el.innerHTML = markerInner(n);
+    paintMarkerFace(el, n, now, markKey);
     m = new maplibregl.Marker({ element: el, anchor: "center" }).setLngLat([n.lon, n.lat]).addTo(map);
-    el.addEventListener("click", () => showCard(n));
     markers.set(n.callsign, m);
     nodePos.set(n.callsign, { lat: n.lat, lon: n.lon });
   } else {
     m.setLngLat([n.lon, n.lat]);
-    const el = m.getElement();
-    el.dataset.mode = mode;
-    el.dataset.band = nodeBand(n);
-    el.classList.toggle("tower", tower);
-    if (el.dataset.markKey !== markKey) {
-      el.dataset.markKey = markKey;
-      el.innerHTML = markerInner(n);
-    }
-    el.style.opacity = selectedBand && nodeBand(n) !== selectedBand ? "0.25" : "";
+    paintMarkerFace(m.getElement(), n, now, markKey);
     nodePos.set(n.callsign, { lat: n.lat, lon: n.lon });
   }
 }
@@ -730,13 +816,15 @@ function markerInner(n) {
   return `${html}<span class="tower-freq" style="color:${color}">${escapeHtml(freq)}</span>`;
 }
 
-function showCard(n) {
+function showCard(n, nowMs) {
   if (!card) return;
+  const now = nowMs == null ? Date.now() : nowMs;
   card.hidden = false;
   card.innerHTML = kv([
     ["call", n.callsign || "—"],
     ["pin", isTower(n) ? "tower" : "station"],
     ["mode", n.mode || "—"],
+    ["heard", lastHeardLabel(stationAgeMs(n, now))],
     ["ptt", n.ptt || "—"],
     ["preset", n.preset || "—"],
     ["band", nodeBand(n)],
@@ -797,27 +885,40 @@ function renderBands(bands) {
   });
 }
 
-function renderStations(nodes) {
-  lastNodes = nodes || [];
+function renderStations(nodes, asOfMs) {
+  const now = asOfMs == null ? Date.now() : asOfMs;
+  lastNodes = (nodes || [])
+    .filter((n) => stationAgeMs(n, now) <= HOLD_MS)
+    .sort((a, b) => {
+      const aa = stationAgeMs(a, now);
+      const bb = stationAgeMs(b, now);
+      const aLive = aa <= LIVE_MS;
+      const bLive = bb <= LIVE_MS;
+      if (aLive !== bLive) return aLive ? -1 : 1;
+      return aa - bb;
+    });
   const shown = selectedBand
     ? lastNodes.filter((n) => nodeBand(n) === selectedBand)
     : lastNodes;
+  dropMarkersExcept(lastNodes);
   stationList.innerHTML = "";
   shown.forEach((n) => {
     const d = document.createElement("div");
-    d.className = "station";
+    const age = stationAgeMs(n, now);
+    d.className = age <= LIVE_MS ? "station online" : "station";
     d.dataset.call = n.callsign || "";
     const band = nodeBand(n);
     const freq = nodeFreq(n);
-    d.innerHTML = `${pinHtml(n, "mode-mark")}<span><b>${escapeHtml(n.callsign)}</b>${escapeHtml(n.mode || "")} ${escapeHtml(band)}${freq ? " " + escapeHtml(freq) : ""}</span>`;
+    const heard = lastHeardLabel(age);
+    d.innerHTML = `${pinHtml(n, "mode-mark")}<span><b>${escapeHtml(n.callsign)}</b>${escapeHtml(n.mode || "")} ${escapeHtml(band)}${freq ? " " + escapeHtml(freq) : ""}<span class="heard">${escapeHtml(heard)}</span></span>`;
     d.onclick = () => {
-      showCard(n);
+      showCard(n, now);
       if (n.lat != null) map.flyTo({ center: [n.lon, n.lat], zoom: 6 });
     };
     stationList.appendChild(d);
-    upsertNode(n);
+    upsertNode(n, now);
   });
-  lastNodes.forEach((n) => upsertNode(n));
+  lastNodes.forEach((n) => upsertNode(n, now));
   updateMailOverlays();
   document.getElementById("n-online").textContent = lastNodes.length;
   const sc = document.getElementById("station-count");
@@ -932,6 +1033,41 @@ function drawSpark(events) {
   ctx.stroke();
 }
 
+function historyEvents() {
+  return linkCache.length ? linkCache : replayCache;
+}
+
+async function ensureLinkHistory() {
+  if (Date.now() - linkLoadedAt < 20000 && linkLoadedAt) return;
+  const since = Math.floor(Date.now() / 1000) - Math.floor(HOLD_MS / 1000);
+  const limit = 2000;
+  let links = null;
+  try {
+    const res = await fetch(`${API}/api/v1/links?since=${since}&limit=${limit}`, {
+      signal: AbortSignal.timeout(6000),
+    });
+    if (res.ok) {
+      const body = await res.json();
+      if (Array.isArray(body.links)) links = body.links;
+    }
+  } catch (_) {}
+  if (!links) {
+    try {
+      const res = await fetch(`${API}/api/v1/events?since=${since}&limit=${limit}`, {
+        signal: AbortSignal.timeout(6000),
+      });
+      if (res.ok) {
+        const body = await res.json();
+        if (Array.isArray(body.events)) links = body.events;
+      }
+    } catch (_) {}
+  }
+  if (links) {
+    linkCache = links;
+    linkLoadedAt = Date.now();
+  }
+}
+
 async function ensureReplay() {
   if (!(Date.now() - replayLoadedAt < 20000 && replayCache.length)) {
     const since = Math.floor(Date.now() / 1000) - SPAN * 60;
@@ -940,10 +1076,11 @@ async function ensureReplay() {
       replayCache = ev.events || [];
       replayLoadedAt = Date.now();
       drawSpark(replayCache);
-      if (isLive()) seedLinksFromEvents(replayCache);
       if (liveMode && !liveLogSeeded) seedLiveLog();
     } catch (_) {}
   }
+  await ensureLinkHistory();
+  if (isLive() && (linkLoadedAt || replayLoadedAt)) seedLinksFromEvents(historyEvents());
   await ensureTrail();
 }
 
@@ -978,25 +1115,10 @@ function nodesFromTrail(cutoff) {
 
 function paintHistory(cutoff) {
   const nodes = trailLoadedAt ? nodesFromTrail(cutoff) : lastNodes;
-  if (trailLoadedAt) {
-    dropMarkersExcept(nodes);
-    renderStations(nodes);
-  }
+  if (trailLoadedAt) renderStations(nodes, cutoff * 1000);
   qsoLinks.clear();
   mailRecent.clear();
-  const start = cutoff - LINK_MS / 1000;
-  (replayCache || []).forEach((x) => {
-    const ts = x.ts || 0;
-    if (ts < start || ts > cutoff) return;
-    const kind = String(x.kind || x.type || "").toLowerCase();
-    if (kind === "mail") {
-      noteMailActivity(x.origin, x.dest);
-      if (x.origin && x.dest) rememberLink(x.origin, x.dest, false, false, true);
-      return;
-    }
-    if (!isTrafficKind(kind, x.type) || !x.origin || !x.dest) return;
-    rememberLink(x.origin, x.dest, linkIsInet(x, nodes), false, false);
-  });
+  seedLinksFromEvents(historyEvents(), cutoff * 1000, nodes);
   ensureArcLayer();
   drawArcs();
   updateMailOverlays();
@@ -1114,7 +1236,8 @@ scrub.addEventListener("input", () => {
 
 async function refresh() {
   try {
-    const nodes = await (await fetch(`${API}/api/v1/nodes`)).json();
+    const heardSince = Math.floor(Date.now() / 1000) - Math.floor(HOLD_MS / 1000);
+    const nodes = await (await fetch(`${API}/api/v1/nodes?heard_since=${heardSince}`)).json();
     if (isLive()) renderStations(nodes.nodes || []);
     try {
       const bands = await (await fetch(`${API}/api/v1/bands`)).json();
@@ -1140,7 +1263,7 @@ async function refresh() {
     if (isLive()) {
       qsoLinks.clear();
       mailRecent.clear();
-      seedLinksFromEvents(replayCache);
+      seedLinksFromEvents(historyEvents());
     } else {
       paintHistory(replayCutoff());
     }
@@ -1178,15 +1301,17 @@ function connectLive() {
       const origin = m.origin || m.callsign || "?";
       const kind = (m.kind || m.type || "").toLowerCase();
       if (kind === "mail") {
-        noteMailActivity(origin, m.dest);
-        if (m.dest && !String(m.dest).includes("@")) rememberLink(origin, m.dest, false, true, true);
+        noteMailActivity(origin, m.dest, eventAtMs(m, Date.now()));
+        if (m.dest && !String(m.dest).includes("@")) {
+          rememberLink(origin, m.dest, false, true, true, eventAtMs(m, Date.now()));
+        }
         tick(eventLine(m));
         return;
       }
       if (kind === "tx" || kind === "msg" || m.type === "hub_forward") pulseMarker(origin, "tx");
       if (kind === "rx" || kind === "relay") pulseMarker(origin, "rx");
       if (m.dest && isTrafficKind(kind, m.type)) {
-        rememberLink(origin, m.dest, linkIsInet(m));
+        rememberLink(origin, m.dest, linkIsInet(m), undefined, undefined, eventAtMs(m, Date.now()));
       }
       tick(eventLine(m));
     } catch (_) {}
@@ -1200,6 +1325,11 @@ function connectLive() {
 
 window.WCR.linkIsInet = linkIsInet;
 window.WCR.stationLinkCall = stationLinkCall;
+window.WCR.linkAlpha = linkAlpha;
+window.WCR.pinAgeOpacity = pinAgeOpacity;
+window.WCR.lastHeardLabel = lastHeardLabel;
+window.WCR.LIVE_MS = LIVE_MS;
+window.WCR.HOLD_MS = HOLD_MS;
 
 setInterval(renderConn, 1000);
 renderModes([]);

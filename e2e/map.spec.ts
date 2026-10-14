@@ -20,6 +20,11 @@ declare global {
         nodes?: { callsign: string; mode: string }[],
       ): boolean;
       stationLinkCall(dest: string, knownCalls: string[]): string | null;
+      linkAlpha(ageMs: number, nowMs: number): number;
+      pinAgeOpacity(ageMs: number): number;
+      lastHeardLabel(ageMs: number): string;
+      LIVE_MS: number;
+      HOLD_MS: number;
     };
   }
 }
@@ -140,7 +145,7 @@ test("live map shell loads", async ({ page }) => {
 test("internet-radio tower pin shows the dial frequency", async ({ page }, testInfo) => {
   await page.route("**/api/v1/**", async (route) => {
     const url = route.request().url();
-    if (url.includes("/api/v1/nodes") && url.includes("since=")) {
+    if (url.includes("/api/v1/nodes") && /[?&]since=/.test(url)) {
       await route.fulfill({ json: { since: 1, trail: [] } });
       return;
     }
@@ -267,4 +272,138 @@ test("bulletin and group traffic do not draw arcs to every station", async ({ pa
   expect(links.direct).toBe("M7TJF");
   expect(links.absent).toBeNull();
   expect(links.self).toBe("~RFSIMA");
+});
+
+test("lines pulse while live, stay faint through 48h, then go", async ({ page }) => {
+  await page.goto("/");
+  const fade = await page.evaluate(() => {
+    const live = window.WCR.LIVE_MS;
+    const hold = window.WCR.HOLD_MS;
+    const alpha = window.WCR.linkAlpha;
+    const hour = 60 * 60 * 1000;
+    const early = alpha(1_000, 0);
+    const lateLive = alpha(live - 1, 600);
+    const settled = alpha(live + 1, 0);
+    const at47 = alpha(47 * hour, 0);
+    const at48 = alpha(hold, 0);
+    const after = alpha(hold + 1, 0);
+    return { early, lateLive, settled, at47, at48, after, live, hold };
+  });
+  expect(fade.early).toBeGreaterThanOrEqual(0.55);
+  expect(fade.early).toBeLessThanOrEqual(0.95);
+  expect(fade.lateLive).toBeGreaterThanOrEqual(0.55);
+  expect(fade.lateLive).toBeLessThanOrEqual(0.95);
+  expect(fade.settled).toBeLessThan(0.55);
+  expect(fade.settled).toBeGreaterThan(0.5);
+  expect(fade.at47).toBeGreaterThan(0.12);
+  expect(fade.at47).toBeLessThan(0.25);
+  expect(fade.at48).toBeGreaterThan(0.11);
+  expect(fade.at48).toBeLessThanOrEqual(0.13);
+  expect(fade.after).toBe(0);
+});
+
+test("station pins dim with age and the sidebar lists who is reporting first", async ({ page }) => {
+  const now = Math.floor(Date.now() / 1000);
+  await page.route("**/api/v1/**", async (route) => {
+    const url = route.request().url();
+    if (url.includes("/api/v1/nodes") && /[?&]since=/.test(url)) {
+      await route.fulfill({ json: { since: 1, trail: [] } });
+      return;
+    }
+    if (url.includes("/api/v1/nodes")) {
+      await route.fulfill({
+        json: {
+          nodes: [
+            {
+              callsign: "G4OLD",
+              lat: 51.5,
+              lon: -0.12,
+              mode: "radio",
+              band: "40m",
+              last_seen: now - 20 * 3600,
+            },
+            {
+              callsign: "G4NEW",
+              lat: 52.2,
+              lon: 0.12,
+              mode: "radio-plus",
+              band: "2m",
+              last_seen: now - 60,
+            },
+            {
+              callsign: "G4GONE",
+              lat: 53.0,
+              lon: -1.5,
+              mode: "internet",
+              band: "inet",
+              last_seen: now - 49 * 3600,
+            },
+          ],
+        },
+      });
+      return;
+    }
+    if (url.includes("/links")) {
+      await route.fulfill({ json: { links: [], since: now - 48 * 3600 } });
+      return;
+    }
+    if (url.includes("/events")) {
+      await route.fulfill({ json: { events: [] } });
+      return;
+    }
+    if (url.includes("/bands")) {
+      await route.fulfill({ json: { bands: [] } });
+      return;
+    }
+    if (url.includes("/hubs")) {
+      await route.fulfill({ json: { hubs: [] } });
+      return;
+    }
+    if (url.includes("/stats")) {
+      await route.fulfill({ json: { forwarded: 0 } });
+      return;
+    }
+    await route.fulfill({ json: {} });
+  });
+
+  await page.goto("/");
+  const rows = page.locator("#station-list .station");
+  await expect(rows).toHaveCount(2, { timeout: 15_000 });
+  await expect(rows.nth(0)).toContainText("G4NEW");
+  await expect(rows.nth(0).locator(".heard")).toHaveText(/last heard (just now|1m ago)/);
+  await expect(rows.nth(1)).toContainText("G4OLD");
+  await expect(rows.nth(1).locator(".heard")).toHaveText("last heard 20h ago");
+  await expect(page.locator(".station", { hasText: "G4GONE" })).toHaveCount(0);
+  await expect(page.locator(".map-mark-wrap")).toHaveCount(2);
+
+  const pins = await page.evaluate(() => {
+    const wrap = (call: string) => {
+      const el = [...document.querySelectorAll(".map-mark-wrap")].find((node) =>
+        (node.getAttribute("aria-label") || "").startsWith(call),
+      ) as HTMLElement | undefined;
+      const age = el?.querySelector(".map-mark-age") as HTMLElement | undefined;
+      return el && age
+        ? { opacity: Number(age.style.opacity), title: el.title }
+        : null;
+    };
+    return { fresh: wrap("G4NEW"), stale: wrap("G4OLD") };
+  });
+  expect(pins.fresh).not.toBeNull();
+  expect(pins.stale).not.toBeNull();
+  expect(pins.fresh!.opacity).toBe(1);
+  expect(pins.fresh!.title).toMatch(/last heard (just now|1m ago)/);
+  expect(pins.stale!.opacity).toBeLessThan(0.85);
+  expect(pins.stale!.opacity).toBeGreaterThan(0.4);
+  expect(pins.stale!.title).toBe("last heard 20h ago");
+
+  await dismissBoot(page);
+  await page.evaluate(() => {
+    window.WCR.map.jumpTo({ center: [-0.02, 51.85], zoom: 7 });
+  });
+  await page.locator("#station-list").screenshot({
+    path: "/opt/cursor/artifacts/map-stations-48h.png",
+  });
+  await page.locator("#map").screenshot({
+    path: "/opt/cursor/artifacts/map-pins-48h.png",
+  });
 });
