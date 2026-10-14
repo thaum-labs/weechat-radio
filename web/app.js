@@ -185,11 +185,64 @@ if (mapStyleSelect) {
 
 const SPAN = 1440;
 const LINK_MS = 10 * 60 * 1000;
+/**
+ * Glow after a tx/rx/mail event. The hub does not send tx-end or rx-end.
+ * A `tx` is published once the frame has finished keying, and an `rx` when
+ * the frame is decoded, so this is the short "just on the air" window.
+ */
+const ACTIVE_MS = 8 * 1000;
 const markers = new Map();
 const nodePos = new Map();
 let arcCanvas = null;
 let arcCtx = null;
 const qsoLinks = new Map();
+const liveEvents = [];
+let viewNow = null;
+let arcTimer = 0;
+let arcTimerMs = 0;
+
+function mapNow() {
+  return viewNow == null ? Date.now() : viewNow;
+}
+
+function eventAtMs(ev, fallbackMs) {
+  const ts = Number(ev && ev.ts);
+  if (!Number.isFinite(ts) || ts <= 0) return fallbackMs;
+  return ts < 1e12 ? ts * 1000 : ts;
+}
+
+function prefersReducedMotion() {
+  return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+}
+
+/** Pulse while the contact is fresh, then fade to nothing across LINK_MS. */
+function linkAppearance(ageMs, nowMs, reduceMotion) {
+  const age = Math.max(0, ageMs);
+  const reduce = reduceMotion == null ? prefersReducedMotion() : !!reduceMotion;
+  if (age > LINK_MS) return { alpha: 0, pulse: false, expired: true };
+  if (!reduce && age < ACTIVE_MS) {
+    const wave = 0.5 + 0.5 * Math.sin(((nowMs || 0) / 1200) * Math.PI * 2);
+    return { alpha: 0.55 + wave * 0.4, pulse: true, expired: false };
+  }
+  const start = reduce ? 0 : ACTIVE_MS;
+  const span = Math.max(1, LINK_MS - start);
+  const t = Math.min(1, Math.max(0, (age - start) / span));
+  return { alpha: 0.55 * (1 - t), pulse: false, expired: false };
+}
+
+function noteLiveEvent(ev) {
+  if (!ev || ev.type === "node") return;
+  liveEvents.push(ev);
+  const now = Date.now();
+  for (let i = liveEvents.length - 1; i >= 0; i--) {
+    if (now - eventAtMs(liveEvents[i], now) > LINK_MS) liveEvents.splice(i, 1);
+  }
+  while (liveEvents.length > 200) liveEvents.shift();
+}
+
+function eventsForLinks() {
+  return (replayCache || []).concat(liveEvents);
+}
 
 function nodeKey(call) {
   if (!call) return null;
@@ -311,17 +364,20 @@ function arcTargets(from, to) {
   return [resolved];
 }
 
-function rememberLink(from, to, inet, draw, mail) {
+function rememberLink(from, to, inet, draw, mail, atMs) {
   const fromKey = nodeKey(from);
   if (!fromKey || !to) return;
-  const now = Date.now();
+  const at = Number.isFinite(atMs) ? atMs : mapNow();
   for (const dest of arcTargets(fromKey, to)) {
-    qsoLinks.set(linkPairKey(fromKey, dest), {
+    const key = linkPairKey(fromKey, dest);
+    const prev = qsoLinks.get(key);
+    if (prev && prev.at > at) continue;
+    qsoLinks.set(key, {
       a: fromKey,
       b: dest,
       inet: !!inet,
       mail: !!mail,
-      at: now,
+      at,
     });
   }
   if (draw === false) return;
@@ -346,12 +402,31 @@ function strokePinLink(s1, s2, color, dash) {
   arcCtx.stroke();
 }
 
+function linkPaint(link) {
+  if (link && link.mail) return { rgb: "255,122,61", dash: [3, 3] };
+  if (link && link.inet) return { rgb: "125,155,255", dash: [] };
+  return { rgb: "57,255,20", dash: [6, 4] };
+}
+
+function syncArcTimer(pulse, any) {
+  const want = pulse ? 400 : any ? 5000 : 0;
+  if (want === arcTimerMs) return;
+  if (arcTimer) {
+    clearInterval(arcTimer);
+    arcTimer = 0;
+  }
+  arcTimerMs = want;
+  if (want) arcTimer = setInterval(drawArcs, want);
+}
+
 function drawArcs() {
   if (!arcCtx || !arcCanvas) return;
   const cssW = arcCanvas.clientWidth || 800;
   const cssH = arcCanvas.clientHeight || 600;
   arcCtx.clearRect(0, 0, cssW, cssH);
-  const now = Date.now();
+  const now = mapNow();
+  let pulse = false;
+  let any = false;
   for (const [k, link] of [...qsoLinks]) {
     if (now - link.at > LINK_MS) qsoLinks.delete(k);
   }
@@ -359,26 +434,32 @@ function drawArcs() {
     const p1 = nodePos.get(link.a);
     const p2 = nodePos.get(link.b);
     if (!p1 || !p2) continue;
-    const age = (now - link.at) / LINK_MS;
-    const alpha = Math.max(0.35, 0.95 - age * 0.55);
+    const age = now - link.at;
+    const look = linkAppearance(age, now);
+    if (look.expired || look.alpha <= 0) continue;
+    any = true;
+    if (look.pulse) pulse = true;
     const s1 = map.project([p1.lon, p1.lat]);
     const s2 = map.project([p2.lon, p2.lat]);
-    const color = link.mail
-      ? `rgba(255,122,61,${alpha})`
-      : link.inet
-        ? `rgba(125,155,255,${alpha})`
-        : `rgba(57,255,20,${alpha})`;
-    const dash = link.mail ? [3, 3] : link.inet ? [] : [6, 4];
+    const paint = linkPaint(link);
+    const color = `rgba(${paint.rgb},${look.alpha})`;
+    const dash = paint.dash;
+    if (look.pulse) {
+      arcCtx.shadowColor = color;
+      arcCtx.shadowBlur = 10;
+    }
     strokePinLink(s1, s2, color, dash);
+    arcCtx.shadowBlur = 0;
   }
+  syncArcTimer(pulse, any);
 }
 
-function noteMailActivity(origin, dest) {
-  const now = Date.now();
+function noteMailActivity(origin, dest, atMs) {
+  const at = Number.isFinite(atMs) ? atMs : Date.now();
   const o = origin && String(origin).trim();
-  if (o) mailRecent.set(o.toUpperCase(), now);
+  if (o) mailRecent.set(o.toUpperCase(), at);
   const d = dest && String(dest).trim();
-  if (d && !d.includes("@")) mailRecent.set(d.toUpperCase(), now);
+  if (d && !d.includes("@")) mailRecent.set(d.toUpperCase(), at);
 }
 
 function updateMailOverlays() {
@@ -400,18 +481,21 @@ function mailOverlayCount() {
   return n;
 }
 
-function seedLinksFromEvents(events) {
-  const cutoff = Date.now() / 1000 - LINK_MS / 1000;
+function seedLinksFromEvents(events, nodes) {
+  const now = mapNow();
+  const cutoff = now - LINK_MS;
+  const future = viewNow == null ? now + 120_000 : now;
   (events || []).forEach((x) => {
-    if ((x.ts || 0) < cutoff) return;
+    const at = eventAtMs(x, now);
+    if (at < cutoff || at > future) return;
     const kind = String(x.kind || x.type || "").toLowerCase();
     if (kind === "mail") {
-      noteMailActivity(x.origin, x.dest);
-      if (x.origin && x.dest) rememberLink(x.origin, x.dest, false, false, true);
+      if (Date.now() - at <= LINK_MS) noteMailActivity(x.origin, x.dest, at);
+      if (x.origin && x.dest) rememberLink(x.origin, x.dest, false, false, true, at);
       return;
     }
     if (!isTrafficKind(kind, x.type) || !x.origin || !x.dest) return;
-    rememberLink(x.origin, x.dest, linkIsInet(x), false, false);
+    rememberLink(x.origin, x.dest, linkIsInet(x, nodes), false, false, at);
   });
   updateMailOverlays();
   if (qsoLinks.size) {
@@ -940,7 +1024,7 @@ async function ensureReplay() {
       replayCache = ev.events || [];
       replayLoadedAt = Date.now();
       drawSpark(replayCache);
-      if (isLive()) seedLinksFromEvents(replayCache);
+      if (isLive()) seedLinksFromEvents(eventsForLinks());
       if (liveMode && !liveLogSeeded) seedLiveLog();
     } catch (_) {}
   }
@@ -982,21 +1066,10 @@ function paintHistory(cutoff) {
     dropMarkersExcept(nodes);
     renderStations(nodes);
   }
+  viewNow = cutoff * 1000;
   qsoLinks.clear();
   mailRecent.clear();
-  const start = cutoff - LINK_MS / 1000;
-  (replayCache || []).forEach((x) => {
-    const ts = x.ts || 0;
-    if (ts < start || ts > cutoff) return;
-    const kind = String(x.kind || x.type || "").toLowerCase();
-    if (kind === "mail") {
-      noteMailActivity(x.origin, x.dest);
-      if (x.origin && x.dest) rememberLink(x.origin, x.dest, false, false, true);
-      return;
-    }
-    if (!isTrafficKind(kind, x.type) || !x.origin || !x.dest) return;
-    rememberLink(x.origin, x.dest, linkIsInet(x, nodes), false, false);
-  });
+  seedLinksFromEvents(replayCache, nodes);
   ensureArcLayer();
   drawArcs();
   updateMailOverlays();
@@ -1136,11 +1209,11 @@ async function refresh() {
     }
     const stats = await (await fetch(`${API}/api/v1/stats`)).json();
     document.getElementById("n-tx").textContent = stats.forwarded ?? "—";
+    if (isLive()) viewNow = null;
     await ensureReplay();
     if (isLive()) {
-      qsoLinks.clear();
-      mailRecent.clear();
-      seedLinksFromEvents(replayCache);
+      viewNow = null;
+      seedLinksFromEvents(eventsForLinks());
     } else {
       paintHistory(replayCutoff());
     }
@@ -1175,18 +1248,20 @@ function connectLive() {
         scheduleRefresh();
         return;
       }
+      noteLiveEvent(m);
       const origin = m.origin || m.callsign || "?";
       const kind = (m.kind || m.type || "").toLowerCase();
+      const at = eventAtMs(m, Date.now());
       if (kind === "mail") {
-        noteMailActivity(origin, m.dest);
-        if (m.dest && !String(m.dest).includes("@")) rememberLink(origin, m.dest, false, true, true);
+        noteMailActivity(origin, m.dest, at);
+        if (m.dest && !String(m.dest).includes("@")) rememberLink(origin, m.dest, false, true, true, at);
         tick(eventLine(m));
         return;
       }
       if (kind === "tx" || kind === "msg" || m.type === "hub_forward") pulseMarker(origin, "tx");
       if (kind === "rx" || kind === "relay") pulseMarker(origin, "rx");
       if (m.dest && isTrafficKind(kind, m.type)) {
-        rememberLink(origin, m.dest, linkIsInet(m));
+        rememberLink(origin, m.dest, linkIsInet(m), undefined, undefined, at);
       }
       tick(eventLine(m));
     } catch (_) {}
@@ -1200,6 +1275,22 @@ function connectLive() {
 
 window.WCR.linkIsInet = linkIsInet;
 window.WCR.stationLinkCall = stationLinkCall;
+window.WCR.linkAppearance = linkAppearance;
+window.WCR.linkPaint = linkPaint;
+window.WCR.rememberLink = rememberLink;
+window.WCR.seedLinksFromEvents = seedLinksFromEvents;
+window.WCR.LINK_MS = LINK_MS;
+window.WCR.ACTIVE_MS = ACTIVE_MS;
+window.WCR.linkSnapshot = (a, b) => {
+  const row = qsoLinks.get(linkPairKey(a, b));
+  return row ? { at: row.at, inet: row.inet, mail: row.mail } : null;
+};
+
+if (window.matchMedia) {
+  const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const redraw = () => drawArcs();
+  if (motion.addEventListener) motion.addEventListener("change", redraw);
+}
 
 setInterval(renderConn, 1000);
 renderModes([]);

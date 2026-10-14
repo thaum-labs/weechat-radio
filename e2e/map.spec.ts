@@ -20,6 +20,24 @@ declare global {
         nodes?: { callsign: string; mode: string }[],
       ): boolean;
       stationLinkCall(dest: string, knownCalls: string[]): string | null;
+      linkAppearance(
+        ageMs: number,
+        nowMs: number,
+        reduceMotion?: boolean,
+      ): { alpha: number; pulse: boolean; expired: boolean };
+      linkPaint(link: { mail?: boolean; inet?: boolean }): { rgb: string; dash: number[] };
+      rememberLink(
+        from: string,
+        to: string,
+        inet: boolean,
+        draw: boolean,
+        mail: boolean,
+        atMs: number,
+      ): void;
+      seedLinksFromEvents(events: unknown[]): void;
+      linkSnapshot(a: string, b: string): { at: number; inet: boolean; mail: boolean } | null;
+      LINK_MS: number;
+      ACTIVE_MS: number;
     };
   }
 }
@@ -267,4 +285,150 @@ test("bulletin and group traffic do not draw arcs to every station", async ({ pa
   expect(links.direct).toBe("M7TJF");
   expect(links.absent).toBeNull();
   expect(links.self).toBe("~RFSIMA");
+});
+
+test("a contact pulses, then fades across 10 minutes, and a new one restarts it", async ({ page }) => {
+  await page.goto("/");
+  const fade = await page.evaluate(() => {
+    const look = window.WCR.linkAppearance;
+    const active = window.WCR.ACTIVE_MS;
+    const life = window.WCR.LINK_MS;
+    const paint = window.WCR.linkPaint;
+    return {
+      active,
+      life,
+      fresh: look(0, 0, false),
+      stillLive: look(active - 1, 0, false),
+      settled: look(active, 0, false),
+      mid: look(life / 2, 0, false),
+      late: look(life - 30_000, 0, false),
+      done: look(life + 1, 0, false),
+      calm: look(0, 0, true),
+      calmMid: look(life / 2, 0, true),
+      rf: paint({}),
+      inet: paint({ inet: true }),
+      mail: paint({ mail: true }),
+    };
+  });
+  expect(fade.life).toBe(10 * 60 * 1000);
+  expect(fade.fresh.pulse).toBe(true);
+  expect(fade.fresh.alpha).toBeGreaterThanOrEqual(0.55);
+  expect(fade.fresh.alpha).toBeLessThanOrEqual(0.95);
+  expect(fade.stillLive.pulse).toBe(true);
+  expect(fade.settled.pulse).toBe(false);
+  expect(fade.settled.alpha).toBeCloseTo(0.55, 2);
+  expect(fade.mid.pulse).toBe(false);
+  expect(fade.mid.alpha).toBeLessThan(fade.settled.alpha);
+  expect(fade.mid.alpha).toBeGreaterThan(0.15);
+  expect(fade.late.alpha).toBeLessThan(fade.mid.alpha);
+  expect(fade.late.alpha).toBeGreaterThan(0);
+  expect(fade.done.expired).toBe(true);
+  expect(fade.done.alpha).toBe(0);
+  expect(fade.calm.pulse).toBe(false);
+  expect(fade.calm.alpha).toBeCloseTo(0.55, 2);
+  expect(fade.calmMid.alpha).toBeLessThan(fade.calm.alpha);
+  expect(fade.rf).toEqual({ rgb: "57,255,20", dash: [6, 4] });
+  expect(fade.inet).toEqual({ rgb: "125,155,255", dash: [] });
+  expect(fade.mail).toEqual({ rgb: "255,122,61", dash: [3, 3] });
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const fromPage = await page.evaluate(() => window.WCR.linkAppearance(0, 0));
+  expect(fromPage.pulse).toBe(false);
+  expect(fromPage.alpha).toBeCloseTo(0.55, 2);
+});
+
+test("a live line survives a refresh that has not caught the event yet", async ({ page }, testInfo) => {
+  await page.route("**/api/v1/**", async (route) => {
+    const url = route.request().url();
+    if (url.includes("/api/v1/nodes") && /[?&]since=/.test(url)) {
+      await route.fulfill({ json: { since: 1, trail: [] } });
+      return;
+    }
+    if (url.includes("/api/v1/nodes")) {
+      await route.fulfill({
+        json: {
+          nodes: [
+            { callsign: "G4AAA", lat: 51.5, lon: -0.12, mode: "radio", band: "40m" },
+            { callsign: "G4BBB", lat: 52.2, lon: 0.12, mode: "radio-plus", band: "2m" },
+          ],
+        },
+      });
+      return;
+    }
+    if (url.includes("/events")) {
+      await route.fulfill({ json: { events: [] } });
+      return;
+    }
+    if (url.includes("/bands")) {
+      await route.fulfill({ json: { bands: [] } });
+      return;
+    }
+    if (url.includes("/hubs")) {
+      await route.fulfill({ json: { hubs: [] } });
+      return;
+    }
+    if (url.includes("/stats")) {
+      await route.fulfill({ json: { forwarded: 0 } });
+      return;
+    }
+    await route.fulfill({ json: {} });
+  });
+
+  await page.goto("/");
+  await expect(page.locator(".map-mark-wrap")).toHaveCount(2, { timeout: 15_000 });
+  const kept = await page.evaluate(() => {
+    const at = Date.now() - 60_000;
+    window.WCR.rememberLink("G4AAA", "G4BBB", false, false, false, at);
+    const before = window.WCR.linkSnapshot("G4AAA", "G4BBB");
+    window.WCR.seedLinksFromEvents([]);
+    const afterEmpty = window.WCR.linkSnapshot("G4AAA", "G4BBB");
+    window.WCR.seedLinksFromEvents([
+      {
+        ts: Math.floor((at - 30_000) / 1000),
+        kind: "tx",
+        origin: "G4AAA",
+        dest: "G4BBB",
+        path: "rf",
+      },
+    ]);
+    const afterOlder = window.WCR.linkSnapshot("G4AAA", "G4BBB");
+    const newer = at + 20_000;
+    window.WCR.seedLinksFromEvents([
+      {
+        ts: Math.floor(newer / 1000),
+        kind: "rx",
+        origin: "G4BBB",
+        dest: "G4AAA",
+        path: "inet",
+      },
+    ]);
+    const afterNewer = window.WCR.linkSnapshot("G4AAA", "G4BBB");
+    return {
+      before,
+      afterEmpty,
+      afterOlder,
+      afterNewer,
+      newerAt: Math.floor(newer / 1000) * 1000,
+    };
+  });
+  expect(kept.before).not.toBeNull();
+  expect(kept.afterEmpty).toEqual(kept.before);
+  expect(kept.afterOlder).toEqual(kept.before);
+  expect(kept.afterNewer!.at).toBe(kept.newerAt);
+  expect(kept.afterNewer!.inet).toBe(true);
+  expect(kept.afterNewer!.at).toBeGreaterThan(kept.before!.at);
+
+  await page.evaluate(() => {
+    const at = Date.now() - 60_000;
+    window.WCR.rememberLink("G4AAA", "G4BBB", false, true, false, at);
+    window.WCR.map.jumpTo({ center: [-0.02, 51.85], zoom: 7 });
+  });
+  const boot = page.locator("#boot_screen");
+  if (await boot.isVisible()) await boot.click();
+  await page.locator("#map").screenshot({
+    path: testInfo.outputPath("map-link-fade.png"),
+  });
+  await page.locator("#map").screenshot({
+    path: "/opt/cursor/artifacts/map-link-fade.png",
+  });
 });
