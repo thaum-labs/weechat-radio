@@ -141,8 +141,8 @@
           <li><code>[rl]</code> you heard your own frame come back (echo or a relay, not a receipt). A noisy path can skip this.</li>
           <li><code>[ok]</code> delivered. A direct message and <code>#bulletin</code> stop here. <code>#bulletin</code> has no member list, so it never shows <code>[all]</code>.</li>
           <li><code>[all]</code> every member of a closed group acknowledged</li>
-          <li><code>[no]</code> refused, or the retries are used up</li>
-          <li><code>[xN]</code> how many times the line was keyed. <code>[x1]</code> is the first send. With 3 retries the last copy is <code>[x4]</code>.</li>
+          <li><code>[no]</code> refused, or the last copy waited out its interval with no acknowledgement</li>
+          <li><code>[xN]</code> how many times the line was keyed. <code>[x1]</code> is the first send. With 3 retries the last copy is <code>[x4]</code>, then one more wait before <code>[no]</code>.</li>
         </ul>
         <p>The diagram is on the <a href="/docs/protocol.html#delivery-marks">wire protocol</a> page, under delivery marks.</p>
       </div>

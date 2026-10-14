@@ -336,6 +336,19 @@ mod tests {
     }
 
     #[test]
+    fn last_copy_still_waits_one_interval() {
+        // retry-3/3 is n=3. The next hold is the ACK wait, routine 360s, not zero.
+        assert_eq!(
+            next_retry_hold_base(3, 1_000, Priority::Routine),
+            1_000 + 360
+        );
+        assert_eq!(
+            next_retry_hold_jittered(3, 1_000, Priority::Routine, false),
+            1_000 + 360
+        );
+    }
+
+    #[test]
     fn failed_stays_until_a_real_ack() {
         let store = Store::open_memory().unwrap();
         let engine = Engine::new(std::sync::Arc::new(store), "G4AAA".into());
