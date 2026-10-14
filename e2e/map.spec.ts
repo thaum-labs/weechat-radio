@@ -36,6 +36,9 @@ declare global {
       LIVE_MS: number;
       ACTIVE_MS: number;
       HOLD_MS: number;
+      MODE_COLOR: Record<string, string>;
+      MAIL_COLOR: string;
+      LINK_PAINT: Record<string, { color: string; dash: number[] }>;
     };
   }
 }
@@ -423,6 +426,155 @@ test("station pins dim with age and the sidebar lists who is reporting first", a
   });
   await page.locator("#map").screenshot({
     path: "/opt/cursor/artifacts/map-pins-48h.png",
+  });
+});
+
+test("map key explains line styles, pin colours, and the 48h fade", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await dismissBoot(page);
+  const key = page.locator("#map-key");
+  await expect(key).toBeVisible();
+  await expect(key).toHaveAttribute("open", "");
+  await expect(key.locator(".map-key-note")).toHaveText(
+    "Lines glow while live, then fade faintly over 48h.",
+  );
+
+  const painted = await page.evaluate(() => {
+    const line = (kind: string) => {
+      const el = document.querySelector(`#map-key [data-link="${kind}"] line`);
+      return {
+        stroke: el?.getAttribute("stroke") || "",
+        width: el?.getAttribute("stroke-width") || "",
+        dash: el?.getAttribute("stroke-dasharray") || "",
+      };
+    };
+    const pin = (mode: string) => {
+      const rect = document.querySelector(`#map-key [data-mode="${mode}"] rect`);
+      return rect?.getAttribute("fill") || "";
+    };
+    const map = document.getElementById("map")!.getBoundingClientRect();
+    const box = document.getElementById("map-key")!.getBoundingClientRect();
+    const attrib = document.querySelector(".maplibregl-ctrl-attrib")?.getBoundingClientRect();
+    const controls = [...document.querySelectorAll(".maplibregl-ctrl")].map((el) => ({
+      cls: el.className,
+      box: el.getBoundingClientRect(),
+    }));
+    const hits = (a: DOMRect, b: DOMRect) =>
+      a.width > 0 &&
+      b.width > 0 &&
+      a.left < b.right &&
+      a.right > b.left &&
+      a.top < b.bottom &&
+      a.bottom > b.top;
+    return {
+      lines: { rf: line("rf"), inet: line("inet"), mail: line("mail") },
+      pins: {
+        internet: pin("internet"),
+        "internet-radio": pin("internet-radio"),
+        radio: pin("radio"),
+        "radio-plus": pin("radio-plus"),
+      },
+      paint: window.WCR.LINK_PAINT,
+      modes: window.WCR.MODE_COLOR,
+      mail: window.WCR.MAIL_COLOR,
+      inside:
+        box.left >= map.left &&
+        box.right <= map.right &&
+        box.top >= map.top &&
+        box.bottom <= map.bottom,
+      leftOfCenter: box.left < map.left + map.width / 2,
+      nearBottom: box.bottom > map.top + map.height * 0.55,
+      hitsAttrib: attrib ? hits(box, attrib) : false,
+      controlHits: controls
+        .filter((c) => !String(c.cls).includes("maplibregl-ctrl-attrib") && hits(box, c.box))
+        .map((c) => c.cls),
+    };
+  });
+
+  expect(painted.lines.rf).toEqual({
+    stroke: painted.paint.rf.color,
+    width: "2.5",
+    dash: painted.paint.rf.dash.join(" "),
+  });
+  expect(painted.lines.inet).toEqual({
+    stroke: painted.paint.inet.color,
+    width: "2.5",
+    dash: "",
+  });
+  expect(painted.lines.mail).toEqual({
+    stroke: painted.paint.mail.color,
+    width: "2.5",
+    dash: painted.paint.mail.dash.join(" "),
+  });
+  expect(painted.paint.rf).toEqual({ color: "#39ff14", dash: [6, 4] });
+  expect(painted.paint.inet).toEqual({ color: "#7d9bff", dash: [] });
+  expect(painted.paint.mail).toEqual({ color: "#ff7a3d", dash: [3, 3] });
+  expect(painted.mail).toBe("#ff7a3d");
+  expect(painted.pins.internet).toBe(painted.modes.internet);
+  expect(painted.pins["internet-radio"]).toBe(painted.modes["internet-radio"]);
+  expect(painted.pins.radio).toBe(painted.modes.radio);
+  expect(painted.pins["radio-plus"]).toBe(painted.modes["radio-plus"]);
+  expect(painted.modes).toEqual({
+    internet: "#00e5ff",
+    "internet-radio": "#39ff14",
+    radio: "#ffbf00",
+    "radio-plus": "#ff4dff",
+  });
+  expect(painted.inside).toBe(true);
+  expect(painted.leftOfCenter).toBe(true);
+  expect(painted.nearBottom).toBe(true);
+  expect(painted.hitsAttrib).toBe(false);
+  expect(painted.controlHits).toEqual([]);
+
+  await page.locator(".map-panel").screenshot({
+    path: testInfo.outputPath("map-key-desktop.png"),
+  });
+  await page.locator(".map-panel").screenshot({
+    path: "/opt/cursor/artifacts/map-key-desktop.png",
+  });
+
+  await key.locator("summary").focus();
+  await expect(key.locator("summary")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(key).not.toHaveAttribute("open", "");
+  await page.keyboard.press("Enter");
+  await expect(key).toHaveAttribute("open", "");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await dismissBoot(page);
+  const phone = page.locator("#map-key");
+  await expect(phone).toBeVisible();
+  await expect(phone).not.toHaveAttribute("open", "");
+  const phoneFit = await page.evaluate(() => {
+    const map = document.getElementById("map")!.getBoundingClientRect();
+    const box = document.getElementById("map-key")!.getBoundingClientRect();
+    const attrib = document.querySelector(".maplibregl-ctrl-attrib")?.getBoundingClientRect();
+    const hits = (a: DOMRect, b: DOMRect) =>
+      a.width > 0 &&
+      b.width > 0 &&
+      a.left < b.right &&
+      a.right > b.left &&
+      a.top < b.bottom &&
+      a.bottom > b.top;
+    const summary = document.querySelector("#map-key summary")!.getBoundingClientRect();
+    return {
+      inside: box.left >= map.left - 1 && box.right <= map.right + 1 && box.bottom <= map.bottom + 1,
+      hitsAttrib: attrib ? hits(box, attrib) : false,
+      summaryTall: summary.height >= 44,
+      left: box.left - map.left,
+    };
+  });
+  expect(phoneFit.inside).toBe(true);
+  expect(phoneFit.hitsAttrib).toBe(false);
+  expect(phoneFit.summaryTall).toBe(true);
+  expect(phoneFit.left).toBeLessThan(80);
+  await phone.locator("summary").click();
+  await expect(phone).toHaveAttribute("open", "");
+  await expect(phone.locator(".map-key-note")).toBeVisible();
+  await page.locator(".map-panel").screenshot({
+    path: "/opt/cursor/artifacts/map-key-phone.png",
   });
 });
 
