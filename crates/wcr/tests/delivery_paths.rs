@@ -10,6 +10,15 @@ use tokio::time::timeout;
 use wcr::config::Config;
 use wcr::modes::Mode;
 
+/// One delivery test at a time. The emergency retry is 8s and the gateway
+/// notice shares the mock air queue; a parallel neighbour on a slow runner
+/// makes the ACK lose that race.
+fn suite_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+    &LOCK
+}
+
 fn scratch(name: &str) -> PathBuf {
     static N: AtomicU64 = AtomicU64::new(0);
     let n = N.fetch_add(1, Ordering::Relaxed);
@@ -243,6 +252,7 @@ async fn wait_radio(ports: &[u16]) {
 
 #[tokio::test]
 async fn hub_dm_one_line_and_sender_ack() {
+    let _suite = suite_lock().lock().await;
     for (from, to, body) in [
         ("~QAONE1", "~QATWO2", "guest-dm-body"),
         ("G4ABC", "M0XYZ", "licensed-dm-body"),
@@ -324,6 +334,7 @@ async fn hub_dm_one_line_and_sender_ack() {
 
 #[tokio::test]
 async fn internet_bulletin_acks_once_and_not_all() {
+    let _suite = suite_lock().lock().await;
     let hub_port = start_hub().await;
     let hub_ws = format!("ws://127.0.0.1:{hub_port}/ws");
     let mut nodes = Vec::new();
@@ -421,6 +432,7 @@ async fn internet_bulletin_acks_once_and_not_all() {
 
 #[tokio::test]
 async fn radio_bulletin_reaches_ok_and_dm_ack_cancels_retry() {
+    let _suite = suite_lock().lock().await;
     let air = wcr::sim::SharedAir::new(0.0);
     let mut nodes = Vec::new();
     let mut irc = Vec::new();
@@ -500,8 +512,12 @@ async fn radio_bulletin_reaches_ok_and_dm_ack_cancels_retry() {
         .await
         .unwrap();
     let mut send_reader = tokio::io::BufReader::new(&mut sender);
-    let rest = read_lines_until(&mut send_reader, 14, |lines| {
-        lines.iter().any(|l| l.contains("+radio/delivery=retry-"))
+    // Wait for the DM's [ok]. Stopping at the first retry tag hides an ACK
+    // that arrives a moment later when the runner is busy.
+    let rest = read_lines_until(&mut send_reader, 30, |lines| {
+        lines
+            .iter()
+            .any(|l| l.contains("+radio/delivery=delivered"))
     })
     .await;
     sent.extend(rest);
@@ -513,6 +529,8 @@ async fn radio_bulletin_reaches_ok_and_dm_ack_cancels_retry() {
         delivered >= 2,
         "DM after the bulletin did not reach [ok]: {sent:?}"
     );
+    let tail = read_lines_until(&mut send_reader, 12, |_| false).await;
+    sent.extend(tail);
     assert!(
         !sent.iter().any(|l| l.contains("+radio/delivery=retry-")),
         "retry after ACK: {sent:?}"
@@ -524,6 +542,7 @@ async fn radio_bulletin_reaches_ok_and_dm_ack_cancels_retry() {
 
 #[tokio::test]
 async fn radio_group_reaches_all() {
+    let _suite = suite_lock().lock().await;
     let air = wcr::sim::SharedAir::new(0.0);
     let members = ["G4AAA", "M0BBB", "2E0CCC"];
     let mut nodes = Vec::new();
@@ -577,6 +596,7 @@ async fn radio_group_reaches_all() {
 
 #[tokio::test]
 async fn relay_through_middle_station_acks_sender() {
+    let _suite = suite_lock().lock().await;
     let air = wcr::sim::SharedAir::new(0.0);
     // A (1) hears only B. C (3) hears only B. B hears both.
     let plan = [
@@ -653,6 +673,7 @@ async fn relay_through_middle_station_acks_sender() {
 
 #[tokio::test]
 async fn dm_to_the_relay_is_not_copied_onward() {
+    let _suite = suite_lock().lock().await;
     let air = wcr::sim::SharedAir::new(0.0);
     // C hears only B. A's DM to B must stop at B.
     let plan = [
@@ -733,6 +754,7 @@ async fn dm_to_the_relay_is_not_copied_onward() {
 
 #[tokio::test]
 async fn internet_closed_group_reaches_all() {
+    let _suite = suite_lock().lock().await;
     let hub_port = start_hub().await;
     let hub_ws = format!("ws://127.0.0.1:{hub_port}/ws");
     let members = ["G4AAA", "M0BBB", "2E0CCC"];
@@ -790,6 +812,7 @@ async fn internet_closed_group_reaches_all() {
 
 #[tokio::test]
 async fn hub_claim_is_a_failed_send_not_sent() {
+    let _suite = suite_lock().lock().await;
     let hub_port = start_hub().await;
     let hub_ws = format!("ws://127.0.0.1:{hub_port}/ws");
     let mut nodes = Vec::new();
@@ -858,6 +881,7 @@ async fn hub_claim_is_a_failed_send_not_sent() {
 
 #[tokio::test]
 async fn irc_port_in_use_fails_fast() {
+    let _suite = suite_lock().lock().await;
     let held = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let p = held.local_addr().unwrap().port();
     let home = scratch("irc-busy");
@@ -877,6 +901,7 @@ async fn irc_port_in_use_fails_fast() {
 /// on a message we originated, or the line is sent once and never retried.
 #[tokio::test]
 async fn own_message_retries_while_the_relay_loop_runs() {
+    let _suite = suite_lock().lock().await;
     let air = wcr::sim::SharedAir::new(0.0);
     let home = scratch("retry-own");
     let (kiss, ctrl) = wcr::sim::mock_modem73_free(air).await.unwrap();
@@ -913,6 +938,7 @@ async fn own_message_retries_while_the_relay_loop_runs() {
 /// immediately, not on the next 60 s membership refresh.
 #[tokio::test]
 async fn hub_group_created_at_runtime_is_routable() {
+    let _suite = suite_lock().lock().await;
     let hub_port = start_hub().await;
     let hub_ws = format!("ws://127.0.0.1:{hub_port}/ws");
     let members = ["G4AAA", "M0BBB"];
@@ -977,6 +1003,7 @@ async fn hub_group_created_at_runtime_is_routable() {
 /// Radio-plus #bulletin is uploaded by the gateway. Radio mode is not.
 #[tokio::test]
 async fn radio_plus_bulletin_reaches_internet_via_gateway() {
+    let _suite = suite_lock().lock().await;
     let hub_port = start_hub().await;
     let hub_ws = format!("ws://127.0.0.1:{hub_port}/ws");
     let air = wcr::sim::SharedAir::new(0.0);
@@ -1058,7 +1085,7 @@ async fn radio_plus_bulletin_reaches_internet_via_gateway() {
     );
 
     let mut send_reader = tokio::io::BufReader::new(&mut sender);
-    let sent = read_lines_until(&mut send_reader, 20, |lines| {
+    let sent = read_lines_until(&mut send_reader, 40, |lines| {
         lines.iter().any(|l| l.contains("+radio/delivery=gateway"))
     })
     .await;
@@ -1092,6 +1119,7 @@ async fn radio_plus_bulletin_reaches_internet_via_gateway() {
 /// Closed group: one member on the hub must not cancel the RF relay or the retries.
 #[tokio::test]
 async fn radio_plus_closed_group_reaches_rf_member_and_all() {
+    let _suite = suite_lock().lock().await;
     let hub_port = start_hub().await;
     let hub_ws = format!("ws://127.0.0.1:{hub_port}/ws");
     let air = wcr::sim::SharedAir::new(0.0);
