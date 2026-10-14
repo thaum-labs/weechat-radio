@@ -1893,13 +1893,12 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                 {
                     rt.downstream_heard.lock().insert(id);
                 }
+                // on_rx already wrote Delivered before this runs, so a same-state
+                // advance is false. Paint [ok] from the state before that write.
                 let already = matches!(acked_prior, Some(Delivery::Delivered | Delivery::All));
-                if !already
-                    && rt
-                        .store
-                        .advance_delivery(&id, Delivery::Delivered)
-                        .unwrap_or(false)
-                {
+                let _ = rt.store.advance_delivery(&id, Delivery::Delivered);
+                let now = rt.store.delivery_of(&id).ok().flatten();
+                if !already && matches!(now, Some(Delivery::Delivered | Delivery::All)) {
                     rt.irc.tagmsg_delivery(&id.hex(), "delivered").await;
                 }
                 // A closed group is not done on the first ACK. Keep the retry
