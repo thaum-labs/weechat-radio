@@ -20,7 +20,7 @@ The address is `{callsign}@mail.weechatradio.com`. There is no domain setting. G
 - **Hub:** Sent after the hub says Resend accepted the message. A rejection is Failed.
 - **Radio-plus, every PTT:** Keying the burst is Outbox `[tx]`. A chunk ack from the gateway is `[gw]` (the gateway has the bytes). Sent is only the gateway's `CompleteAck`, after Resend accepted it. Until then the line stays in the outbox.
 - Missing acks are retried with backoff (8s, then 16s, 32s, …) up to `[rf] max_retries` (at least 3). Then the row is Failed, with the reason: the gateway never acknowledged, or it has the message but it was not accepted.
-- A transmit that does not finish (VOX never keys, or the modem stops answering) uses the same backoff, then Failed with the modem error. The wait grows with the burst so a long message is not cut off at 90 seconds.
+- If the row is still `[tx]` five minutes after this attempt started, and nothing has moved it on, it is Failed. VOX lead, tail, and the modem drain are unchanged.
 
 A toast timer does not mark Sent. The compose hint and the send confirm both show the estimated airtime. A long message says it is not Sent until the gateway accepts it.
 

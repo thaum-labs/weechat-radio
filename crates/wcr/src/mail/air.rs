@@ -72,16 +72,6 @@ pub fn confirm_air_line(secs: f64, bursts: usize, preset: &str) -> String {
     )
 }
 
-/// How long to wait for this burst to leave the modem. A fixed 90s cuts off a
-/// long message on a slow preset and restores chat while it is still keying.
-pub(super) fn tx_drain_cap(preset: Preset, frames: &[Vec<u8>]) -> Duration {
-    let bytes: usize = frames.iter().map(Vec::len).sum();
-    let bps = preset.bitrate_bps().max(1) as f64;
-    let tx = (bytes as f64) * 8.0 / bps;
-    let secs = (tx * 2.0 + 45.0).ceil() as u64;
-    Duration::from_secs(secs.max(90))
-}
-
 /// Chunk indexes still waiting for a gateway ack. Empty `got` means none yet.
 pub fn missing_chunk_idxs(total: u32, got: &str) -> Vec<u16> {
     let have: std::collections::HashSet<u16> =
@@ -200,6 +190,7 @@ async fn dispatch(ctx: &TxCtx, asm: &mut Assembler, cmd: MailCmd) {
                 tracing::warn!("mail ack wait {id}: {e}");
             }
         }
+        MailCmd::TxStuck { id, gen } => on_tx_stuck(ctx, &id, gen),
     }
 }
 
@@ -318,6 +309,7 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
         return Err(Error::protocol("mail frame wider than the rung"));
     }
     ctx.store.set_state(&row.id, "outbox", "tx")?;
+    arm_tx_stuck(ctx, &row.id);
     let cap = gateway::mail_attempt_cap(cfg.rf.max_retries);
     if let Err(e) = burst(
         ctx,
@@ -336,7 +328,7 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
             .bump_retry(&row.id)
             .unwrap_or(row.retries.saturating_add(1));
         if n >= cap {
-            fail_mail(ctx, &row.id, &e.to_string());
+            fail_mail(ctx, &row.id, gateway::NO_GATEWAY_ACK);
         } else {
             silence_wait(ctx, &row.id);
             let tx = ctx.cmd_tx.clone();
@@ -369,6 +361,33 @@ fn silence_wait(ctx: &TxCtx, id: &str) {
     let mut waits = ctx.waits.lock();
     let n = waits.get(id).copied().unwrap_or(0).wrapping_add(1);
     waits.insert(id.to_string(), n);
+}
+
+fn arm_tx_stuck(ctx: &TxCtx, id: &str) {
+    let gen = {
+        let mut waits = ctx.waits.lock();
+        let n = waits.get(id).copied().unwrap_or(0).wrapping_add(1);
+        waits.insert(id.to_string(), n);
+        n
+    };
+    let tx = ctx.cmd_tx.clone();
+    let id = id.to_string();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(gateway::TX_STUCK_AFTER_SECS)).await;
+        let _ = tx.send(MailCmd::TxStuck { id, gen }).await;
+    });
+}
+
+fn on_tx_stuck(ctx: &TxCtx, id: &str, gen: u64) {
+    if ctx.waits.lock().get(id).copied() != Some(gen) {
+        return;
+    }
+    let Ok(Some(row)) = ctx.store.get(id) else {
+        return;
+    };
+    if let Some(error) = gateway::tx_stuck_error(&row.state) {
+        fail_mail(ctx, id, error);
+    }
 }
 
 fn arm_wait(ctx: &TxCtx, id: &str, after: Duration) {
@@ -524,13 +543,7 @@ async fn burst(
                 "drain_after" => {
                     if let Some(c) = &ports.control {
                         let target = lease::drain_target_after(before, frames.len() as u64);
-                        let cap = tx_drain_cap(preset, frames);
-                        if !lease::wait_tx_count(c, target, cap).await {
-                            return Err(Error::Modem(
-                                "Radio did not finish transmitting. Check PTT and the modem."
-                                    .into(),
-                            ));
-                        }
+                        lease::wait_tx_count(c, target, Duration::from_secs(90)).await;
                     }
                     if vox && tail_ms > 0 {
                         tokio::time::sleep(Duration::from_millis(u64::from(tail_ms))).await;

@@ -36,6 +36,19 @@ pub fn resend_accepted(http_ok: bool) -> bool {
 pub const NO_GATEWAY_ACK: &str =
     "Gateway did not acknowledge. The message may not have been heard.";
 pub const GATEWAY_NOT_ACCEPTED: &str = "Gateway has the message, but it was not accepted.";
+pub const TX_STUCK: &str = "Timed out while transmitting. The message stayed at tx.";
+
+/// Longer than one hf-poor VOX pass (idle wait, drain, lead, and tail).
+pub const TX_STUCK_AFTER_SECS: u64 = 300;
+
+/// Error when a row is still `tx` after `TX_STUCK_AFTER_SECS` and nothing superseded that wait.
+pub fn tx_stuck_error(state: &str) -> Option<&'static str> {
+    if state == "tx" {
+        Some(TX_STUCK)
+    } else {
+        None
+    }
+}
 
 /// `max_retries` of 0 means "no cap" for chat. Mail still has to stop.
 pub fn mail_attempt_cap(max_retries: u32) -> u32 {
@@ -147,5 +160,9 @@ mod tests {
         assert_eq!(state_mark("gateway"), "[gw]");
         assert_eq!(state_mark("failed"), "[no]");
         assert_eq!(state_mark("sent"), "[ok]");
+        assert_eq!(tx_stuck_error("tx"), Some(TX_STUCK));
+        assert_eq!(tx_stuck_error("gateway"), None);
+        assert_eq!(tx_stuck_error("sent"), None);
+        assert_eq!(TX_STUCK_AFTER_SECS, 300);
     }
 }
