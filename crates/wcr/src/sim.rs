@@ -188,11 +188,16 @@ pub async fn mock_modem73_free(air: SharedAir) -> crate::error::Result<(u16, u16
     Ok((kiss_port, ctrl_port))
 }
 
+/// Per-link loss for a linked modem: `(from, to, frame)` returns true to drop
+/// that copy for that receiver only. Lets a test lose one hop of a chain.
+pub type LinkDrop = Arc<dyn Fn(u64, u64, &[u8]) -> bool + Send + Sync>;
+
 fn spawn_linked_kiss(
     listener: TcpListener,
     air: SharedAir,
     station: u64,
     hear: Arc<std::collections::HashSet<u64>>,
+    drop_rx: Option<LinkDrop>,
     last_air: Arc<Mutex<Option<Instant>>>,
     tx_count: Arc<AtomicU64>,
 ) {
@@ -202,6 +207,7 @@ fn spawn_linked_kiss(
             let air = air.clone();
             let last_air = last_air.clone();
             let hear = hear.clone();
+            let drop_rx = drop_rx.clone();
             let tx_count = tx_count.clone();
             tokio::spawn(async move {
                 let mut dec = KissDecoder::new();
@@ -227,6 +233,9 @@ fn spawn_linked_kiss(
                                     continue;
                                 }
                                 *last_air.lock().expect("last_air") = Some(Instant::now());
+                                if drop_rx.as_ref().is_some_and(|d| d(from, station, &payload)) {
+                                    continue;
+                                }
                                 let enc = encode_frame(&payload);
                                 if stream.write_all(&enc).await.is_err() { break; }
                             }
@@ -244,6 +253,7 @@ fn start_linked_modem(
     air: SharedAir,
     station: u64,
     hear: std::collections::HashSet<u64>,
+    drop_rx: Option<LinkDrop>,
 ) {
     let last_air = Arc::new(Mutex::new(None::<Instant>));
     let tx_count = Arc::new(AtomicU64::new(0));
@@ -252,6 +262,7 @@ fn start_linked_modem(
         air,
         station,
         Arc::new(hear),
+        drop_rx,
         last_air.clone(),
         tx_count.clone(),
     );
@@ -270,7 +281,7 @@ pub async fn mock_modem73_linked(
 ) -> crate::error::Result<()> {
     let kiss = TcpListener::bind(kiss_bind).await?;
     let ctrl = TcpListener::bind(ctrl_bind).await?;
-    start_linked_modem(kiss, ctrl, air, station, hear);
+    start_linked_modem(kiss, ctrl, air, station, hear, None);
     Ok(())
 }
 
@@ -282,7 +293,20 @@ pub async fn mock_modem73_linked_free(
 ) -> crate::error::Result<(u16, u16)> {
     let (kiss, kiss_port) = loopback_listener().await?;
     let (ctrl, ctrl_port) = loopback_listener().await?;
-    start_linked_modem(kiss, ctrl, air, station, hear);
+    start_linked_modem(kiss, ctrl, air, station, hear, None);
+    Ok((kiss_port, ctrl_port))
+}
+
+/// [`mock_modem73_linked_free`] with a per-link drop rule on what this station hears.
+pub async fn mock_modem73_chain_free(
+    air: SharedAir,
+    station: u64,
+    hear: std::collections::HashSet<u64>,
+    drop_rx: LinkDrop,
+) -> crate::error::Result<(u16, u16)> {
+    let (kiss, kiss_port) = loopback_listener().await?;
+    let (ctrl, ctrl_port) = loopback_listener().await?;
+    start_linked_modem(kiss, ctrl, air, station, hear, Some(drop_rx));
     Ok((kiss_port, ctrl_port))
 }
 
