@@ -2449,7 +2449,8 @@ async fn relay_heard_retry(rt: &Runtime, env: &Envelope) {
             .group_all_received(&name, &env.msg_id)
             .unwrap_or(false)
     });
-    if rt.downstream_heard.lock().contains(&env.msg_id) && !receipts_missing {
+    let heard_further = rt.downstream_heard.lock().contains(&env.msg_id);
+    if !relay::retry_passes_on(&stored.env, heard_further, receipts_missing) {
         return;
     }
     // Every neighbour has the line, so passing the retry on reaches nobody
