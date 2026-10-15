@@ -23,12 +23,17 @@ use wcr::proto::{Envelope, MsgType};
 use wcr::sim::{TimedLog, TimedOpts};
 
 const CALLS: [&str; 5] = ["G4AAA", "M0BBB", "2E0CCC", "M0DDD", "G4EEE"];
-const FRAME_MS: u64 = 1_500;
-/// The live sim's 30 s "busy, transmitting anyway" against a 3.6 s frame,
-/// scaled to this frame.
-const CSMA_STUCK_MS: u64 = 12_000;
+/// One hf-poor (RDM-600S) frame on the air. The node's own timers (ACK cap,
+/// relay slots, retry holds) are set for this airtime, so the harness keeps it.
+const FRAME_MS: u64 = 4_000;
+/// The live sim's "busy, transmitting anyway" after 30 s of carrier sense.
+const CSMA_STUCK_MS: u64 = 30_000;
+/// Longest a case may take: the originator's three retries and the ack wait.
+const CASE_SECS: u64 = 900;
 
-fn suite_lock() -> &'static tokio::sync::Mutex<()> {
+/// Reserved ports are free again until the nodes bind them, so chains start
+/// one at a time. Once up, the cases run side by side on their own air.
+fn setup_lock() -> &'static tokio::sync::Mutex<()> {
     static LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
         std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
     &LOCK
@@ -228,6 +233,7 @@ struct Chain {
 
 impl Chain {
     async fn start(group: Option<&str>) -> Self {
+        let _setup = setup_lock().lock().await;
         let air = wcr::sim::SharedAir::new(0.0);
         let log: TimedLog = Arc::new(Mutex::new(Vec::new()));
         let opts = TimedOpts {
@@ -235,6 +241,7 @@ impl Chain {
             count_tx: true,
             collide: true,
             csma_stuck_ms: CSMA_STUCK_MS,
+            rung_airtime: false,
         };
         let mut prep = Vec::new();
         for (i, call) in CALLS.iter().enumerate() {
@@ -367,11 +374,10 @@ fn seen_once(chain: &Chain, from: usize, body: &str) -> Vec<(&'static str, usize
 }
 
 async fn group_line_reaches_everyone(from: usize, body: &str) {
-    let _suite = suite_lock().lock().await;
     let mut chain = Chain::start(Some("net")).await;
     chain.join("#net").await;
     chain.clients[from]
-        .send(&format!("PRIVMSG #net :!{body}"))
+        .send(&format!("PRIVMSG #net :{body}"))
         .await;
     let all = |c: &Chain| {
         c.clients[from]
@@ -380,7 +386,7 @@ async fn group_line_reaches_everyone(from: usize, body: &str) {
             .any(|l| l.contains("+radio/delivery=all"))
     };
     let got_all = chain
-        .wait(300, |c| {
+        .wait(CASE_SECS, |c| {
             all(c) && seen_once(c, from, body).iter().all(|(_, n)| *n >= 1)
         })
         .await;
@@ -433,7 +439,6 @@ async fn group_line_from_the_far_end_reaches_all() {
 /// B2 on the live chain: E's bulletin reached D only.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn bulletin_from_the_far_end_reaches_the_other_end() {
-    let _suite = suite_lock().lock().await;
     let mut chain = Chain::start(None).await;
     chain.join("#bulletin").await;
     let body = "b2-from-the-far-end";
@@ -441,7 +446,9 @@ async fn bulletin_from_the_far_end_reaches_the_other_end() {
         .send(&format!("PRIVMSG #bulletin :{body}"))
         .await;
     let ok = chain
-        .wait(300, |c| seen_once(c, 4, body).iter().all(|(_, n)| *n >= 1))
+        .wait(CASE_SECS, |c| {
+            seen_once(c, 4, body).iter().all(|(_, n)| *n >= 1)
+        })
         .await;
     tokio::time::sleep(Duration::from_secs(4)).await;
     let seen = seen_once(&chain, 4, body);
