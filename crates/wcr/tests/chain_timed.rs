@@ -20,7 +20,7 @@ use tokio::net::TcpStream;
 use wcr::config::Config;
 use wcr::modes::Mode;
 use wcr::proto::{Envelope, MsgType};
-use wcr::sim::{TimedLog, TimedOpts};
+use wcr::sim::{LinkDrop, TimedLog, TimedOpts};
 
 const CALLS: [&str; 5] = ["G4AAA", "M0BBB", "2E0CCC", "M0DDD", "G4EEE"];
 /// One hf-poor (RDM-600S) frame on the air. The node's own timers (ACK cap,
@@ -244,6 +244,11 @@ struct Chain {
 
 impl Chain {
     async fn start(group: Option<&str>) -> Self {
+        Self::start_with(group, None).await
+    }
+
+    /// Like [`Chain::start`], with `drop_rx` losing chosen frames per link.
+    async fn start_with(group: Option<&str>, drop_rx: Option<LinkDrop>) -> Self {
         let _setup = setup_lock().lock().await;
         let air = wcr::sim::SharedAir::new(0.0);
         let log: TimedLog = Arc::new(Mutex::new(Vec::new()));
@@ -267,7 +272,7 @@ impl Chain {
                 air.clone(),
                 st,
                 hear_set(st),
-                None,
+                drop_rx.clone(),
                 opts,
                 log.clone(),
             )
@@ -490,7 +495,11 @@ fn seen_once(chain: &Chain, from: usize, body: &str) -> Vec<(&'static str, usize
 /// round (G3 about 1 run in 9, G2 rarer). `chain_harness` and
 /// `delivery_paths` hold `[all]` itself.
 async fn group_line_reaches_everyone(from: usize, body: &str) {
-    let mut chain = Chain::start(Some("net")).await;
+    group_line_reaches_everyone_with(from, body, None).await;
+}
+
+async fn group_line_reaches_everyone_with(from: usize, body: &str, drop_rx: Option<LinkDrop>) {
+    let mut chain = Chain::start_with(Some("net"), drop_rx).await;
     chain.join("#net").await;
     chain.clients[from]
         .send(&format!("PRIVMSG #net :{body}"))
@@ -563,6 +572,34 @@ fn assert_relays_capped(from: usize, keys: &[(&'static str, usize)], trace: &str
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn group_line_from_the_near_end_reaches_all() {
     group_line_reaches_everyone(0, "g1-from-the-near-end").await;
+}
+
+/// G1 when B has never heard C (every C beacon lost at B, as on ubuntu CI
+/// for #45) and B's first relay is lost at C. B hears only the originator,
+/// so it cannot tell it is not the end of the chain: it keeps relaying.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_relay_that_never_heard_beyond_keeps_relaying() {
+    let body = "g1-past-an-unheard-neighbour";
+    let lost = Arc::new(AtomicU64::new(0));
+    let lost_c = lost.clone();
+    let drop_rx: LinkDrop = Arc::new(move |from, to, frame| {
+        let Ok(env) = Envelope::decode(frame) else {
+            return false;
+        };
+        match (from, to) {
+            (3, 2) => env.kind == MsgType::Beacon,
+            (2, 3) => {
+                env.kind == MsgType::Msg
+                    && env.body_text().contains(body)
+                    && lost_c.fetch_add(1, Ordering::SeqCst) == 0
+            }
+            _ => false,
+        }
+    });
+    group_line_reaches_everyone_with(0, body, Some(drop_rx)).await;
+    // The first copy to C was lost and B sent another.
+    let copies = lost.load(Ordering::SeqCst);
+    assert!(copies >= 2, "B keyed the line to C {copies} times");
 }
 
 /// G3 on the live chain: C keys a group line, B and D both relay it and
