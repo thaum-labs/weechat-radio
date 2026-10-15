@@ -2,6 +2,7 @@
 //! Borrow the shared modem for one Email burst, then restore chat settings.
 
 use crate::air::{AirQueue, ChannelSense, ChannelState, ModemSense};
+use crate::modem::control::ModemStatus;
 use crate::modem::{ControlClient, KissClient};
 use crate::presets::{Preset, Rung};
 use serde_json::Value;
@@ -80,13 +81,50 @@ pub async fn wait_idle(ports: &RadioPorts, cap: Duration) -> bool {
     }
 }
 
-pub async fn wait_tx_count(control: &ControlClient, target: u64, cap: Duration) {
+/// The transmitter is keying, or still has frames queued behind the one on air.
+pub fn modem_keying(st: &ModemStatus) -> bool {
+    st.ptt_on
+        || st.channel_state.trim().eq_ignore_ascii_case("tx")
+        || st.tx_queue.is_some_and(|n| n > 0)
+}
+
+/// Upstream modem73 leaves `tx_frame_count` at 0, so the counter alone never
+/// drains and the lease used to end on a fixed cap with frames still queued.
+/// Done once the transmitter is idle and the counter reached `target`, or the
+/// modem was seen keying and reports its queue, or the keyed airtime is over.
+pub fn burst_drained(st: &ModemStatus, target: u64, seen_keying: bool, airtime_over: bool) -> bool {
+    !modem_keying(st)
+        && (tx_drained(st.tx_frame_count, target)
+            || (seen_keying && st.tx_queue.is_some())
+            || airtime_over)
+}
+
+/// Same patience as chat's `pace_and_send`: three times the airtime, plus grace.
+pub fn drain_cap(airtime: Duration) -> Duration {
+    airtime * 3 + Duration::from_secs(15)
+}
+
+/// Wait until every frame of the burst has left the modem. `airtime` is the
+/// keyed estimate; the cap is [`drain_cap`] of it.
+pub async fn wait_drained(control: &ControlClient, target: u64, airtime: Duration) {
     let start = Instant::now();
+    let cap = drain_cap(airtime);
+    let mut seen_keying = false;
+    let mut idle_polls = 0u8;
     loop {
         match control.get_status().await {
-            Ok(st) if tx_drained(st.tx_frame_count, target) => return,
+            Ok(st) => {
+                seen_keying |= modem_keying(&st);
+                if burst_drained(&st, target, seen_keying, start.elapsed() >= airtime) {
+                    idle_polls += 1;
+                    if idle_polls >= 2 {
+                        return;
+                    }
+                } else {
+                    idle_polls = 0;
+                }
+            }
             Err(_) => return,
-            _ => {}
         }
         if start.elapsed() >= cap {
             return;
@@ -95,7 +133,8 @@ pub async fn wait_tx_count(control: &ControlClient, target: u64, cap: Duration) 
     }
 }
 
-/// Wait until `tx_frame_count` stops climbing, so a mode change cannot strand a queued frame.
+/// Wait until `tx_frame_count` stops climbing and the transmitter is idle, so
+/// a mode change cannot strand a queued frame.
 pub async fn wait_tx_stable(control: &ControlClient, cap: Duration) -> u64 {
     let start = Instant::now();
     let mut last = control
@@ -105,17 +144,105 @@ pub async fn wait_tx_stable(control: &ControlClient, cap: Duration) -> u64 {
         .unwrap_or(0);
     loop {
         tokio::time::sleep(Duration::from_millis(200)).await;
-        let now = control
-            .get_status()
-            .await
-            .map(|s| s.tx_frame_count)
-            .unwrap_or(last);
-        if now == last {
-            return now;
+        let Ok(st) = control.get_status().await else {
+            return last;
+        };
+        if st.tx_frame_count == last && !modem_keying(&st) {
+            return last;
         }
-        last = now;
+        last = st.tx_frame_count;
         if start.elapsed() >= cap {
             return last;
         }
+    }
+}
+
+/// A frame is being received. The gateway holds its reply rather than keying
+/// over a chunk that is still on the air.
+pub fn channel_receiving(ports: &RadioPorts) -> bool {
+    ports
+        .sense
+        .as_ref()
+        .is_some_and(|s| s.state() == ChannelState::Rx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn upstream(channel: &str, ptt: bool, queue: u64) -> ModemStatus {
+        ModemStatus {
+            channel_state: channel.into(),
+            ptt_on: ptt,
+            tx_frame_count: 0,
+            tx_queue: Some(queue),
+            ..ModemStatus::default()
+        }
+    }
+
+    #[test]
+    fn a_frozen_tx_counter_does_not_end_the_lease_mid_burst() {
+        // Upstream modem73: tx_frame_count stays 0 while 48 chunks key.
+        let target = drain_target_after(0, 49);
+        assert!(!burst_drained(
+            &upstream("tx", true, 30),
+            target,
+            true,
+            false
+        ));
+        assert!(!burst_drained(
+            &upstream("idle", false, 2),
+            target,
+            true,
+            true
+        ));
+        assert!(!burst_drained(
+            &upstream("idle", true, 0),
+            target,
+            true,
+            true
+        ));
+        assert!(burst_drained(
+            &upstream("idle", false, 0),
+            target,
+            true,
+            false
+        ));
+        // Not seen keying yet: the frames may still be on their way to the modem.
+        assert!(!burst_drained(
+            &upstream("idle", false, 0),
+            target,
+            false,
+            false
+        ));
+        assert!(burst_drained(
+            &upstream("idle", false, 0),
+            target,
+            false,
+            true
+        ));
+    }
+
+    #[test]
+    fn a_counting_modem_still_drains_on_the_counter() {
+        let st = ModemStatus {
+            tx_frame_count: 12,
+            ..ModemStatus::default()
+        };
+        assert!(burst_drained(&st, 12, false, false));
+        assert!(!burst_drained(&st, 13, false, false));
+        assert!(burst_drained(&st, 13, false, true));
+        assert!(!modem_keying(&st));
+        assert!(modem_keying(&upstream("rx", false, 1)));
+        assert!(!modem_keying(&upstream("rx", false, 0)));
+    }
+
+    #[test]
+    fn the_drain_cap_matches_chat_patience() {
+        assert_eq!(
+            drain_cap(Duration::from_secs(200)),
+            Duration::from_secs(615)
+        );
+        assert!(drain_cap(Duration::from_secs(200)) > Duration::from_secs(90));
     }
 }

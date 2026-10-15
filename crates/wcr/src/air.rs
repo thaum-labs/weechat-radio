@@ -326,6 +326,8 @@ struct QueueInner {
     items: Vec<AirItem>,
     /// Email holds the radio lease. Chat may still enqueue; `pop_ready` waits.
     paused: bool,
+    /// Set only by the mail lease. An ACK's `resume` clears `paused`, not this.
+    mail_lease: bool,
 }
 
 #[derive(Clone)]
@@ -340,6 +342,7 @@ impl AirQueue {
             inner: Arc::new(Mutex::new(QueueInner {
                 items: Vec::new(),
                 paused: false,
+                mail_lease: false,
             })),
             notify: Arc::new(Notify::new()),
         }
@@ -379,7 +382,7 @@ impl AirQueue {
     pub fn pop_ready(&self) -> Option<AirItem> {
         let now = Instant::now();
         let mut g = self.inner.lock();
-        if g.paused {
+        if g.paused || g.mail_lease {
             return None;
         }
         let idx = g.items.iter().position(|x| x.not_before <= now)?;
@@ -401,8 +404,27 @@ impl AirQueue {
         self.inner.lock().paused
     }
 
+    /// Hold chat for the whole mail lease. A chat ACK keyed meanwhile pauses
+    /// and resumes the queue around itself; that must not end the lease.
+    pub fn hold_for_mail(&self) {
+        self.inner.lock().mail_lease = true;
+    }
+
+    pub fn release_mail(&self) {
+        self.inner.lock().mail_lease = false;
+        self.notify.notify_waiters();
+    }
+
+    pub fn is_held_for_mail(&self) -> bool {
+        self.inner.lock().mail_lease
+    }
+
     fn next_deadline(&self) -> Option<Instant> {
-        self.inner.lock().items.iter().map(|x| x.not_before).min()
+        let g = self.inner.lock();
+        if g.mail_lease {
+            return None;
+        }
+        g.items.iter().map(|x| x.not_before).min()
     }
 
     fn apply_congestion(&self, occ: u8, congested_pct: u8) {
@@ -1094,6 +1116,34 @@ mod tests {
         assert!(!q.is_paused());
         assert!(q.pop_ready().is_some());
         assert_eq!(q.depth(), 0);
+    }
+
+    #[test]
+    fn an_ack_resume_does_not_end_the_mail_lease() {
+        use crate::proto::{Callsign, Envelope, Flags};
+        let q = AirQueue::new();
+        let env = Envelope::new_msg(
+            Callsign::parse("G4ABC").unwrap(),
+            Callsign::parse("M0XYZ").unwrap(),
+            1,
+            b"hi".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        assert!(q.enqueue(AirItem::new(
+            &env,
+            "G4ABC",
+            vec![b"frame".to_vec()],
+            Preset::HfPoor
+        )));
+        q.hold_for_mail();
+        q.pause();
+        q.resume();
+        assert!(q.is_held_for_mail());
+        assert!(q.pop_ready().is_none(), "chat keyed inside the mail lease");
+        q.release_mail();
+        assert!(q.pop_ready().is_some());
     }
 
     #[test]
