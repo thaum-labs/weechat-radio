@@ -312,8 +312,22 @@ pub fn neighbours_hold(neighbours: &[String], holders: &[String], came_relayed: 
 }
 
 /// Most copies of one line a relay keys: its relay, one repeat, and one
-/// answer to the originator's retry. Receipts are not counted.
+/// answer to the originator's retry.
 pub const RELAY_MAX_COPIES: u32 = 3;
+
+/// Most copies of someone else's receipt a relay keys. Every member's
+/// receipt walks back along the whole chain, and late copies of a finished
+/// line's receipts land on the next line's.
+pub const RECEIPT_MAX_COPIES: u32 = 2;
+
+/// Copies of `env` a relay may key.
+pub fn relay_copy_cap(env: &Envelope) -> u32 {
+    if env.kind == MsgType::Ack {
+        RECEIPT_MAX_COPIES
+    } else {
+        RELAY_MAX_COPIES
+    }
+}
 
 /// Only stations that heard a `#bulletin` from its originator ACK it. The
 /// originator stops at the first ACK, so a receipt from further away is
