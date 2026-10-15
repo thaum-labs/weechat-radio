@@ -397,7 +397,11 @@ impl Coverage {
         if fresh.is_empty() || fresh.len() < self.keyers_floor(now) {
             return false;
         }
-        let holders = self.holders.get(id).map(|(_, h)| h.as_slice()).unwrap_or(&[]);
+        let holders = self
+            .holders
+            .get(id)
+            .map(|(_, h)| h.as_slice())
+            .unwrap_or(&[]);
         let named = fresh
             .iter()
             .all(|n| holders.iter().any(|h| h.eq_ignore_ascii_case(n)));
@@ -1222,5 +1226,106 @@ mod tests {
             next_retry_hold_jittered(0, 100, Priority::Emergency, false),
             108
         );
+    }
+
+    fn group_line() -> Envelope {
+        Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::from_raw("NET"),
+            1,
+            b"g".to_vec(),
+            6,
+            Flags::new().with(crate::proto::FLAG_GROUP),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_closed_group_retry_does_not_cancel_the_walk() {
+        let group = group_line();
+        assert!(closed_group_walks(&group));
+        assert!(group_walk_continues(&group, 0, 3, false));
+        assert!(group_walk_continues(&group, 2, 3, false));
+        assert!(!group_walk_continues(&group, 0, 3, true));
+        assert!(!group_walk_continues(&group, 3, 3, false));
+        let mut spent = group.clone();
+        spent.hops_left = 0;
+        assert!(!group_walk_continues(&spent, 0, 3, false));
+        // Incoming 5 against a stored 4 is the originator keying again.
+        assert!(!duplicate_suppresses(&group, 5, 4));
+        assert!(duplicate_suppresses(&group, 3, 4));
+        let mut dm = group.clone();
+        dm.flags = Flags::new();
+        assert!(!closed_group_walks(&dm));
+        assert!(duplicate_suppresses(&dm, 5, 4));
+        assert!(!closed_group_walks(&{
+            let mut b = group.clone();
+            b.dest = Callsign::from_raw("BULLETIN");
+            b
+        }));
+    }
+
+    #[test]
+    fn a_repeated_relay_steps_one_rung_and_keeps_the_preset_frame() {
+        assert_eq!(relay_rung(Preset::HfPoor, 0, 40), Rung::Rdm600S);
+        assert_eq!(relay_rung(Preset::HfPoor, 1, 40), Rung::Rdm300S);
+        assert_eq!(relay_rung(Preset::HfPoor, 4, 40), Rung::Rdm300S);
+        assert_eq!(relay_rung(Preset::HfPoor, 1, 200), Rung::Rdm600S);
+        assert_eq!(relay_rung(Preset::HfWeak, 3, 40), Rung::Rdm300S);
+        assert_eq!(relay_rung(Preset::VhfFm, 3, 40), Rung::OfdmQpskHalf);
+        assert_eq!(relay_rung(Preset::HfDeep, 2, 40), Rung::Mfsk32R);
+        let slot = frame_slot(Preset::HfPoor);
+        assert!(slot > std::time::Duration::from_secs(3));
+        for _ in 0..12 {
+            let delay = spread_delay(Preset::HfPoor, Priority::Routine);
+            let n = (delay.as_secs_f64() / slot.as_secs_f64()).round() as u32;
+            assert!(n < spread_slots(Priority::Routine));
+            assert!((delay.as_secs_f64() - slot.as_secs_f64() * n as f64).abs() < 0.01);
+        }
+    }
+
+    fn heard_line(origin: &str, hops: u8) -> Envelope {
+        Envelope::new_msg(
+            Callsign::parse(origin).unwrap(),
+            Callsign::from_raw("NET"),
+            1,
+            b"g".to_vec(),
+            hops,
+            Flags::new().with(crate::proto::FLAG_GROUP),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn an_end_station_stops_once_its_only_neighbour_holds_the_frame() {
+        let line = heard_line("G4AAA", 5);
+        let mut beacon = heard_line("M0BBB", 1);
+        beacon.kind = MsgType::Beacon;
+        let mut cover = Coverage::new(1_000);
+        cover.heard(&beacon, None, 1_000);
+        // Relayed by the one neighbour: a new hop count, origin still G4AAA.
+        cover.heard(&line, Some(6), 1_050);
+        assert!(!cover.covered(&line.msg_id, 1_050));
+        assert!(cover.covered(&line.msg_id, 1_000 + COVERAGE_WARMUP_S));
+        let mut other_hop = line.clone();
+        other_hop.hops_left = 3;
+        cover.heard(&other_hop, Some(6), 1_400);
+        assert!(
+            !cover.covered(&line.msg_id, 1_500),
+            "two hop counts means a second neighbour, even unnamed"
+        );
+
+        let mut two = Coverage::new(1_000);
+        two.heard(&beacon, None, 1_000);
+        let mut east = heard_line("2E0CCC", 1);
+        east.kind = MsgType::Beacon;
+        two.heard(&east, None, 1_000);
+        two.heard(&line, Some(6), 1_100);
+        let from_b = Envelope::ack_for(&line, Callsign::parse("M0BBB").unwrap(), 2, None);
+        two.heard(&from_b, Some(5), 1_200);
+        assert!(!two.covered(&line.msg_id, 1_250));
+        let from_c = Envelope::ack_for(&line, Callsign::parse("2E0CCC").unwrap(), 3, None);
+        two.heard(&from_c, Some(5), 1_300);
+        assert!(two.covered(&line.msg_id, 1_350));
     }
 }
