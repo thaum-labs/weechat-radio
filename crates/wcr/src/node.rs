@@ -89,6 +89,8 @@ struct Runtime {
     hub_marked: Arc<Mutex<HashSet<MsgId>>>,
     /// Msgids whose sender already has [gw], so a later RF echo does not paint [rl].
     gw_marked: Arc<Mutex<HashSet<MsgId>>>,
+    /// Msgids that already painted [rl]. A neighbour relay does not paint it again.
+    rl_painted: Arc<Mutex<HashSet<MsgId>>>,
 }
 
 impl Runtime {
@@ -421,6 +423,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         hub_offered: Arc::new(Mutex::new(HashSet::new())),
         hub_marked: Arc::new(Mutex::new(HashSet::new())),
         gw_marked: Arc::new(Mutex::new(HashSet::new())),
+        rl_painted: Arc::new(Mutex::new(HashSet::new())),
     };
     refresh_group_prios(&rt);
 
@@ -1648,6 +1651,18 @@ fn group_member_heard_rf(store: &Store, dest: &str, freq: u32) -> bool {
         .any(|m| store.recently_heard_rf(m, 600, freq).unwrap_or(false))
 }
 
+/// Paint [rl] once. A later neighbour relay of the same message does not
+/// paint again. Hearing the frame after [ok] or [all] still paints once.
+fn take_relay_mark(
+    painted: &mut HashSet<MsgId>,
+    id: MsgId,
+    advanced: bool,
+    prior: Option<Delivery>,
+) -> bool {
+    let want = advanced || matches!(prior, Some(Delivery::Delivered | Delivery::All));
+    want && painted.insert(id)
+}
+
 async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>) -> Result<()> {
     // Safety net: mail frames are WCRM and demuxed before decode. A Mail
     // envelope must not enter chat delivery, retry, or the air queue.
@@ -1666,22 +1681,25 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
             }
             return Ok(());
         }
-        // [no], [ok], and [all] are terminal. Hearing the final copy again
-        // must not paint [rl] over a failure. A real ACK is the only way
-        // off [no], and that path does not come through our own origin.
+        // [no] stays [no]. [ok] and [all] can gain one [rl] if the echo is
+        // heard after the receipt. A later copy of the same message does not
+        // paint [rl] again. A real ACK is the only way off [no], and that
+        // path does not come through our own origin.
         let cur = rt.store.delivery_of(&env.msg_id).ok().flatten();
         let advanced = rt
             .store
             .advance_delivery(&env.msg_id, Delivery::Relayed)
             .unwrap_or(false);
-        let heard_after_ack = matches!(
-            cur,
-            Some(Delivery::Delivered | Delivery::All | Delivery::Relayed)
-        );
-        if !rt.gw_marked.lock().contains(&env.msg_id) && (advanced || heard_after_ack) {
+        if rt.gw_marked.lock().contains(&env.msg_id) {
+            if let Some(air) = rt.air() {
+                air.cancel(env.msg_id);
+            }
+        } else if take_relay_mark(&mut rt.rl_painted.lock(), env.msg_id, advanced, cur) {
             rt.irc.tagmsg_delivery(&env.msg_id.hex(), "relayed").await;
-        } else if let Some(air) = rt.air() {
-            air.cancel(env.msg_id);
+        } else if !rt.rl_painted.lock().contains(&env.msg_id) {
+            if let Some(air) = rt.air() {
+                air.cancel(env.msg_id);
+            }
         }
         return Ok(());
     }
@@ -3198,6 +3216,45 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relay_mark_paints_once_per_message() {
+        let mut painted = HashSet::new();
+        let id = MsgId::from_bytes([1, 0, 0, 0, 0, 0, 0, 0]);
+        assert!(take_relay_mark(
+            &mut painted,
+            id,
+            true,
+            Some(Delivery::Sent)
+        ));
+        assert!(!take_relay_mark(
+            &mut painted,
+            id,
+            false,
+            Some(Delivery::Relayed)
+        ));
+        let other = MsgId::from_bytes([2, 0, 0, 0, 0, 0, 0, 0]);
+        assert!(take_relay_mark(
+            &mut painted,
+            other,
+            false,
+            Some(Delivery::Delivered)
+        ));
+        assert!(!take_relay_mark(
+            &mut painted,
+            other,
+            false,
+            Some(Delivery::Delivered)
+        ));
+        let failed = MsgId::from_bytes([3, 0, 0, 0, 0, 0, 0, 0]);
+        assert!(!take_relay_mark(
+            &mut painted,
+            failed,
+            false,
+            Some(Delivery::Failed)
+        ));
+        assert!(!painted.contains(&failed));
+    }
 
     #[test]
     fn relay_log_names_the_forwarded_frame() {

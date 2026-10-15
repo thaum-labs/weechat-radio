@@ -15,6 +15,7 @@ use crate::proto::IdentityKeys;
 use crate::status::SharedStatus;
 use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
@@ -26,23 +27,47 @@ pub fn mail_rung(preset: Preset, retries: u32) -> Rung {
     Rung::from_index(idx)
 }
 
-pub fn mail_airtime_secs(preset: Preset, body_len: usize, turnaround_ms: u32) -> (f64, usize) {
-    let mtu = Rung::from_index(preset.ladder_start()).payload_bytes() as usize;
-    let limit = mtu.min(crate::proto::MAX_BODY);
-    // A real mail id is 64 hex chars, and the first chunk carries the header.
-    // Dividing the body by the rung size ignores that and under-counts by about half.
-    let id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+/// The message the airtime hint and the sender both split. Chunk boundaries
+/// follow this body and header, not a stand-in of the same length.
+pub struct AirtimeMail<'a> {
+    pub from: &'a str,
+    pub to: &'a str,
+    pub subject: &'a str,
+    pub body: &'a str,
+    pub gateway: &'a str,
+    pub ack: bool,
+}
+
+fn plan_limit(preset: Preset) -> usize {
+    (Rung::from_index(preset.ladder_start()).payload_bytes() as usize).min(crate::proto::MAX_BODY)
+}
+
+/// Chunk at the preset's ladder-start payload. A later retry uses a slower
+/// rung for the modem, and may slice a frame, but it does not re-split the
+/// body. Re-splitting on that smaller payload stamped the byte length as the
+/// chunk total.
+pub(super) fn plan_mail_wires(preset: Preset, id: &str, mail: &AirtimeMail<'_>) -> Vec<MailWire> {
     let meta = MailMeta {
-        from: "M7TJF@mail.weechatradio.com".into(),
-        to: "operator@example.com".into(),
-        subject: "subject".into(),
-        dest: "GATEWAY".into(),
-        via: "GATEWAY".into(),
-        ack: true,
+        from: mail.from.to_string(),
+        to: mail.to.to_string(),
+        subject: mail.subject.to_string(),
+        dest: mail.gateway.to_string(),
+        via: mail.gateway.to_string(),
+        ack: mail.ack,
         ..MailMeta::default()
     };
-    let body = "x".repeat(body_len);
-    let wires = proto::chunk_to_limit(id, &meta, &body, limit);
+    proto::chunk_to_limit(id, &meta, mail.body, plan_limit(preset))
+}
+
+pub fn mail_airtime_secs(
+    preset: Preset,
+    mail: &AirtimeMail<'_>,
+    turnaround_ms: u32,
+) -> (f64, usize) {
+    // A real mail id is 64 hex chars, and the first chunk carries the header.
+    let id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let wires = plan_mail_wires(preset, id, mail);
+    let mtu = plan_limit(preset);
     let mut lens = Vec::new();
     for w in &wires {
         if let Ok(parts) = proto::frames_for_mtu(&proto::encode_chunk(w), mtu) {
@@ -92,11 +117,17 @@ pub fn humanize_airtime(secs: f64) -> String {
     }
 }
 
-pub fn airtime_hint(bytes: usize, preset: Preset, hub_only: bool, turnaround_ms: u32) -> String {
+pub fn airtime_hint(
+    mail: &AirtimeMail<'_>,
+    preset: Preset,
+    hub_only: bool,
+    turnaround_ms: u32,
+) -> String {
+    let bytes = mail.body.len();
     if hub_only {
         format!("{bytes} B · hub only")
     } else {
-        let (secs, n) = mail_airtime_secs(preset, bytes, turnaround_ms);
+        let (secs, n) = mail_airtime_secs(preset, mail, turnaround_ms);
         let warn = if secs >= 20.0 || bytes >= 1500 {
             " · not Sent until the gateway accepts it"
         } else {
@@ -136,6 +167,8 @@ struct TxCtx {
     ports: Arc<dyn Fn() -> RadioPorts + Send + Sync>,
     cmd_tx: mpsc::Sender<MailCmd>,
     tel: broadcast::Sender<crate::telemetry::TelemetryEvent>,
+    /// True while `burst` holds the radio. Sampled when a frame arrives.
+    keying: Arc<AtomicBool>,
     waits: Mutex<HashMap<String, u64>>,
     checks: Mutex<u64>,
     quiet: Mutex<u64>,
@@ -143,8 +176,8 @@ struct TxCtx {
 
 struct Assembler {
     slices: HashMap<String, Vec<Option<String>>>,
-    /// op+mail id → chunk total → index → wire. Totals do not share a bucket.
-    buckets: HashMap<String, HashMap<u16, HashMap<u16, MailWire>>>,
+    /// op+mail id → index → wire. One mail is one bucket. The header total is not a key.
+    buckets: HashMap<String, HashMap<u16, MailWire>>,
     from: HashMap<String, String>,
     to: HashMap<String, String>,
     /// Complete messages waiting out the quiet gap before the gateway keys.
@@ -160,6 +193,7 @@ pub(super) fn spawn(
     cmd_tx: mpsc::Sender<MailCmd>,
     rx: mpsc::Receiver<MailCmd>,
     tel: broadcast::Sender<crate::telemetry::TelemetryEvent>,
+    keying: Arc<AtomicBool>,
 ) {
     let ctx = TxCtx {
         store,
@@ -169,6 +203,7 @@ pub(super) fn spawn(
         ports,
         cmd_tx,
         tel,
+        keying,
         waits: Mutex::new(HashMap::new()),
         checks: Mutex::new(0),
         quiet: Mutex::new(0),
@@ -236,7 +271,10 @@ async fn dispatch(ctx: &TxCtx, asm: &mut Assembler, cmd: MailCmd) {
             };
             let _ = send_control(ctx, MailOp::GetReq, meta, "").await;
         }
-        MailCmd::Inbound(incoming) => on_incoming(ctx, asm, incoming).await,
+        MailCmd::Inbound {
+            incoming,
+            during_burst,
+        } => on_incoming(ctx, asm, incoming, during_burst).await,
         MailCmd::SyncHub => {
             let _ = sync_hub(ctx).await;
         }
@@ -331,18 +369,16 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
     let vox = cfg.modem.is_vox();
     let rung = mail_rung(preset, row.retries);
     let mtu = rung.payload_bytes() as usize;
-    let meta = MailMeta {
-        from: row.from_addr.clone(),
-        to: row.to_addr.clone(),
-        subject: row.subject.clone(),
-        dest: gateway_cs.clone(),
-        via: gateway_cs.clone(),
+    let planned = AirtimeMail {
+        from: &row.from_addr,
+        to: &row.to_addr,
+        subject: &row.subject,
+        body: &row.body,
+        gateway: &gateway_cs,
         // Same flag `compose` hashed into the id. PTT does not change it.
         ack: row.ack,
-        ..MailMeta::default()
     };
-    let wires_all =
-        proto::chunk_to_limit(&row.id, &meta, &row.body, mtu.min(crate::proto::MAX_BODY));
+    let wires_all = plan_mail_wires(preset, &row.id, &planned);
     let total = wires_all.len().max(1) as u32;
     if row.chunks == 0 {
         ctx.store.set_chunks(&row.id, total)?;
@@ -547,6 +583,14 @@ async fn send_control(ctx: &TxCtx, op: MailOp, mut meta: MailMeta, payload: &str
     .await
 }
 
+struct ClearKeying(Arc<AtomicBool>);
+
+impl Drop for ClearKeying {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 async fn burst(
     ctx: &TxCtx,
     frames: &[Vec<u8>],
@@ -556,6 +600,8 @@ async fn burst(
     lead_ms: u32,
     tail_ms: u32,
 ) -> Result<()> {
+    ctx.keying.store(true, Ordering::Release);
+    let _clear = ClearKeying(Arc::clone(&ctx.keying));
     let ports = (ctx.ports)();
     let Some(kiss) = ports.kiss.clone() else {
         return Err(Error::Modem("Radio is not running.".into()));
@@ -637,7 +683,7 @@ async fn burst(
     result
 }
 
-async fn on_incoming(ctx: &TxCtx, asm: &mut Assembler, incoming: Incoming) {
+async fn on_incoming(ctx: &TxCtx, asm: &mut Assembler, incoming: Incoming, during_burst: bool) {
     let wire = match incoming {
         Incoming::Wire(w) => Some(w),
         Incoming::Slice {
@@ -675,7 +721,7 @@ async fn on_incoming(ctx: &TxCtx, asm: &mut Assembler, incoming: Incoming) {
             if gateway_reply {
                 push_ready(asm, (meta, body, op));
                 arm_quiet(ctx);
-            } else if let Err(e) = apply_mail(ctx, meta, body, op).await {
+            } else if let Err(e) = apply_mail(ctx, meta, body, op, during_burst).await {
                 tracing::warn!("mail inbound: {e}");
             }
         }
@@ -702,8 +748,8 @@ fn absorb(asm: &mut Assembler, wire: MailWire) -> Absorb {
     }
     let mail_id = wire.mail_id.clone();
     let key = format!("{:?}:{}", wire.op, wire.mail_id);
-    let buckets = asm.buckets.entry(key).or_default();
-    match proto::put_chunk(buckets, wire) {
+    let slot = asm.buckets.entry(key).or_default();
+    match proto::put_chunk(slot, wire) {
         proto::ChunkPut::Rejected => Absorb::Rejected {
             mail_id,
             idx: 0,
@@ -767,7 +813,7 @@ async fn on_quiet(ctx: &TxCtx, asm: &mut Assembler, gen: u64) {
         if let Some(id) = meta.ids.first() {
             completed.insert(id.clone());
         }
-        if let Err(e) = apply_mail(ctx, meta, body, op).await {
+        if let Err(e) = apply_mail(ctx, meta, body, op, false).await {
             tracing::warn!("mail inbound: {e}");
         }
     }
@@ -801,14 +847,15 @@ struct HaveReport {
     indexes: Vec<u16>,
 }
 
-/// Incomplete Data/VoxData buckets. The fullest total is the one the sender
-/// is filling; a finished set has already left the bucket.
+/// Incomplete Data/VoxData mails. The count is the smallest total stored,
+/// which is the chunk count when a byte-length label also arrived. A finished
+/// set has already left the bucket.
 fn pending_have_reports(
     asm: &Assembler,
     completed: &std::collections::HashSet<String>,
 ) -> Vec<HaveReport> {
     let mut out = Vec::new();
-    for (key, totals) in &asm.buckets {
+    for (key, slot) in &asm.buckets {
         let Some((op_name, mail_id)) = key.split_once(':') else {
             continue;
         };
@@ -818,13 +865,12 @@ fn pending_have_reports(
         if completed.contains(mail_id) {
             continue;
         }
-        let Some((count, slot)) = totals
-            .iter()
-            .max_by_key(|(count, slot)| (slot.len(), *count))
-        else {
+        let Some(count) = slot.values().map(|w| w.count).min() else {
             continue;
         };
-        if slot.is_empty() || slot.len() >= usize::from(*count) {
+        let mut indexes: Vec<u16> = slot.keys().copied().filter(|i| *i < count).collect();
+        indexes.sort_unstable();
+        if indexes.is_empty() || indexes.len() >= usize::from(count) {
             continue;
         }
         let Some(from) = asm.from.get(mail_id) else {
@@ -833,15 +879,10 @@ fn pending_have_reports(
         let Some(origin) = proto::callsign_from_wcr(from) else {
             continue;
         };
-        let mut indexes: Vec<u16> = slot.keys().copied().filter(|i| i < count).collect();
-        indexes.sort_unstable();
-        if indexes.is_empty() {
-            continue;
-        }
         out.push(HaveReport {
             mail_id: mail_id.to_string(),
             origin,
-            count: *count,
+            count,
             indexes,
         });
     }
@@ -918,7 +959,13 @@ fn log_chunk(ctx: &TxCtx, asm: &Assembler, wire: &MailWire) {
     );
 }
 
-async fn apply_mail(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Result<()> {
+async fn apply_mail(
+    ctx: &TxCtx,
+    meta: MailMeta,
+    body: String,
+    op: MailOp,
+    during_burst: bool,
+) -> Result<()> {
     let cfg = ctx.cfg.lock().clone();
     let us = cfg.callsign.to_ascii_uppercase();
     if !meta.dest.is_empty() && !meta.dest.eq_ignore_ascii_case(&us) {
@@ -977,7 +1024,9 @@ async fn apply_mail(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Re
                 ctx.store.set_outcome(&id, "outbox", "gateway", "")?;
                 tracing::info!("mail at gateway {id}");
                 arm_wait(ctx, &id, Duration::from_secs(45));
-            } else if !indexes.is_empty() {
+            } else if !indexes.is_empty()
+                && gateway::progress_ack_retries(during_burst, have, total)
+            {
                 arm_wait(
                     ctx,
                     &id,
@@ -1390,7 +1439,7 @@ mod tests {
     }
 
     #[test]
-    fn have_report_uses_the_fullest_incomplete_total() {
+    fn have_report_uses_the_smaller_total_for_one_mail() {
         let mut asm = Assembler {
             slices: HashMap::new(),
             buckets: HashMap::new(),
@@ -1398,23 +1447,113 @@ mod tests {
             to: HashMap::new(),
             ready: Vec::new(),
         };
-        let mut short = HashMap::new();
-        short.insert(0u16, wire(0, 3));
-        let mut long = HashMap::new();
-        long.insert(0u16, wire(0, 46));
-        long.insert(2u16, wire(2, 46));
-        asm.buckets.insert(
-            "VoxData:abc".into(),
-            HashMap::from([(3u16, short), (46u16, long)]),
-        );
+        let mut slot = HashMap::new();
+        slot.insert(0u16, wire(0, 48));
+        slot.insert(2u16, wire(2, 3900));
+        asm.buckets.insert("VoxData:abc".into(), slot);
         asm.from
             .insert("abc".into(), "M7TJF@mail.weechatradio.com".into());
         let reports = pending_have_reports(&asm, &std::collections::HashSet::new());
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].origin, "M7TJF");
-        assert_eq!(reports[0].count, 46);
+        assert_eq!(reports[0].count, 48);
         assert_eq!(reports[0].indexes, vec![0, 2]);
         let done = std::collections::HashSet::from(["abc".to_string()]);
         assert!(pending_have_reports(&asm, &done).is_empty());
+    }
+
+    fn spaced_body(n: usize) -> String {
+        let word = "hello mail ";
+        let mut body = word.repeat(n / word.len());
+        body.push_str(&"x".repeat(n - body.len()));
+        body
+    }
+
+    fn sample_mail(body: &str) -> AirtimeMail<'_> {
+        AirtimeMail {
+            from: "M7TJF@mail.weechatradio.com",
+            to: "operator@example.com",
+            subject: "subject",
+            body,
+            gateway: "GATEWAY",
+            ack: true,
+        }
+    }
+
+    #[test]
+    fn a_retry_plans_the_same_chunk_count_as_the_first_send() {
+        let body = spaced_body(3900);
+        let mail = sample_mail(&body);
+        let id = "ab".repeat(32);
+        let first = plan_mail_wires(Preset::HfPoor, &id, &mail);
+        let total = first.len() as u32;
+        assert!(total > 1 && total < 200, "ladder-start plan was {total}");
+        assert!(first.iter().all(|w| u32::from(w.count) == total));
+        let again = plan_mail_wires(Preset::HfPoor, &id, &mail);
+        assert_eq!(again.len() as u32, total);
+        let (_, hinted) = mail_airtime_secs(Preset::HfPoor, &mail, 250);
+        assert_eq!(hinted, first.len());
+        let trap = mail_rung(Preset::HfPoor, 2).payload_bytes() as usize;
+        assert!(trap < plan_limit(Preset::HfPoor));
+        let meta = MailMeta {
+            from: mail.from.into(),
+            to: mail.to.into(),
+            subject: mail.subject.into(),
+            dest: mail.gateway.into(),
+            via: mail.gateway.into(),
+            ack: mail.ack,
+            ..MailMeta::default()
+        };
+        let bad = proto::chunk_to_limit(&id, &meta, &body, trap);
+        assert!(
+            bad.len() as u32 > total,
+            "slower rung would re-split {total} into {}",
+            bad.len()
+        );
+        let missing = missing_chunk_idxs(total, "0,7,14");
+        let resend: Vec<_> = first.iter().filter(|w| missing.contains(&w.idx)).collect();
+        assert!(resend.iter().all(|w| u32::from(w.count) == total));
+        assert!(!resend
+            .iter()
+            .any(|w| w.idx == 0 || w.idx == 7 || w.idx == 14));
+    }
+
+    #[test]
+    fn absorb_completes_when_a_resend_uses_the_byte_length() {
+        let body = spaced_body(3900);
+        let mail = sample_mail(&body);
+        let id = proto::compute_mail_id(mail.from, mail.to, mail.subject, &body, mail.ack);
+        let wires = plan_mail_wires(Preset::HfPoor, &id, &mail);
+        let mut asm = Assembler {
+            slices: HashMap::new(),
+            buckets: HashMap::new(),
+            from: HashMap::new(),
+            to: HashMap::new(),
+            ready: Vec::new(),
+        };
+        let missing: Vec<u16> = wires.iter().map(|w| w.idx).filter(|i| i % 7 == 0).collect();
+        assert!(!missing.is_empty());
+        for w in wires.iter().filter(|w| !missing.contains(&w.idx)) {
+            assert!(
+                matches!(absorb(&mut asm, w.clone()), Absorb::Pending),
+                "partial set must not complete"
+            );
+        }
+        let mut last = Absorb::Pending;
+        for idx in &missing {
+            let mut w = wires[*idx as usize].clone();
+            w.count = body.len() as u16;
+            last = absorb(&mut asm, w);
+        }
+        match last {
+            Absorb::Ready(_, text, op) => {
+                assert_eq!(op, MailOp::VoxData);
+                assert_eq!(text, body);
+            }
+            Absorb::Pending => panic!("resend did not complete the mail"),
+            Absorb::Rejected { idx, count, .. } => {
+                panic!("resend rejected {idx}/{count}")
+            }
+        }
     }
 }

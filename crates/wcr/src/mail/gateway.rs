@@ -70,6 +70,12 @@ pub fn mail_try_label(retries: u32, cap: u32) -> String {
     )
 }
 
+/// A partial "has N/M" ack starts another send only after this burst has
+/// finished keying. Chunks still on the air are not missing yet.
+pub fn progress_ack_retries(during_burst: bool, have: u32, total: u32) -> bool {
+    !during_burst && total > 0 && have < total
+}
+
 /// 8s, 16s, 32s, 64s, then 128s. Added after the keyed burst has finished.
 pub fn ack_backoff_secs(retries: u32) -> u64 {
     8u64.saturating_mul(1u64 << retries.min(4))
@@ -179,6 +185,10 @@ mod tests {
                 error: GATEWAY_NOT_ACCEPTED
             })
         );
+        assert!(!progress_ack_retries(true, 24, 48));
+        assert!(progress_ack_retries(false, 24, 48));
+        assert!(!progress_ack_retries(false, 48, 48));
+        assert!(!progress_ack_retries(false, 0, 0));
         assert_eq!(ack_backoff_secs(0), 8);
         assert_eq!(ack_backoff_secs(1), 16);
         assert_eq!(ack_backoff_secs(3), 64);
