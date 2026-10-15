@@ -164,8 +164,11 @@ struct Rule {
     pred: FramePred,
 }
 
+/// Copies already dropped, per rule and message id.
+type Seen = Arc<Mutex<HashMap<(usize, [u8; 8]), u32>>>;
+
 fn link_drop(rules: Vec<Rule>, log: Arc<Mutex<Vec<String>>>) -> LinkDrop {
-    let seen: Arc<Mutex<HashMap<(usize, [u8; 8]), u32>>> = Arc::new(Mutex::new(HashMap::new()));
+    let seen: Seen = Arc::new(Mutex::new(HashMap::new()));
     Arc::new(move |from, to, frame| {
         let Ok(env) = Envelope::decode(frame) else {
             return false;
@@ -259,12 +262,12 @@ fn privmsg_body(line: &str) -> Option<&str> {
 
 /// Members in the last `353` reply for `chan`.
 fn names_of(lines: &[String], chan: &str) -> Option<Vec<String>> {
-    let needle = format!(" 353 ");
+    let needle = " 353 ";
     let tail = format!("= {chan} :");
     lines
         .iter()
         .rev()
-        .find(|l| l.contains(&needle) && l.contains(&tail))
+        .find(|l| l.contains(needle) && l.contains(&tail))
         .map(|l| {
             l.split_once(&tail)
                 .map(|(_, b)| b.split_whitespace().map(|s| s.to_string()).collect())
