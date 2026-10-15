@@ -97,6 +97,8 @@ struct Runtime {
     neighbours: Arc<Mutex<HashMap<String, u32>>>,
     /// When this node started listening.
     started: u32,
+    /// Copies of someone else's line this station has keyed.
+    relay_copies: Arc<Mutex<HashMap<MsgId, u32>>>,
 }
 
 impl Runtime {
@@ -444,6 +446,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         last_traffic: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         neighbours: Arc::new(Mutex::new(HashMap::new())),
         started: crate::proto::now_ts(),
+        relay_copies: Arc::new(Mutex::new(HashMap::new())),
     };
     refresh_group_prios(&rt);
 
@@ -531,8 +534,11 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                             || (m.env.kind != MsgType::Ack
                                 && line_reached_neighbours(&rt_h, &m.env));
                         // A repeat that every neighbour no longer needs stays
-                        // off the air. The first relay always goes.
-                        if retries > 0 && heard {
+                        // off the air, and so does one past the cap. The
+                        // first relay always goes.
+                        let spent =
+                            m.env.kind != MsgType::Ack && relay_copies_spent(&rt_h, &m.env.msg_id);
+                        if retries > 0 && (heard || spent) {
                             let _ = rt_h.store.set_hold(&m.env.msg_id, 0, m.env.hops_left);
                             continue;
                         }
@@ -1535,14 +1541,9 @@ fn line_reached_neighbours(rt: &Runtime, line: &Envelope) -> bool {
     relay::neighbours_hold(&current_neighbours(rt), &holders, came_relayed)
 }
 
-/// A neighbour's receipt shows a station past us on `line`'s path.
-fn line_has_station_beyond(rt: &Runtime, line: &Envelope) -> bool {
-    let held: Vec<Envelope> = rt
-        .store
-        .acks_for(&line.msg_id, &rt.engine.our_call)
-        .map(|acks| acks.into_iter().map(|a| a.env).collect())
-        .unwrap_or_default();
-    relay::neighbour_beyond(line, &held, &current_neighbours(rt))
+/// We have keyed our cap of copies of someone else's line.
+fn relay_copies_spent(rt: &Runtime, id: &MsgId) -> bool {
+    rt.relay_copies.lock().get(id).copied().unwrap_or(0) >= relay::RELAY_MAX_COPIES
 }
 
 fn note_own_rf_tx(rt: &Runtime, env: &Envelope) {
@@ -1618,6 +1619,7 @@ async fn dispatch_with(
                 .sides
                 .lock()
                 .relaying(env.msg_id, std::time::Instant::now() + delay);
+            *rt.relay_copies.lock().entry(env.msg_id).or_insert(0) += 1;
         }
     }
     let via_inet =
@@ -2164,6 +2166,17 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                             rt.irc.tagmsg_delivery(&id.hex(), "all").await;
                         }
                         keep = group_still_waiting(&rt.store, &orig.env);
+                        // Our relay of someone else's line: once every
+                        // neighbour has it, a queued repeat reaches nobody new.
+                        if !relay::is_own_origin(&rt.engine.our_call, &orig.env)
+                            && rt.store.retries_of(&id).unwrap_or(0) > 0
+                            && line_reached_neighbours(rt, &orig.env)
+                        {
+                            let _ = rt.store.set_hold(&id, 0, orig.env.hops_left);
+                            if let Some(air) = rt.air() {
+                                air.cancel(id);
+                            }
+                        }
                     }
                 }
                 // Our relay copy of someone else's bulletin keeps walking.
@@ -2403,11 +2416,9 @@ async fn relay_heard_retry(rt: &Runtime, env: &Envelope) {
     if rt.downstream_heard.lock().contains(&env.msg_id) && !receipts_missing {
         return;
     }
-    // Every neighbour has the line. The retry goes on only toward a station
-    // past us that still owes a receipt; at the end of the chain it stops.
-    if line_reached_neighbours(rt, &stored.env)
-        && !(receipts_missing && line_has_station_beyond(rt, &stored.env))
-    {
+    // Every neighbour has the line, so passing the retry on reaches nobody
+    // new. The receipts we hold for it went out above.
+    if line_reached_neighbours(rt, &stored.env) || relay_copies_spent(rt, &env.msg_id) {
         return;
     }
     if relay::may_rebroadcast(&rt.engine.our_call, &stored.env, Some(stored.delivery))

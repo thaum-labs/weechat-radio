@@ -311,17 +311,9 @@ pub fn neighbours_hold(neighbours: &[String], holders: &[String], came_relayed: 
         .all(|n| holders.iter().any(|h| h.eq_ignore_ascii_case(n)))
 }
 
-/// A neighbour's receipt says it heard the line with fewer hops left than we
-/// did (`our_line` is our stored copy, one hop down): a station is past us.
-pub fn neighbour_beyond(our_line: &Envelope, held: &[Envelope], neighbours: &[String]) -> bool {
-    let ours = our_line.hops_left.saturating_add(1);
-    held.iter().any(|ack| {
-        neighbours
-            .iter()
-            .any(|n| n.eq_ignore_ascii_case(ack.origin.as_str()))
-            && ack.acked_line_hops().is_some_and(|theirs| theirs < ours)
-    })
-}
+/// Most copies of one line a relay keys: its relay, one repeat, and one
+/// answer to the originator's retry. Receipts are not counted.
+pub const RELAY_MAX_COPIES: u32 = 3;
 
 /// Only stations that heard a `#bulletin` from its originator ACK it. The
 /// originator stops at the first ACK, so a receipt from further away is
@@ -498,13 +490,14 @@ pub const BEACON_MAX_S: i64 = 120;
 /// Longest a station goes without a beacon while traffic keeps it quiet.
 pub const BEACON_MAX_GAP_S: u32 = 600;
 
-/// A beacon goes out once a full base interval has passed with no traffic
+/// A beacon goes out once `BEACON_MAX_GAP_S` has passed with no traffic
 /// keyed or decoded here (`last_traffic`, 0 for none), or when the last
-/// beacon (`last_beacon`) is `BEACON_MAX_GAP_S` old. Traffic already tells the
-/// neighbours who is on the dial, and a beacon keyed into it lands on the
-/// relays and receipts that need the air.
+/// beacon (`last_beacon`) is that old. Traffic already tells the neighbours
+/// who is on the dial. A line's retries and receipts run for about that long,
+/// and a beacon keyed into a gap between them can deafen the station that
+/// should hear the next retry.
 pub fn beacon_due(now: u32, last_traffic: u32, last_beacon: Option<u32>) -> bool {
-    let quiet = last_traffic == 0 || now.saturating_sub(last_traffic) >= BEACON_BASE_S as u32;
+    let quiet = last_traffic == 0 || now.saturating_sub(last_traffic) >= BEACON_MAX_GAP_S;
     let overdue = last_beacon.is_none_or(|t| now.saturating_sub(t) >= BEACON_MAX_GAP_S);
     quiet || overdue
 }
@@ -1406,22 +1399,6 @@ mod tests {
     }
 
     #[test]
-    fn a_receipt_from_further_on_shows_a_station_past_us() {
-        let line = group_line();
-        let mut ours = line.clone();
-        ours.hops_left = 4; // heard at 5
-        let ack_from = |call: &str, h: u8| {
-            let mut copy = line.clone();
-            copy.hops_left = h;
-            Envelope::ack_for(&copy, Callsign::parse(call).unwrap(), u32::from(h), None)
-        };
-        let n = vec!["M0BBB".to_string(), "M0DDD".to_string()];
-        assert!(neighbour_beyond(&ours, &[ack_from("M0DDD", 4)], &n));
-        assert!(!neighbour_beyond(&ours, &[ack_from("M0BBB", 6)], &n));
-        assert!(!neighbour_beyond(&ours, &[ack_from("G4EEE", 3)], &n));
-    }
-
-    #[test]
     fn an_invite_travels_as_far_as_its_group() {
         let invite = Envelope::new_msg(
             Callsign::parse("G4AAA").unwrap(),
@@ -1555,10 +1532,14 @@ mod tests {
 
     #[test]
     fn a_beacon_waits_for_a_quiet_channel() {
-        let base = BEACON_BASE_S as u32;
+        let gap = BEACON_MAX_GAP_S;
         assert!(beacon_due(1_000, 0, Some(990)), "nothing heard yet");
         assert!(!beacon_due(1_000, 990, Some(900)), "traffic 10 s ago");
-        assert!(beacon_due(1_000, 1_000 - base, Some(990)));
+        assert!(
+            !beacon_due(1_000, 1_000 - 200, Some(990)),
+            "a line's retries are still running"
+        );
+        assert!(beacon_due(1_000, 1_000 - gap, Some(990)));
         assert!(beacon_due(1_000, 990, None), "the first beacon goes out");
         assert!(beacon_due(1_000, 990, Some(1_000 - BEACON_MAX_GAP_S)));
     }
