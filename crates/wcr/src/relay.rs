@@ -316,6 +316,15 @@ pub fn neighbours_hold(neighbours: &[String], holders: &[String], came_relayed: 
 /// repeats are what carries a far member's receipt home.
 pub const RELAY_MAX_COPIES: u32 = 3;
 
+/// A relay passes an originator's retry on unless a station further along
+/// already carried the line. A direct message is the exception: hearing it
+/// one hop on says nothing about its addressee, whose ACK alone ends it (and
+/// marks our copy delivered, which stops the relay anyway).
+pub fn retry_passes_on(line: &Envelope, heard_further: bool, receipts_missing: bool) -> bool {
+    let direct = line.kind != MsgType::Ack && !line.flags.group();
+    !heard_further || receipts_missing || direct
+}
+
 /// Only stations that heard a `#bulletin` from its originator ACK it. The
 /// originator stops at the first ACK, so a receipt from further away is
 /// airtime that the relays need.
@@ -1397,6 +1406,26 @@ mod tests {
         assert!(neighbours_hold(&b, &n(&["G4AAA", "2E0CCC"]), false));
         // Nobody heard yet: keep the old walk.
         assert!(!neighbours_hold(&[], &n(&["G4AAA"]), true));
+    }
+
+    #[test]
+    fn a_direct_message_retry_passes_on_after_a_further_relay() {
+        let mut dm = group_line();
+        dm.flags = Flags::new();
+        dm.dest = Callsign::parse("G4EEE").unwrap();
+        assert!(
+            retry_passes_on(&dm, true, false),
+            "loss can be past the next hop"
+        );
+        let line = group_line();
+        assert!(!retry_passes_on(&line, true, false));
+        assert!(retry_passes_on(&line, true, true), "receipts still missing");
+        assert!(retry_passes_on(&line, false, false));
+        let ack = Envelope::ack_for(&dm, Callsign::parse("G4EEE").unwrap(), 1, None);
+        assert!(
+            !retry_passes_on(&ack, true, false),
+            "a receipt walk still stops"
+        );
     }
 
     #[test]
