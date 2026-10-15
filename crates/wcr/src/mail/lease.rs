@@ -16,6 +16,7 @@ pub fn lease_sequence() -> &'static [&'static str] {
     &[
         "pause",
         "wait_idle",
+        "wait_clear",
         "drain_before",
         "snapshot",
         "set_mail_config",
@@ -164,6 +165,19 @@ pub fn channel_receiving(ports: &RadioPorts) -> bool {
         .sense
         .as_ref()
         .is_some_and(|s| s.state() == ChannelState::Rx)
+}
+
+/// Longest a mail lease waits for an inbound frame to finish before keying.
+pub const WAIT_CLEAR_CAP: Duration = Duration::from_secs(12);
+
+/// Let a frame that is being decoded finish before keying. A sender that
+/// keys its retry over the gateway's acceptance never hears it. Undecodable
+/// noise is not `Rx`, so a noisy floor does not hold the lease.
+pub async fn wait_clear(ports: &RadioPorts, cap: Duration) {
+    let start = Instant::now();
+    while channel_receiving(ports) && start.elapsed() < cap {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
 }
 
 #[cfg(test)]

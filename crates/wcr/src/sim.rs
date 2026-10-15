@@ -326,6 +326,8 @@ pub struct TimedKey {
     pub cap: usize,
     /// Wider than `cap`. modem73 drops it instead of keying.
     pub dropped: bool,
+    /// How long the frame held the channel.
+    pub len: Duration,
 }
 
 pub type TimedLog = Arc<Mutex<Vec<TimedKey>>>;
@@ -338,6 +340,16 @@ pub struct TimedOpts {
     /// Upstream modem73 reports `tx_frame_count` 0 and only `tx_queue` /
     /// `ptt_on` move. True counts each frame as it starts.
     pub count_tx: bool,
+    /// Two stations this receiver hears keyed over each other: neither frame
+    /// decodes here. The keyers may not hear each other (hidden terminal).
+    pub collide: bool,
+    /// Non-zero: the noise floor sits above the carrier threshold, as on the
+    /// PulseAudio RF sim. Carrier sense is always busy, so each queued frame
+    /// waits this long, then keys anyway with one burst continuation.
+    pub csma_stuck_ms: u64,
+    /// `frame_ms` is the RDM-600S frame. A slower rung keys a longer frame,
+    /// as on the air: RDM-300S about 1.85 times, MFSK-32R 1.2 times.
+    pub rung_airtime: bool,
 }
 
 struct TimedState {
@@ -346,6 +358,8 @@ struct TimedState {
     keyed_until: Option<Instant>,
     heard_at: Option<Instant>,
     cap: usize,
+    /// Airtime of one frame in the current mode, relative to `frame_ms`.
+    scale: f64,
     csma: bool,
     tx_count: u64,
 }
@@ -356,8 +370,47 @@ fn timed_hearing(log: &TimedLog, hear: &std::collections::HashSet<u64>, frame: D
     let log = log.lock().expect("timed log");
     log.iter()
         .rev()
-        .take_while(|k| k.at.elapsed() < frame * 2)
-        .any(|k| !k.dropped && hear.contains(&k.station) && k.at.elapsed() < frame)
+        .take_while(|k| k.at.elapsed() < frame * 4)
+        .any(|k| !k.dropped && hear.contains(&k.station) && k.at.elapsed() < k.len)
+}
+
+/// Another station this receiver hears was keying while `from` sent `payload`.
+fn timed_collided(
+    log: &TimedLog,
+    hear: &std::collections::HashSet<u64>,
+    from: u64,
+    payload: &[u8],
+    frame: Duration,
+) -> bool {
+    let log = log.lock().expect("timed log");
+    let Some((start, len)) = log
+        .iter()
+        .rev()
+        .find(|k| k.station == from && !k.dropped && k.payload == payload)
+        .map(|k| (k.at, k.len))
+    else {
+        return false;
+    };
+    let edge = Duration::from_millis(20);
+    log.iter()
+        .rev()
+        .take_while(|k| k.at + frame * 4 > start)
+        .any(|k| {
+            k.station != from
+                && !k.dropped
+                && hear.contains(&k.station)
+                && k.at + edge < start + len
+                && k.at + k.len > start + edge
+        })
+}
+
+/// Airtime of the last copy of `payload` that `from` keyed.
+fn timed_len(log: &TimedLog, from: u64, payload: &[u8]) -> Option<Duration> {
+    let log = log.lock().expect("timed log");
+    log.iter()
+        .rev()
+        .find(|k| k.station == from && k.payload == payload)
+        .map(|k| k.len)
 }
 
 fn timed_cap(cfg: &serde_json::Value, prev: usize) -> usize {
@@ -365,6 +418,20 @@ fn timed_cap(cfg: &serde_json::Value, prev: usize) -> usize {
         Some(0) => 512,
         Some(1) => 55,
         Some(2) => 170,
+        _ => prev,
+    }
+}
+
+/// Frame airtime of the mode in `cfg`, relative to an RDM-600S frame.
+fn timed_scale(cfg: &serde_json::Value, prev: f64) -> f64 {
+    match cfg.get("modem_type").and_then(|v| v.as_i64()) {
+        Some(0) => 0.25,
+        Some(1) => 1.2,
+        Some(2) => match cfg.get("robust_mode").and_then(|v| v.as_i64()) {
+            Some(5) => 0.5,
+            Some(7) => 1.85,
+            _ => 1.0,
+        },
         _ => prev,
     }
 }
@@ -389,6 +456,7 @@ pub async fn mock_modem73_timed(
         keyed_until: None,
         heard_at: None,
         cap: 170,
+        scale: 1.0,
         csma: true,
         tx_count: 0,
     }));
@@ -399,35 +467,54 @@ pub async fn mock_modem73_timed(
     let tx_air = air.clone();
     let tx_hear = hear.clone();
     let tx_log = log.clone();
+    let stuck = Duration::from_millis(opts.csma_stuck_ms);
     tokio::spawn(async move {
+        let mut burst_left = 0u8;
         loop {
             let next = tx_st.lock().expect("timed").queue.pop_front();
             let Some(payload) = next else {
+                burst_left = 0;
                 tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
             };
             let waited = Instant::now();
+            let cap = if stuck.is_zero() {
+                Duration::from_secs(10)
+            } else {
+                stuck
+            };
+            let mut deferred = false;
             loop {
                 let clear = {
                     let g = tx_st.lock().expect("timed");
-                    !g.csma
-                        || (g
-                            .heard_at
+                    if !g.csma || burst_left > 0 {
+                        true
+                    } else if !stuck.is_zero() {
+                        false
+                    } else {
+                        g.heard_at
                             .is_none_or(|t| t.elapsed() >= Duration::from_millis(300))
-                            && !timed_hearing(&tx_log, &tx_hear, frame))
+                            && !timed_hearing(&tx_log, &tx_hear, frame)
+                    }
                 };
-                if clear || waited.elapsed() >= Duration::from_secs(10) {
+                if clear || waited.elapsed() >= cap {
                     break;
                 }
+                deferred = true;
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
-            let (cap, csma) = {
+            if deferred && !stuck.is_zero() {
+                burst_left = 1;
+            } else {
+                burst_left = burst_left.saturating_sub(1);
+            }
+            let (cap, csma, len) = {
                 let mut g = tx_st.lock().expect("timed");
                 g.keying = true;
                 if opts.count_tx {
                     g.tx_count += 1;
                 }
-                (g.cap, g.csma)
+                (g.cap, g.csma, frame.mul_f64(g.scale))
             };
             let dropped = payload.len() > cap;
             tx_log.lock().expect("timed log").push(TimedKey {
@@ -437,9 +524,10 @@ pub async fn mock_modem73_timed(
                 csma,
                 cap,
                 dropped,
+                len,
             });
             if !dropped {
-                tokio::time::sleep(frame).await;
+                tokio::time::sleep(len).await;
                 tx_air.send_from(station, payload);
             }
             let mut g = tx_st.lock().expect("timed");
@@ -450,6 +538,7 @@ pub async fn mock_modem73_timed(
 
     let rx_st = st.clone();
     let rx_hear = hear.clone();
+    let rx_log = log.clone();
     tokio::spawn(async move {
         loop {
             let (mut stream, _) = kiss.accept().await.expect("kiss accept");
@@ -457,6 +546,7 @@ pub async fn mock_modem73_timed(
             let air = air.clone();
             let hear = rx_hear.clone();
             let drop_rx = drop_rx.clone();
+            let log = rx_log.clone();
             tokio::spawn(async move {
                 let mut dec = KissDecoder::new();
                 let mut rx = air.subscribe_linked();
@@ -481,9 +571,15 @@ pub async fn mock_modem73_timed(
                             let deaf = {
                                 let mut g = st.lock().expect("timed");
                                 g.heard_at = Some(Instant::now());
-                                g.keying || g.keyed_until.is_some_and(|t| t.elapsed() < frame)
+                                let len = timed_len(&log, from, &payload).unwrap_or(frame);
+                                g.keying || g.keyed_until.is_some_and(|t| t.elapsed() < len)
                             };
-                            if deaf || drop_rx.as_ref().is_some_and(|d| d(from, station, &payload)) {
+                            let collided = opts.collide
+                                && timed_collided(&log, &hear, from, &payload, frame);
+                            if deaf
+                                || collided
+                                || drop_rx.as_ref().is_some_and(|d| d(from, station, &payload))
+                            {
                                 continue;
                             }
                             if stream.write_all(&encode_frame(&payload)).await.is_err() {
@@ -530,6 +626,8 @@ pub async fn mock_modem73_timed(
                                         "tx"
                                     } else if rx {
                                         "rx"
+                                    } else if opts.csma_stuck_ms > 0 {
+                                        "busy"
                                     } else {
                                         "idle"
                                     };
@@ -547,6 +645,9 @@ pub async fn mock_modem73_timed(
                                 }
                                 "set_config" => {
                                     g.cap = timed_cap(&v, g.cap);
+                                    if opts.rung_airtime {
+                                        g.scale = timed_scale(&v, g.scale);
+                                    }
                                     if let Some(on) =
                                         v.get("csma_enabled").and_then(|x| x.as_bool())
                                     {
