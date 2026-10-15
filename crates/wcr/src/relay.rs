@@ -247,10 +247,18 @@ pub fn group_walk_continues(
         && ack_walk_continues(downstream_heard, retries, max_retries)
 }
 
-/// Hops a line leaves its originator with: 6 for `#bulletin` and closed
-/// groups, the priority's budget for a direct message.
+/// A direct invite to a closed group. It has to reach every station the
+/// group's own lines reach, so it travels on the group's hop budget.
+pub fn is_group_invite(env: &Envelope) -> bool {
+    env.kind == MsgType::Msg
+        && !env.flags.group()
+        && crate::slash::parse_invite_text(&env.body_text()).is_some()
+}
+
+/// Hops a line leaves its originator with: 6 for `#bulletin`, closed groups
+/// and invites to them, the priority's budget for a direct message.
 pub fn initial_hops(env: &Envelope) -> u8 {
-    if env.flags.group() {
+    if env.flags.group() || is_group_invite(env) {
         crate::emcomm::BULLETIN_TTL
     } else {
         env.priority().default_ttl()
@@ -260,6 +268,59 @@ pub fn initial_hops(env: &Envelope) -> u8 {
 /// A copy with `hops_heard` came straight from its originator, no relay between.
 pub fn heard_from_origin(env: &Envelope, hops_heard: u8) -> bool {
     hops_heard >= initial_hops(env)
+}
+
+/// A neighbour not heard for this long has gone: three beacon gaps.
+pub const NEIGHBOUR_TTL_S: u32 = 3 * BEACON_MAX_GAP_S;
+
+/// Listening this long after start, every neighbour has had time to beacon
+/// (the first beacon goes within `BEACON_MAX_S`, then waits out a busy
+/// modem). Before that the neighbour list is not trusted.
+pub const NEIGHBOUR_WARMUP_S: u32 = BEACON_MAX_S as u32 + 60;
+
+/// A copy heard with the hops its origin keyed it with came straight from
+/// that station, with no relay between: the origin is a neighbour. `line` is
+/// the line an ACK answers, when we hold it. Beacons are never relayed.
+pub fn heard_direct(env: &Envelope, line: Option<&Envelope>) -> bool {
+    let keyed = match env.kind {
+        MsgType::Beacon => return true,
+        MsgType::Ack => match line {
+            Some(l) => ack_hop_budget(l.flags.group() || is_group_invite(l), l.priority()),
+            None => crate::emcomm::BULLETIN_TTL,
+        },
+        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status => initial_hops(env),
+        _ => return false,
+    };
+    env.hops_left >= keyed
+}
+
+/// Every station we hear directly already has the line, so another copy
+/// from us reaches nobody new: we are the end of the chain for it.
+/// `holders` have it (its originator, and every member whose receipt we
+/// hold). With one neighbour and a relayed copy, that neighbour is the one
+/// that relayed it to us. With no neighbour known we cannot tell.
+pub fn neighbours_hold(neighbours: &[String], holders: &[String], came_relayed: bool) -> bool {
+    if neighbours.is_empty() {
+        return false;
+    }
+    if came_relayed && neighbours.len() == 1 {
+        return true;
+    }
+    neighbours
+        .iter()
+        .all(|n| holders.iter().any(|h| h.eq_ignore_ascii_case(n)))
+}
+
+/// A neighbour's receipt says it heard the line with fewer hops left than we
+/// did (`our_line` is our stored copy, one hop down): a station is past us.
+pub fn neighbour_beyond(our_line: &Envelope, held: &[Envelope], neighbours: &[String]) -> bool {
+    let ours = our_line.hops_left.saturating_add(1);
+    held.iter().any(|ack| {
+        neighbours
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case(ack.origin.as_str()))
+            && ack.acked_line_hops().is_some_and(|theirs| theirs < ours)
+    })
 }
 
 /// Only stations that heard a `#bulletin` from its originator ACK it. The
@@ -1310,6 +1371,73 @@ mod tests {
             assert!(n < spread_slots(Priority::Routine));
             assert!((delay.as_secs_f64() - wide * n as f64).abs() < 0.01);
         }
+    }
+
+    #[test]
+    fn a_neighbour_is_a_station_heard_without_a_relay() {
+        let line = group_line();
+        assert!(heard_direct(&line, None));
+        let mut relayed = line.clone();
+        relayed.hops_left -= 1;
+        assert!(!heard_direct(&relayed, None));
+        let ack = Envelope::ack_for(&line, Callsign::parse("M0DDD").unwrap(), 1, None);
+        let mut ack = ack;
+        ack.hops_left = crate::emcomm::BULLETIN_TTL;
+        assert!(heard_direct(&ack, Some(&line)));
+        assert!(heard_direct(&ack, None));
+        ack.hops_left -= 1;
+        assert!(!heard_direct(&ack, Some(&line)));
+        assert!(!heard_direct(&ack, None));
+    }
+
+    #[test]
+    fn the_end_of_a_chain_does_not_repeat_a_line() {
+        let n = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // A at the end hears only B, and B relayed the line to it.
+        assert!(neighbours_hold(&n(&["M0BBB"]), &[], true));
+        // A heard it from the originator itself: B may not have it.
+        assert!(!neighbours_hold(&n(&["M0BBB"]), &[], false));
+        // B in the middle: A sent it, C has not answered yet.
+        let b = n(&["G4AAA", "2E0CCC"]);
+        assert!(!neighbours_hold(&b, &n(&["G4AAA"]), false));
+        assert!(neighbours_hold(&b, &n(&["G4AAA", "2E0CCC"]), false));
+        // Nobody heard yet: keep the old walk.
+        assert!(!neighbours_hold(&[], &n(&["G4AAA"]), true));
+    }
+
+    #[test]
+    fn a_receipt_from_further_on_shows_a_station_past_us() {
+        let line = group_line();
+        let mut ours = line.clone();
+        ours.hops_left = 4; // heard at 5
+        let ack_from = |call: &str, h: u8| {
+            let mut copy = line.clone();
+            copy.hops_left = h;
+            Envelope::ack_for(&copy, Callsign::parse(call).unwrap(), u32::from(h), None)
+        };
+        let n = vec!["M0BBB".to_string(), "M0DDD".to_string()];
+        assert!(neighbour_beyond(&ours, &[ack_from("M0DDD", 4)], &n));
+        assert!(!neighbour_beyond(&ours, &[ack_from("M0BBB", 6)], &n));
+        assert!(!neighbour_beyond(&ours, &[ack_from("G4EEE", 3)], &n));
+    }
+
+    #[test]
+    fn an_invite_travels_as_far_as_its_group() {
+        let invite = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::parse("G4EEE").unwrap(),
+            1,
+            crate::slash::invite_notice("#qa", "G4AAA").into_bytes(),
+            crate::emcomm::BULLETIN_TTL,
+            Flags::new(),
+        )
+        .unwrap();
+        assert!(is_group_invite(&invite));
+        assert_eq!(initial_hops(&invite), crate::emcomm::BULLETIN_TTL);
+        let mut dm = invite.clone();
+        dm.body = b"hello".to_vec();
+        assert!(!is_group_invite(&dm));
+        assert_eq!(initial_hops(&dm), Priority::Routine.default_ttl());
     }
 
     #[test]

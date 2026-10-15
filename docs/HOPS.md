@@ -7,7 +7,7 @@ The first hop diagrams are same-frequency radio. The hub is not in that path. Th
 
 What the program does
 
-A normal direct message goes out with 3 hops left. A priority message (a leading `!`) starts with 4. An emergency message (`!!`) starts with 5. The public `#bulletin` channel and every other group start with 6 hops, so a line of five stations can still reach the far end. If a closed group lists more stations than those hops can cross in a straight line, the sender is told the far end may not hear it.
+A normal direct message goes out with 3 hops left. A priority message (a leading `!`) starts with 4. An emergency message (`!!`) starts with 5. The public `#bulletin` channel and every other group start with 6 hops, so a line of five stations can still reach the far end. An invite to a closed group is a direct message, but it starts with the group's 6 so it reaches every station the group does. If a closed group lists more stations than those hops can cross in a straight line, the sender is told the far end may not hear it.
 
 Group names are at most 8 characters, the same width as a callsign on the air. A longer name is refused with that limit, instead of being cut down to a different room.
 

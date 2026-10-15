@@ -93,6 +93,10 @@ struct Runtime {
     rl_painted: Arc<Mutex<HashSet<MsgId>>>,
     /// When this station last keyed or decoded a frame other than a beacon.
     last_traffic: Arc<std::sync::atomic::AtomicU32>,
+    /// Stations heard on RF with no relay between, and when.
+    neighbours: Arc<Mutex<HashMap<String, u32>>>,
+    /// When this node started listening.
+    started: u32,
 }
 
 impl Runtime {
@@ -242,6 +246,12 @@ fn still_awaiting_ack(store: &Store, id: &crate::proto::MsgId) -> bool {
         Delivery::Delivered => group_still_waiting(store, &m.env),
         Delivery::Failed | Delivery::All => false,
     }
+}
+
+/// `retry-n/max` is progress on a line nobody has carried or answered yet.
+/// After [rl], [gw] or [ok] the retries go on quietly: marks never move back.
+fn retry_mark_shows(delivery: Option<Delivery>) -> bool {
+    matches!(delivery, None | Some(Delivery::Queued | Delivery::Sent))
 }
 
 fn finish_ack_walk(rt: &Runtime, id: &crate::proto::MsgId) {
@@ -432,6 +442,8 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         gw_marked: Arc::new(Mutex::new(HashSet::new())),
         rl_painted: Arc::new(Mutex::new(HashSet::new())),
         last_traffic: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+        neighbours: Arc::new(Mutex::new(HashMap::new())),
+        started: crate::proto::now_ts(),
     };
     refresh_group_prios(&rt);
 
@@ -515,8 +527,16 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                             continue;
                         }
                         let retries = rt_h.store.retries_of(&m.env.msg_id).unwrap_or(0);
+                        let heard = rt_h.downstream_heard.lock().contains(&m.env.msg_id)
+                            || (m.env.kind != MsgType::Ack
+                                && line_reached_neighbours(&rt_h, &m.env));
+                        // A repeat that every neighbour no longer needs stays
+                        // off the air. The first relay always goes.
+                        if retries > 0 && heard {
+                            let _ = rt_h.store.set_hold(&m.env.msg_id, 0, m.env.hops_left);
+                            continue;
+                        }
                         let slot = dispatch_spread(&rt_h, &m.env).await;
-                        let heard = rt_h.downstream_heard.lock().contains(&m.env.msg_id);
                         let max = rt_h.cfg.lock().rf.max_retries;
                         let next_to_origin = relayed_next_to_origin(&rt_h.store, &m.env);
                         if relay::keep_relaying(&m.env, retries, max, heard)
@@ -618,7 +638,8 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                             }
                             continue;
                         }
-                        if !walking {
+                        let delivery = rt_r.store.delivery_of(&m.env.msg_id).ok().flatten();
+                        if !walking && retry_mark_shows(delivery) {
                             let tries = rt_r.store.rf_tx_of(&m.env.msg_id).ok();
                             rt_r.irc
                                 .tagmsg_progress(
@@ -647,15 +668,11 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                             continue;
                         }
                         // Retries are spent and someone ACKed, but not every
-                        // member. [ok] is not the end of a closed group.
+                        // member. The line stays [ok]; a late ACK still paints
+                        // [all]. Marks never move back.
                         if m.delivery == Delivery::Delivered
                             && group_still_waiting(&rt_r.store, &m.env)
                         {
-                            // Some members confirmed. [no] would say the line
-                            // failed after it had already been acknowledged.
-                            rt_r.irc
-                                .tagmsg_delivery(&m.env.msg_id.hex(), "waiting")
-                                .await;
                             continue;
                         }
                         if rt_r
@@ -731,7 +748,10 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 Some(HubTick::Refused { banner, queued }) => {
                     rt_hub.irc.notice_all(&banner).await;
                     for env in queued {
-                        if env.origin.as_str() == rt_hub.engine.our_call {
+                        let delivery = rt_hub.store.delivery_of(&env.msg_id).ok().flatten();
+                        if env.origin.as_str() == rt_hub.engine.our_call
+                            && delivery.is_none_or(|d| d.can_advance(Delivery::Failed))
+                        {
                             rt_hub
                                 .irc
                                 .tagmsg_delivery(&env.msg_id.hex(), "failed")
@@ -1213,9 +1233,10 @@ async fn send_chat(rt: &Runtime, target: &str, text: &str) -> Result<()> {
     if is_group {
         flags.set(FLAG_GROUP, true);
     }
-    // Closed groups use the bulletin hop count. A routine 3 dies before the
-    // far end of a five-station line; bulletin's 6 crosses that chain.
-    let hops = if is_group {
+    // Closed groups, and invites to them, use the bulletin hop count. A
+    // routine 3 dies before the far end of a five-station line; bulletin's 6
+    // crosses that chain.
+    let hops = if is_group || crate::slash::parse_invite_text(text).is_some() {
         BULLETIN_TTL
     } else {
         prio.default_ttl()
@@ -1464,6 +1485,64 @@ fn note_traffic(rt: &Runtime, env: &Envelope) {
         rt.last_traffic
             .store(crate::proto::now_ts(), std::sync::atomic::Ordering::Relaxed);
     }
+}
+
+/// Remember a station heard straight from itself on RF.
+fn note_neighbour(rt: &Runtime, env: &Envelope) {
+    if env
+        .origin
+        .as_str()
+        .eq_ignore_ascii_case(&rt.engine.our_call)
+    {
+        return;
+    }
+    let line = env
+        .acked_id()
+        .filter(|_| env.kind == MsgType::Ack)
+        .and_then(|id| rt.store.get(&id).ok().flatten())
+        .map(|m| m.env);
+    if relay::heard_direct(env, line.as_ref()) {
+        rt.neighbours.lock().insert(
+            env.origin.as_str().to_ascii_uppercase(),
+            crate::proto::now_ts(),
+        );
+    }
+}
+
+/// Stations heard directly lately. Empty until every neighbour has had time
+/// to beacon, so a cold start relays as if none were known.
+fn current_neighbours(rt: &Runtime) -> Vec<String> {
+    let now = crate::proto::now_ts();
+    if now.saturating_sub(rt.started) < relay::NEIGHBOUR_WARMUP_S {
+        return Vec::new();
+    }
+    let mut g = rt.neighbours.lock();
+    g.retain(|_, t| now.saturating_sub(*t) < relay::NEIGHBOUR_TTL_S);
+    g.keys().cloned().collect()
+}
+
+/// Every station we hear directly already has `line` (our stored copy).
+fn line_reached_neighbours(rt: &Runtime, line: &Envelope) -> bool {
+    let mut holders = vec![line.origin.as_str().to_string()];
+    if let Some(name) = closed_group_name(line) {
+        holders.extend(
+            rt.store
+                .receipts_for(&name, &line.msg_id)
+                .unwrap_or_default(),
+        );
+    }
+    let came_relayed = !relay::heard_from_origin(line, line.hops_left.saturating_add(1));
+    relay::neighbours_hold(&current_neighbours(rt), &holders, came_relayed)
+}
+
+/// A neighbour's receipt shows a station past us on `line`'s path.
+fn line_has_station_beyond(rt: &Runtime, line: &Envelope) -> bool {
+    let held: Vec<Envelope> = rt
+        .store
+        .acks_for(&line.msg_id, &rt.engine.our_call)
+        .map(|acks| acks.into_iter().map(|a| a.env).collect())
+        .unwrap_or_default();
+    relay::neighbour_beyond(line, &held, &current_neighbours(rt))
 }
 
 fn note_own_rf_tx(rt: &Runtime, env: &Envelope) {
@@ -1759,8 +1838,9 @@ fn group_member_heard_rf(store: &Store, dest: &str, freq: u32) -> bool {
         .any(|m| store.recently_heard_rf(m, 600, freq).unwrap_or(false))
 }
 
-/// Paint [rl] once. A later neighbour relay of the same message does not
-/// paint again. Hearing the frame after [ok] or [all] still paints once.
+/// Take the [rl] mark once. A later neighbour relay of the same message does
+/// not take it again. After [ok] or [all] it is taken without painting, so
+/// the mark does not move back.
 fn take_relay_mark(
     painted: &mut HashSet<MsgId>,
     id: MsgId,
@@ -1779,6 +1859,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
     }
     if medium == "rf" {
         note_traffic(rt, &env);
+        note_neighbour(rt, &env);
     }
     if env.origin.as_str() == rt.engine.our_call {
         // A relay closer to the destination has fewer hops than the copy we
@@ -1807,10 +1888,10 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
             }
             return Ok(());
         }
-        // [no] stays [no]. [ok] and [all] can gain one [rl] if the echo is
-        // heard after the receipt. A later copy of the same message does not
-        // paint [rl] again. A real ACK is the only way off [no], and that
-        // path does not come through our own origin.
+        // [no] stays [no], and [ok] and [all] stay put: an echo heard after
+        // the receipt is taken but not painted. A later copy of the same
+        // message does not paint [rl] again. A real ACK is the only way off
+        // [no], and that path does not come through our own origin.
         let cur = rt.store.delivery_of(&env.msg_id).ok().flatten();
         let advanced = rt
             .store
@@ -1821,7 +1902,9 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                 air.cancel(env.msg_id);
             }
         } else if take_relay_mark(&mut rt.rl_painted.lock(), env.msg_id, advanced, cur) {
-            rt.irc.tagmsg_delivery(&env.msg_id.hex(), "relayed").await;
+            if advanced {
+                rt.irc.tagmsg_delivery(&env.msg_id.hex(), "relayed").await;
+            }
         } else if !rt.rl_painted.lock().contains(&env.msg_id) {
             if let Some(air) = rt.air() {
                 air.cancel(env.msg_id);
@@ -2019,6 +2102,9 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                     let _ = acknowledge(rt, &env, snr).await;
                 }
                 if !mute_closed && env.flags.group() {
+                    if closed {
+                        learn_member(&rt.store, &rt.engine.our_call, &name, env.origin.as_str());
+                    }
                     let _ = rt.store.receipt(
                         &env.dest.to_string().to_ascii_lowercase(),
                         &env.msg_id,
@@ -2066,6 +2152,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                 if let Ok(Some(orig)) = rt.store.get(&id) {
                     if orig.env.flags.group() && !dest_is_bulletin(orig.env.dest.as_str()) {
                         let group = orig.env.dest.to_string().to_ascii_lowercase();
+                        learn_member(&rt.store, &rt.engine.our_call, &group, env.origin.as_str());
                         let _ = rt.store.receipt(&group, &id, env.origin.as_str());
                         let _ = rt.store.receipt(&group, &id, &rt.engine.our_call);
                         if rt.store.group_all_received(&group, &id).unwrap_or(false)
@@ -2152,9 +2239,12 @@ async fn acknowledge(rt: &Runtime, env: &Envelope, snr: Option<f32>) -> Result<(
         snr,
     );
     // Same hop budget as the message. A routine 3 dies before it walks back
-    // along a five-station line; a group receipt uses the message's 6.
+    // along a five-station line; a group receipt, or an invite's, uses 6.
     ack.flags.set_priority(env.priority());
-    ack.hops_left = relay::ack_hop_budget(env.flags.group(), env.priority());
+    ack.hops_left = relay::ack_hop_budget(
+        env.flags.group() || relay::is_group_invite(env),
+        env.priority(),
+    );
     // Mode flags (including THIRD_PARTY on ~guest) must be set before the
     // signature. dispatch() stamps them again; a later mutation makes the hub
     // drop the ACK as unverified.
@@ -2311,6 +2401,13 @@ async fn relay_heard_retry(rt: &Runtime, env: &Envelope) {
             .unwrap_or(false)
     });
     if rt.downstream_heard.lock().contains(&env.msg_id) && !receipts_missing {
+        return;
+    }
+    // Every neighbour has the line. The retry goes on only toward a station
+    // past us that still owes a receipt; at the end of the chain it stops.
+    if line_reached_neighbours(rt, &stored.env)
+        && !(receipts_missing && line_has_station_beyond(rt, &stored.env))
+    {
         return;
     }
     if relay::may_rebroadcast(&rt.engine.our_call, &stored.env, Some(stored.delivery))
@@ -2580,6 +2677,17 @@ fn refresh_group_prios(rt: &Runtime) {
         })
         .collect();
     rt.snap.lock().group_prios = briefs;
+}
+
+/// A station that sends on a closed group, or answers one of its lines, is
+/// in it. The roster that named it may never have reached us, and a JOIN
+/// sends nothing over the air, so member lists would never match otherwise.
+fn learn_member(store: &Store, our_call: &str, group: &str, call: &str) {
+    if store.is_group_member(group, our_call).unwrap_or(false)
+        && !store.is_group_member(group, call).unwrap_or(true)
+    {
+        let _ = store.group_create(group, &[call.to_ascii_uppercase()]);
+    }
 }
 
 /// Remember a closed channel when another station invites us over the air.
@@ -3540,6 +3648,39 @@ mod tests {
             Some(Delivery::Failed)
         ));
         assert!(!painted.contains(&failed));
+    }
+
+    #[test]
+    fn a_member_learns_who_sends_or_answers_on_its_group() {
+        let store = Store::open_memory().unwrap();
+        learn_member(&store, "M0CCC", "qa", "G4EEE");
+        assert!(
+            store.group_members("qa").unwrap().is_empty(),
+            "not our group"
+        );
+        store
+            .group_create("qa", &["M0CCC".into(), "G4AAA".into()])
+            .unwrap();
+        learn_member(&store, "M0CCC", "qa", "g4eee");
+        learn_member(&store, "M0CCC", "qa", "G4EEE");
+        let mut members = store.group_members("qa").unwrap();
+        members.sort();
+        assert_eq!(members, ["G4AAA", "G4EEE", "M0CCC"]);
+    }
+
+    #[test]
+    fn retries_after_a_relay_or_receipt_do_not_paint() {
+        assert!(retry_mark_shows(Some(Delivery::Sent)));
+        assert!(retry_mark_shows(Some(Delivery::Queued)));
+        for d in [
+            Delivery::Relayed,
+            Delivery::Gateway,
+            Delivery::Delivered,
+            Delivery::All,
+            Delivery::Failed,
+        ] {
+            assert!(!retry_mark_shows(Some(d)), "{d:?}");
+        }
     }
 
     #[test]
