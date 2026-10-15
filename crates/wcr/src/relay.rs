@@ -97,6 +97,21 @@ pub fn may_rebroadcast(our_call: &str, env: &Envelope, delivery: Option<Delivery
     true
 }
 
+/// Whether an ACK for `original` should mark our stored copy `[ok]`.
+/// A relay's copy of someone else's bulletin stays open: any neighbour's ACK
+/// says nothing about the stations further along, and `[ok]` would stop
+/// this relay from carrying it on.
+pub fn ack_marks_delivered(our_call: &str, original: &Envelope) -> bool {
+    is_own_origin(our_call, original) || !bulletin_keeps_walking(original)
+}
+
+/// An ACK from the DM's addressee means the line arrived. An ACK for a
+/// bulletin or group says only that one station got it, and must not stop a
+/// relay from carrying the line on to the others.
+pub fn ack_ends_relay(ack_origin: &str, original: Option<&Envelope>) -> bool {
+    original.is_some_and(|o| !o.flags.group() && o.dest.as_str().eq_ignore_ascii_case(ack_origin))
+}
+
 /// The hold pump and the ARQ loop share one table. A row we originated is a
 /// retry, not a relay: `may_rebroadcast` is false for it, and the pump must
 /// leave the hold alone so the retry timer still fires.
@@ -155,16 +170,52 @@ pub fn bulletin_keeps_walking(env: &Envelope) -> bool {
     ) && crate::slash::is_bulletin(env.dest.as_str())
 }
 
-/// Schedule another relay of a bulletin that has not been heard further on.
+/// Channel control frame (`WCRMETA members=…`, `leave=…`, `prio=…`). It has
+/// no ACK, so one lost copy used to leave every station past it with a
+/// short roster.
+pub fn is_channel_meta(env: &Envelope) -> bool {
+    env.kind == MsgType::Status
+        && env.flags.group()
+        && !crate::slash::is_bulletin(env.dest.as_str())
+        && env.body.starts_with(b"WCRMETA ")
+}
+
+/// Relays key this frame again until a station further along is heard.
+pub fn keeps_walking(env: &Envelope) -> bool {
+    bulletin_keeps_walking(env) || is_channel_meta(env)
+}
+
+/// Our own frame that nobody ACKs. The ARQ loop repeats it until a relay
+/// is heard carrying it on, then stops without a retry tag or `[no]`.
+pub fn walks_until_relayed(env: &Envelope) -> bool {
+    env.kind == MsgType::Ack || is_channel_meta(env)
+}
+
+/// Schedule another relay of a bulletin or channel roster that has not been
+/// heard further on.
 pub fn keep_relaying(
     env: &Envelope,
     retries: u32,
     max_retries: u32,
     downstream_heard: bool,
 ) -> bool {
-    bulletin_keeps_walking(env)
+    keeps_walking(env)
         && env.hops_left > 0
         && ack_walk_continues(downstream_heard, retries, max_retries)
+}
+
+/// A later copy of a frame we already answered. Only one that came from
+/// the originator's side (as many hops or more than ours) is a retry worth a
+/// new ACK. A copy with fewer hops is a relay further along; answering it
+/// sends another receipt down the whole line for nothing.
+pub fn copy_wants_new_ack(incoming_hops: u8, stored_hops: u8) -> bool {
+    !heard_further(incoming_hops, stored_hops)
+}
+
+/// A duplicate from the originator's side is not a relay further along.
+/// It must not cancel our pending copy of a frame that walks hop by hop.
+pub fn duplicate_suppresses(env: &Envelope, incoming_hops: u8, stored_hops: u8) -> bool {
+    !(keeps_walking(env) && origin_retry(incoming_hops, stored_hops))
 }
 
 pub fn jitter_ms(priority: Priority) -> u64 {
@@ -317,11 +368,12 @@ impl Engine {
         )?;
         self.store
             .add_hop(&env.msg_id, env.origin.as_str(), medium, snr)?;
-        let waiting = self
-            .store
-            .get(&env.msg_id)?
+        let prior = self.store.get(&env.msg_id)?;
+        let waiting = prior
+            .as_ref()
             .map(|m| m.delivery == Delivery::Queued || m.delivery == Delivery::Sent)
             .unwrap_or(false);
+        let stored_hops = prior.as_ref().map(|m| m.env.hops_left).unwrap_or(0);
         let decision = decide(&self.store, env, waiting)?;
         match decision.action {
             Action::Accept => {
@@ -334,7 +386,13 @@ impl Engine {
                     if let Some(id) = stored.acked_id() {
                         // Failed -> delivered is allowed. Delivered and [all]
                         // do not move backwards.
-                        let _ = self.store.advance_delivery(&id, Delivery::Delivered)?;
+                        let marks = self
+                            .store
+                            .get(&id)?
+                            .is_none_or(|o| ack_marks_delivered(&self.our_call, &o.env));
+                        if marks {
+                            let _ = self.store.advance_delivery(&id, Delivery::Delivered)?;
+                        }
                     }
                 }
                 if stored.kind == MsgType::Msg && stored.dest.as_str() == self.our_call {
@@ -363,7 +421,8 @@ impl Engine {
                     medium,
                     env.flags.group(),
                     crate::slash::is_bulletin(env.dest.as_str()),
-                ) {
+                ) && duplicate_suppresses(env, env.hops_left, stored_hops)
+                {
                     self.store.suppress(&env.msg_id)?;
                     let _ = self
                         .store
@@ -465,6 +524,157 @@ mod tests {
         let ack = Envelope::ack_for(&group, Callsign::parse("M0BBB").unwrap(), 2, None);
         assert!(!bulletin_keeps_walking(&ack));
         assert!(!keep_relaying(&ack, 0, 3, false));
+    }
+
+    #[test]
+    fn roster_walks_hop_by_hop_like_a_bulletin() {
+        let roster = |body: &[u8], dest: &str| {
+            let mut env = Envelope::new_msg(
+                Callsign::parse("G4AAA").unwrap(),
+                Callsign::from_raw(dest),
+                1,
+                body.to_vec(),
+                6,
+                Flags::new().with(crate::proto::FLAG_GROUP),
+            )
+            .unwrap();
+            env.kind = MsgType::Status;
+            env
+        };
+        let members = roster(b"WCRMETA members=G4AAA,M0BBB", "NET");
+        assert!(is_channel_meta(&members));
+        assert!(keeps_walking(&members));
+        assert!(walks_until_relayed(&members));
+        assert!(keep_relaying(&members, 0, 3, false));
+        assert!(!keep_relaying(&members, 0, 3, true));
+        assert!(!keep_relaying(&members, 3, 3, false));
+        assert!(is_channel_meta(&roster(b"WCRMETA leave=M0BBB", "NET")));
+
+        let chat = roster(b"hello", "NET");
+        assert!(!is_channel_meta(&chat));
+        assert!(!keeps_walking(&chat));
+        let mut dm = members.clone();
+        dm.flags = Flags::new();
+        assert!(!is_channel_meta(&dm));
+        assert!(!is_channel_meta(&roster(b"WCRMETA members=X", "BULLETIN")));
+
+        let ack = Envelope::ack_for(&chat, Callsign::parse("M0BBB").unwrap(), 2, None);
+        assert!(walks_until_relayed(&ack));
+        assert!(!keeps_walking(&ack));
+    }
+
+    #[test]
+    fn only_the_dm_addressee_ack_ends_a_relay() {
+        let dm = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::parse("2E0CCC").unwrap(),
+            1,
+            b"dm".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        assert!(ack_ends_relay("2E0CCC", Some(&dm)));
+        assert!(ack_ends_relay("2e0ccc", Some(&dm)));
+        assert!(!ack_ends_relay("M0BBB", Some(&dm)));
+        assert!(!ack_ends_relay("2E0CCC", None));
+        let bulletin = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::from_raw("BULLETIN"),
+            2,
+            b"b".to_vec(),
+            6,
+            Flags::new().with(crate::proto::FLAG_GROUP),
+        )
+        .unwrap();
+        assert!(!ack_ends_relay("M0BBB", Some(&bulletin)));
+        let mut group = bulletin.clone();
+        group.dest = Callsign::from_raw("NET");
+        assert!(!ack_ends_relay("NET", Some(&group)));
+    }
+
+    #[test]
+    fn neighbour_ack_does_not_close_a_relayed_bulletin() {
+        let bulletin = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::from_raw("BULLETIN"),
+            1,
+            b"b".to_vec(),
+            6,
+            Flags::new().with(crate::proto::FLAG_GROUP),
+        )
+        .unwrap();
+        assert!(!ack_marks_delivered("2E0CCC", &bulletin));
+        assert!(ack_marks_delivered("G4AAA", &bulletin));
+        let mut dm = bulletin.clone();
+        dm.dest = Callsign::parse("M0DDD").unwrap();
+        dm.flags = Flags::new();
+        assert!(ack_marks_delivered("2E0CCC", &dm));
+        let mut group = bulletin.clone();
+        group.dest = Callsign::from_raw("NET");
+        assert!(ack_marks_delivered("2E0CCC", &group));
+    }
+
+    #[test]
+    fn retry_copies_and_further_relays_are_told_apart() {
+        // We stored 4. The sender's side keys 5 or more; a relay further on keys 3.
+        assert!(copy_wants_new_ack(5, 4));
+        assert!(copy_wants_new_ack(4, 4));
+        assert!(!copy_wants_new_ack(3, 4));
+        let bulletin = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::from_raw("BULLETIN"),
+            1,
+            b"b".to_vec(),
+            6,
+            Flags::new().with(crate::proto::FLAG_GROUP),
+        )
+        .unwrap();
+        assert!(!duplicate_suppresses(&bulletin, 5, 4));
+        assert!(duplicate_suppresses(&bulletin, 4, 4));
+        assert!(duplicate_suppresses(&bulletin, 3, 4));
+        let mut dm = bulletin.clone();
+        dm.dest = Callsign::parse("M0DDD").unwrap();
+        dm.flags = Flags::new();
+        assert!(duplicate_suppresses(&dm, 5, 4));
+    }
+
+    #[test]
+    fn relay_keeps_its_bulletin_open_after_a_neighbour_ack() {
+        let store = Arc::new(Store::open_memory().unwrap());
+        let engine = Engine::new(store.clone(), "2E0CCC".into());
+        let bulletin = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::from_raw("BULLETIN"),
+            1,
+            b"b".to_vec(),
+            5,
+            Flags::new().with(crate::proto::FLAG_GROUP),
+        )
+        .unwrap();
+        assert_eq!(
+            engine.on_rx(&bulletin, "rf", None, None).unwrap().action,
+            Action::Accept
+        );
+        let ack = Envelope::ack_for(&bulletin, Callsign::parse("M0BBB").unwrap(), 7, None);
+        engine.on_rx(&ack, "rf", None, None).unwrap();
+        let row = store.get(&bulletin.msg_id).unwrap().unwrap();
+        assert_eq!(row.delivery, Delivery::Queued);
+        assert!(may_rebroadcast("2E0CCC", &row.env, Some(row.delivery)));
+
+        // The sender's side keys it again before our hold fires: not a
+        // relay further on, so our copy is not suppressed.
+        let mut again = bulletin.clone();
+        again.hops_left = 5;
+        assert_eq!(
+            engine.on_rx(&again, "rf", None, None).unwrap().action,
+            Action::Suppress
+        );
+        assert!(store
+            .hold_due(u32::MAX)
+            .unwrap()
+            .iter()
+            .any(|m| m.env.msg_id == bulletin.msg_id));
     }
 
     #[test]
