@@ -314,6 +314,262 @@ pub fn encode_over_air(env: &Envelope) -> Vec<u8> {
     env.encode().unwrap_or_default()
 }
 
+/// One frame a [`mock_modem73_timed`] station took off its queue.
+#[derive(Debug, Clone)]
+pub struct TimedKey {
+    pub station: u64,
+    pub at: Instant,
+    pub payload: Vec<u8>,
+    /// Carrier sense was on when the frame keyed.
+    pub csma: bool,
+    /// Frame capacity of the mode current when the frame keyed.
+    pub cap: usize,
+    /// Wider than `cap`. modem73 drops it instead of keying.
+    pub dropped: bool,
+}
+
+pub type TimedLog = Arc<Mutex<Vec<TimedKey>>>;
+
+/// How a [`mock_modem73_timed`] station reports its transmitter.
+#[derive(Debug, Clone, Copy)]
+pub struct TimedOpts {
+    /// Airtime of every keyed frame.
+    pub frame_ms: u64,
+    /// Upstream modem73 reports `tx_frame_count` 0 and only `tx_queue` /
+    /// `ptt_on` move. True counts each frame as it starts.
+    pub count_tx: bool,
+}
+
+struct TimedState {
+    queue: std::collections::VecDeque<Vec<u8>>,
+    keying: bool,
+    keyed_until: Option<Instant>,
+    heard_at: Option<Instant>,
+    cap: usize,
+    csma: bool,
+    tx_count: u64,
+}
+
+/// A neighbour's frame is on the air right now. Carrier sense hears it
+/// before the frame has finished, which is when a receiver decodes it.
+fn timed_hearing(log: &TimedLog, hear: &std::collections::HashSet<u64>, frame: Duration) -> bool {
+    let log = log.lock().expect("timed log");
+    log.iter()
+        .rev()
+        .take_while(|k| k.at.elapsed() < frame * 2)
+        .any(|k| !k.dropped && hear.contains(&k.station) && k.at.elapsed() < frame)
+}
+
+fn timed_cap(cfg: &serde_json::Value, prev: usize) -> usize {
+    match cfg.get("modem_type").and_then(|v| v.as_i64()) {
+        Some(0) => 512,
+        Some(1) => 55,
+        Some(2) => 170,
+        _ => prev,
+    }
+}
+
+/// modem73 as upstream behaves: one global TX mode, a serial TX queue with
+/// real airtime, frames over the current mode's capacity dropped when they
+/// reach the transmitter, and a receiver that is deaf while it keys.
+/// Every frame this station takes off its queue is appended to `log`.
+pub async fn mock_modem73_timed(
+    air: SharedAir,
+    station: u64,
+    hear: std::collections::HashSet<u64>,
+    drop_rx: Option<LinkDrop>,
+    opts: TimedOpts,
+    log: TimedLog,
+) -> crate::error::Result<(u16, u16)> {
+    let (kiss, kiss_port) = loopback_listener().await?;
+    let (ctrl, ctrl_port) = loopback_listener().await?;
+    let st = Arc::new(Mutex::new(TimedState {
+        queue: Default::default(),
+        keying: false,
+        keyed_until: None,
+        heard_at: None,
+        cap: 170,
+        csma: true,
+        tx_count: 0,
+    }));
+    let frame = Duration::from_millis(opts.frame_ms);
+    let hear = Arc::new(hear);
+
+    let tx_st = st.clone();
+    let tx_air = air.clone();
+    let tx_hear = hear.clone();
+    let tx_log = log.clone();
+    tokio::spawn(async move {
+        loop {
+            let next = tx_st.lock().expect("timed").queue.pop_front();
+            let Some(payload) = next else {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                continue;
+            };
+            let waited = Instant::now();
+            loop {
+                let clear = {
+                    let g = tx_st.lock().expect("timed");
+                    !g.csma
+                        || (g
+                            .heard_at
+                            .is_none_or(|t| t.elapsed() >= Duration::from_millis(300))
+                            && !timed_hearing(&tx_log, &tx_hear, frame))
+                };
+                if clear || waited.elapsed() >= Duration::from_secs(10) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            let (cap, csma) = {
+                let mut g = tx_st.lock().expect("timed");
+                g.keying = true;
+                if opts.count_tx {
+                    g.tx_count += 1;
+                }
+                (g.cap, g.csma)
+            };
+            let dropped = payload.len() > cap;
+            tx_log.lock().expect("timed log").push(TimedKey {
+                station,
+                at: Instant::now(),
+                payload: payload.clone(),
+                csma,
+                cap,
+                dropped,
+            });
+            if !dropped {
+                tokio::time::sleep(frame).await;
+                tx_air.send_from(station, payload);
+            }
+            let mut g = tx_st.lock().expect("timed");
+            g.keying = false;
+            g.keyed_until = Some(Instant::now());
+        }
+    });
+
+    let rx_st = st.clone();
+    let rx_hear = hear.clone();
+    tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = kiss.accept().await.expect("kiss accept");
+            let st = rx_st.clone();
+            let air = air.clone();
+            let hear = rx_hear.clone();
+            let drop_rx = drop_rx.clone();
+            tokio::spawn(async move {
+                let mut dec = KissDecoder::new();
+                let mut rx = air.subscribe_linked();
+                let mut buf = [0u8; 2048];
+                loop {
+                    tokio::select! {
+                        n = stream.read(&mut buf) => {
+                            match n {
+                                Ok(0) | Err(_) => break,
+                                Ok(n) => {
+                                    for payload in dec.push(&buf[..n]) {
+                                        st.lock().expect("timed").queue.push_back(payload);
+                                    }
+                                }
+                            }
+                        }
+                        got = rx.recv() => {
+                            let Ok((from, payload)) = got else { continue };
+                            if from == station || !hear.contains(&from) {
+                                continue;
+                            }
+                            let deaf = {
+                                let mut g = st.lock().expect("timed");
+                                g.heard_at = Some(Instant::now());
+                                g.keying || g.keyed_until.is_some_and(|t| t.elapsed() < frame)
+                            };
+                            if deaf || drop_rx.as_ref().is_some_and(|d| d(from, station, &payload)) {
+                                continue;
+                            }
+                            if stream.write_all(&encode_frame(&payload)).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+
+    tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = ctrl.accept().await.expect("ctrl accept");
+            let st = st.clone();
+            let log = log.clone();
+            let hear = hear.clone();
+            tokio::spawn(async move {
+                let mut stash = Vec::new();
+                let mut buf = [0u8; 2048];
+                loop {
+                    let n = match stream.read(&mut buf).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => n,
+                    };
+                    stash.extend_from_slice(&buf[..n]);
+                    let Ok(frames) = crate::modem::control::decode_control_frames(&mut stash)
+                    else {
+                        continue;
+                    };
+                    for v in frames {
+                        let cmd = v.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
+                        let on_air = timed_hearing(&log, &hear, frame);
+                        let reply = {
+                            let mut g = st.lock().expect("timed");
+                            match cmd {
+                                "get_status" => {
+                                    let rx = on_air
+                                        || g.heard_at.is_some_and(|t| {
+                                            t.elapsed() < Duration::from_millis(400)
+                                        });
+                                    let state = if g.keying {
+                                        "tx"
+                                    } else if rx {
+                                        "rx"
+                                    } else {
+                                        "idle"
+                                    };
+                                    serde_json::json!({
+                                        "channel_state": state,
+                                        "ptt_on": g.keying,
+                                        "tx_queue": g.queue.len(),
+                                        "tx_frame_count": g.tx_count,
+                                        "last_snr": 12.0,
+                                        "audio_connected": true,
+                                        "occupancy_pct": if rx { 80 } else { 0 },
+                                        "input_level_db": if rx { -12.0 } else { -48.0 },
+                                        "output_level_db": -80.0,
+                                    })
+                                }
+                                "set_config" => {
+                                    g.cap = timed_cap(&v, g.cap);
+                                    if let Some(on) =
+                                        v.get("csma_enabled").and_then(|x| x.as_bool())
+                                    {
+                                        g.csma = on;
+                                    }
+                                    serde_json::json!({"ok": true})
+                                }
+                                _ => serde_json::json!({"ok": true}),
+                            }
+                        };
+                        if let Ok(f) = encode_control_frame(&reply) {
+                            if stream.write_all(&f).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+    Ok((kiss_port, ctrl_port))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
