@@ -108,8 +108,9 @@ fn station_cfg(
     cfg
 }
 
-/// Accepts every `/api/v1/mail/send` and keeps the JSON bodies.
-async fn mock_hub(posts: Arc<Mutex<Vec<serde_json::Value>>>) -> u16 {
+/// Accepts every `/api/v1/mail/send` after `delay` (the hub's own post to
+/// Resend) and keeps the JSON bodies.
+async fn mock_hub(posts: Arc<Mutex<Vec<serde_json::Value>>>, delay: Duration) -> u16 {
     use axum::routing::post;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -118,6 +119,7 @@ async fn mock_hub(posts: Arc<Mutex<Vec<serde_json::Value>>>) -> u16 {
         post(move |body: axum::body::Bytes| {
             let posts = posts.clone();
             async move {
+                tokio::time::sleep(delay).await;
                 if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&body) {
                     posts.lock().unwrap().push(v);
                 }
@@ -160,10 +162,14 @@ struct Pair {
 
 impl Pair {
     async fn start(opts: TimedOpts, drop_rx: LinkDrop) -> Self {
+        Self::start_with(opts, drop_rx, Duration::ZERO).await
+    }
+
+    async fn start_with(opts: TimedOpts, drop_rx: LinkDrop, hub_delay: Duration) -> Self {
         let air = wcr::sim::SharedAir::new(0.0);
         let log: TimedLog = Arc::new(Mutex::new(Vec::new()));
         let posts = Arc::new(Mutex::new(Vec::new()));
-        let hub = mock_hub(posts.clone()).await;
+        let hub = mock_hub(posts.clone(), hub_delay).await;
         let hub_url = format!("ws://127.0.0.1:{hub}/ws");
         let ports = reserve_ports(4).await;
         let mut nodes = Vec::new();
@@ -336,6 +342,9 @@ async fn long_mail_recovers_a_lost_final_chunk() {
         TimedOpts {
             frame_ms: 2_000,
             count_tx: false,
+            collide: false,
+            csma_stuck_ms: 0,
+            rung_airtime: false,
         },
         drop_rx,
     )
@@ -419,6 +428,9 @@ async fn a_resend_keys_only_what_the_latest_report_lacks() {
         TimedOpts {
             frame_ms: 2_000,
             count_tx: true,
+            collide: false,
+            csma_stuck_ms: 0,
+            rung_airtime: false,
         },
         drop_rx,
     )
@@ -471,5 +483,145 @@ async fn a_resend_keys_only_what_the_latest_report_lacks() {
     assert!(
         keyed.values().all(|n| *n <= 2),
         "keys per chunk: {keyed:?}\n{trace}"
+    );
+}
+
+/// The gateway posts the mail and keys the acceptance, and that one frame is
+/// lost. The sender must not key the whole mail again: one probe chunk, the
+/// gateway repeats the acceptance it already has, and the row reaches Sent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_lost_acceptance_is_answered_by_one_probe() {
+    let lost = Arc::new(AtomicU64::new(0));
+    let lost_c = lost.clone();
+    let drop_rx: LinkDrop = Arc::new(move |from, to, frame| {
+        let Some((op, _, _)) = chunk_of(frame) else {
+            return false;
+        };
+        from == 2 && to == 1 && op == 7 && lost_c.fetch_add(1, Ordering::SeqCst) == 0
+    });
+    let pair = Pair::start(
+        TimedOpts {
+            frame_ms: 400,
+            count_tx: false,
+            collide: false,
+            csma_stuck_ms: 0,
+            rung_airtime: false,
+        },
+        drop_rx,
+    )
+    .await;
+    // Compose trims the body, and the gateway posts what it reassembled.
+    let body = "Field report, power steady, next sked on the hour. "
+        .repeat(12)
+        .trim_end()
+        .to_string();
+    let t0 = Instant::now();
+    let id = pair.compose(&body).await;
+    let row = pair.wait_state(&id, "sent", 180).await;
+    let trace = pair.trace(t0);
+    eprintln!("{trace}");
+    let row = row.expect("outbox row");
+    let state = row.get("state").and_then(|x| x.as_str()).unwrap_or("");
+    let posts = pair.posts.lock().unwrap().clone();
+    let log = pair.log.lock().unwrap().clone();
+    pair.stop();
+
+    assert!(
+        lost.load(Ordering::SeqCst) >= 1,
+        "the acceptance was never keyed"
+    );
+    assert_eq!(state, "sent", "row {row}\n{trace}");
+    assert_eq!(posts.len(), 1, "gateway posts: {posts:?}");
+    assert_eq!(
+        posts[0].get("body").and_then(|x| x.as_str()),
+        Some(body.as_str())
+    );
+    let mut keyed = std::collections::BTreeMap::<u16, u32>::new();
+    let mut acks = 0u32;
+    for k in log.iter().filter(|k| is_mail(&k.payload)) {
+        assert!(!k.dropped, "mail frame dropped by the modem\n{trace}");
+        if k.station == 2 && chunk_of(&k.payload).is_some_and(|c| c.0 == 7) {
+            acks += 1;
+        }
+        if k.station == 1 {
+            if let Some((op, idx, _)) = chunk_of(&k.payload) {
+                if is_data_op(op) {
+                    *keyed.entry(idx).or_default() += 1;
+                }
+            }
+        }
+    }
+    let again: Vec<u16> = keyed
+        .iter()
+        .filter(|(_, n)| **n > 1)
+        .map(|(i, _)| *i)
+        .collect();
+    assert!(
+        keyed.len() > 4,
+        "the mail was too short to prove the probe: {keyed:?}"
+    );
+    assert_eq!(
+        again.len(),
+        1,
+        "a lost acceptance must cost one probe chunk, not the whole mail: {keyed:?}\n{trace}"
+    );
+    assert!(
+        acks >= 2,
+        "gateway keyed the acceptance {acks} times\n{trace}"
+    );
+}
+
+/// The live v0.1.89 big mail, at real hf-poor airtime: 4 s frames, a slower
+/// frame on a retry rung, and a hub that takes 2 s to accept the post. Nothing
+/// is lost on the air. The gateway's acceptance used to land after the
+/// sender's retry had already keyed, so the sender never heard it and keyed
+/// the whole mail again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_long_mail_at_real_airtime_is_accepted_on_the_first_pass() {
+    let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
+    let pair = Pair::start_with(
+        TimedOpts {
+            frame_ms: 4_000,
+            count_tx: false,
+            collide: false,
+            csma_stuck_ms: 0,
+            rung_airtime: true,
+        },
+        drop_rx,
+        Duration::from_secs(2),
+    )
+    .await;
+    let mut body = long_body();
+    body.truncate(800);
+    let body = body.trim().to_string();
+    let t0 = Instant::now();
+    let id = pair.compose(&body).await;
+    let row = pair.wait_state(&id, "sent", 240).await;
+    let trace = pair.trace(t0);
+    eprintln!("{trace}");
+    let row = row.expect("outbox row");
+    let state = row.get("state").and_then(|x| x.as_str()).unwrap_or("");
+    let posts = pair.posts.lock().unwrap().clone();
+    let log = pair.log.lock().unwrap().clone();
+    pair.stop();
+
+    assert_eq!(state, "sent", "row {row}\n{trace}");
+    assert_eq!(posts.len(), 1, "gateway posts: {posts:?}");
+    let mut keyed = std::collections::BTreeMap::<u16, u32>::new();
+    for k in log.iter().filter(|k| k.station == 1 && is_mail(&k.payload)) {
+        assert!(!k.dropped, "mail frame dropped by the modem\n{trace}");
+        if let Some((op, idx, _)) = chunk_of(&k.payload) {
+            if is_data_op(op) {
+                *keyed.entry(idx).or_default() += 1;
+            }
+        }
+    }
+    assert!(
+        keyed.len() > 4,
+        "the mail was too short to show a resend: {keyed:?}"
+    );
+    assert!(
+        keyed.values().all(|n| *n == 1),
+        "the sender keyed over the acceptance and sent the mail again: {keyed:?}\n{trace}"
     );
 }

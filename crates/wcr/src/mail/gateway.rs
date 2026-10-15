@@ -88,17 +88,46 @@ pub fn ack_backoff_secs(retries: u32) -> u64 {
     8u64.saturating_mul(1u64 << retries.min(4))
 }
 
-/// Wait until the keyed audio should be over, then the backoff, then one
-/// frame so the gateway's ack can land before the next key-up.
+/// The gateway's hub post and its own radio lease, between the end of its
+/// quiet gap and its reply keying.
+pub const REPLY_SETUP_SECS: f64 = 6.0;
+
+/// Wait until the keyed audio should be over, then the gateway's quiet gap,
+/// its hub post and lease, and one reply frame, then the backoff. A retry
+/// that keys before the reply lands leaves the sender deaf to it.
 pub fn retry_after_secs(airtime_secs: f64, spent_secs: f64, retries: u32, frame_secs: f64) -> f64 {
     let remain = (airtime_secs - spent_secs).max(0.0);
-    remain + ack_backoff_secs(retries) as f64 + frame_secs.max(0.0)
+    let frame = frame_secs.max(0.0);
+    remain + quiet_gap_secs(frame) + REPLY_SETUP_SECS + frame + ack_backoff_secs(retries) as f64
 }
 
 /// Gateway stays quiet this long after the last chunk before it keys an ack.
 /// Longer than one frame, so a chunk still on the air resets the wait.
 pub fn quiet_gap_secs(frame_secs: f64) -> f64 {
     (frame_secs * 2.0).max(3.0)
+}
+
+pub const MAX_QUIET_GAP_SECS: f64 = 30.0;
+
+/// A retry on a slower rung spaces its frames wider than the ladder-start
+/// frame. Wait half as long again as the spacing actually heard, so the
+/// gateway does not key between two chunks of one burst.
+pub fn quiet_gap_heard_secs(frame_secs: f64, heard_spacing_secs: f64) -> f64 {
+    quiet_gap_secs(frame_secs)
+        .max(heard_spacing_secs * 1.5)
+        .min(MAX_QUIET_GAP_SECS)
+}
+
+/// A retry with no gateway progress at all. More than this many chunks
+/// still missing, and the sender keys one chunk to ask what the gateway
+/// holds instead of the whole mail again.
+pub const PROBE_MIN_MISSING: usize = 4;
+
+/// The gateway answers one chunk with its acceptance, or a have-report the
+/// sender resends from. Nothing heard back keeps the full first try's cost
+/// to one frame per retry.
+pub fn probe_only(retries: u32, gateway_reported: bool, missing: usize) -> bool {
+    retries > 0 && !gateway_reported && missing > PROBE_MIN_MISSING
 }
 
 /// How many times the gateway holds its reply because a frame is still
@@ -127,6 +156,11 @@ pub enum AckTimeout {
     GiveUp {
         error: &'static str,
     },
+}
+
+/// Accepted or given up. Nothing is keyed for it again.
+pub fn is_finished(state: &str) -> bool {
+    matches!(state, "sent" | "failed")
 }
 
 /// What to do when the ack wait expires. `None` means the row is already finished.
@@ -209,10 +243,13 @@ mod tests {
         assert_eq!(ack_backoff_secs(0), 8);
         assert_eq!(ack_backoff_secs(1), 16);
         assert_eq!(ack_backoff_secs(3), 64);
-        assert!((retry_after_secs(22.0, 1.0, 0, 4.0) - 33.0).abs() < 0.01);
-        assert!((retry_after_secs(5.0, 9.0, 1, 4.0) - 20.0).abs() < 0.01);
+        assert!((retry_after_secs(22.0, 1.0, 0, 4.0) - 47.0).abs() < 0.01);
+        assert!((retry_after_secs(5.0, 9.0, 1, 4.0) - 34.0).abs() < 0.01);
         assert!((quiet_gap_secs(3.6) - 7.2).abs() < 0.01);
         assert!((quiet_gap_secs(1.0) - 3.0).abs() < 0.01);
+        assert!((quiet_gap_heard_secs(4.0, 0.0) - 8.0).abs() < 0.01);
+        assert!((quiet_gap_heard_secs(4.0, 7.5) - 11.25).abs() < 0.01);
+        assert!((quiet_gap_heard_secs(4.0, 60.0) - MAX_QUIET_GAP_SECS).abs() < 0.01);
         assert_eq!(
             radio_down_text("modem: Radio is not running."),
             Some(RADIO_NOT_RUNNING)
@@ -244,6 +281,28 @@ mod tests {
         let long = 200.0;
         assert!(tx_stuck_after_secs(long) as f64 > long * 3.0);
         assert_eq!(tx_stuck_after_secs(200.0), 660);
+    }
+
+    /// v0.1.89 big mail: the gateway's ack keyed 9 s after the last chunk,
+    /// the sender's retry 13 s after, and the sender keyed over the ack.
+    #[test]
+    fn the_sender_waits_out_the_gateway_reply_before_a_retry() {
+        let frame = 4.0;
+        let gateway_reply = quiet_gap_secs(frame) + REPLY_SETUP_SECS + frame;
+        for retries in 0..4 {
+            assert!(retry_after_secs(0.0, 0.0, retries, frame) > gateway_reply);
+        }
+        let slow_rung = quiet_gap_heard_secs(frame, 7.5) + REPLY_SETUP_SECS + 7.5;
+        assert!(retry_after_secs(0.0, 0.0, 1, frame) > slow_rung);
+    }
+
+    #[test]
+    fn a_retry_with_no_gateway_progress_keys_one_probe() {
+        assert!(!probe_only(0, false, 56));
+        assert!(probe_only(1, false, 56));
+        assert!(!probe_only(1, true, 56));
+        assert!(!probe_only(2, false, PROBE_MIN_MISSING));
+        assert!(probe_only(2, false, PROBE_MIN_MISSING + 1));
     }
 
     #[test]

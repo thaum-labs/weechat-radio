@@ -3,10 +3,14 @@
 
 use crate::error::Result;
 use crate::modes::Mode;
-use crate::proto::{Envelope, MsgType, Priority};
+use crate::presets::{Preset, Rung};
+use crate::proto::{Envelope, MsgId, MsgType, Priority};
 use crate::store::{Delivery, Store};
+use parking_lot::Mutex;
 use rand::Rng;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 #[derive(Clone, Debug)]
 pub struct RelayDecision {
@@ -215,7 +219,189 @@ pub fn copy_wants_new_ack(incoming_hops: u8, stored_hops: u8) -> bool {
 /// A duplicate from the originator's side is not a relay further along.
 /// It must not cancel our pending copy of a frame that walks hop by hop.
 pub fn duplicate_suppresses(env: &Envelope, incoming_hops: u8, stored_hops: u8) -> bool {
-    !(keeps_walking(env) && origin_retry(incoming_hops, stored_hops))
+    !((keeps_walking(env) || closed_group_walks(env)) && origin_retry(incoming_hops, stored_hops))
+}
+
+/// A closed-group line relayed for its members. One copy is often lost at
+/// the next station, and the originator's retries only reach it when every
+/// hop between carries them, so the relay walks it like a bulletin.
+pub fn closed_group_walks(env: &Envelope) -> bool {
+    matches!(
+        env.kind,
+        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status
+    ) && env.flags.group()
+        && !crate::slash::is_bulletin(env.dest.as_str())
+}
+
+/// Walk a closed-group relay again until a station further along is heard,
+/// every member's receipt is known here (the pump then stops on `[all]`),
+/// or the retries are spent.
+pub fn group_walk_continues(
+    env: &Envelope,
+    retries: u32,
+    max_retries: u32,
+    downstream_heard: bool,
+) -> bool {
+    closed_group_walks(env)
+        && env.hops_left > 0
+        && ack_walk_continues(downstream_heard, retries, max_retries)
+}
+
+/// Hops a line leaves its originator with: 6 for `#bulletin` and closed
+/// groups, the priority's budget for a direct message.
+pub fn initial_hops(env: &Envelope) -> u8 {
+    if env.flags.group() {
+        crate::emcomm::BULLETIN_TTL
+    } else {
+        env.priority().default_ttl()
+    }
+}
+
+/// A copy with `hops_heard` came straight from its originator, no relay between.
+pub fn heard_from_origin(env: &Envelope, hops_heard: u8) -> bool {
+    hops_heard >= initial_hops(env)
+}
+
+/// Only stations that heard a `#bulletin` from its originator ACK it. The
+/// originator stops at the first ACK, so a receipt from further away is
+/// airtime that the relays need.
+pub fn acks_line(env: &Envelope) -> bool {
+    !crate::slash::is_bulletin(env.dest.as_str()) || heard_from_origin(env, env.hops_left)
+}
+
+/// Our relay of someone else's receipt keys again until a station closer to
+/// the originator is heard carrying it. Next to the originator nobody relays
+/// it on, so that copy goes once and the originator's retry asks again.
+pub fn ack_relay_walks(
+    ack: &Envelope,
+    next_to_origin: bool,
+    retries: u32,
+    max_retries: u32,
+    downstream_heard: bool,
+) -> bool {
+    ack.kind == MsgType::Ack
+        && ack.hops_left > 0
+        && !next_to_origin
+        && ack_walk_continues(downstream_heard, retries, max_retries)
+}
+
+/// A receipt that says where its sender heard the line (v0.1.90 on), against
+/// where we did. True when the sender is no further from the originator than
+/// we are, so carrying its receipt takes it the wrong way. A station that does
+/// not hold the line is not on its path. None for an older receipt.
+pub fn ack_upstream_by_hops(ack: &Envelope, our_line: Option<&Envelope>) -> Option<bool> {
+    let theirs = ack.acked_line_hops()?;
+    let Some(line) = our_line else {
+        return Some(true);
+    };
+    // Stored copies hold one hop less than the copy we heard.
+    Some(line.hops_left.saturating_add(1) <= theirs)
+}
+
+/// Which receipts this station carries toward a line's originator.
+///
+/// A receipt from the originator's side of us, carried on, walked to the far
+/// end of a chain and back, collided with the receipts that needed the air,
+/// and made its sender stop repeating it. A receipt now says where its sender
+/// heard the line ([`ack_upstream_by_hops`]). For an older receipt, a station
+/// that ACKed before our relay of the line went out is taken as upstream.
+#[derive(Default)]
+pub struct AckSides {
+    lines: HashMap<MsgId, LineSide>,
+}
+
+#[derive(Default)]
+struct LineSide {
+    /// When our first relay of the line keys.
+    relay_at: Option<Instant>,
+    /// Ackers heard before that.
+    upstream: Vec<String>,
+}
+
+impl AckSides {
+    fn side(&mut self, line: MsgId) -> &mut LineSide {
+        if self.lines.len() > 4096 && !self.lines.contains_key(&line) {
+            self.lines.clear();
+        }
+        self.lines.entry(line).or_default()
+    }
+
+    /// Our relay of `line` keys at `at`.
+    pub fn relaying(&mut self, line: MsgId, at: Instant) {
+        let side = self.side(line);
+        if side.relay_at.is_none_or(|t| at < t) {
+            side.relay_at = Some(at);
+        }
+    }
+
+    /// `acker` sent a receipt for `line`, heard on the air at `now`. True when
+    /// it came from the originator's side and is not ours to carry.
+    pub fn from_upstream(&mut self, line: MsgId, acker: &str, now: Instant) -> bool {
+        let side = self.side(line);
+        if side.upstream.iter().any(|c| c.eq_ignore_ascii_case(acker)) {
+            return true;
+        }
+        if side.relay_at.is_some_and(|t| now >= t) {
+            return false;
+        }
+        side.upstream.push(acker.to_ascii_uppercase());
+        true
+    }
+
+    /// `acker` sits on the originator's side of us for `line`.
+    pub fn mark_upstream(&mut self, line: MsgId, acker: &str) {
+        let side = self.side(line);
+        if !side.upstream.iter().any(|c| c.eq_ignore_ascii_case(acker)) {
+            side.upstream.push(acker.to_ascii_uppercase());
+        }
+    }
+
+    /// `acker` is known to sit on the originator's side of us for `line`.
+    pub fn is_upstream(&self, line: &MsgId, acker: &str) -> bool {
+        self.lines
+            .get(line)
+            .is_some_and(|s| s.upstream.iter().any(|c| c.eq_ignore_ascii_case(acker)))
+    }
+}
+
+/// Rung a relay keys on: the preset's own. A relay used to key in whatever
+/// mode the modem was left in, and modem73 dropped a frame wider than that
+/// mode. A slower rung would hold the channel longer on a busy chain, where
+/// the copies are lost to collisions, not to SNR.
+pub fn relay_rung(preset: Preset) -> Rung {
+    Rung::from_index(preset.ladder_start())
+}
+
+/// Airtime of one full frame on the preset. modem73 frames are a fixed
+/// length per mode, so a short frame holds the channel this long too.
+pub fn frame_slot(preset: Preset) -> std::time::Duration {
+    std::time::Duration::from_secs_f64(crate::presets::airtime_secs(
+        preset,
+        preset.payload_bytes() as usize,
+        0,
+    ))
+}
+
+/// Frame slots a relay or group receipt picks from. Two neighbours that
+/// cannot hear each other both answer the frame between them at once; a
+/// station between them decodes neither. Carrier sense cannot help. On a
+/// group retry each side answers with its own receipt and the ones it holds,
+/// so a routine line leaves room for several frames.
+pub fn spread_slots(priority: Priority) -> u32 {
+    match priority {
+        Priority::Emergency => 2,
+        Priority::Priority => 4,
+        Priority::Routine => 6,
+    }
+}
+
+/// Delay before keying a relay or group receipt: a whole random slot, so
+/// two stations that picked different slots do not overlap. A slot is a
+/// quarter longer than the frame: an ACK can key a moment late.
+pub fn spread_delay(preset: Preset, priority: Priority) -> std::time::Duration {
+    let slot = frame_slot(preset).mul_f64(1.25);
+    let pick = rand::thread_rng().gen_range(0..spread_slots(priority));
+    slot * pick
 }
 
 pub fn jitter_ms(priority: Priority) -> u64 {
@@ -247,6 +433,20 @@ pub fn next_retry_hold(retries: u32, now: u32, priority: Priority) -> u32 {
 pub const BEACON_BASE_S: i64 = 60;
 pub const BEACON_MIN_S: i64 = 15;
 pub const BEACON_MAX_S: i64 = 120;
+
+/// Longest a station goes without a beacon while traffic keeps it quiet.
+pub const BEACON_MAX_GAP_S: u32 = 600;
+
+/// A beacon goes out once a full base interval has passed with no traffic
+/// keyed or decoded here (`last_traffic`, 0 for none), or when the last
+/// beacon (`last_beacon`) is `BEACON_MAX_GAP_S` old. Traffic already tells the
+/// neighbours who is on the dial, and a beacon keyed into it lands on the
+/// relays and receipts that need the air.
+pub fn beacon_due(now: u32, last_traffic: u32, last_beacon: Option<u32>) -> bool {
+    let quiet = last_traffic == 0 || now.saturating_sub(last_traffic) >= BEACON_BASE_S as u32;
+    let overdue = last_beacon.is_none_or(|t| now.saturating_sub(t) >= BEACON_MAX_GAP_S);
+    quiet || overdue
+}
 
 /// Next identity-beacon wait, 60 s ± jitter, clamped to 15–120 s.
 pub fn beacon_interval_secs(jitter_s: u32) -> u64 {
@@ -344,11 +544,37 @@ pub fn rf_egress_heard(
 pub struct Engine {
     pub store: Arc<Store>,
     pub our_call: String,
+    pub sides: Arc<Mutex<AckSides>>,
 }
 
 impl Engine {
     pub fn new(store: Arc<Store>, our_call: String) -> Self {
-        Self { store, our_call }
+        Self {
+            store,
+            our_call,
+            sides: Arc::new(Mutex::new(AckSides::default())),
+        }
+    }
+
+    /// A receipt heard on the air for a line that is not ours, from the
+    /// originator's side of us. See [`AckSides`].
+    fn ack_from_upstream(&self, ack: &Envelope, medium: &str) -> bool {
+        if ack.kind != MsgType::Ack || !medium.eq_ignore_ascii_case("rf") {
+            return false;
+        }
+        let Some(line) = ack.acked_id() else {
+            return false;
+        };
+        let ours = self.store.get(&line).ok().flatten();
+        let mut sides = self.sides.lock();
+        match ack_upstream_by_hops(ack, ours.as_ref().map(|m| &m.env)) {
+            Some(true) => {
+                sides.mark_upstream(line, ack.origin.as_str());
+                true
+            }
+            Some(false) => false,
+            None => sides.from_upstream(line, ack.origin.as_str(), Instant::now()),
+        }
     }
 
     pub fn on_rx(
@@ -406,7 +632,8 @@ impl Engine {
                         .advance_delivery(&stored.msg_id, Delivery::Relayed)?;
                 }
                 let delivery = self.store.delivery_of(&stored.msg_id).ok().flatten();
-                if may_rebroadcast(&self.our_call, &stored, delivery) {
+                let upstream = self.ack_from_upstream(env, medium);
+                if may_rebroadcast(&self.our_call, &stored, delivery) && !upstream {
                     let now = crate::proto::now_ts();
                     self.store.set_hold(
                         &stored.msg_id,
@@ -1028,5 +1255,183 @@ mod tests {
             next_retry_hold_jittered(0, 100, Priority::Emergency, false),
             108
         );
+    }
+
+    fn group_line() -> Envelope {
+        Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::from_raw("NET"),
+            1,
+            b"g".to_vec(),
+            6,
+            Flags::new().with(crate::proto::FLAG_GROUP),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_closed_group_retry_does_not_cancel_the_walk() {
+        let group = group_line();
+        assert!(closed_group_walks(&group));
+        assert!(group_walk_continues(&group, 0, 3, false));
+        assert!(group_walk_continues(&group, 2, 3, false));
+        assert!(!group_walk_continues(&group, 0, 3, true));
+        assert!(!group_walk_continues(&group, 3, 3, false));
+        let mut spent = group.clone();
+        spent.hops_left = 0;
+        assert!(!group_walk_continues(&spent, 0, 3, false));
+        // Incoming 5 against a stored 4 is the originator keying again.
+        assert!(!duplicate_suppresses(&group, 5, 4));
+        assert!(duplicate_suppresses(&group, 3, 4));
+        let mut dm = group.clone();
+        dm.flags = Flags::new();
+        assert!(!closed_group_walks(&dm));
+        assert!(duplicate_suppresses(&dm, 5, 4));
+        assert!(!closed_group_walks(&{
+            let mut b = group.clone();
+            b.dest = Callsign::from_raw("BULLETIN");
+            b
+        }));
+    }
+
+    #[test]
+    fn a_relay_keys_on_the_preset_rung_in_whole_frame_slots() {
+        assert_eq!(relay_rung(Preset::HfPoor), Rung::Rdm600S);
+        assert_eq!(relay_rung(Preset::HfWeak), Rung::Rdm300S);
+        assert_eq!(relay_rung(Preset::VhfFm), Rung::OfdmQpskHalf);
+        assert_eq!(relay_rung(Preset::HfDeep), Rung::Mfsk32R);
+        assert!(relay_rung(Preset::HfPoor).payload_bytes() >= Preset::HfPoor.payload_bytes());
+        let slot = frame_slot(Preset::HfPoor);
+        assert!(slot > std::time::Duration::from_secs(3));
+        for _ in 0..12 {
+            let delay = spread_delay(Preset::HfPoor, Priority::Routine);
+            let wide = slot.mul_f64(1.25).as_secs_f64();
+            let n = (delay.as_secs_f64() / wide).round() as u32;
+            assert!(n < spread_slots(Priority::Routine));
+            assert!((delay.as_secs_f64() - wide * n as f64).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn only_the_originators_neighbours_ack_a_bulletin() {
+        let mut bulletin = group_line();
+        bulletin.dest = Callsign::from_raw("BULLETIN");
+        assert_eq!(initial_hops(&bulletin), crate::emcomm::BULLETIN_TTL);
+        assert!(acks_line(&bulletin));
+        let mut relayed = bulletin.clone();
+        relayed.hops_left -= 1;
+        assert!(!acks_line(&relayed));
+        let mut group = group_line();
+        group.hops_left = 2;
+        assert!(acks_line(&group), "every closed-group member answers");
+        let dm = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::parse("M0BBB").unwrap(),
+            1,
+            b"dm".to_vec(),
+            Priority::Routine.default_ttl(),
+            Flags::new(),
+        )
+        .unwrap();
+        assert!(heard_from_origin(&dm, 3));
+        assert!(!heard_from_origin(&dm, 2));
+    }
+
+    #[test]
+    fn a_receipt_from_the_originators_side_is_not_carried() {
+        let line = group_line();
+        let mut sides = AckSides::default();
+        let t0 = Instant::now();
+        // B answered before our relay of the line went out: B is upstream.
+        assert!(sides.from_upstream(line.msg_id, "M0BBB", t0));
+        sides.relaying(line.msg_id, t0 + std::time::Duration::from_secs(8));
+        assert!(sides.from_upstream(line.msg_id, "M0BBB", t0 + std::time::Duration::from_secs(4)));
+        // D answered after it: D heard our relay, so D's receipt is ours to carry.
+        let later = t0 + std::time::Duration::from_secs(30);
+        assert!(!sides.from_upstream(line.msg_id, "M0DDD", later));
+        assert!(sides.is_upstream(&line.msg_id, "m0bbb"));
+        assert!(sides.from_upstream(line.msg_id, "M0BBB", later));
+        assert!(!sides.is_upstream(&line.msg_id, "M0DDD"));
+    }
+
+    #[test]
+    fn the_engine_relays_only_receipts_from_beyond_us() {
+        let store = Arc::new(Store::open_memory().unwrap());
+        let engine = Engine::new(store.clone(), "2E0CCC".into());
+        // C heard the line one hop out (5 left); B heard it at 6, D at 4.
+        let line = group_line();
+        let mut at_c = line.clone();
+        at_c.hops_left = 5;
+        engine.on_rx(&at_c, "rf", None, None).unwrap();
+        let ack_by = |call: &str, seq: u32, heard: u8| {
+            let mut copy = line.clone();
+            copy.hops_left = heard;
+            let mut a = Envelope::ack_for(&copy, Callsign::parse(call).unwrap(), seq, None);
+            a.hops_left = crate::emcomm::BULLETIN_TTL;
+            a
+        };
+        let hold_of = |id: &MsgId| {
+            store
+                .hold_due(u32::MAX)
+                .unwrap()
+                .iter()
+                .any(|m| m.env.msg_id == *id)
+        };
+        let from_b = ack_by("M0BBB", 1, 6);
+        engine.on_rx(&from_b, "rf", None, None).unwrap();
+        assert!(
+            !hold_of(&from_b.msg_id),
+            "an upstream receipt is not relayed"
+        );
+        assert!(engine.sides.lock().is_upstream(&line.msg_id, "M0BBB"));
+        let from_d = ack_by("M0DDD", 2, 4);
+        engine.on_rx(&from_d, "rf", None, None).unwrap();
+        assert!(
+            hold_of(&from_d.msg_id),
+            "a receipt from beyond us walks back"
+        );
+        let from_hub = ack_by("M0HUB", 3, 6);
+        engine.on_rx(&from_hub, "inet", None, None).unwrap();
+        assert!(
+            hold_of(&from_hub.msg_id),
+            "a gateway still keys a hub receipt"
+        );
+
+        // An older receipt has no hop byte: answering before our relay of the
+        // line went out marks the sender upstream.
+        let old = |call: &str, seq: u32| {
+            let mut a = ack_by(call, seq, 5);
+            a.body.truncate(crate::proto::ids::MSG_ID_LEN);
+            a.msg_id = MsgId::compute(&a.origin, &a.dest, seq, &a.body);
+            a
+        };
+        let early = old("M0EEE", 4);
+        engine.on_rx(&early, "rf", None, None).unwrap();
+        assert!(!hold_of(&early.msg_id));
+        engine.sides.lock().relaying(line.msg_id, Instant::now());
+        let late = old("M0FFF", 5);
+        engine.on_rx(&late, "rf", None, None).unwrap();
+        assert!(hold_of(&late.msg_id));
+    }
+
+    #[test]
+    fn a_receipt_relay_walks_except_next_to_the_originator() {
+        let line = group_line();
+        let ack = Envelope::ack_for(&line, Callsign::parse("M0DDD").unwrap(), 1, None);
+        assert!(ack_relay_walks(&ack, false, 0, 3, false));
+        assert!(!ack_relay_walks(&ack, true, 0, 3, false));
+        assert!(!ack_relay_walks(&ack, false, 0, 3, true));
+        assert!(!ack_relay_walks(&ack, false, 3, 3, false));
+        assert!(!ack_relay_walks(&line, false, 0, 3, false));
+    }
+
+    #[test]
+    fn a_beacon_waits_for_a_quiet_channel() {
+        let base = BEACON_BASE_S as u32;
+        assert!(beacon_due(1_000, 0, Some(990)), "nothing heard yet");
+        assert!(!beacon_due(1_000, 990, Some(900)), "traffic 10 s ago");
+        assert!(beacon_due(1_000, 1_000 - base, Some(990)));
+        assert!(beacon_due(1_000, 990, None), "the first beacon goes out");
+        assert!(beacon_due(1_000, 990, Some(1_000 - BEACON_MAX_GAP_S)));
     }
 }
