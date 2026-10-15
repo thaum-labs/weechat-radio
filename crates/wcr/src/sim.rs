@@ -338,6 +338,13 @@ pub struct TimedOpts {
     /// Upstream modem73 reports `tx_frame_count` 0 and only `tx_queue` /
     /// `ptt_on` move. True counts each frame as it starts.
     pub count_tx: bool,
+    /// Two stations this receiver hears keyed over each other: neither frame
+    /// decodes here. The keyers may not hear each other (hidden terminal).
+    pub collide: bool,
+    /// Non-zero: the noise floor sits above the carrier threshold, as on the
+    /// PulseAudio RF sim. Carrier sense is always busy, so each queued frame
+    /// waits this long, then keys anyway with one burst continuation.
+    pub csma_stuck_ms: u64,
 }
 
 struct TimedState {
@@ -358,6 +365,33 @@ fn timed_hearing(log: &TimedLog, hear: &std::collections::HashSet<u64>, frame: D
         .rev()
         .take_while(|k| k.at.elapsed() < frame * 2)
         .any(|k| !k.dropped && hear.contains(&k.station) && k.at.elapsed() < frame)
+}
+
+/// Another station this receiver hears was keying while `from` sent `payload`.
+fn timed_collided(
+    log: &TimedLog,
+    hear: &std::collections::HashSet<u64>,
+    from: u64,
+    payload: &[u8],
+    frame: Duration,
+) -> bool {
+    let log = log.lock().expect("timed log");
+    let Some(start) = log
+        .iter()
+        .rev()
+        .find(|k| k.station == from && !k.dropped && k.payload == payload)
+        .map(|k| k.at)
+    else {
+        return false;
+    };
+    let edge = Duration::from_millis(20);
+    log.iter().rev().take_while(|k| k.at + frame * 4 > start).any(|k| {
+        k.station != from
+            && !k.dropped
+            && hear.contains(&k.station)
+            && k.at + edge < start + frame
+            && k.at + frame > start + edge
+    })
 }
 
 fn timed_cap(cfg: &serde_json::Value, prev: usize) -> usize {
@@ -399,27 +433,46 @@ pub async fn mock_modem73_timed(
     let tx_air = air.clone();
     let tx_hear = hear.clone();
     let tx_log = log.clone();
+    let stuck = Duration::from_millis(opts.csma_stuck_ms);
     tokio::spawn(async move {
+        let mut burst_left = 0u8;
         loop {
             let next = tx_st.lock().expect("timed").queue.pop_front();
             let Some(payload) = next else {
+                burst_left = 0;
                 tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
             };
             let waited = Instant::now();
+            let cap = if stuck.is_zero() {
+                Duration::from_secs(10)
+            } else {
+                stuck
+            };
+            let mut deferred = false;
             loop {
                 let clear = {
                     let g = tx_st.lock().expect("timed");
-                    !g.csma
-                        || (g
-                            .heard_at
+                    if !g.csma || burst_left > 0 {
+                        true
+                    } else if !stuck.is_zero() {
+                        false
+                    } else {
+                        g.heard_at
                             .is_none_or(|t| t.elapsed() >= Duration::from_millis(300))
-                            && !timed_hearing(&tx_log, &tx_hear, frame))
+                            && !timed_hearing(&tx_log, &tx_hear, frame)
+                    }
                 };
-                if clear || waited.elapsed() >= Duration::from_secs(10) {
+                if clear || waited.elapsed() >= cap {
                     break;
                 }
+                deferred = true;
                 tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            if deferred && !stuck.is_zero() {
+                burst_left = 1;
+            } else {
+                burst_left = burst_left.saturating_sub(1);
             }
             let (cap, csma) = {
                 let mut g = tx_st.lock().expect("timed");
@@ -450,6 +503,7 @@ pub async fn mock_modem73_timed(
 
     let rx_st = st.clone();
     let rx_hear = hear.clone();
+    let rx_log = log.clone();
     tokio::spawn(async move {
         loop {
             let (mut stream, _) = kiss.accept().await.expect("kiss accept");
@@ -457,6 +511,7 @@ pub async fn mock_modem73_timed(
             let air = air.clone();
             let hear = rx_hear.clone();
             let drop_rx = drop_rx.clone();
+            let log = rx_log.clone();
             tokio::spawn(async move {
                 let mut dec = KissDecoder::new();
                 let mut rx = air.subscribe_linked();
@@ -483,7 +538,12 @@ pub async fn mock_modem73_timed(
                                 g.heard_at = Some(Instant::now());
                                 g.keying || g.keyed_until.is_some_and(|t| t.elapsed() < frame)
                             };
-                            if deaf || drop_rx.as_ref().is_some_and(|d| d(from, station, &payload)) {
+                            let collided = opts.collide
+                                && timed_collided(&log, &hear, from, &payload, frame);
+                            if deaf
+                                || collided
+                                || drop_rx.as_ref().is_some_and(|d| d(from, station, &payload))
+                            {
                                 continue;
                             }
                             if stream.write_all(&encode_frame(&payload)).await.is_err() {
@@ -530,6 +590,8 @@ pub async fn mock_modem73_timed(
                                         "tx"
                                     } else if rx {
                                         "rx"
+                                    } else if opts.csma_stuck_ms > 0 {
+                                        "busy"
                                     } else {
                                         "idle"
                                     };
