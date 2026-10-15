@@ -939,6 +939,7 @@ async fn irc_port_in_use_fails_fast() {
 async fn own_message_retries_while_the_relay_loop_runs() {
     let _suite = suite_lock().lock().await;
     let air = wcr::sim::SharedAir::new(0.0);
+    let mut on_air = air.subscribe();
     let home = scratch("retry-own");
     let (kiss, ctrl) = wcr::sim::mock_modem73_free(air).await.unwrap();
     let ports = reserve_ports(2).await;
@@ -958,15 +959,24 @@ async fn own_message_retries_while_the_relay_loop_runs() {
         .write_all(b"PRIVMSG M0BBB :!!own-retry-body\r\n")
         .await
         .unwrap();
-    let mut reader = tokio::io::BufReader::new(&mut sender);
     // 8 s hold, then up to max_defer_ms (15 s) if the mock air queue is busy.
-    let got = read_lines_until(&mut reader, 45, |lines| {
-        lines.iter().any(|l| l.contains("+radio/delivery=retry-"))
-    })
-    .await;
+    // The mock echoes our own frame, so the line shows [rl] and the retry
+    // goes out without a mark: count the copies on the air instead.
+    let mut copies = 0;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+    while copies < 2 {
+        let Ok(Ok(frame)) = tokio::time::timeout_at(deadline, on_air.recv()).await else {
+            break;
+        };
+        if wcr::proto::Envelope::decode(&frame)
+            .is_ok_and(|env| env.body_text().contains("own-retry-body"))
+        {
+            copies += 1;
+        }
+    }
     assert!(
-        got.iter().any(|l| l.contains("+radio/delivery=retry-")),
-        "own message was not retried while the relay loop ran: {got:?}"
+        copies >= 2,
+        "own message was not retried while the relay loop ran: {copies} copies"
     );
     node.abort();
 }

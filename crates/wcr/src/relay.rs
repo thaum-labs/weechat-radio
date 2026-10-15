@@ -247,10 +247,18 @@ pub fn group_walk_continues(
         && ack_walk_continues(downstream_heard, retries, max_retries)
 }
 
-/// Hops a line leaves its originator with: 6 for `#bulletin` and closed
-/// groups, the priority's budget for a direct message.
+/// A direct invite to a closed group. It has to reach every station the
+/// group's own lines reach, so it travels on the group's hop budget.
+pub fn is_group_invite(env: &Envelope) -> bool {
+    env.kind == MsgType::Msg
+        && !env.flags.group()
+        && crate::slash::parse_invite_text(&env.body_text()).is_some()
+}
+
+/// Hops a line leaves its originator with: 6 for `#bulletin`, closed groups
+/// and invites to them, the priority's budget for a direct message.
 pub fn initial_hops(env: &Envelope) -> u8 {
-    if env.flags.group() {
+    if env.flags.group() || is_group_invite(env) {
         crate::emcomm::BULLETIN_TTL
     } else {
         env.priority().default_ttl()
@@ -260,6 +268,61 @@ pub fn initial_hops(env: &Envelope) -> u8 {
 /// A copy with `hops_heard` came straight from its originator, no relay between.
 pub fn heard_from_origin(env: &Envelope, hops_heard: u8) -> bool {
     hops_heard >= initial_hops(env)
+}
+
+/// A neighbour not heard for this long has gone: three beacon gaps.
+pub const NEIGHBOUR_TTL_S: u32 = 3 * BEACON_MAX_GAP_S;
+
+/// Listening this long after start, every neighbour has had time to beacon
+/// (the first beacon goes within `BEACON_MAX_S`, then waits out a busy
+/// modem). Before that the neighbour list is not trusted.
+pub const NEIGHBOUR_WARMUP_S: u32 = BEACON_MAX_S as u32 + 60;
+
+/// A copy heard with the hops its origin keyed it with came straight from
+/// that station, with no relay between: the origin is a neighbour. `line` is
+/// the line an ACK answers, when we hold it. Beacons are never relayed.
+pub fn heard_direct(env: &Envelope, line: Option<&Envelope>) -> bool {
+    let keyed = match env.kind {
+        MsgType::Beacon => return true,
+        MsgType::Ack => match line {
+            Some(l) => ack_hop_budget(l.flags.group() || is_group_invite(l), l.priority()),
+            None => crate::emcomm::BULLETIN_TTL,
+        },
+        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status => initial_hops(env),
+        _ => return false,
+    };
+    env.hops_left >= keyed
+}
+
+/// Every station we hear directly already has the line, so another copy
+/// from us reaches nobody new: we are the end of the chain for it.
+/// `holders` have it (its originator, and every member whose receipt we
+/// hold). With one neighbour and a relayed copy, that neighbour is the one
+/// that relayed it to us. With no neighbour known we cannot tell.
+pub fn neighbours_hold(neighbours: &[String], holders: &[String], came_relayed: bool) -> bool {
+    if neighbours.is_empty() {
+        return false;
+    }
+    if came_relayed && neighbours.len() == 1 {
+        return true;
+    }
+    neighbours
+        .iter()
+        .all(|n| holders.iter().any(|h| h.eq_ignore_ascii_case(n)))
+}
+
+/// Most copies of one line a relay keys: its relay, one repeat, and one
+/// answer to the originator's retry. Receipts are not capped: each hop's
+/// repeats are what carries a far member's receipt home.
+pub const RELAY_MAX_COPIES: u32 = 3;
+
+/// A relay passes an originator's retry on unless a station further along
+/// already carried the line. A direct message is the exception: hearing it
+/// one hop on says nothing about its addressee, whose ACK alone ends it (and
+/// marks our copy delivered, which stops the relay anyway).
+pub fn retry_passes_on(line: &Envelope, heard_further: bool, receipts_missing: bool) -> bool {
+    let direct = line.kind != MsgType::Ack && !line.flags.group();
+    !heard_further || receipts_missing || direct
 }
 
 /// Only stations that heard a `#bulletin` from its originator ACK it. The
@@ -437,13 +500,14 @@ pub const BEACON_MAX_S: i64 = 120;
 /// Longest a station goes without a beacon while traffic keeps it quiet.
 pub const BEACON_MAX_GAP_S: u32 = 600;
 
-/// A beacon goes out once a full base interval has passed with no traffic
+/// A beacon goes out once `BEACON_MAX_GAP_S` has passed with no traffic
 /// keyed or decoded here (`last_traffic`, 0 for none), or when the last
-/// beacon (`last_beacon`) is `BEACON_MAX_GAP_S` old. Traffic already tells the
-/// neighbours who is on the dial, and a beacon keyed into it lands on the
-/// relays and receipts that need the air.
+/// beacon (`last_beacon`) is that old. Traffic already tells the neighbours
+/// who is on the dial. A line's retries and receipts run for about that long,
+/// and a beacon keyed into a gap between them can deafen the station that
+/// should hear the next retry.
 pub fn beacon_due(now: u32, last_traffic: u32, last_beacon: Option<u32>) -> bool {
-    let quiet = last_traffic == 0 || now.saturating_sub(last_traffic) >= BEACON_BASE_S as u32;
+    let quiet = last_traffic == 0 || now.saturating_sub(last_traffic) >= BEACON_MAX_GAP_S;
     let overdue = last_beacon.is_none_or(|t| now.saturating_sub(t) >= BEACON_MAX_GAP_S);
     quiet || overdue
 }
@@ -1313,6 +1377,77 @@ mod tests {
     }
 
     #[test]
+    fn a_neighbour_is_a_station_heard_without_a_relay() {
+        let line = group_line();
+        assert!(heard_direct(&line, None));
+        let mut relayed = line.clone();
+        relayed.hops_left -= 1;
+        assert!(!heard_direct(&relayed, None));
+        let ack = Envelope::ack_for(&line, Callsign::parse("M0DDD").unwrap(), 1, None);
+        let mut ack = ack;
+        ack.hops_left = crate::emcomm::BULLETIN_TTL;
+        assert!(heard_direct(&ack, Some(&line)));
+        assert!(heard_direct(&ack, None));
+        ack.hops_left -= 1;
+        assert!(!heard_direct(&ack, Some(&line)));
+        assert!(!heard_direct(&ack, None));
+    }
+
+    #[test]
+    fn the_end_of_a_chain_does_not_repeat_a_line() {
+        let n = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // A at the end hears only B, and B relayed the line to it.
+        assert!(neighbours_hold(&n(&["M0BBB"]), &[], true));
+        // A heard it from the originator itself: B may not have it.
+        assert!(!neighbours_hold(&n(&["M0BBB"]), &[], false));
+        // B in the middle: A sent it, C has not answered yet.
+        let b = n(&["G4AAA", "2E0CCC"]);
+        assert!(!neighbours_hold(&b, &n(&["G4AAA"]), false));
+        assert!(neighbours_hold(&b, &n(&["G4AAA", "2E0CCC"]), false));
+        // Nobody heard yet: keep the old walk.
+        assert!(!neighbours_hold(&[], &n(&["G4AAA"]), true));
+    }
+
+    #[test]
+    fn a_direct_message_retry_passes_on_after_a_further_relay() {
+        let mut dm = group_line();
+        dm.flags = Flags::new();
+        dm.dest = Callsign::parse("G4EEE").unwrap();
+        assert!(
+            retry_passes_on(&dm, true, false),
+            "loss can be past the next hop"
+        );
+        let line = group_line();
+        assert!(!retry_passes_on(&line, true, false));
+        assert!(retry_passes_on(&line, true, true), "receipts still missing");
+        assert!(retry_passes_on(&line, false, false));
+        let ack = Envelope::ack_for(&dm, Callsign::parse("G4EEE").unwrap(), 1, None);
+        assert!(
+            !retry_passes_on(&ack, true, false),
+            "a receipt walk still stops"
+        );
+    }
+
+    #[test]
+    fn an_invite_travels_as_far_as_its_group() {
+        let invite = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::parse("G4EEE").unwrap(),
+            1,
+            crate::slash::invite_notice("#qa", "G4AAA").into_bytes(),
+            crate::emcomm::BULLETIN_TTL,
+            Flags::new(),
+        )
+        .unwrap();
+        assert!(is_group_invite(&invite));
+        assert_eq!(initial_hops(&invite), crate::emcomm::BULLETIN_TTL);
+        let mut dm = invite.clone();
+        dm.body = b"hello".to_vec();
+        assert!(!is_group_invite(&dm));
+        assert_eq!(initial_hops(&dm), Priority::Routine.default_ttl());
+    }
+
+    #[test]
     fn only_the_originators_neighbours_ack_a_bulletin() {
         let mut bulletin = group_line();
         bulletin.dest = Callsign::from_raw("BULLETIN");
@@ -1427,10 +1562,14 @@ mod tests {
 
     #[test]
     fn a_beacon_waits_for_a_quiet_channel() {
-        let base = BEACON_BASE_S as u32;
+        let gap = BEACON_MAX_GAP_S;
         assert!(beacon_due(1_000, 0, Some(990)), "nothing heard yet");
         assert!(!beacon_due(1_000, 990, Some(900)), "traffic 10 s ago");
-        assert!(beacon_due(1_000, 1_000 - base, Some(990)));
+        assert!(
+            !beacon_due(1_000, 1_000 - 200, Some(990)),
+            "a line's retries are still running"
+        );
+        assert!(beacon_due(1_000, 1_000 - gap, Some(990)));
         assert!(beacon_due(1_000, 990, None), "the first beacon goes out");
         assert!(beacon_due(1_000, 990, Some(1_000 - BEACON_MAX_GAP_S)));
     }
