@@ -13,7 +13,7 @@ Group names are at most 8 characters, the same width as a callsign on the air. A
 
 The first time a station hears the message, it shows the line locally and subtracts one from hops left. If any hops remain, and this station did not write the message, it waits a short random moment and sends the message again.
 
-Hearing the same message a second time does not send it again, except when the originator retries an id this station already relayed and no station further along has been heard. That copy is relayed again, at most once per originator retry. If this station was waiting to relay and then hears someone else relay it, it cancels its own send. When hops left hits 0, the station that has the message can still read it, and it does not transmit it.
+Hearing the same message a second time does not send it again, except when the originator retries an id this station already relayed and no station further along has been heard. That copy is relayed again, at most once per originator retry. A `#bulletin` relay keeps sending on that schedule until a station further along is heard, because the sender stops at the first ACK. An ACK back to the sender uses the same hop count as the message. The station that wrote the ACK retries it, and each hop relays those retries, until a station closer to the sender is heard. If this station was waiting to relay and then hears someone else relay it, it cancels its own send. When hops left hits 0, the station that has the message can still read it, and it does not transmit it.
 
 A normal message can cross three radio legs. The program does not measure kilometres. It relays a frame it decoded, on the same frequency, while hops remain.
 

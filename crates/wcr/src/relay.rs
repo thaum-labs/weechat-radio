@@ -130,6 +130,43 @@ pub fn origin_retry(incoming_hops: u8, stored_hops: u8) -> bool {
     incoming_hops > stored_hops
 }
 
+/// Hop budget for an ACK. A group receipt uses the same 6 hops as the message,
+/// not the routine 3, so it can walk back along a five-station line.
+pub fn ack_hop_budget(group: bool, priority: Priority) -> u8 {
+    if group {
+        crate::emcomm::BULLETIN_TTL
+    } else {
+        priority.default_ttl()
+    }
+}
+
+/// The station that sent this ACK keeps keying it until a hop closer to the
+/// originator relays it, or the retry count is used up.
+pub fn ack_walk_continues(downstream_heard: bool, retries: u32, max_retries: u32) -> bool {
+    !downstream_heard && retries < max_retries
+}
+
+/// `#bulletin` has no member list, so the sender stops at the first ACK.
+/// A relay keeps the copy moving until a station further along is heard.
+pub fn bulletin_keeps_walking(env: &Envelope) -> bool {
+    matches!(
+        env.kind,
+        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status
+    ) && crate::slash::is_bulletin(env.dest.as_str())
+}
+
+/// Schedule another relay of a bulletin that has not been heard further on.
+pub fn keep_relaying(
+    env: &Envelope,
+    retries: u32,
+    max_retries: u32,
+    downstream_heard: bool,
+) -> bool {
+    bulletin_keeps_walking(env)
+        && env.hops_left > 0
+        && ack_walk_continues(downstream_heard, retries, max_retries)
+}
+
 pub fn jitter_ms(priority: Priority) -> u64 {
     let range = priority.jitter_ms();
     rand::thread_rng().gen_range(range)
@@ -373,6 +410,61 @@ mod tests {
         assert!(heard_further(4, 5));
         assert!(!heard_further(5, 5));
         assert!(!heard_further(6, 5));
+    }
+
+    #[test]
+    fn ack_uses_the_message_hop_budget_and_walks_until_relayed() {
+        assert_eq!(
+            ack_hop_budget(true, Priority::Routine),
+            crate::emcomm::BULLETIN_TTL
+        );
+        assert_eq!(
+            ack_hop_budget(true, Priority::Emergency),
+            crate::emcomm::BULLETIN_TTL
+        );
+        assert_eq!(ack_hop_budget(false, Priority::Routine), 3);
+        assert_eq!(ack_hop_budget(false, Priority::Emergency), 5);
+        assert!(ack_walk_continues(false, 0, 3));
+        assert!(ack_walk_continues(false, 2, 3));
+        assert!(!ack_walk_continues(true, 0, 3));
+        assert!(!ack_walk_continues(false, 3, 3));
+    }
+
+    #[test]
+    fn bulletin_relay_repeats_until_a_further_station_is_heard() {
+        let bulletin = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::from_raw("BULLETIN"),
+            1,
+            b"b1".to_vec(),
+            5,
+            Flags::new().with(crate::proto::FLAG_GROUP),
+        )
+        .unwrap();
+        assert!(bulletin_keeps_walking(&bulletin));
+        assert!(keep_relaying(&bulletin, 0, 3, false));
+        assert!(keep_relaying(&bulletin, 2, 3, false));
+        assert!(!keep_relaying(&bulletin, 0, 3, true));
+        assert!(!keep_relaying(&bulletin, 3, 3, false));
+        let mut done = bulletin.clone();
+        done.hops_left = 0;
+        assert!(!keep_relaying(&done, 0, 3, false));
+
+        let group = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::from_raw("QARP"),
+            1,
+            b"g1".to_vec(),
+            5,
+            Flags::new().with(crate::proto::FLAG_GROUP),
+        )
+        .unwrap();
+        assert!(!bulletin_keeps_walking(&group));
+        assert!(!keep_relaying(&group, 0, 3, false));
+
+        let ack = Envelope::ack_for(&group, Callsign::parse("M0BBB").unwrap(), 2, None);
+        assert!(!bulletin_keeps_walking(&ack));
+        assert!(!keep_relaying(&ack, 0, 3, false));
     }
 
     #[test]

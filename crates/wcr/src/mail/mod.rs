@@ -15,16 +15,17 @@ use crate::modes::Mode;
 use crate::presets::Preset;
 use crate::proto::IdentityKeys;
 use crate::status::SharedStatus;
-pub use air::confirm_air_line;
+pub use air::{confirm_air_line, AirtimeMail};
 pub use gateway::{local_send_path as gateway_path, state_mark, SendPath};
 pub use lease::RadioPorts;
 
-pub fn airtime_parts(bytes: usize, preset: Preset, turnaround_ms: u32) -> (f64, usize) {
-    air::mail_airtime_secs(preset, bytes, turnaround_ms)
+pub fn airtime_parts(mail: &AirtimeMail<'_>, preset: Preset, turnaround_ms: u32) -> (f64, usize) {
+    air::mail_airtime_secs(preset, mail, turnaround_ms)
 }
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 pub use store::{MailRow, WaitHeader};
 use tokio::sync::{broadcast, mpsc};
@@ -84,15 +85,16 @@ pub fn email_block_reason(
     }
 }
 
-pub fn hint_line(body_len: usize, mode: Mode, preset: Preset, turnaround_ms: u32) -> String {
+pub fn hint_line(mail: &AirtimeMail<'_>, mode: Mode, preset: Preset, turnaround_ms: u32) -> String {
     let hub_only = matches!(gateway::local_send_path(mode), SendPath::Hub);
-    air::airtime_hint(body_len, preset, hub_only, turnaround_ms)
+    air::airtime_hint(mail, preset, hub_only, turnaround_ms)
 }
 
 #[derive(Clone)]
 pub struct MailHandle {
     pub store: Arc<store::MailStore>,
     cmd: mpsc::Sender<MailCmd>,
+    keying: Arc<AtomicBool>,
     pub cfg: Arc<Mutex<Config>>,
     pub snap: Arc<SharedStatus>,
     keys: IdentityKeys,
@@ -109,7 +111,11 @@ pub enum MailCmd {
     CheckQuiet {
         gen: u64,
     },
-    Inbound(Incoming),
+    Inbound {
+        incoming: Incoming,
+        /// The burst was still keying when this frame arrived.
+        during_burst: bool,
+    },
     SyncHub,
     AckWait {
         id: String,
@@ -147,19 +153,28 @@ pub fn start(
     let path = db_path(&cfg.lock());
     let store = Arc::new(store::MailStore::open(&path)?);
     let (cmd, rx) = mpsc::channel(64);
+    let keying = Arc::new(AtomicBool::new(false));
     let handle = MailHandle {
         store: store.clone(),
         cmd: cmd.clone(),
+        keying: Arc::clone(&keying),
         cfg: cfg.clone(),
         snap: snap.clone(),
         keys: keys.clone(),
     };
-    air::spawn(store, cfg, snap, keys, ports, cmd, rx, tel);
+    air::spawn(store, cfg, snap, keys, ports, cmd, rx, tel, keying);
     Ok(handle)
 }
 
 pub async fn on_rf(mail: &MailHandle, incoming: Incoming) {
-    let _ = mail.cmd.send(MailCmd::Inbound(incoming)).await;
+    let during_burst = mail.keying.load(Ordering::Acquire);
+    let _ = mail
+        .cmd
+        .send(MailCmd::Inbound {
+            incoming,
+            during_burst,
+        })
+        .await;
 }
 
 impl MailHandle {
@@ -194,14 +209,27 @@ impl MailHandle {
         }
         let from = proto::wcr_address(&cfg.callsign);
         let ack = matches!(gateway::local_send_path(cfg.mode), SendPath::Rf);
-        let bytes = body.len();
-        let id = proto::compute_mail_id(&from, to.trim(), subject.trim(), &body, ack);
+        let to_addr = to.trim();
+        let subject_s = subject.trim();
+        let gateway = cfg.mail.gateway.trim().to_ascii_uppercase();
+        let preview = AirtimeMail {
+            from: &from,
+            to: to_addr,
+            subject: subject_s,
+            body: &body,
+            gateway: &gateway,
+            ack,
+        };
+        let id = proto::compute_mail_id(&from, to_addr, subject_s, &body, ack);
+        let preset = crate::presets::Preset::parse(&cfg.modem.preset)
+            .unwrap_or(crate::presets::Preset::HfPoor);
+        let airtime = hint_line(&preview, cfg.mode, preset, cfg.rf.turnaround_ms);
         self.store.insert(&MailRow {
             id: id.clone(),
             folder: "outbox".into(),
             from_addr: from,
-            to_addr: to.trim().to_string(),
-            subject: subject.trim().to_string(),
+            to_addr: to_addr.to_string(),
+            subject: subject_s.to_string(),
             body,
             ts: chrono::Utc::now().timestamp(),
             state: "queued".into(),
@@ -218,9 +246,6 @@ impl MailHandle {
             SendPath::Rf => "rf",
             SendPath::Blocked => "blocked",
         };
-        let preset = crate::presets::Preset::parse(&cfg.modem.preset)
-            .unwrap_or(crate::presets::Preset::HfPoor);
-        let airtime = hint_line(bytes, cfg.mode, preset, cfg.rf.turnaround_ms);
         Ok(json!({ "id": id, "path": path, "airtime": airtime }))
     }
 
@@ -517,20 +542,42 @@ mod tests {
         assert_eq!(live.address, "tj@example.com");
     }
 
+    fn preview<'a>(body: &'a str) -> AirtimeMail<'a> {
+        AirtimeMail {
+            from: "M7TJF@mail.weechatradio.com",
+            to: "operator@example.com",
+            subject: "subject",
+            body,
+            gateway: "GATEWAY",
+            ack: true,
+        }
+    }
+
     #[test]
     fn a_long_mail_warns_before_it_is_sent() {
-        let hint = hint_line(3900, Mode::RadioPlus, Preset::HfPoor, 250);
+        let long_body = "hello mail ".repeat(3900 / 11) + &"x".repeat(3900 % 11);
+        assert_eq!(long_body.len(), 3900);
+        let long = preview(&long_body);
+        let hint = hint_line(&long, Mode::RadioPlus, Preset::HfPoor, 250);
         assert!(
             hint.contains("not Sent until the gateway accepts it"),
             "{hint}"
         );
         assert!(hint.contains("bursts"), "{hint}");
-        let (secs, long_n) = air::mail_airtime_secs(Preset::HfPoor, 3900, 250);
+        let (secs, long_n) = air::mail_airtime_secs(Preset::HfPoor, &long, 250);
+        let planned = air::plan_mail_wires(
+            Preset::HfPoor,
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            &long,
+        );
+        assert_eq!(long_n, planned.len(), "hint must match the send split");
         assert!(long_n >= 46, "3900 B estimated {long_n} bursts");
         assert!(secs > 150.0, "3900 B estimated {secs:.0}s");
-        let (_, short_n) = air::mail_airtime_secs(Preset::HfPoor, 115, 250);
+        let short_body = "x".repeat(115);
+        let (_, short_n) = air::mail_airtime_secs(Preset::HfPoor, &preview(&short_body), 250);
         assert!(short_n >= 3, "115 B estimated {short_n} bursts");
-        let one = hint_line(1, Mode::RadioPlus, Preset::VhfFm, 250);
+        let one_body = "x";
+        let one = hint_line(&preview(&one_body), Mode::RadioPlus, Preset::VhfFm, 250);
         assert!(one.contains("(1 burst)"), "{one}");
         assert!(!one.contains("bursts"), "{one}");
         let line = confirm_air_line(120.0, 23, "hf-poor");
