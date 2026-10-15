@@ -250,11 +250,11 @@ fn still_awaiting_ack(store: &Store, id: &crate::proto::MsgId) -> bool {
     }
 }
 
-/// A relay carried the line ([rl]), so its ACK walks back as far as the line
-/// walked out. The last wait runs one more interval before [no], so a late
-/// ACK does not turn [no] into [ok].
+/// The last copy waits two intervals before [no], not one. On a long or busy
+/// chain an ACK takes as long to walk back as the line took to walk out, and
+/// a late ACK would turn [no] into [ok].
 fn ack_wait_runs_on(delivery: Delivery, retries: u32, max: u32) -> bool {
-    delivery == Delivery::Relayed && retries == max
+    matches!(delivery, Delivery::Sent | Delivery::Relayed) && retries == max
 }
 
 /// `retry-n/max` is progress on a line nobody has carried or answered yet.
@@ -3718,10 +3718,10 @@ mod tests {
     }
 
     #[test]
-    fn a_relayed_line_waits_one_more_interval_before_no() {
+    fn the_last_copy_waits_two_intervals_before_no() {
         assert!(ack_wait_runs_on(Delivery::Relayed, 3, 3));
+        assert!(ack_wait_runs_on(Delivery::Sent, 3, 3));
         assert!(!ack_wait_runs_on(Delivery::Relayed, 4, 3), "only once");
-        assert!(!ack_wait_runs_on(Delivery::Sent, 3, 3), "nobody carried it");
         assert!(!ack_wait_runs_on(Delivery::Delivered, 3, 3));
     }
 
