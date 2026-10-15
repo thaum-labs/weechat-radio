@@ -184,6 +184,41 @@ struct Assembler {
     ready: Vec<(MailMeta, String, MailOp)>,
     /// Quiet gaps that ended while a frame was still being received.
     quiet_defers: u8,
+    /// Mail id → sender callsign: a chunk arrived for mail the hub already
+    /// accepted. The gateway repeats its acceptance once the channel is quiet.
+    reack: HashMap<String, String>,
+    /// When the last mail frame arrived, and the spacing before it.
+    last_rx: Option<std::time::Instant>,
+    rx_spacing: f64,
+}
+
+impl Assembler {
+    fn new() -> Self {
+        Self {
+            slices: HashMap::new(),
+            buckets: HashMap::new(),
+            from: HashMap::new(),
+            to: HashMap::new(),
+            ready: Vec::new(),
+            quiet_defers: 0,
+            reack: HashMap::new(),
+            last_rx: None,
+            rx_spacing: 0.0,
+        }
+    }
+
+    /// A gap longer than the quiet cap is a new burst, not frame spacing.
+    fn note_frame(&mut self, now: std::time::Instant) {
+        if let Some(prev) = self.last_rx {
+            let gap = now.saturating_duration_since(prev).as_secs_f64();
+            self.rx_spacing = if gap < gateway::MAX_QUIET_GAP_SECS {
+                gap
+            } else {
+                0.0
+            };
+        }
+        self.last_rx = Some(now);
+    }
 }
 
 pub(super) fn spawn(
@@ -214,14 +249,7 @@ pub(super) fn spawn(
 }
 
 async fn run(mut rx: mpsc::Receiver<MailCmd>, ctx: TxCtx) {
-    let mut asm = Assembler {
-        slices: HashMap::new(),
-        buckets: HashMap::new(),
-        from: HashMap::new(),
-        to: HashMap::new(),
-        ready: Vec::new(),
-        quiet_defers: 0,
-    };
+    let mut asm = Assembler::new();
     let mut tick = tokio::time::interval(Duration::from_secs(30));
     loop {
         tokio::select! {
@@ -387,7 +415,11 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
         ctx.store.set_chunks(&row.id, total)?;
     }
     let total = if row.chunks == 0 { total } else { row.chunks };
-    let missing = missing_chunk_idxs(total, &row.got);
+    let mut missing = missing_chunk_idxs(total, &row.got);
+    let probe = gateway::probe_only(row.retries, !row.got.trim().is_empty(), missing.len());
+    if probe {
+        missing.truncate(1);
+    }
     let mut chunks = Vec::new();
     for w in wires_all.iter().filter(|w| missing.contains(&w.idx)) {
         chunks.push((w.idx, proto::frames_for_mtu(&proto::encode_chunk(w), mtu)?));
@@ -418,14 +450,13 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
     // this try was scheduled.
     let id = row.id.clone();
     let plan = move || {
-        let got = ctx
-            .store
-            .get(&id)
-            .ok()
-            .flatten()
-            .map(|r| r.got)
-            .unwrap_or_default();
-        let still = missing_chunk_idxs(total, &got);
+        let Some(now) = ctx.store.get(&id).ok().flatten() else {
+            return KeyPlan::default();
+        };
+        if gateway::is_finished(&now.state) {
+            return KeyPlan::default();
+        }
+        let still = missing_chunk_idxs(total, &now.got);
         let mut keyed = KeyPlan::default();
         for (idx, frames) in chunks.iter().filter(|(i, _)| still.contains(i)) {
             keyed.chunks.push(*idx);
@@ -472,6 +503,10 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
         }
     };
     if keyed.chunks.is_empty() {
+        let state = ctx.store.get(&row.id)?.map(|r| r.state).unwrap_or_default();
+        if gateway::is_finished(&state) {
+            return Ok(());
+        }
         tracing::info!(
             "mail {} has nothing left to key; waiting on the gateway",
             row.id
@@ -481,12 +516,21 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
         return Ok(());
     }
     note_mail(ctx, &cfg.callsign, &gateway_cs);
-    tracing::info!(
-        "mail keyed {} to {gateway_cs} ({} chunks, {})",
-        row.id,
-        keyed.chunks.len(),
-        gateway::mail_try_label(row.retries, cap)
-    );
+    if probe {
+        tracing::info!(
+            "mail keyed {} to {gateway_cs} (probe chunk {}/{total}, {})",
+            row.id,
+            keyed.chunks.first().map(|i| i + 1).unwrap_or(1),
+            gateway::mail_try_label(row.retries, cap)
+        );
+    } else {
+        tracing::info!(
+            "mail keyed {} to {gateway_cs} ({} chunks, {})",
+            row.id,
+            keyed.chunks.len(),
+            gateway::mail_try_label(row.retries, cap)
+        );
+    }
     let airtime = keyed_airtime_secs(
         preset,
         keyed.frames.iter().map(Vec::len),
@@ -684,6 +728,9 @@ async fn burst(
                         return Err(Error::Modem("Chat is still using the radio.".into()));
                     }
                 }
+                "wait_clear" => {
+                    lease::wait_clear(&ports, lease::WAIT_CLEAR_CAP).await;
+                }
                 "pause" => {
                     if let Some(air) = &ports.air {
                         air.hold_for_mail();
@@ -764,6 +811,10 @@ async fn burst(
 }
 
 async fn on_incoming(ctx: &TxCtx, asm: &mut Assembler, incoming: Incoming, during_burst: bool) {
+    let gateway = ctx.cfg.lock().mode == Mode::InternetRadio;
+    if gateway {
+        asm.note_frame(std::time::Instant::now());
+    }
     let wire = match incoming {
         Incoming::Wire(w) => Some(w),
         Incoming::Slice {
@@ -773,14 +824,30 @@ async fn on_incoming(ctx: &TxCtx, asm: &mut Assembler, incoming: Incoming, durin
             data,
         } => finish_slice(asm, &group, part, parts, data),
     };
-    let Some(wire) = wire else { return };
+    let Some(wire) = wire else {
+        // A slice of a chunk still on the air. Keying now would deafen the
+        // gateway to the rest of the burst.
+        if gateway {
+            arm_quiet(ctx, asm);
+        }
+        return;
+    };
     remember_party(asm, &wire);
     log_chunk(ctx, asm, &wire);
-    let gateway_reply = ctx.cfg.lock().mode == Mode::InternetRadio
+    let gateway_reply = gateway
         && matches!(
             wire.op,
             MailOp::Data | MailOp::VoxData | MailOp::ListReq | MailOp::GetReq
         );
+    if gateway_reply && matches!(wire.op, MailOp::Data | MailOp::VoxData) {
+        if let Some(origin) = accepted_origin(ctx, &wire.mail_id) {
+            asm.buckets
+                .remove(&format!("{:?}:{}", wire.op, wire.mail_id));
+            asm.reack.insert(wire.mail_id, origin);
+            arm_quiet(ctx, asm);
+            return;
+        }
+    }
     match absorb(asm, wire) {
         Absorb::Rejected {
             mail_id,
@@ -789,23 +856,33 @@ async fn on_incoming(ctx: &TxCtx, asm: &mut Assembler, incoming: Incoming, durin
         } => {
             tracing::warn!("mail drop chunk {mail_id} {idx}/{count} (bad total)");
             if gateway_reply {
-                arm_quiet(ctx);
+                arm_quiet(ctx, asm);
             }
         }
         Absorb::Pending => {
             if gateway_reply {
-                arm_quiet(ctx);
+                arm_quiet(ctx, asm);
             }
         }
         Absorb::Ready(meta, body, op) => {
             if gateway_reply {
                 push_ready(asm, (meta, body, op));
-                arm_quiet(ctx);
+                arm_quiet(ctx, asm);
             } else if let Err(e) = apply_mail(ctx, meta, body, op, during_burst).await {
                 tracing::warn!("mail inbound: {e}");
             }
         }
     }
+}
+
+/// Sender of a mail this gateway already handed to the hub, which Resend
+/// accepted. Any chunk of it, from any try, is answered with that acceptance.
+fn accepted_origin(ctx: &TxCtx, mail_id: &str) -> Option<String> {
+    let row = ctx.store.get(mail_id).ok().flatten()?;
+    if row.folder != "relay" || row.state != "sent" {
+        return None;
+    }
+    proto::callsign_from_wcr(&row.from_addr)
 }
 
 enum Absorb {
@@ -865,7 +942,7 @@ fn push_ready(asm: &mut Assembler, item: (MailMeta, String, MailOp)) {
     asm.ready.push(item);
 }
 
-fn arm_quiet(ctx: &TxCtx) {
+fn arm_quiet(ctx: &TxCtx, asm: &Assembler) {
     let gen = {
         let mut n = ctx.quiet.lock();
         *n = n.wrapping_add(1);
@@ -875,7 +952,7 @@ fn arm_quiet(ctx: &TxCtx) {
     let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor);
     let mtu = Rung::from_index(preset.ladder_start()).payload_bytes() as usize;
     let frame = keyed_airtime_secs(preset, std::iter::once(mtu), cfg.rf.turnaround_ms);
-    let gap = Duration::from_secs_f64(gateway::quiet_gap_secs(frame));
+    let gap = Duration::from_secs_f64(gateway::quiet_gap_heard_secs(frame, asm.rx_spacing));
     let tx = ctx.cmd_tx.clone();
     tokio::spawn(async move {
         tokio::time::sleep(gap).await;
@@ -889,7 +966,7 @@ async fn on_quiet(ctx: &TxCtx, asm: &mut Assembler, gen: u64) {
     }
     if gateway::quiet_defers(lease::channel_receiving(&(ctx.ports)()), asm.quiet_defers) {
         asm.quiet_defers += 1;
-        arm_quiet(ctx);
+        arm_quiet(ctx, asm);
         return;
     }
     asm.quiet_defers = 0;
@@ -905,6 +982,15 @@ async fn on_quiet(ctx: &TxCtx, asm: &mut Assembler, gen: u64) {
     }
     if ctx.cfg.lock().mode != Mode::InternetRadio {
         return;
+    }
+    for (mail_id, origin) in std::mem::take(&mut asm.reack) {
+        if completed.contains(&mail_id) {
+            continue;
+        }
+        tracing::info!("mail {mail_id} already accepted; repeating the ack");
+        if let Err(e) = send_complete(ctx, &origin, &mail_id, "ok").await {
+            tracing::warn!("mail ack {mail_id}: {e}");
+        }
     }
     for report in pending_have_reports(asm, &completed) {
         let payload = proto::have_bitmap(report.count, &report.indexes);
@@ -1461,7 +1547,9 @@ async fn send_complete(ctx: &TxCtx, origin: &str, mail_id: &str, payload: &str) 
         ack: true,
         ..MailMeta::default()
     };
-    reply_wire(ctx, MailOp::CompleteAck, ack, payload).await
+    reply_wire(ctx, MailOp::CompleteAck, ack, payload).await?;
+    tracing::info!("mail ack keyed {mail_id} to {origin}");
+    Ok(())
 }
 
 async fn reply_wire(ctx: &TxCtx, op: MailOp, meta: MailMeta, payload: &str) -> Result<()> {
@@ -1527,14 +1615,7 @@ mod tests {
 
     #[test]
     fn have_report_uses_the_smaller_total_for_one_mail() {
-        let mut asm = Assembler {
-            slices: HashMap::new(),
-            buckets: HashMap::new(),
-            from: HashMap::new(),
-            to: HashMap::new(),
-            ready: Vec::new(),
-            quiet_defers: 0,
-        };
+        let mut asm = Assembler::new();
         let mut slot = HashMap::new();
         slot.insert(0u16, wire(0, 48));
         slot.insert(2u16, wire(2, 3900));
@@ -1548,6 +1629,20 @@ mod tests {
         assert_eq!(reports[0].indexes, vec![0, 2]);
         let done = std::collections::HashSet::from(["abc".to_string()]);
         assert!(pending_have_reports(&asm, &done).is_empty());
+    }
+
+    #[test]
+    fn the_quiet_gap_follows_the_frame_spacing_heard() {
+        let mut asm = Assembler::new();
+        let t0 = std::time::Instant::now();
+        asm.note_frame(t0);
+        assert_eq!(asm.rx_spacing, 0.0);
+        asm.note_frame(t0 + Duration::from_millis(7_500));
+        assert!((asm.rx_spacing - 7.5).abs() < 0.01);
+        let gap = gateway::quiet_gap_heard_secs(4.0, asm.rx_spacing);
+        assert!(gap > 7.5, "gap {gap} must outlast one RDM-300S chunk");
+        asm.note_frame(t0 + Duration::from_secs(120));
+        assert_eq!(asm.rx_spacing, 0.0, "a new burst is not frame spacing");
     }
 
     fn spaced_body(n: usize) -> String {
@@ -1612,14 +1707,7 @@ mod tests {
         let mail = sample_mail(&body);
         let id = proto::compute_mail_id(mail.from, mail.to, mail.subject, &body, mail.ack);
         let wires = plan_mail_wires(Preset::HfPoor, &id, &mail);
-        let mut asm = Assembler {
-            slices: HashMap::new(),
-            buckets: HashMap::new(),
-            from: HashMap::new(),
-            to: HashMap::new(),
-            ready: Vec::new(),
-            quiet_defers: 0,
-        };
+        let mut asm = Assembler::new();
         let missing: Vec<u16> = wires.iter().map(|w| w.idx).filter(|i| i % 7 == 0).collect();
         assert!(!missing.is_empty());
         for w in wires.iter().filter(|w| !missing.contains(&w.idx)) {
