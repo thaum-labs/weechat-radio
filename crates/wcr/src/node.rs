@@ -242,6 +242,11 @@ fn still_awaiting_ack(store: &Store, id: &crate::proto::MsgId) -> bool {
     }
 }
 
+fn finish_ack_walk(rt: &Runtime, id: &crate::proto::MsgId) {
+    let _ = rt.store.set_hold(id, 0, 0);
+    let _ = rt.store.advance_delivery(id, Delivery::Delivered);
+}
+
 fn group_still_waiting(store: &Store, env: &Envelope) -> bool {
     let Some(name) = closed_group_name(env) else {
         return false;
@@ -507,7 +512,26 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                             continue;
                         }
                         let _ = dispatch(&rt_h, &m.env).await;
-                        let _ = rt_h.store.set_hold(&m.env.msg_id, 0, m.env.hops_left);
+                        let heard = rt_h.downstream_heard.lock().contains(&m.env.msg_id);
+                        let retries = rt_h.store.retries_of(&m.env.msg_id).unwrap_or(0);
+                        let max = rt_h.cfg.lock().rf.max_retries;
+                        if relay::keep_relaying(&m.env, retries, max, heard) {
+                            // Relayed, not Queued, so the echo of this copy does
+                            // not cancel the next send.
+                            let _ = rt_h
+                                .store
+                                .advance_delivery(&m.env.msg_id, Delivery::Relayed);
+                            let jitter = rt_h.cfg.lock().rf.retry_jitter;
+                            let next = relay::next_retry_hold_jittered(
+                                retries,
+                                now,
+                                m.env.priority(),
+                                jitter,
+                            );
+                            let _ = rt_h.store.bump_retry(&m.env.msg_id, next);
+                        } else {
+                            let _ = rt_h.store.set_hold(&m.env.msg_id, 0, m.env.hops_left);
+                        }
                     }
                 }
                 if let Ok((o, h)) = rt_h.store.queue_depth() {
@@ -550,7 +574,13 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 }
                 if let Ok(due) = rt_r.store.retry_due(now, &our, max) {
                     for (m, retries) in due {
-                        if !still_awaiting_ack(&rt_r.store, &m.env.msg_id) {
+                        if m.env.kind == MsgType::Ack {
+                            let heard = rt_r.downstream_heard.lock().contains(&m.env.msg_id);
+                            if !relay::ack_walk_continues(heard, retries, max) {
+                                finish_ack_walk(&rt_r, &m.env.msg_id);
+                                continue;
+                            }
+                        } else if !still_awaiting_ack(&rt_r.store, &m.env.msg_id) {
                             let _ = rt_r.store.set_hold(&m.env.msg_id, 0, 0);
                             continue;
                         }
@@ -558,7 +588,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                             continue;
                         }
                         let n = retries + 1;
-                        {
+                        if m.env.kind != MsgType::Ack {
                             let mut s = rt_r.snap.lock();
                             s.retries = n;
                         }
@@ -571,14 +601,16 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                             rt_r.snap.lock().retries = 0;
                             continue;
                         }
-                        let tries = rt_r.store.rf_tx_of(&m.env.msg_id).ok();
-                        rt_r.irc
-                            .tagmsg_progress(
-                                &m.env.msg_id.hex(),
-                                &format!("retry-{n}/{max}"),
-                                tries,
-                            )
-                            .await;
+                        if m.env.kind != MsgType::Ack {
+                            let tries = rt_r.store.rf_tx_of(&m.env.msg_id).ok();
+                            rt_r.irc
+                                .tagmsg_progress(
+                                    &m.env.msg_id.hex(),
+                                    &format!("retry-{n}/{max}"),
+                                    tries,
+                                )
+                                .await;
+                        }
                         // The last copy (n == max) still waits one full interval
                         // for an ACK. [no] is the ack-wait below, not this key.
                         let jitter = rt_r.cfg.lock().rf.retry_jitter;
@@ -589,6 +621,10 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 }
                 if let Ok(due) = rt_r.store.ack_wait_due(now, &our, max) {
                     for m in due {
+                        if m.env.kind == MsgType::Ack {
+                            finish_ack_walk(&rt_r, &m.env.msg_id);
+                            continue;
+                        }
                         let _ = rt_r.store.set_hold(&m.env.msg_id, 0, 0);
                         if !still_awaiting_ack(&rt_r.store, &m.env.msg_id) {
                             continue;
@@ -1670,6 +1706,17 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
         return Ok(());
     }
     if env.origin.as_str() == rt.engine.our_call {
+        // A relay closer to the destination has fewer hops than the copy we
+        // keyed. That is how an ACK walk stops: our own echo has the same count.
+        if env.kind == MsgType::Ack {
+            if let Ok(Some(stored)) = rt.store.get(&env.msg_id) {
+                if relay::heard_further(env.hops_left, stored.env.hops_left) {
+                    rt.downstream_heard.lock().insert(env.msg_id);
+                    let _ = rt.store.set_hold(&env.msg_id, 0, stored.env.hops_left);
+                    let _ = rt.store.advance_delivery(&env.msg_id, Delivery::Delivered);
+                }
+            }
+        }
         // Acoustic echo or a relay of our own frame. Control frames (ACK,
         // beacon, …) must not paint [rl] onto the last chat line.
         if !matches!(
@@ -2003,17 +2050,27 @@ async fn acknowledge(rt: &Runtime, env: &Envelope, snr: Option<f32>) -> Result<(
         seq,
         snr,
     );
-    // A routine ACK starts at 3 hops and dies before it walks back along a
-    // five-station line. Groups use the same 6 hops as the message.
-    if env.flags.group() {
-        ack.hops_left = ack.hops_left.max(BULLETIN_TTL);
-    }
+    // Same hop budget as the message. A routine 3 dies before it walks back
+    // along a five-station line; a group receipt uses the message's 6.
+    ack.flags.set_priority(env.priority());
+    ack.hops_left = relay::ack_hop_budget(env.flags.group(), env.priority());
     // Mode flags (including THIRD_PARTY on ~guest) must be set before the
     // signature. dispatch() stamps them again; a later mutation makes the hub
     // drop the ACK as unverified.
-    stamp_own_mode_flags(&mut ack, &rt.engine.our_call, rt.cfg.lock().mode);
-    if rt.cfg.lock().mode.uses_internet() {
+    let cfg_now = rt.cfg.lock().clone();
+    stamp_own_mode_flags(&mut ack, &rt.engine.our_call, cfg_now.mode);
+    if cfg_now.mode.uses_internet() {
         let _ = rt.keys.sign_envelope(&mut ack);
+    }
+    if cfg_now.mode.uses_radio() {
+        // Retry this ACK the way the message is retried, until a station
+        // closer to the originator relays it.
+        if rt.store.insert(&ack, Delivery::Sent).unwrap_or(false) {
+            let now = crate::proto::now_ts();
+            let hold =
+                relay::next_retry_hold_jittered(0, now, env.priority(), cfg_now.rf.retry_jitter);
+            let _ = rt.store.set_hold(&ack.msg_id, hold, ack.hops_left);
+        }
     }
     let dither = if env.flags.group() {
         let max = rt.cfg.lock().rf.ack_dither_ms as u64;
@@ -2044,6 +2101,10 @@ async fn acknowledge(rt: &Runtime, env: &Envelope, snr: Option<f32>) -> Result<(
 /// is clearly still waiting, and relay it again when we are the middle hop
 /// and the receipt has not landed.
 async fn maybe_answer_retry(rt: &Runtime, env: &Envelope, snr: Option<f32>) {
+    if env.kind == MsgType::Ack {
+        relay_heard_retry(rt, env).await;
+        return;
+    }
     if !env.flags.req_ack() {
         return;
     }
@@ -2071,11 +2132,21 @@ async fn maybe_answer_retry(rt: &Runtime, env: &Envelope, snr: Option<f32>) {
     if closed && !member {
         return;
     }
+    relay_heard_retry(rt, env).await;
+}
+
+/// Forward an originator retry of a frame we already relayed, until a station
+/// further along has been heard. ACKs use this on the way back to the sender.
+async fn relay_heard_retry(rt: &Runtime, env: &Envelope) {
+    let now = crate::proto::now_ts();
     let Ok(Some(stored)) = rt.store.get(&env.msg_id) else {
         return;
     };
     if relay::heard_further(env.hops_left, stored.env.hops_left) {
         rt.downstream_heard.lock().insert(env.msg_id);
+        if relay::bulletin_keeps_walking(&stored.env) {
+            let _ = rt.store.set_hold(&env.msg_id, 0, stored.env.hops_left);
+        }
         return;
     }
     if !relay::origin_retry(env.hops_left, stored.env.hops_left) {
