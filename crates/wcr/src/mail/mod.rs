@@ -166,7 +166,34 @@ pub fn start(
     Ok(handle)
 }
 
+/// Record a gateway have-report the moment it is decoded. The mail loop can
+/// be inside a long lease; the next resend is planned from this, not from a
+/// report still queued behind that lease.
+fn note_have_report(store: &store::MailStore, us: &str, incoming: &Incoming) -> Option<(u32, u32)> {
+    let Incoming::Wire(w) = incoming else {
+        return None;
+    };
+    if w.op != proto::MailOp::ChunkAck || w.count > 1 {
+        return None;
+    }
+    if !w.meta.dest.is_empty() && !w.meta.dest.eq_ignore_ascii_case(us) {
+        return None;
+    }
+    let (count, bits) = proto::parse_have_bitmap(&w.payload)?;
+    let row = store.get(&w.mail_id).ok()??;
+    if row.folder != "outbox" || row.chunks != u32::from(count) {
+        return None;
+    }
+    let mut last = None;
+    for idx in bits {
+        last = store.note_chunk(&w.mail_id, idx).ok().flatten().or(last);
+    }
+    last
+}
+
 pub async fn on_rf(mail: &MailHandle, incoming: Incoming) {
+    let us = mail.cfg.lock().callsign.to_ascii_uppercase();
+    let _ = note_have_report(&mail.store, &us, &incoming);
     let during_burst = mail.keying.load(Ordering::Acquire);
     let _ = mail
         .cmd
@@ -586,6 +613,71 @@ mod tests {
         assert!(line.contains("Not Sent until the gateway accepts it"));
         assert!(air::missing_chunk_idxs(4, "0,2").is_empty() == false);
         assert_eq!(air::missing_chunk_idxs(4, "0,2"), vec![1, 3]);
+    }
+
+    #[test]
+    fn a_have_report_is_noted_before_the_mail_loop_runs() {
+        let store = store::MailStore::open_memory().expect("store");
+        store
+            .insert(&store::MailRow {
+                id: "m48".into(),
+                folder: "outbox".into(),
+                from_addr: "M7TJF@mail.weechatradio.com".into(),
+                to_addr: "a@b.co".into(),
+                subject: "s".into(),
+                body: "long".into(),
+                ts: 1,
+                state: "tx".into(),
+                unread: false,
+                ack: true,
+                retries: 2,
+                detail: String::new(),
+                chunks: 48,
+                got: "0,1,2".into(),
+            })
+            .unwrap();
+        let have: Vec<u16> = (0..48)
+            .filter(|i| *i != 7 && *i != 30 && *i != 47)
+            .collect();
+        let report = |dest: &str, count: u16| {
+            Incoming::Wire(proto::MailWire {
+                op: MailOp::ChunkAck,
+                mail_id: "m48".into(),
+                idx: 0,
+                count: 1,
+                meta: MailMeta {
+                    dest: dest.into(),
+                    ..MailMeta::default()
+                },
+                payload: proto::have_bitmap(count, &have),
+            })
+        };
+        assert_eq!(
+            note_have_report(&store, "M7TJF", &report("G4XYZ", 48)),
+            None
+        );
+        assert_eq!(
+            note_have_report(&store, "M7TJF", &report("M7TJF", 40)),
+            None
+        );
+        assert_eq!(store.get("m48").unwrap().unwrap().got, "0,1,2");
+        assert_eq!(
+            note_have_report(&store, "M7TJF", &report("M7TJF", 48)),
+            Some((45, 48))
+        );
+        let row = store.get("m48").unwrap().unwrap();
+        assert_eq!(
+            air::missing_chunk_idxs(row.chunks, &row.got),
+            vec![7, 30, 47]
+        );
+        let data = Incoming::Wire(proto::MailWire {
+            op: MailOp::VoxData,
+            ..match report("M7TJF", 48) {
+                Incoming::Wire(w) => w,
+                Incoming::Slice { .. } => unreachable!(),
+            }
+        });
+        assert_eq!(note_have_report(&store, "M7TJF", &data), None);
     }
 
     #[test]

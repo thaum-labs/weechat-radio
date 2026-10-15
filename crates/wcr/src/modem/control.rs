@@ -18,6 +18,10 @@ pub struct ModemStatus {
     pub ptt_on: bool,
     pub rx_frame_count: u64,
     pub tx_frame_count: u64,
+    /// Frames waiting behind the one on the air. Upstream modem73 reports
+    /// this and leaves `tx_frame_count` at 0. `None` when the modem omits it.
+    #[serde(default)]
+    pub tx_queue: Option<u64>,
     pub last_snr: f32,
     pub last_ber: f32,
     pub occupancy_pct: i32,
@@ -73,6 +77,10 @@ impl ModemStatus {
             ptt_on: json_bool(&v, "ptt_on").unwrap_or(false),
             rx_frame_count: json_u64(&v, "rx_frame_count"),
             tx_frame_count: json_u64(&v, "tx_frame_count"),
+            tx_queue: v
+                .get("tx_queue")
+                .and_then(|x| x.as_f64())
+                .map(|n| n.max(0.0) as u64),
             last_snr: json_f32(&v, &["last_snr"]).unwrap_or(0.0),
             last_ber: json_f32(&v, &["last_ber"]).unwrap_or(0.0),
             occupancy_pct: json_i32(&v, "occupancy_pct"),
@@ -409,6 +417,10 @@ mod tests {
         assert_eq!(st.channel_state, "tx");
         assert_eq!(st.rx_frame_count, 0);
         assert_eq!(st.occupancy_pct, 9);
+        assert_eq!(st.tx_queue, Some(0));
+        let queued = ModemStatus::from_json(serde_json::json!({"tx_queue": 3}));
+        assert_eq!(queued.tx_queue, Some(3));
+        assert_eq!(ModemStatus::from_json(serde_json::json!({})).tx_queue, None);
     }
 
     #[test]

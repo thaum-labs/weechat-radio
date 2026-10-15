@@ -42,6 +42,13 @@ pub const TX_STUCK: &str = "Timed out while transmitting. The message stayed at 
 /// Longer than one hf-poor VOX pass (idle wait, drain, lead, and tail).
 pub const TX_STUCK_AFTER_SECS: u64 = 300;
 
+/// A 48-chunk hf-poor mail keys for over three minutes. The stuck timer
+/// scales with the planned airtime so a long burst is not failed mid-key.
+pub fn tx_stuck_after_secs(airtime_secs: f64) -> u64 {
+    let scaled = (airtime_secs.max(0.0) * 3.0).ceil() as u64 + 60;
+    scaled.max(TX_STUCK_AFTER_SECS)
+}
+
 /// Error when a row is still `tx` after `TX_STUCK_AFTER_SECS` and nothing superseded that wait.
 pub fn tx_stuck_error(state: &str) -> Option<&'static str> {
     if state == "tx" {
@@ -92,6 +99,16 @@ pub fn retry_after_secs(airtime_secs: f64, spent_secs: f64, retries: u32, frame_
 /// Longer than one frame, so a chunk still on the air resets the wait.
 pub fn quiet_gap_secs(frame_secs: f64) -> f64 {
     (frame_secs * 2.0).max(3.0)
+}
+
+/// How many times the gateway holds its reply because a frame is still
+/// being received when the quiet gap ends.
+pub const MAX_QUIET_DEFERS: u8 = 4;
+
+/// Hold the reply while a chunk is on the air. Keying over it deafens the
+/// gateway to that chunk. Bounded, so a busy channel cannot hold it forever.
+pub fn quiet_defers(receiving: bool, defers: u8) -> bool {
+    receiving && defers < MAX_QUIET_DEFERS
 }
 
 /// The modem never opened. Say so immediately instead of burning the retries.
@@ -218,5 +235,22 @@ mod tests {
         assert_eq!(tx_stuck_error("gateway"), None);
         assert_eq!(tx_stuck_error("sent"), None);
         assert_eq!(TX_STUCK_AFTER_SECS, 300);
+    }
+
+    #[test]
+    fn a_long_burst_is_not_called_stuck_while_it_keys() {
+        assert_eq!(tx_stuck_after_secs(4.0), TX_STUCK_AFTER_SECS);
+        assert_eq!(tx_stuck_after_secs(0.0), TX_STUCK_AFTER_SECS);
+        let long = 200.0;
+        assert!(tx_stuck_after_secs(long) as f64 > long * 3.0);
+        assert_eq!(tx_stuck_after_secs(200.0), 660);
+    }
+
+    #[test]
+    fn the_gateway_holds_its_reply_while_a_chunk_is_on_the_air() {
+        assert!(quiet_defers(true, 0));
+        assert!(quiet_defers(true, MAX_QUIET_DEFERS - 1));
+        assert!(!quiet_defers(true, MAX_QUIET_DEFERS));
+        assert!(!quiet_defers(false, 0));
     }
 }
