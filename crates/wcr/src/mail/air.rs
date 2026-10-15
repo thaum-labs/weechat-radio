@@ -415,14 +415,17 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
         ctx.store.set_chunks(&row.id, total)?;
     }
     let total = if row.chunks == 0 { total } else { row.chunks };
-    let mut missing = missing_chunk_idxs(total, &row.got);
+    let missing = missing_chunk_idxs(total, &row.got);
     let probe = gateway::probe_only(row.retries, !row.got.trim().is_empty(), missing.len());
-    if probe {
-        missing.truncate(1);
-    }
     let mut chunks = Vec::new();
     for w in wires_all.iter().filter(|w| missing.contains(&w.idx)) {
         chunks.push((w.idx, proto::frames_for_mtu(&proto::encode_chunk(w), mtu)?));
+    }
+    if probe {
+        // Any chunk gets the gateway's answer. The one with the fewest frames
+        // keeps this station deaf for the shortest time.
+        chunks.sort_by_key(|(_, frames)| frames.len());
+        chunks.truncate(1);
     }
     if chunks.is_empty() {
         return Ok(());

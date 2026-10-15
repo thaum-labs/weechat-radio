@@ -4,10 +4,13 @@
 use crate::error::Result;
 use crate::modes::Mode;
 use crate::presets::{Preset, Rung};
-use crate::proto::{Envelope, MsgType, Priority};
+use crate::proto::{Envelope, MsgId, MsgType, Priority};
 use crate::store::{Delivery, Store};
+use parking_lot::Mutex;
 use rand::Rng;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 #[derive(Clone, Debug)]
 pub struct RelayDecision {
@@ -244,23 +247,107 @@ pub fn group_walk_continues(
         && ack_walk_continues(downstream_heard, retries, max_retries)
 }
 
-/// Rung for the `step`-th copy this station relays without hearing it go
-/// further. Starts at the preset's ladder start, never faster. Steps only to
-/// a rung that still carries the preset's full frame: modem73 has one TX
-/// mode, and a narrower mode drops any wider frame still in its queue.
-pub fn relay_rung(preset: Preset, step: u32, widest: usize) -> Rung {
-    let mut idx = preset.ladder_start();
-    for _ in 0..step {
-        let next = idx + 1;
-        if next >= Rung::COUNT
-            || next > Rung::max_for_size(widest)
-            || Rung::from_index(next).payload_bytes() < preset.payload_bytes()
-        {
-            break;
-        }
-        idx = next;
+/// Hops a line leaves its originator with: 6 for `#bulletin` and closed
+/// groups, the priority's budget for a direct message.
+pub fn initial_hops(env: &Envelope) -> u8 {
+    if env.flags.group() {
+        crate::emcomm::BULLETIN_TTL
+    } else {
+        env.priority().default_ttl()
     }
-    Rung::from_index(idx)
+}
+
+/// A copy with `hops_heard` came straight from its originator, no relay between.
+pub fn heard_from_origin(env: &Envelope, hops_heard: u8) -> bool {
+    hops_heard >= initial_hops(env)
+}
+
+/// Only stations that heard a `#bulletin` from its originator ACK it. The
+/// originator stops at the first ACK, so a receipt from further away is
+/// airtime that the relays need.
+pub fn acks_line(env: &Envelope) -> bool {
+    !crate::slash::is_bulletin(env.dest.as_str()) || heard_from_origin(env, env.hops_left)
+}
+
+/// Our relay of someone else's receipt keys again until a station closer to
+/// the originator is heard carrying it. Next to the originator nobody relays
+/// it on, so that copy goes once and the originator's retry asks again.
+pub fn ack_relay_walks(
+    ack: &Envelope,
+    next_to_origin: bool,
+    retries: u32,
+    max_retries: u32,
+    downstream_heard: bool,
+) -> bool {
+    ack.kind == MsgType::Ack
+        && ack.hops_left > 0
+        && !next_to_origin
+        && ack_walk_continues(downstream_heard, retries, max_retries)
+}
+
+/// Which receipts this station carries toward a line's originator.
+///
+/// A station that ACKed a line before our relay of it went out heard the
+/// line before we did: it sits between us and the originator. Carrying its
+/// receipt takes it away from the originator, to the far end of a chain and
+/// back, where it collided with the receipts that needed the air.
+#[derive(Default)]
+pub struct AckSides {
+    lines: HashMap<MsgId, LineSide>,
+}
+
+#[derive(Default)]
+struct LineSide {
+    /// When our first relay of the line keys.
+    relay_at: Option<Instant>,
+    /// Ackers heard before that.
+    upstream: Vec<String>,
+}
+
+impl AckSides {
+    fn side(&mut self, line: MsgId) -> &mut LineSide {
+        if self.lines.len() > 4096 && !self.lines.contains_key(&line) {
+            self.lines.clear();
+        }
+        self.lines.entry(line).or_default()
+    }
+
+    /// Our relay of `line` keys at `at`.
+    pub fn relaying(&mut self, line: MsgId, at: Instant) {
+        let side = self.side(line);
+        if side.relay_at.is_none_or(|t| at < t) {
+            side.relay_at = Some(at);
+        }
+    }
+
+    /// `acker` sent a receipt for `line`, heard on the air at `now`. True when
+    /// it came from the originator's side and is not ours to carry.
+    pub fn from_upstream(&mut self, line: MsgId, acker: &str, now: Instant) -> bool {
+        let side = self.side(line);
+        if side.upstream.iter().any(|c| c.eq_ignore_ascii_case(acker)) {
+            return true;
+        }
+        if side.relay_at.is_some_and(|t| now >= t) {
+            return false;
+        }
+        side.upstream.push(acker.to_ascii_uppercase());
+        true
+    }
+
+    /// `acker` is known to sit on the originator's side of us for `line`.
+    pub fn is_upstream(&self, line: &MsgId, acker: &str) -> bool {
+        self.lines
+            .get(line)
+            .is_some_and(|s| s.upstream.iter().any(|c| c.eq_ignore_ascii_case(acker)))
+    }
+}
+
+/// Rung a relay keys on: the preset's own. A relay used to key in whatever
+/// mode the modem was left in, and modem73 dropped a frame wider than that
+/// mode. A slower rung would hold the channel longer on a busy chain, where
+/// the copies are lost to collisions, not to SNR.
+pub fn relay_rung(preset: Preset) -> Rung {
+    Rung::from_index(preset.ladder_start())
 }
 
 /// Airtime of one full frame on the preset. modem73 frames are a fixed
@@ -275,145 +362,24 @@ pub fn frame_slot(preset: Preset) -> std::time::Duration {
 
 /// Frame slots a relay or group receipt picks from. Two neighbours that
 /// cannot hear each other both answer the frame between them at once; a
-/// station between them decodes neither. Carrier sense cannot help.
+/// station between them decodes neither. Carrier sense cannot help. On a
+/// group retry each side answers with its own receipt and the ones it holds,
+/// so a routine line leaves room for several frames.
 pub fn spread_slots(priority: Priority) -> u32 {
     match priority {
         Priority::Emergency => 2,
-        Priority::Priority => 3,
-        Priority::Routine => 4,
+        Priority::Priority => 4,
+        Priority::Routine => 6,
     }
 }
 
 /// Delay before keying a relay or group receipt: a whole random slot, so
-/// two stations that picked different slots do not overlap.
+/// two stations that picked different slots do not overlap. A slot is a
+/// quarter longer than the frame: an ACK can key a moment late.
 pub fn spread_delay(preset: Preset, priority: Priority) -> std::time::Duration {
-    let slot = frame_slot(preset);
+    let slot = frame_slot(preset).mul_f64(1.25);
     let pick = rand::thread_rng().gen_range(0..spread_slots(priority));
     slot * pick
-}
-
-/// How long a neighbour heard keying its own frame counts as present.
-pub const NEIGHBOUR_FRESH_S: u32 = 900;
-/// Uptime before a lone known neighbour is taken as the keyer of every frame.
-pub const COVERAGE_WARMUP_S: u32 = 120;
-const COVERAGE_KEEP_S: u32 = 3_600;
-
-/// Which neighbours already hold a frame, from what was decoded on RF.
-///
-/// A neighbour is a station heard keying its own frame (a beacon, or a frame
-/// still at the top hop budget). A frame's origin holds it; an ACK's sender
-/// holds the ACK and the line it answers. When one neighbour is known and
-/// nothing suggests a second, every frame decoded came from that neighbour.
-/// Each station keys one id at one hop count, so copies of one id at two
-/// counts (other than our own) mean two keyers: a second neighbour exists
-/// even if it has never keyed its own frame.
-#[derive(Default)]
-pub struct Coverage {
-    started: u32,
-    neighbours: std::collections::HashMap<String, u32>,
-    holders: std::collections::HashMap<crate::proto::MsgId, (u32, Vec<String>)>,
-    hops: std::collections::HashMap<crate::proto::MsgId, (u32, Vec<u8>)>,
-    keyers_seen: (u32, usize),
-}
-
-impl Coverage {
-    pub fn new(now: u32) -> Self {
-        Self {
-            started: now,
-            ..Self::default()
-        }
-    }
-
-    fn hold(&mut self, id: crate::proto::MsgId, call: &str, now: u32) {
-        let e = self.holders.entry(id).or_insert((now, Vec::new()));
-        e.0 = now;
-        if !e.1.iter().any(|c| c.eq_ignore_ascii_case(call)) {
-            e.1.push(call.to_ascii_uppercase());
-        }
-    }
-
-    /// One frame decoded on RF. `ours` is the hop count we stored for it
-    /// before this copy, which is what our own relay keys.
-    pub fn heard(&mut self, env: &Envelope, ours: Option<u8>, now: u32) {
-        let origin = env.origin.as_str();
-        if env.kind == MsgType::Beacon
-            || (env.kind != MsgType::Frag && env.hops_left >= crate::emcomm::BULLETIN_TTL)
-        {
-            self.neighbours.insert(origin.to_ascii_uppercase(), now);
-        }
-        self.hold(env.msg_id, origin, now);
-        if env.kind == MsgType::Ack {
-            if let Some(id) = env.acked_id() {
-                self.hold(id, origin, now);
-            }
-        }
-        if ours != Some(env.hops_left) && env.kind != MsgType::Beacon {
-            let e = self.hops.entry(env.msg_id).or_insert((now, Vec::new()));
-            e.0 = now;
-            if !e.1.contains(&env.hops_left) {
-                e.1.push(env.hops_left);
-            }
-            let n = e.1.len();
-            if n >= self.keyers_floor(now) {
-                self.keyers_seen = (now, n);
-            }
-        }
-        self.prune(now);
-    }
-
-    fn prune(&mut self, now: u32) {
-        if self.holders.len() < 512 && self.hops.len() < 512 {
-            return;
-        }
-        self.holders
-            .retain(|_, (t, _)| now.saturating_sub(*t) < COVERAGE_KEEP_S);
-        self.hops
-            .retain(|_, (t, _)| now.saturating_sub(*t) < COVERAGE_KEEP_S);
-        self.neighbours
-            .retain(|_, t| now.saturating_sub(*t) < COVERAGE_KEEP_S);
-    }
-
-    fn fresh(&self, now: u32) -> Vec<&str> {
-        self.neighbours
-            .iter()
-            .filter(|(_, t)| now.saturating_sub(**t) < NEIGHBOUR_FRESH_S)
-            .map(|(c, _)| c.as_str())
-            .collect()
-    }
-
-    /// Most keyers seen for one id lately: a floor on how many neighbours exist.
-    fn keyers_floor(&self, now: u32) -> usize {
-        if now.saturating_sub(self.keyers_seen.0) < NEIGHBOUR_FRESH_S {
-            self.keyers_seen.1
-        } else {
-            0
-        }
-    }
-
-    /// Every neighbour we know of already holds `id`, so keying it again
-    /// reaches nobody new. False until a neighbour is known.
-    pub fn covered(&self, id: &crate::proto::MsgId, now: u32) -> bool {
-        let fresh = self.fresh(now);
-        if fresh.is_empty() || fresh.len() < self.keyers_floor(now) {
-            return false;
-        }
-        let holders = self
-            .holders
-            .get(id)
-            .map(|(_, h)| h.as_slice())
-            .unwrap_or(&[]);
-        let named = fresh
-            .iter()
-            .all(|n| holders.iter().any(|h| h.eq_ignore_ascii_case(n)));
-        if named {
-            return true;
-        }
-        // One neighbour, nothing suggesting another: it keyed what we decoded.
-        fresh.len() == 1
-            && self.keyers_floor(now) <= 1
-            && now.saturating_sub(self.started) >= COVERAGE_WARMUP_S
-            && self.hops.contains_key(id)
-    }
 }
 
 pub fn jitter_ms(priority: Priority) -> u64 {
@@ -445,6 +411,20 @@ pub fn next_retry_hold(retries: u32, now: u32, priority: Priority) -> u32 {
 pub const BEACON_BASE_S: i64 = 60;
 pub const BEACON_MIN_S: i64 = 15;
 pub const BEACON_MAX_S: i64 = 120;
+
+/// Longest a station goes without a beacon while traffic keeps it quiet.
+pub const BEACON_MAX_GAP_S: u32 = 600;
+
+/// A beacon goes out once a full base interval has passed with no traffic
+/// keyed or decoded here (`last_traffic`, 0 for none), or when the last
+/// beacon (`last_beacon`) is `BEACON_MAX_GAP_S` old. Traffic already tells the
+/// neighbours who is on the dial, and a beacon keyed into it lands on the
+/// relays and receipts that need the air.
+pub fn beacon_due(now: u32, last_traffic: u32, last_beacon: Option<u32>) -> bool {
+    let quiet = last_traffic == 0 || now.saturating_sub(last_traffic) >= BEACON_BASE_S as u32;
+    let overdue = last_beacon.is_none_or(|t| now.saturating_sub(t) >= BEACON_MAX_GAP_S);
+    quiet || overdue
+}
 
 /// Next identity-beacon wait, 60 s ± jitter, clamped to 15–120 s.
 pub fn beacon_interval_secs(jitter_s: u32) -> u64 {
@@ -542,11 +522,30 @@ pub fn rf_egress_heard(
 pub struct Engine {
     pub store: Arc<Store>,
     pub our_call: String,
+    pub sides: Arc<Mutex<AckSides>>,
 }
 
 impl Engine {
     pub fn new(store: Arc<Store>, our_call: String) -> Self {
-        Self { store, our_call }
+        Self {
+            store,
+            our_call,
+            sides: Arc::new(Mutex::new(AckSides::default())),
+        }
+    }
+
+    /// A receipt heard on the air for a line that is not ours, from the
+    /// originator's side of us. See [`AckSides`].
+    fn ack_from_upstream(&self, ack: &Envelope, medium: &str) -> bool {
+        if ack.kind != MsgType::Ack || !medium.eq_ignore_ascii_case("rf") {
+            return false;
+        }
+        let Some(line) = ack.acked_id() else {
+            return false;
+        };
+        self.sides
+            .lock()
+            .from_upstream(line, ack.origin.as_str(), Instant::now())
     }
 
     pub fn on_rx(
@@ -604,7 +603,8 @@ impl Engine {
                         .advance_delivery(&stored.msg_id, Delivery::Relayed)?;
                 }
                 let delivery = self.store.delivery_of(&stored.msg_id).ok().flatten();
-                if may_rebroadcast(&self.our_call, &stored, delivery) {
+                let upstream = self.ack_from_upstream(env, medium);
+                if may_rebroadcast(&self.our_call, &stored, delivery) && !upstream {
                     let now = crate::proto::now_ts();
                     self.store.set_hold(
                         &stored.msg_id,
@@ -1266,66 +1266,121 @@ mod tests {
     }
 
     #[test]
-    fn a_repeated_relay_steps_one_rung_and_keeps_the_preset_frame() {
-        assert_eq!(relay_rung(Preset::HfPoor, 0, 40), Rung::Rdm600S);
-        assert_eq!(relay_rung(Preset::HfPoor, 1, 40), Rung::Rdm300S);
-        assert_eq!(relay_rung(Preset::HfPoor, 4, 40), Rung::Rdm300S);
-        assert_eq!(relay_rung(Preset::HfPoor, 1, 200), Rung::Rdm600S);
-        assert_eq!(relay_rung(Preset::HfWeak, 3, 40), Rung::Rdm300S);
-        assert_eq!(relay_rung(Preset::VhfFm, 3, 40), Rung::OfdmQpskHalf);
-        assert_eq!(relay_rung(Preset::HfDeep, 2, 40), Rung::Mfsk32R);
+    fn a_relay_keys_on_the_preset_rung_in_whole_frame_slots() {
+        assert_eq!(relay_rung(Preset::HfPoor), Rung::Rdm600S);
+        assert_eq!(relay_rung(Preset::HfWeak), Rung::Rdm300S);
+        assert_eq!(relay_rung(Preset::VhfFm), Rung::OfdmQpskHalf);
+        assert_eq!(relay_rung(Preset::HfDeep), Rung::Mfsk32R);
+        assert!(relay_rung(Preset::HfPoor).payload_bytes() >= Preset::HfPoor.payload_bytes());
         let slot = frame_slot(Preset::HfPoor);
         assert!(slot > std::time::Duration::from_secs(3));
         for _ in 0..12 {
             let delay = spread_delay(Preset::HfPoor, Priority::Routine);
-            let n = (delay.as_secs_f64() / slot.as_secs_f64()).round() as u32;
+            let wide = slot.mul_f64(1.25).as_secs_f64();
+            let n = (delay.as_secs_f64() / wide).round() as u32;
             assert!(n < spread_slots(Priority::Routine));
-            assert!((delay.as_secs_f64() - slot.as_secs_f64() * n as f64).abs() < 0.01);
+            assert!((delay.as_secs_f64() - wide * n as f64).abs() < 0.01);
         }
     }
 
-    fn heard_line(origin: &str, hops: u8) -> Envelope {
-        Envelope::new_msg(
-            Callsign::parse(origin).unwrap(),
-            Callsign::from_raw("NET"),
+    #[test]
+    fn only_the_originators_neighbours_ack_a_bulletin() {
+        let mut bulletin = group_line();
+        bulletin.dest = Callsign::from_raw("BULLETIN");
+        assert_eq!(initial_hops(&bulletin), crate::emcomm::BULLETIN_TTL);
+        assert!(acks_line(&bulletin));
+        let mut relayed = bulletin.clone();
+        relayed.hops_left -= 1;
+        assert!(!acks_line(&relayed));
+        let mut group = group_line();
+        group.hops_left = 2;
+        assert!(acks_line(&group), "every closed-group member answers");
+        let dm = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::parse("M0BBB").unwrap(),
             1,
-            b"g".to_vec(),
-            hops,
-            Flags::new().with(crate::proto::FLAG_GROUP),
+            b"dm".to_vec(),
+            Priority::Routine.default_ttl(),
+            Flags::new(),
         )
-        .unwrap()
+        .unwrap();
+        assert!(heard_from_origin(&dm, 3));
+        assert!(!heard_from_origin(&dm, 2));
     }
 
     #[test]
-    fn an_end_station_stops_once_its_only_neighbour_holds_the_frame() {
-        let line = heard_line("G4AAA", 5);
-        let mut beacon = heard_line("M0BBB", 1);
-        beacon.kind = MsgType::Beacon;
-        let mut cover = Coverage::new(1_000);
-        cover.heard(&beacon, None, 1_000);
-        // Relayed by the one neighbour: a new hop count, origin still G4AAA.
-        cover.heard(&line, Some(6), 1_050);
-        assert!(!cover.covered(&line.msg_id, 1_050));
-        assert!(cover.covered(&line.msg_id, 1_000 + COVERAGE_WARMUP_S));
-        let mut other_hop = line.clone();
-        other_hop.hops_left = 3;
-        cover.heard(&other_hop, Some(6), 1_400);
-        assert!(
-            !cover.covered(&line.msg_id, 1_500),
-            "two hop counts means a second neighbour, even unnamed"
-        );
+    fn a_receipt_from_the_originators_side_is_not_carried() {
+        let line = group_line();
+        let mut sides = AckSides::default();
+        let t0 = Instant::now();
+        // B answered before our relay of the line went out: B is upstream.
+        assert!(sides.from_upstream(line.msg_id, "M0BBB", t0));
+        sides.relaying(line.msg_id, t0 + std::time::Duration::from_secs(8));
+        assert!(sides.from_upstream(line.msg_id, "M0BBB", t0 + std::time::Duration::from_secs(4)));
+        // D answered after it: D heard our relay, so D's receipt is ours to carry.
+        let later = t0 + std::time::Duration::from_secs(30);
+        assert!(!sides.from_upstream(line.msg_id, "M0DDD", later));
+        assert!(sides.is_upstream(&line.msg_id, "m0bbb"));
+        assert!(sides.from_upstream(line.msg_id, "M0BBB", later));
+        assert!(!sides.is_upstream(&line.msg_id, "M0DDD"));
+    }
 
-        let mut two = Coverage::new(1_000);
-        two.heard(&beacon, None, 1_000);
-        let mut east = heard_line("2E0CCC", 1);
-        east.kind = MsgType::Beacon;
-        two.heard(&east, None, 1_000);
-        two.heard(&line, Some(6), 1_100);
-        let from_b = Envelope::ack_for(&line, Callsign::parse("M0BBB").unwrap(), 2, None);
-        two.heard(&from_b, Some(5), 1_200);
-        assert!(!two.covered(&line.msg_id, 1_250));
-        let from_c = Envelope::ack_for(&line, Callsign::parse("2E0CCC").unwrap(), 3, None);
-        two.heard(&from_c, Some(5), 1_300);
-        assert!(two.covered(&line.msg_id, 1_350));
+    #[test]
+    fn the_engine_relays_only_receipts_from_beyond_us() {
+        let store = Arc::new(Store::open_memory().unwrap());
+        let engine = Engine::new(store.clone(), "2E0CCC".into());
+        let line = group_line();
+        let ack_by = |call: &str, seq: u32| {
+            let mut a = Envelope::ack_for(&line, Callsign::parse(call).unwrap(), seq, None);
+            a.hops_left = crate::emcomm::BULLETIN_TTL;
+            a
+        };
+        let hold_of = |id: &MsgId| {
+            store
+                .hold_due(u32::MAX)
+                .unwrap()
+                .iter()
+                .any(|m| m.env.msg_id == *id)
+        };
+        let from_b = ack_by("M0BBB", 1);
+        engine.on_rx(&from_b, "rf", None, None).unwrap();
+        assert!(
+            !hold_of(&from_b.msg_id),
+            "an upstream receipt is not relayed"
+        );
+        let from_hub = ack_by("M0HUB", 2);
+        engine.on_rx(&from_hub, "inet", None, None).unwrap();
+        assert!(
+            hold_of(&from_hub.msg_id),
+            "a gateway still keys a hub receipt"
+        );
+        engine.sides.lock().relaying(line.msg_id, Instant::now());
+        let from_d = ack_by("M0DDD", 3);
+        engine.on_rx(&from_d, "rf", None, None).unwrap();
+        assert!(
+            hold_of(&from_d.msg_id),
+            "a receipt from beyond us walks back"
+        );
+    }
+
+    #[test]
+    fn a_receipt_relay_walks_except_next_to_the_originator() {
+        let line = group_line();
+        let ack = Envelope::ack_for(&line, Callsign::parse("M0DDD").unwrap(), 1, None);
+        assert!(ack_relay_walks(&ack, false, 0, 3, false));
+        assert!(!ack_relay_walks(&ack, true, 0, 3, false));
+        assert!(!ack_relay_walks(&ack, false, 0, 3, true));
+        assert!(!ack_relay_walks(&ack, false, 3, 3, false));
+        assert!(!ack_relay_walks(&line, false, 0, 3, false));
+    }
+
+    #[test]
+    fn a_beacon_waits_for_a_quiet_channel() {
+        let base = BEACON_BASE_S as u32;
+        assert!(beacon_due(1_000, 0, Some(990)), "nothing heard yet");
+        assert!(!beacon_due(1_000, 990, Some(900)), "traffic 10 s ago");
+        assert!(beacon_due(1_000, 1_000 - base, Some(990)));
+        assert!(beacon_due(1_000, 990, None), "the first beacon goes out");
+        assert!(beacon_due(1_000, 990, Some(1_000 - BEACON_MAX_GAP_S)));
     }
 }

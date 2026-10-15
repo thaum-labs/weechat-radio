@@ -91,10 +91,8 @@ struct Runtime {
     gw_marked: Arc<Mutex<HashSet<MsgId>>>,
     /// Msgids that already painted [rl]. A neighbour relay does not paint it again.
     rl_painted: Arc<Mutex<HashSet<MsgId>>>,
-    /// Which neighbours already hold each frame, from RF decodes.
-    cover: Arc<Mutex<relay::Coverage>>,
-    /// Copies of someone else's frame this station has keyed.
-    relay_copies: Arc<Mutex<HashMap<MsgId, u32>>>,
+    /// When this station last keyed or decoded a frame other than a beacon.
+    last_traffic: Arc<std::sync::atomic::AtomicU32>,
 }
 
 impl Runtime {
@@ -134,11 +132,6 @@ impl Runtime {
         } else {
             false
         }
-    }
-
-    /// Every known neighbour already holds `id`. Another copy reaches no one.
-    fn covered(&self, id: &MsgId) -> bool {
-        self.cover.lock().covered(id, crate::proto::now_ts())
     }
 
     fn relay_due(&self, id: &MsgId, now: u32) -> bool {
@@ -438,8 +431,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         hub_marked: Arc::new(Mutex::new(HashSet::new())),
         gw_marked: Arc::new(Mutex::new(HashSet::new())),
         rl_painted: Arc::new(Mutex::new(HashSet::new())),
-        cover: Arc::new(Mutex::new(relay::Coverage::new(crate::proto::now_ts()))),
-        relay_copies: Arc::new(Mutex::new(HashMap::new())),
+        last_traffic: Arc::new(std::sync::atomic::AtomicU32::new(0)),
     };
     refresh_group_prios(&rt);
 
@@ -523,20 +515,13 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                             continue;
                         }
                         let retries = rt_h.store.retries_of(&m.env.msg_id).unwrap_or(0);
-                        // A first relay of a line still goes out: a silent
-                        // neighbour may need it. A receipt, or a repeat, that
-                        // every known neighbour already holds reaches nobody.
-                        let repeat = m.env.kind == MsgType::Ack || retries > 0;
-                        if repeat && rt_h.covered(&m.env.msg_id) {
-                            let _ = rt_h.store.set_hold(&m.env.msg_id, 0, m.env.hops_left);
-                            continue;
-                        }
-                        let _ = dispatch_spread(&rt_h, &m.env).await;
-                        let heard = rt_h.downstream_heard.lock().contains(&m.env.msg_id)
-                            || rt_h.covered(&m.env.msg_id);
+                        let slot = dispatch_spread(&rt_h, &m.env).await;
+                        let heard = rt_h.downstream_heard.lock().contains(&m.env.msg_id);
                         let max = rt_h.cfg.lock().rf.max_retries;
+                        let next_to_origin = relayed_next_to_origin(&rt_h.store, &m.env);
                         if relay::keep_relaying(&m.env, retries, max, heard)
                             || relay::group_walk_continues(&m.env, retries, max, heard)
+                            || relay::ack_relay_walks(&m.env, next_to_origin, retries, max, heard)
                         {
                             // Relayed, not Queued, so the echo of this copy does
                             // not cancel the next send.
@@ -544,9 +529,11 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                                 .store
                                 .advance_delivery(&m.env.msg_id, Delivery::Relayed);
                             let jitter = rt_h.cfg.lock().rf.retry_jitter;
+                            // The walk timer starts when this copy keys.
+                            let keyed = now.saturating_add(slot.as_secs() as u32);
                             let next = relay::next_retry_hold_jittered(
                                 retries,
-                                now,
+                                keyed,
                                 m.env.priority(),
                                 jitter,
                             );
@@ -761,6 +748,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     {
         let rt_b = rt.clone();
         tokio::spawn(async move {
+            let mut last_beacon = None;
             loop {
                 let (jitter_s, congested, uses_rf, vox) = {
                     let cfg = rt_b.cfg.lock();
@@ -809,6 +797,12 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         continue;
                     }
                 }
+                let now = crate::proto::now_ts();
+                let traffic = rt_b.last_traffic.load(std::sync::atomic::Ordering::Relaxed);
+                if !relay::beacon_due(now, traffic, last_beacon) {
+                    continue;
+                }
+                last_beacon = Some(now);
                 let cfg = rt_b.cfg.lock().clone();
                 let Ok(seq) = rt_b.store.next_seq(&rt_b.engine.our_call) else {
                     continue;
@@ -1374,6 +1368,7 @@ async fn enqueue_rf(
     preset: Preset,
     opts: EnqueueOpts,
 ) -> Result<bool> {
+    note_traffic(rt, rf_env);
     if rf_env.kind == MsgType::Ack {
         // Key off the IRC/RX loop. Waiting out a busy channel must not stall
         // reading the next frame.
@@ -1396,14 +1391,12 @@ async fn enqueue_rf(
         return Ok(true);
     };
     // A relay used to key with no rung, in whatever mode the modem was left
-    // in, and modem73 then dropped a frame wider than that mode. The copy
-    // count is how many times this station has already relayed the id.
+    // in, and modem73 then dropped a frame wider than that mode.
     let rung = opts.rung.or_else(|| {
         if rf_env.origin.as_str() == rt.engine.our_call {
             None
         } else {
-            let widest = frames.iter().map(Vec::len).max().unwrap_or(0);
-            Some(relay::relay_rung(preset, u32::from(opts.copy), widest))
+            Some(relay::relay_rung(preset))
         }
     });
     let mut item = AirItem::new(rf_env, &rt.engine.our_call, frames, preset).with_copy(opts.copy);
@@ -1465,6 +1458,14 @@ async fn key_ack_now(
     Ok(sent)
 }
 
+/// A frame keyed or decoded here. The beacon waits for a quiet channel.
+fn note_traffic(rt: &Runtime, env: &Envelope) {
+    if env.kind != MsgType::Beacon {
+        rt.last_traffic
+            .store(crate::proto::now_ts(), std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 fn note_own_rf_tx(rt: &Runtime, env: &Envelope) {
     if env.origin.as_str() != rt.engine.our_call {
         return;
@@ -1496,39 +1497,26 @@ async fn send_rf(
 }
 
 async fn dispatch(rt: &Runtime, env: &Envelope) -> Result<()> {
-    dispatch_with(rt, env, false, RfSlot::default()).await
-}
-
-/// When and on which ladder step a frame keys. Own frames go now on step 0.
-#[derive(Clone, Copy, Default)]
-struct RfSlot {
-    step: u32,
-    delay: Duration,
+    dispatch_with(rt, env, false, Duration::ZERO).await
 }
 
 /// Key someone else's frame, or a group receipt, in a random frame slot so
 /// two neighbours answering the same frame do not land on top of each other
-/// at the station between them.
-async fn dispatch_spread(rt: &Runtime, env: &Envelope) -> Result<()> {
+/// at the station between them. Returns the slot's delay.
+async fn dispatch_spread(rt: &Runtime, env: &Envelope) -> Duration {
     let preset = Preset::parse(&rt.cfg.lock().modem.preset).unwrap_or(Preset::VhfFm);
     let delay = relay::spread_delay(preset, env.priority());
-    let foreign = !relay::is_own_origin(&rt.engine.our_call, env);
-    let step = if foreign {
-        let mut copies = rt.relay_copies.lock();
-        if copies.len() > 4096 {
-            copies.clear();
-        }
-        let n = copies.entry(env.msg_id).or_insert(0);
-        let step = *n;
-        *n = n.saturating_add(1);
-        step
-    } else {
-        0
-    };
-    dispatch_with(rt, env, false, RfSlot { step, delay }).await
+    let _ = dispatch_with(rt, env, false, delay).await;
+    delay
 }
 
-async fn dispatch_with(rt: &Runtime, env: &Envelope, force_inet: bool, slot: RfSlot) -> Result<()> {
+/// `delay` holds the radio copy back that long; the hub and LAN copies go now.
+async fn dispatch_with(
+    rt: &Runtime,
+    env: &Envelope,
+    force_inet: bool,
+    delay: Duration,
+) -> Result<()> {
     let cfg = rt.cfg.lock().clone();
     let mut env = env.clone();
     stamp_own_mode_flags(&mut env, &rt.engine.our_call, cfg.mode);
@@ -1541,20 +1529,17 @@ async fn dispatch_with(rt: &Runtime, env: &Envelope, force_inet: bool, slot: RfS
         .as_str()
         .eq_ignore_ascii_case(&rt.engine.our_call);
     let mut relayed = false;
-    // `copy` carries how many times we already relayed this id. dispatch_rf_at
-    // leaves a foreign frame without a rung; enqueue_rf fills one from that.
-    let copy = if foreign {
-        slot.step.min(u32::from(u8::MAX)) as u8
-    } else {
-        0
-    };
     if cfg.mode.uses_radio()
-        && dispatch_rf_at(rt, &env, 0, slot.delay, copy)
-            .await
-            .unwrap_or(false)
+        && dispatch_rf_at(rt, &env, 0, delay, 0).await.unwrap_or(false)
         && foreign
     {
         relayed = true;
+        if env.kind != MsgType::Ack {
+            rt.engine
+                .sides
+                .lock()
+                .relaying(env.msg_id, std::time::Instant::now() + delay);
+        }
     }
     let via_inet =
         force_inet || (cfg.mode.uses_internet() && env.flags.inet_ok() && inet_gap_for(rt, &env));
@@ -1793,13 +1778,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
         return Ok(());
     }
     if medium == "rf" {
-        let ours = rt
-            .store
-            .get(&env.msg_id)
-            .ok()
-            .flatten()
-            .map(|m| m.env.hops_left);
-        rt.cover.lock().heard(&env, ours, crate::proto::now_ts());
+        note_traffic(rt, &env);
     }
     if env.origin.as_str() == rt.engine.our_call {
         // A relay closer to the destination has fewer hops than the copy we
@@ -2035,6 +2014,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                 if !mute_closed
                     && env.flags.req_ack()
                     && (env.dest.as_str() == rt.engine.our_call || env.flags.group())
+                    && relay::acks_line(&env)
                 {
                     let _ = acknowledge(rt, &env, snr).await;
                 }
@@ -2185,8 +2165,11 @@ async fn acknowledge(rt: &Runtime, env: &Envelope, snr: Option<f32>) -> Result<(
     }
     if cfg_now.mode.uses_radio() {
         // Retry this ACK the way the message is retried, until a station
-        // closer to the originator relays it.
-        if rt.store.insert(&ack, Delivery::Sent).unwrap_or(false) {
+        // closer to the originator relays it. Next to the originator nobody
+        // relays it; the originator's own retry asks for it again.
+        if rt.store.insert(&ack, Delivery::Sent).unwrap_or(false)
+            && !relay::heard_from_origin(env, env.hops_left)
+        {
             let now = crate::proto::now_ts();
             let hold =
                 relay::next_retry_hold_jittered(0, now, env.priority(), cfg_now.rf.retry_jitter);
@@ -2243,6 +2226,10 @@ async fn maybe_answer_retry(rt: &Runtime, env: &Envelope, snr: Option<f32>) {
     if dest_is_bulletin(env.dest.as_str()) && !env.flags.group() {
         return;
     }
+    if !relay::acks_line(env) {
+        relay_heard_retry(rt, env).await;
+        return;
+    }
     let now = crate::proto::now_ts();
     let name = env.dest.to_string().to_ascii_lowercase();
     let closed = env.flags.group() && !dest_is_bulletin(env.dest.as_str());
@@ -2296,7 +2283,10 @@ async fn relay_heard_retry(rt: &Runtime, env: &Envelope) {
     };
     if relay::heard_further(env.hops_left, stored.env.hops_left) {
         rt.downstream_heard.lock().insert(env.msg_id);
-        if relay::keeps_walking(&stored.env) || relay::closed_group_walks(&stored.env) {
+        if relay::keeps_walking(&stored.env)
+            || relay::closed_group_walks(&stored.env)
+            || stored.env.kind == MsgType::Ack
+        {
             let _ = rt.store.set_hold(&env.msg_id, 0, stored.env.hops_left);
             if let Some(air) = rt.air() {
                 air.cancel(env.msg_id);
@@ -2305,6 +2295,9 @@ async fn relay_heard_retry(rt: &Runtime, env: &Envelope) {
         return;
     }
     if !relay::origin_retry(env.hops_left, stored.env.hops_left) {
+        return;
+    }
+    if ack_from_upstream(rt, &stored.env) {
         return;
     }
     if env.kind != MsgType::Ack {
@@ -2318,9 +2311,6 @@ async fn relay_heard_retry(rt: &Runtime, env: &Envelope) {
             .unwrap_or(false)
     });
     if rt.downstream_heard.lock().contains(&env.msg_id) && !receipts_missing {
-        return;
-    }
-    if rt.covered(&env.msg_id) {
         return;
     }
     if relay::may_rebroadcast(&rt.engine.our_call, &stored.env, Some(stored.delivery))
@@ -2340,7 +2330,7 @@ async fn resend_held_acks(rt: &Runtime, id: &MsgId, now: u32) {
     for ack in acks {
         if ack.env.hops_left == 0
             || rt.downstream_heard.lock().contains(&ack.env.msg_id)
-            || rt.covered(&ack.env.msg_id)
+            || ack_from_upstream(rt, &ack.env)
         {
             continue;
         }
@@ -2350,6 +2340,31 @@ async fn resend_held_acks(rt: &Runtime, id: &MsgId, now: u32) {
             let _ = dispatch_spread(rt, &ack.env).await;
         }
     }
+}
+
+/// A receipt from a station between us and the line's originator. It reaches
+/// the originator without us.
+fn ack_from_upstream(rt: &Runtime, ack: &Envelope) -> bool {
+    ack.kind == MsgType::Ack
+        && ack.acked_id().is_some_and(|line| {
+            rt.engine
+                .sides
+                .lock()
+                .is_upstream(&line, ack.origin.as_str())
+        })
+}
+
+/// We heard the line `ack` answers straight from its originator. A receipt
+/// we relay reaches the originator with no relay after us.
+fn relayed_next_to_origin(store: &Store, ack: &Envelope) -> bool {
+    if ack.kind != MsgType::Ack {
+        return false;
+    }
+    ack.acked_id()
+        .and_then(|line| store.get(&line).ok().flatten())
+        .is_some_and(|line| {
+            relay::heard_from_origin(&line.env, line.env.hops_left.saturating_add(1))
+        })
 }
 
 async fn forward_gateway(rt: &Runtime, env: &Envelope, medium: &str) -> Result<()> {
@@ -2673,7 +2688,7 @@ async fn send_group_status(
         let _ = rt.keys.sign_envelope(&mut env);
     }
     rt.store.insert(&env, Delivery::Queued)?;
-    dispatch_with(rt, &env, force_inet, RfSlot::default()).await?;
+    dispatch_with(rt, &env, force_inet, Duration::ZERO).await?;
     rt.store.set_delivery(&env.msg_id, Delivery::Sent)?;
     if cfg_g.mode.uses_radio() && relay::is_channel_meta(&env) {
         // Nobody ACKs a roster. Repeat it until a relay is heard carrying it.
