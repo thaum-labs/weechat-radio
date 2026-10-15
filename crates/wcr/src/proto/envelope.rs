@@ -12,6 +12,9 @@ use serde::{Deserialize, Serialize};
 pub const VERSION: u8 = 2;
 pub const VERSION_V1: u8 = 1;
 /// Bytes before body in a v1 frame.
+/// SNR byte of an ACK that has no SNR but carries the line's hop count.
+pub const ACK_NO_SNR: i8 = i8::MIN;
+
 pub const HEADER_LEN: usize = 1 + 1 + 2 + MSG_ID_LEN + PACKED_LEN + PACKED_LEN + 1 + 4 + 4 + 2;
 pub const CRC_LEN: usize = 2;
 pub const SIG_LEN: usize = 64;
@@ -179,10 +182,12 @@ impl Envelope {
             flags = flags.with(crate::proto::flags::FLAG_NO_INET);
         }
         let mut body = original.msg_id.0.to_vec();
-        if let Some(snr) = snr_db {
-            let q = snr.round().clamp(-32.0, 31.0) as i8;
-            body.push(q as u8);
-        }
+        let snr = snr_db.map_or(ACK_NO_SNR, |snr| snr.round().clamp(-32.0, 31.0) as i8);
+        body.push(snr as u8);
+        // Where this station heard the line. A relay carries the receipt only
+        // if it heard the line closer to the originator. Older readers stop
+        // at the SNR byte.
+        body.push(original.hops_left);
         Self {
             ver: VERSION,
             kind: MsgType::Ack,
@@ -212,7 +217,16 @@ impl Envelope {
         if self.kind != MsgType::Ack || self.body.len() < MSG_ID_LEN + 1 {
             return None;
         }
-        Some(self.body[MSG_ID_LEN] as i8 as f32)
+        let snr = self.body[MSG_ID_LEN] as i8;
+        (snr != ACK_NO_SNR).then_some(snr as f32)
+    }
+
+    /// Hops left on the line when the ACK's sender heard it. Absent before v0.1.90.
+    pub fn acked_line_hops(&self) -> Option<u8> {
+        if self.kind != MsgType::Ack || self.body.len() < MSG_ID_LEN + 2 {
+            return None;
+        }
+        Some(self.body[MSG_ID_LEN + 1])
     }
 
     pub fn body_text(&self) -> String {
@@ -681,6 +695,9 @@ mod tests {
             Flags::new().with(FLAG_REQ_ACK),
         )
         .unwrap();
+        let quiet = Envelope::ack_for(&env, Callsign::parse("M0XYZ").unwrap(), 8, None);
+        assert_eq!(quiet.acked_snr(), None);
+        assert_eq!(quiet.acked_line_hops(), Some(env.hops_left));
         let ack = Envelope::ack_for(&env, Callsign::parse("M0XYZ").unwrap(), 9, Some(12.4));
         let bytes = ack.encode().unwrap();
         let back = Envelope::decode(&bytes).unwrap();

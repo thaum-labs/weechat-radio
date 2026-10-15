@@ -285,12 +285,26 @@ pub fn ack_relay_walks(
         && ack_walk_continues(downstream_heard, retries, max_retries)
 }
 
+/// A receipt that says where its sender heard the line (v0.1.90 on), against
+/// where we did. True when the sender is no further from the originator than
+/// we are, so carrying its receipt takes it the wrong way. A station that does
+/// not hold the line is not on its path. None for an older receipt.
+pub fn ack_upstream_by_hops(ack: &Envelope, our_line: Option<&Envelope>) -> Option<bool> {
+    let theirs = ack.acked_line_hops()?;
+    let Some(line) = our_line else {
+        return Some(true);
+    };
+    // Stored copies hold one hop less than the copy we heard.
+    Some(line.hops_left.saturating_add(1) <= theirs)
+}
+
 /// Which receipts this station carries toward a line's originator.
 ///
-/// A station that ACKed a line before our relay of it went out heard the
-/// line before we did: it sits between us and the originator. Carrying its
-/// receipt takes it away from the originator, to the far end of a chain and
-/// back, where it collided with the receipts that needed the air.
+/// A receipt from the originator's side of us, carried on, walked to the far
+/// end of a chain and back, collided with the receipts that needed the air,
+/// and made its sender stop repeating it. A receipt now says where its sender
+/// heard the line ([`ack_upstream_by_hops`]). For an older receipt, a station
+/// that ACKed before our relay of the line went out is taken as upstream.
 #[derive(Default)]
 pub struct AckSides {
     lines: HashMap<MsgId, LineSide>,
@@ -332,6 +346,14 @@ impl AckSides {
         }
         side.upstream.push(acker.to_ascii_uppercase());
         true
+    }
+
+    /// `acker` sits on the originator's side of us for `line`.
+    pub fn mark_upstream(&mut self, line: MsgId, acker: &str) {
+        let side = self.side(line);
+        if !side.upstream.iter().any(|c| c.eq_ignore_ascii_case(acker)) {
+            side.upstream.push(acker.to_ascii_uppercase());
+        }
     }
 
     /// `acker` is known to sit on the originator's side of us for `line`.
@@ -543,9 +565,16 @@ impl Engine {
         let Some(line) = ack.acked_id() else {
             return false;
         };
-        self.sides
-            .lock()
-            .from_upstream(line, ack.origin.as_str(), Instant::now())
+        let ours = self.store.get(&line).ok().flatten();
+        let mut sides = self.sides.lock();
+        match ack_upstream_by_hops(ack, ours.as_ref().map(|m| &m.env)) {
+            Some(true) => {
+                sides.mark_upstream(line, ack.origin.as_str());
+                true
+            }
+            Some(false) => false,
+            None => sides.from_upstream(line, ack.origin.as_str(), Instant::now()),
+        }
     }
 
     pub fn on_rx(
@@ -1329,9 +1358,15 @@ mod tests {
     fn the_engine_relays_only_receipts_from_beyond_us() {
         let store = Arc::new(Store::open_memory().unwrap());
         let engine = Engine::new(store.clone(), "2E0CCC".into());
+        // C heard the line one hop out (5 left); B heard it at 6, D at 4.
         let line = group_line();
-        let ack_by = |call: &str, seq: u32| {
-            let mut a = Envelope::ack_for(&line, Callsign::parse(call).unwrap(), seq, None);
+        let mut at_c = line.clone();
+        at_c.hops_left = 5;
+        engine.on_rx(&at_c, "rf", None, None).unwrap();
+        let ack_by = |call: &str, seq: u32, heard: u8| {
+            let mut copy = line.clone();
+            copy.hops_left = heard;
+            let mut a = Envelope::ack_for(&copy, Callsign::parse(call).unwrap(), seq, None);
             a.hops_left = crate::emcomm::BULLETIN_TTL;
             a
         };
@@ -1342,25 +1377,41 @@ mod tests {
                 .iter()
                 .any(|m| m.env.msg_id == *id)
         };
-        let from_b = ack_by("M0BBB", 1);
+        let from_b = ack_by("M0BBB", 1, 6);
         engine.on_rx(&from_b, "rf", None, None).unwrap();
         assert!(
             !hold_of(&from_b.msg_id),
             "an upstream receipt is not relayed"
         );
-        let from_hub = ack_by("M0HUB", 2);
-        engine.on_rx(&from_hub, "inet", None, None).unwrap();
-        assert!(
-            hold_of(&from_hub.msg_id),
-            "a gateway still keys a hub receipt"
-        );
-        engine.sides.lock().relaying(line.msg_id, Instant::now());
-        let from_d = ack_by("M0DDD", 3);
+        assert!(engine.sides.lock().is_upstream(&line.msg_id, "M0BBB"));
+        let from_d = ack_by("M0DDD", 2, 4);
         engine.on_rx(&from_d, "rf", None, None).unwrap();
         assert!(
             hold_of(&from_d.msg_id),
             "a receipt from beyond us walks back"
         );
+        let from_hub = ack_by("M0HUB", 3, 6);
+        engine.on_rx(&from_hub, "inet", None, None).unwrap();
+        assert!(
+            hold_of(&from_hub.msg_id),
+            "a gateway still keys a hub receipt"
+        );
+
+        // An older receipt has no hop byte: answering before our relay of the
+        // line went out marks the sender upstream.
+        let old = |call: &str, seq: u32| {
+            let mut a = ack_by(call, seq, 5);
+            a.body.truncate(crate::proto::ids::MSG_ID_LEN);
+            a.msg_id = MsgId::compute(&a.origin, &a.dest, seq, &a.body);
+            a
+        };
+        let early = old("M0EEE", 4);
+        engine.on_rx(&early, "rf", None, None).unwrap();
+        assert!(!hold_of(&early.msg_id));
+        engine.sides.lock().relaying(line.msg_id, Instant::now());
+        let late = old("M0FFF", 5);
+        engine.on_rx(&late, "rf", None, None).unwrap();
+        assert!(hold_of(&late.msg_id));
     }
 
     #[test]
