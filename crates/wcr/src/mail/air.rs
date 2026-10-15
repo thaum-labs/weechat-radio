@@ -182,6 +182,8 @@ struct Assembler {
     to: HashMap<String, String>,
     /// Complete messages waiting out the quiet gap before the gateway keys.
     ready: Vec<(MailMeta, String, MailOp)>,
+    /// Quiet gaps that ended while a frame was still being received.
+    quiet_defers: u8,
 }
 
 pub(super) fn spawn(
@@ -218,6 +220,7 @@ async fn run(mut rx: mpsc::Receiver<MailCmd>, ctx: TxCtx) {
         from: HashMap::new(),
         to: HashMap::new(),
         ready: Vec::new(),
+        quiet_defers: 0,
     };
     let mut tick = tokio::time::interval(Duration::from_secs(30));
     loop {
@@ -385,30 +388,54 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
     }
     let total = if row.chunks == 0 { total } else { row.chunks };
     let missing = missing_chunk_idxs(total, &row.got);
-    let wires: Vec<_> = wires_all
-        .into_iter()
-        .filter(|w| missing.contains(&w.idx))
-        .collect();
-    if wires.is_empty() {
+    let mut chunks = Vec::new();
+    for w in wires_all.iter().filter(|w| missing.contains(&w.idx)) {
+        chunks.push((w.idx, proto::frames_for_mtu(&proto::encode_chunk(w), mtu)?));
+    }
+    if chunks.is_empty() {
         return Ok(());
     }
-    let mut frames = Vec::new();
-    for w in &wires {
-        frames.extend(proto::frames_for_mtu(&proto::encode_chunk(w), mtu)?);
-    }
-    let widest = frames.iter().map(Vec::len).max().unwrap_or(0);
+    let widest = chunks
+        .iter()
+        .flat_map(|(_, f)| f.iter().map(Vec::len))
+        .max()
+        .unwrap_or(0);
     if widest > mtu {
         return Err(Error::protocol("mail frame wider than the rung"));
     }
     ctx.store.set_state(&row.id, "outbox", "tx")?;
-    arm_tx_stuck(ctx, &row.id);
+    let planned_secs = keyed_airtime_secs(
+        preset,
+        chunks.iter().flat_map(|(_, f)| f.iter().map(Vec::len)),
+        cfg.rf.turnaround_ms,
+    );
+    arm_tx_stuck(ctx, &row.id, gateway::tx_stuck_after_secs(planned_secs));
     let cap = gateway::mail_attempt_cap(cfg.rf.max_retries);
-    let airtime = keyed_airtime_secs(preset, frames.iter().map(Vec::len), cfg.rf.turnaround_ms);
     let frame_secs = keyed_airtime_secs(preset, std::iter::once(mtu), cfg.rf.turnaround_ms);
     let started = std::time::Instant::now();
-    if let Err(e) = burst(
+    // A have-report can land while the lease waits for the channel. Key only
+    // what the gateway still lacks at that moment, not what it lacked when
+    // this try was scheduled.
+    let id = row.id.clone();
+    let plan = move || {
+        let got = ctx
+            .store
+            .get(&id)
+            .ok()
+            .flatten()
+            .map(|r| r.got)
+            .unwrap_or_default();
+        let still = missing_chunk_idxs(total, &got);
+        let mut keyed = KeyPlan::default();
+        for (idx, frames) in chunks.iter().filter(|(i, _)| still.contains(i)) {
+            keyed.chunks.push(*idx);
+            keyed.frames.extend(frames.iter().cloned());
+        }
+        keyed
+    };
+    let keyed = match burst(
         ctx,
-        &frames,
+        &plan,
         preset,
         rung,
         vox,
@@ -417,36 +444,53 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
     )
     .await
     {
-        tracing::warn!("mail key {} failed: {e}", row.id);
-        if let Some(text) = gateway::radio_down_text(&e.to_string()) {
-            fail_mail(ctx, &row.id, text);
+        Ok(keyed) => keyed,
+        Err(e) => {
+            tracing::warn!("mail key {} failed: {e}", row.id);
+            if let Some(text) = gateway::radio_down_text(&e.to_string()) {
+                fail_mail(ctx, &row.id, text);
+                return Err(e);
+            }
+            let n = ctx
+                .store
+                .bump_retry(&row.id)
+                .unwrap_or(row.retries.saturating_add(1));
+            if n >= cap {
+                fail_mail(ctx, &row.id, gateway::NO_GATEWAY_ACK);
+            } else {
+                silence_wait(ctx, &row.id);
+                let tx = ctx.cmd_tx.clone();
+                let id = row.id.clone();
+                let wait = Duration::from_secs(gateway::ack_backoff_secs(n));
+                tokio::spawn(async move {
+                    tokio::time::sleep(wait).await;
+                    let _ = tx.send(MailCmd::Send { id }).await;
+                });
+                tracing::info!("mail retry {} {}", row.id, gateway::mail_try_label(n, cap));
+            }
             return Err(e);
         }
-        let n = ctx
-            .store
-            .bump_retry(&row.id)
-            .unwrap_or(row.retries.saturating_add(1));
-        if n >= cap {
-            fail_mail(ctx, &row.id, gateway::NO_GATEWAY_ACK);
-        } else {
-            silence_wait(ctx, &row.id);
-            let tx = ctx.cmd_tx.clone();
-            let id = row.id.clone();
-            let wait = Duration::from_secs(gateway::ack_backoff_secs(n));
-            tokio::spawn(async move {
-                tokio::time::sleep(wait).await;
-                let _ = tx.send(MailCmd::Send { id }).await;
-            });
-            tracing::info!("mail retry {} {}", row.id, gateway::mail_try_label(n, cap));
-        }
-        return Err(e);
+    };
+    if keyed.chunks.is_empty() {
+        tracing::info!(
+            "mail {} has nothing left to key; waiting on the gateway",
+            row.id
+        );
+        let wait = gateway::ack_backoff_secs(row.retries) as f64 + frame_secs;
+        arm_wait(ctx, &row.id, Duration::from_secs_f64(wait));
+        return Ok(());
     }
     note_mail(ctx, &cfg.callsign, &gateway_cs);
     tracing::info!(
         "mail keyed {} to {gateway_cs} ({} chunks, {})",
         row.id,
-        wires.len(),
+        keyed.chunks.len(),
         gateway::mail_try_label(row.retries, cap)
+    );
+    let airtime = keyed_airtime_secs(
+        preset,
+        keyed.frames.iter().map(Vec::len),
+        cfg.rf.turnaround_ms,
     );
     let spent = started.elapsed().as_secs_f64();
     let wait = gateway::retry_after_secs(airtime, spent, row.retries, frame_secs);
@@ -460,7 +504,7 @@ fn silence_wait(ctx: &TxCtx, id: &str) {
     waits.insert(id.to_string(), n);
 }
 
-fn arm_tx_stuck(ctx: &TxCtx, id: &str) {
+fn arm_tx_stuck(ctx: &TxCtx, id: &str, after_secs: u64) {
     let gen = {
         let mut waits = ctx.waits.lock();
         let n = waits.get(id).copied().unwrap_or(0).wrapping_add(1);
@@ -470,7 +514,7 @@ fn arm_tx_stuck(ctx: &TxCtx, id: &str) {
     let tx = ctx.cmd_tx.clone();
     let id = id.to_string();
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(gateway::TX_STUCK_AFTER_SECS)).await;
+        tokio::time::sleep(Duration::from_secs(after_secs)).await;
         let _ = tx.send(MailCmd::TxStuck { id, gen }).await;
     });
 }
@@ -573,7 +617,7 @@ async fn send_control(ctx: &TxCtx, op: MailOp, mut meta: MailMeta, payload: &str
     }
     burst(
         ctx,
-        &frames,
+        &KeyPlan::fixed(frames),
         preset,
         rung,
         cfg.modem.is_vox(),
@@ -581,6 +625,7 @@ async fn send_control(ctx: &TxCtx, op: MailOp, mut meta: MailMeta, payload: &str
         cfg.modem.vox_tail_ms,
     )
     .await
+    .map(|_| ())
 }
 
 struct ClearKeying(Arc<AtomicBool>);
@@ -591,24 +636,46 @@ impl Drop for ClearKeying {
     }
 }
 
+/// What one lease keys: the chunk indexes and their frames, in air order.
+#[derive(Default)]
+struct KeyPlan {
+    chunks: Vec<u16>,
+    frames: Vec<Vec<u8>>,
+}
+
+impl KeyPlan {
+    fn fixed(frames: Vec<Vec<u8>>) -> impl Fn() -> KeyPlan + Send + Sync {
+        move || KeyPlan {
+            chunks: Vec::new(),
+            frames: frames.clone(),
+        }
+    }
+}
+
+/// Borrow the modem and key `plan()`. The plan is taken after the channel
+/// is idle and chat has drained, so a resend keys only what is still missing
+/// at that moment. An empty plan keys nothing and leaves the mode alone.
 async fn burst(
     ctx: &TxCtx,
-    frames: &[Vec<u8>],
+    plan: &(dyn Fn() -> KeyPlan + Send + Sync),
     preset: Preset,
     rung: Rung,
     vox: bool,
     lead_ms: u32,
     tail_ms: u32,
-) -> Result<()> {
+) -> Result<KeyPlan> {
     ctx.keying.store(true, Ordering::Release);
     let _clear = ClearKeying(Arc::clone(&ctx.keying));
     let ports = (ctx.ports)();
     let Some(kiss) = ports.kiss.clone() else {
         return Err(Error::Modem("Radio is not running.".into()));
     };
-    let mut paused = false;
+    let turnaround_ms = ctx.cfg.lock().rf.turnaround_ms;
+    let mut held = false;
     let mut snapshot = None;
+    let mut mode_set = false;
     let mut before = 0u64;
+    let mut keyed = KeyPlan::default();
     let result = async {
         for step in lease::lease_sequence() {
             match *step {
@@ -619,8 +686,8 @@ async fn burst(
                 }
                 "pause" => {
                     if let Some(air) = &ports.air {
-                        air.pause();
-                        paused = true;
+                        air.hold_for_mail();
+                        held = true;
                     }
                 }
                 "drain_before" => {
@@ -630,9 +697,14 @@ async fn burst(
                 }
                 "snapshot" => {
                     snapshot = Some(lease::restore_config(preset));
+                    keyed = plan();
+                    if keyed.frames.is_empty() {
+                        return Ok(());
+                    }
                 }
                 "set_mail_config" => {
                     if let Some(c) = &ports.control {
+                        mode_set = true;
                         c.set_config(lease::mail_tx_config(preset, rung)).await?;
                     }
                 }
@@ -642,14 +714,19 @@ async fn burst(
                     }
                 }
                 "send_frames" => {
-                    for frame in frames {
+                    for frame in &keyed.frames {
                         kiss.send(frame).await?;
                     }
                 }
                 "drain_after" => {
                     if let Some(c) = &ports.control {
-                        let target = lease::drain_target_after(before, frames.len() as u64);
-                        lease::wait_tx_count(c, target, Duration::from_secs(90)).await;
+                        let target = lease::drain_target_after(before, keyed.frames.len() as u64);
+                        let airtime = keyed_airtime_secs(
+                            preset,
+                            keyed.frames.iter().map(Vec::len),
+                            turnaround_ms,
+                        );
+                        lease::wait_drained(c, target, Duration::from_secs_f64(airtime)).await;
                     }
                     if vox && tail_ms > 0 {
                         tokio::time::sleep(Duration::from_millis(u64::from(tail_ms))).await;
@@ -658,12 +735,13 @@ async fn burst(
                 "restore_snapshot" => {
                     if let (Some(c), Some(snap)) = (&ports.control, snapshot.clone()) {
                         let _ = c.set_config(snap).await;
+                        mode_set = false;
                     }
                 }
                 "resume" => {
                     if let Some(air) = &ports.air {
-                        air.resume();
-                        paused = false;
+                        air.release_mail();
+                        held = false;
                     }
                 }
                 _ => {}
@@ -672,15 +750,17 @@ async fn burst(
         Ok(())
     }
     .await;
-    if paused {
-        if let Some(air) = &ports.air {
-            air.resume();
-        }
+    if mode_set {
         if let (Some(c), Some(snap)) = (&ports.control, snapshot) {
             let _ = c.set_config(snap).await;
         }
     }
-    result
+    if held {
+        if let Some(air) = &ports.air {
+            air.release_mail();
+        }
+    }
+    result.map(|()| keyed)
 }
 
 async fn on_incoming(ctx: &TxCtx, asm: &mut Assembler, incoming: Incoming, during_burst: bool) {
@@ -807,6 +887,12 @@ async fn on_quiet(ctx: &TxCtx, asm: &mut Assembler, gen: u64) {
     if *ctx.quiet.lock() != gen {
         return;
     }
+    if gateway::quiet_defers(lease::channel_receiving(&(ctx.ports)()), asm.quiet_defers) {
+        asm.quiet_defers += 1;
+        arm_quiet(ctx);
+        return;
+    }
+    asm.quiet_defers = 0;
     let ready = std::mem::take(&mut asm.ready);
     let mut completed = std::collections::HashSet::new();
     for (meta, body, op) in ready {
@@ -1413,7 +1499,7 @@ async fn reply_chunks(
     }
     burst(
         ctx,
-        &frames,
+        &KeyPlan::fixed(frames),
         preset,
         rung,
         cfg.modem.is_vox(),
@@ -1421,6 +1507,7 @@ async fn reply_chunks(
         cfg.modem.vox_tail_ms,
     )
     .await
+    .map(|_| ())
 }
 
 #[cfg(test)]
@@ -1446,6 +1533,7 @@ mod tests {
             from: HashMap::new(),
             to: HashMap::new(),
             ready: Vec::new(),
+            quiet_defers: 0,
         };
         let mut slot = HashMap::new();
         slot.insert(0u16, wire(0, 48));
@@ -1530,6 +1618,7 @@ mod tests {
             from: HashMap::new(),
             to: HashMap::new(),
             ready: Vec::new(),
+            quiet_defers: 0,
         };
         let missing: Vec<u16> = wires.iter().map(|w| w.idx).filter(|i| i % 7 == 0).collect();
         assert!(!missing.is_empty());
