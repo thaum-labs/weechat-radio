@@ -3790,10 +3790,20 @@ impl GuiApp {
                 .font(FontId::monospace(13.0)),
         );
         let bytes = self.mail_body.trim().len();
+        let from = crate::mail::wcr_address(&self.callsign);
+        let gateway = self.mail_gateway.trim().to_ascii_uppercase();
+        let preview = crate::mail::AirtimeMail {
+            from: &from,
+            to: self.mail_to.trim(),
+            subject: self.mail_subject.trim(),
+            body: self.mail_body.trim(),
+            gateway: &gateway,
+            ack: matches!(crate::mail::gateway_path(mode), crate::mail::SendPath::Rf),
+        };
         let hint = if self.mail_hold {
             "On the air — To, subject and body stay until TX finishes".to_string()
         } else {
-            crate::mail::hint_line(bytes, mode, preset, 250)
+            crate::mail::hint_line(&preview, mode, preset, 250)
         };
         ui.horizontal(|ui| {
             ui.label(RichText::new(hint).color(DIM).monospace());
@@ -3876,8 +3886,18 @@ impl GuiApp {
         preset: Preset,
     ) {
         let hub = matches!(crate::mail::gateway_path(mode), crate::mail::SendPath::Hub);
-        let (secs, bursts) =
-            crate::mail::airtime_parts(self.mail_body.trim().len().max(confirm.bytes), preset, 250);
+        let from = crate::mail::wcr_address(&self.callsign);
+        let gateway = self.mail_gateway.trim().to_ascii_uppercase();
+        let body = self.mail_body.trim();
+        let preview = crate::mail::AirtimeMail {
+            from: &from,
+            to: confirm.to.trim(),
+            subject: confirm.subject.trim(),
+            body,
+            gateway: &gateway,
+            ack: !hub,
+        };
+        let (secs, bursts) = crate::mail::airtime_parts(&preview, preset, 250);
         let freq = self
             .status
             .as_ref()
