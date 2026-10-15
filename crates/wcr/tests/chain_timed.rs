@@ -689,7 +689,9 @@ async fn busy_chain_with_invites_reaches_everyone() {
                 .any(|l| l.contains("INVITE") && l.contains("#qa"))
         })
     };
-    let got_invites = chain.wait(BUSY_INVITE_SECS, invited).await;
+    // Give the invites a head start, then keep checking to the end: four
+    // invites and their rosters take a while to walk out to E.
+    chain.wait(BUSY_INVITE_SECS, invited).await;
 
     let lines = [
         (0, "qa-g1-from-a"),
@@ -725,7 +727,7 @@ async fn busy_chain_with_invites_reaches_everyone() {
     let trace = chain.trace();
     let mut report = String::new();
     let mut problems = Vec::new();
-    if !got_invites {
+    if !invited(&chain) {
         problems.push("an invite never arrived".to_string());
     }
     let all_ids = ids.iter().cloned().chain([bulletin_id]);
