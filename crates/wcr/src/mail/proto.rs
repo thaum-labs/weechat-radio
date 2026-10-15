@@ -279,19 +279,23 @@ pub enum ChunkPut {
     Ready(Vec<MailWire>),
 }
 
-/// Keep chunks for one mail, one total at a time. A bad total lands in its
-/// own bucket and cannot raise the wait for a consistent set. A repeated
-/// index does not replace the copy already stored.
-pub fn put_chunk(
-    buckets: &mut std::collections::HashMap<u16, std::collections::HashMap<u16, MailWire>>,
-    wire: MailWire,
-) -> ChunkPut {
+/// One bucket per mail. The index is the key, not the total in the header.
+/// A resend that stamps the byte length still fills the hole it belongs in.
+/// The smaller total wins an index, so a real chunk count replaces a byte
+/// length, and a repeat of the same total does not replace the stored copy.
+pub fn put_chunk(slot: &mut std::collections::HashMap<u16, MailWire>, wire: MailWire) -> ChunkPut {
     if !chunk_acceptable(wire.idx, wire.count) {
         return ChunkPut::Rejected;
     }
-    let count = wire.count;
-    let slot = buckets.entry(count).or_default();
-    slot.entry(wire.idx).or_insert(wire);
+    match slot.get(&wire.idx) {
+        Some(prev) if prev.count <= wire.count => {}
+        _ => {
+            slot.insert(wire.idx, wire);
+        }
+    }
+    let Some(count) = slot.values().map(|w| w.count).min() else {
+        return ChunkPut::Pending;
+    };
     if !(0..count).all(|i| slot.contains_key(&i)) {
         return ChunkPut::Pending;
     }
@@ -301,7 +305,7 @@ pub fn put_chunk(
             parts.push(part);
         }
     }
-    buckets.remove(&count);
+    slot.clear();
     ChunkPut::Ready(parts)
 }
 
@@ -467,30 +471,22 @@ pub fn assemble_chunks(parts: Vec<MailWire>) -> Result<(MailMeta, String, MailOp
         return Err(Error::protocol("no mail chunks"));
     }
     let mail_id = parts[0].mail_id.clone();
-    let count = parts[0].count;
     let op = parts[0].op;
-    if count == 0 {
-        return Err(Error::protocol("bad mail chunk count"));
-    }
     let mut by_idx = std::collections::BTreeMap::new();
     for p in parts {
-        if p.mail_id != mail_id || p.count != count || p.op != op {
+        if p.mail_id != mail_id || p.op != op {
             return Err(Error::protocol("mail chunk mismatch"));
         }
         by_idx.entry(p.idx).or_insert(p);
     }
-    if by_idx.len() != count as usize {
+    let n = by_idx.len() as u16;
+    if n == 0 || (0..n).any(|i| !by_idx.contains_key(&i)) {
         return Err(Error::protocol("incomplete mail"));
     }
     let meta = by_idx.get(&0).map(|p| p.meta.clone()).unwrap_or_default();
     let mut body = String::new();
-    for i in 0..count {
-        body.push_str(
-            &by_idx
-                .get(&i)
-                .ok_or_else(|| Error::protocol("missing chunk"))?
-                .payload,
-        );
+    for i in 0..n {
+        body.push_str(&by_idx.get(&i).expect("index checked").payload);
     }
     Ok((meta, body, op))
 }
@@ -613,45 +609,100 @@ mod tests {
 
     #[test]
     fn a_bad_total_does_not_block_a_consistent_set() {
-        let mut buckets = std::collections::HashMap::new();
-        assert_eq!(put_chunk(&mut buckets, wire(6, 6, "x")), ChunkPut::Rejected);
-        assert_eq!(put_chunk(&mut buckets, wire(0, 0, "x")), ChunkPut::Rejected);
-        // 1/121 and 3/121 on the wire (idx is zero-based). They sit in their
-        // own bucket and do not raise the wait for the real 6-chunk mail.
+        let mut slot = std::collections::HashMap::new();
+        assert_eq!(put_chunk(&mut slot, wire(6, 6, "x")), ChunkPut::Rejected);
+        assert_eq!(put_chunk(&mut slot, wire(0, 0, "x")), ChunkPut::Rejected);
+        // A byte-length total shares the mail. The real chunk count replaces it.
         assert!(matches!(
-            put_chunk(&mut buckets, wire(0, 121, "x")),
+            put_chunk(&mut slot, wire(0, 121, "x")),
             ChunkPut::Pending
         ));
         assert!(matches!(
-            put_chunk(&mut buckets, wire(2, 121, "nope")),
+            put_chunk(&mut slot, wire(2, 121, "nope")),
             ChunkPut::Pending
         ));
         for i in 0..3 {
             assert!(matches!(
-                put_chunk(&mut buckets, wire(i, 6, "c")),
+                put_chunk(&mut slot, wire(i, 6, "c")),
                 ChunkPut::Pending
             ));
         }
         // A later try fills the holes. A repeat of an index already stored stays.
         assert!(matches!(
-            put_chunk(&mut buckets, wire(1, 6, "other")),
+            put_chunk(&mut slot, wire(1, 6, "other")),
             ChunkPut::Pending
         ));
         assert!(matches!(
-            put_chunk(&mut buckets, wire(3, 6, "c")),
+            put_chunk(&mut slot, wire(3, 6, "c")),
             ChunkPut::Pending
         ));
         assert!(matches!(
-            put_chunk(&mut buckets, wire(4, 6, "c")),
+            put_chunk(&mut slot, wire(4, 6, "c")),
             ChunkPut::Pending
         ));
-        match put_chunk(&mut buckets, wire(5, 6, "c")) {
+        match put_chunk(&mut slot, wire(5, 6, "c")) {
             ChunkPut::Ready(parts) => {
                 let (_meta, body, op) = assemble_chunks(parts).unwrap();
                 assert_eq!(op, MailOp::Data);
                 assert_eq!(body, "cccccc");
             }
             other => panic!("expected a full set, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_resend_labeled_with_the_byte_length_still_completes() {
+        let body = long_body(3900);
+        let meta = sample_meta();
+        let id = compute_mail_id(&meta.from, &meta.to, &meta.subject, &body, meta.ack);
+        let limit = 170;
+        let wires = chunk_to_limit(&id, &meta, &body, limit);
+        let count = wires.len() as u16;
+        assert!(count > 1, "expected a split mail, got {count}");
+        assert!(wires.iter().all(|w| w.count == count));
+        let mut slot = std::collections::HashMap::new();
+        let missing: Vec<u16> = wires.iter().map(|w| w.idx).filter(|i| i % 7 == 0).collect();
+        assert!(!missing.is_empty());
+        for w in wires.iter().filter(|w| !missing.contains(&w.idx)) {
+            assert!(
+                matches!(put_chunk(&mut slot, w.clone()), ChunkPut::Pending),
+                "partial set must not complete"
+            );
+        }
+        let mut last = ChunkPut::Pending;
+        for idx in &missing {
+            let mut w = wires[*idx as usize].clone();
+            // The bug: a resend stamped the body length instead of the chunk count.
+            w.count = body.len() as u16;
+            last = put_chunk(&mut slot, w);
+        }
+        match last {
+            ChunkPut::Ready(parts) => {
+                let (_meta, text, op) = assemble_chunks(parts).unwrap();
+                assert_eq!(op, MailOp::VoxData);
+                assert_eq!(text, body);
+            }
+            other => panic!("resend did not complete the mail: {other:?}"),
+        }
+    }
+
+    fn long_body(n: usize) -> String {
+        let word = "hello mail ";
+        let mut body = word.repeat(n / word.len());
+        body.push_str(&"x".repeat(n - body.len()));
+        assert_eq!(body.len(), n);
+        body
+    }
+
+    fn sample_meta() -> MailMeta {
+        MailMeta {
+            from: "M7TJF@mail.weechatradio.com".into(),
+            to: "operator@example.com".into(),
+            subject: "subject".into(),
+            dest: "GATEWAY".into(),
+            via: "GATEWAY".into(),
+            ack: true,
+            ..MailMeta::default()
         }
     }
 }

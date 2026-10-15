@@ -23,7 +23,7 @@ The address is `{callsign}@mail.weechatradio.com`. There is no domain setting. G
 - If the radio is not running, the row is Failed at once with `Radio is not running.`
 - If the row is still `[tx]` five minutes after this attempt started, and nothing has moved it on, it is Failed. VOX lead, tail, and the modem drain are unchanged.
 
-A toast timer does not mark Sent. The compose hint and the send confirm both show the estimated airtime, counted from the WCRM frames that will actually be keyed (header included), so one short mail says `1 burst` and a long one matches the chunk count. `POST /api/v1/mail/compose` returns that same hint as `airtime`. A long message says it is not Sent until the gateway accepts it.
+A toast timer does not mark Sent. The compose hint and the send confirm both show the estimated airtime for this message, counted from the WCRM frames the send will key (header included, same split as the body), so one short mail says `1 burst` and a long one matches the chunk count. `POST /api/v1/mail/compose` returns that same hint as `airtime`. A long message says it is not Sent until the gateway accepts it.
 
 ## Log
 
@@ -31,7 +31,7 @@ The station log records `mail keyed`, `mail gateway ack`, `mail at gateway`, `ma
 
 ## On the air
 
-Mail frames are `WCRM` text, not chat envelopes. A message wider than the rung is split into chunks. The gateway keeps those chunks across retries and ignores a chunk whose index is outside its total, so a corrupt total cannot block a complete set. It waits out a quiet gap after the last chunk, longer than one frame. A complete set is then one `CompleteAck`. A set that is still short is one `ChunkAck` whose body is `b:<total>:<hex>`, a bitmap of the indexes already stored, and the next try sends only the missing indexes. A second complete copy gets the `CompleteAck` again and is not posted twice. If a chunk is wider than the rung, it is sliced as `WCRP` and rebuilt before decode. A list request is split the same way, and an empty inbox is answered with `[]`.
+Mail frames are `WCRM` text, not chat envelopes. A message wider than the rung is split into chunks. Every try uses that same chunk count, including a resend of the missing indexes. A slower rung may slice one of those chunks as `WCRP`; it does not split the message again. The gateway keeps one set per mail id. The header total is not a separate bucket, and an index past the smallest total already stored is ignored. It waits out a quiet gap after the last chunk, longer than one frame. A complete set is then one `CompleteAck`. A set that is still short is one `ChunkAck` whose body is `b:<total>:<hex>`, a bitmap of the indexes already stored. A progress ack that arrives while the burst is still keying is stored and does not start another send. The next try, after the burst has finished, sends only the indexes still missing. A second complete copy gets the `CompleteAck` again and is not posted twice. A list request is split the same way, and an empty inbox is answered with `[]`.
 
 The rung starts at the preset's `ladder_start` and only steps more robust. On an HF or VOX preset that means it never moves onto QPSK or OFDM. The rung is chosen from the frames that will actually be keyed.
 
