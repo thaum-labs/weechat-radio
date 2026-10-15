@@ -1335,22 +1335,15 @@ async fn dispatch_rf_at(
     // the pre-fragment envelope forces a split message onto OFDM, which a weak
     // or acoustic path never decodes.
     let widest = frames.iter().map(Vec::len).max().unwrap_or(bytes.len());
-    let own = env.origin.as_str() == rt.engine.our_call;
-    // A relay without a rung keyed in whatever mode an own retry left the
-    // modem in, and modem73 dropped a frame wider than that mode. For
-    // someone else's frame `retries` is how many copies we already relayed.
-    let rung = if own {
-        presets::rung_for(preset, stored, retries, widest)
-    } else {
-        relay::relay_rung(preset, retries, widest)
-    };
+    let rung = presets::rung_for(preset, stored, retries, widest);
+    let apply = env.origin.as_str() == rt.engine.our_call;
     enqueue_rf(
         rt,
         &rf_env,
         frames,
         preset,
         EnqueueOpts {
-            rung: Some(rung),
+            rung: if apply { Some(rung) } else { None },
             delay,
             copy,
         },
@@ -1402,11 +1395,22 @@ async fn enqueue_rf(
         }
         return Ok(true);
     };
+    // A relay used to key with no rung, in whatever mode the modem was left
+    // in, and modem73 then dropped a frame wider than that mode. The copy
+    // count is how many times this station has already relayed the id.
+    let rung = opts.rung.or_else(|| {
+        if rf_env.origin.as_str() == rt.engine.our_call {
+            None
+        } else {
+            let widest = frames.iter().map(Vec::len).max().unwrap_or(0);
+            Some(relay::relay_rung(preset, u32::from(opts.copy), widest))
+        }
+    });
     let mut item = AirItem::new(rf_env, &rt.engine.our_call, frames, preset).with_copy(opts.copy);
     if !opts.delay.is_zero() {
         item = item.with_delay(opts.delay);
     }
-    if let Some(r) = opts.rung {
+    if let Some(r) = rung {
         item = item.with_rung(r);
     }
     let queued = air.enqueue(item);
@@ -1537,8 +1541,15 @@ async fn dispatch_with(rt: &Runtime, env: &Envelope, force_inet: bool, slot: RfS
         .as_str()
         .eq_ignore_ascii_case(&rt.engine.our_call);
     let mut relayed = false;
+    // `copy` carries how many times we already relayed this id. dispatch_rf_at
+    // leaves a foreign frame without a rung; enqueue_rf fills one from that.
+    let copy = if foreign {
+        slot.step.min(u32::from(u8::MAX)) as u8
+    } else {
+        0
+    };
     if cfg.mode.uses_radio()
-        && dispatch_rf_at(rt, &env, slot.step, slot.delay, 0)
+        && dispatch_rf_at(rt, &env, 0, slot.delay, copy)
             .await
             .unwrap_or(false)
         && foreign
@@ -1788,9 +1799,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
             .ok()
             .flatten()
             .map(|m| m.env.hops_left);
-        rt.cover
-            .lock()
-            .heard(&env, ours, crate::proto::now_ts());
+        rt.cover.lock().heard(&env, ours, crate::proto::now_ts());
     }
     if env.origin.as_str() == rt.engine.our_call {
         // A relay closer to the destination has fewer hops than the copy we

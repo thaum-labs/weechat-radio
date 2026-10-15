@@ -385,13 +385,16 @@ fn timed_collided(
         return false;
     };
     let edge = Duration::from_millis(20);
-    log.iter().rev().take_while(|k| k.at + frame * 4 > start).any(|k| {
-        k.station != from
-            && !k.dropped
-            && hear.contains(&k.station)
-            && k.at + edge < start + frame
-            && k.at + frame > start + edge
-    })
+    log.iter()
+        .rev()
+        .take_while(|k| k.at + frame * 4 > start)
+        .any(|k| {
+            k.station != from
+                && !k.dropped
+                && hear.contains(&k.station)
+                && k.at + edge < start + frame
+                && k.at + frame > start + edge
+        })
 }
 
 fn timed_cap(cfg: &serde_json::Value, prev: usize) -> usize {

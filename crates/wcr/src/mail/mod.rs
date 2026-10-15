@@ -739,7 +739,11 @@ mod tests {
                 payload: payload.into(),
             })
         };
-        assert!(!note_complete_ack(&store, "M7TJF", &ack("m56", "G4XYZ", "ok")));
+        assert!(!note_complete_ack(
+            &store,
+            "M7TJF",
+            &ack("m56", "G4XYZ", "ok")
+        ));
         assert_eq!(store.get("m56").unwrap().unwrap().state, "tx");
         assert!(!note_complete_ack(
             &store,
@@ -747,10 +751,21 @@ mod tests {
             &ack("bad", "M7TJF", "fail Hub did not accept the message.")
         ));
         assert_eq!(store.get("bad").unwrap().unwrap().state, "tx");
-        assert!(note_complete_ack(&store, "M7TJF", &ack("m56", "M7TJF", "ok")));
+        assert!(note_complete_ack(
+            &store,
+            "M7TJF",
+            &ack("m56", "M7TJF", "ok")
+        ));
         let done = store.get("m56").unwrap().unwrap();
-        assert_eq!((done.folder.as_str(), done.state.as_str()), ("sent", "sent"));
-        assert!(!note_complete_ack(&store, "M7TJF", &ack("m56", "M7TJF", "ok")));
+        assert_eq!(
+            (done.folder.as_str(), done.state.as_str()),
+            ("sent", "sent")
+        );
+        assert!(!note_complete_ack(
+            &store,
+            "M7TJF",
+            &ack("m56", "M7TJF", "ok")
+        ));
     }
 
     #[test]

@@ -245,10 +245,16 @@ impl Chain {
                 store.group_create(name, &members).unwrap();
             }
             let st = i as u64 + 1;
-            let (kiss, ctrl) =
-                wcr::sim::mock_modem73_timed(air.clone(), st, hear_set(st), None, opts, log.clone())
-                    .await
-                    .unwrap();
+            let (kiss, ctrl) = wcr::sim::mock_modem73_timed(
+                air.clone(),
+                st,
+                hear_set(st),
+                None,
+                opts,
+                log.clone(),
+            )
+            .await
+            .unwrap();
             prep.push((*call, home, kiss, ctrl));
         }
         let ports = reserve_ports(prep.len() * 2).await;
@@ -300,7 +306,12 @@ impl Chain {
     }
 
     fn dropped(&self) -> usize {
-        self.log.lock().unwrap().iter().filter(|k| k.dropped).count()
+        self.log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|k| k.dropped)
+            .count()
     }
 
     fn trace(&self) -> String {
@@ -384,12 +395,25 @@ async fn group_line_reaches_everyone(from: usize, body: &str) {
         "{} line not shown once everywhere: {seen:?}{trace}",
         CALLS[from]
     );
-    assert!(got_all, "{} never reached [all]: {tags:?}{trace}", CALLS[from]);
+    assert!(
+        got_all,
+        "{} never reached [all]: {tags:?}{trace}",
+        CALLS[from]
+    );
     assert!(
         !tags.iter().any(|l| l.contains("+radio/delivery=failed")),
         "false [no]: {tags:?}"
     );
-    assert_eq!(dropped, 0, "modem dropped a frame wider than its mode{trace}");
+    assert_eq!(
+        dropped, 0,
+        "modem dropped a frame wider than its mode{trace}"
+    );
+}
+
+/// G1 on the live chain: A keys a group line and it reaches [all].
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn group_line_from_the_near_end_reaches_all() {
+    group_line_reaches_everyone(0, "g1-from-the-near-end").await;
 }
 
 /// G3 on the live chain: C keys a group line, B and D both relay it and
@@ -430,5 +454,8 @@ async fn bulletin_from_the_far_end_reaches_the_other_end() {
         seen.iter().all(|(_, n)| *n == 1),
         "duplicate bulletin lines: {seen:?}"
     );
-    assert_eq!(dropped, 0, "modem dropped a frame wider than its mode{trace}");
+    assert_eq!(
+        dropped, 0,
+        "modem dropped a frame wider than its mode{trace}"
+    );
 }
