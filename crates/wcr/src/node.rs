@@ -1555,14 +1555,17 @@ fn line_reached_neighbours(rt: &Runtime, line: &Envelope) -> bool {
     relay::neighbours_hold(&current_neighbours(rt), &holders, came_relayed)
 }
 
-/// We have keyed our cap of copies of someone else's line or receipt.
+/// We have keyed our cap of copies of someone else's line. Receipts are not
+/// capped.
 fn relay_copies_spent(rt: &Runtime, env: &Envelope) -> bool {
-    rt.relay_copies
-        .lock()
-        .get(&env.msg_id)
-        .copied()
-        .unwrap_or(0)
-        >= relay::relay_copy_cap(env)
+    env.kind != MsgType::Ack
+        && rt
+            .relay_copies
+            .lock()
+            .get(&env.msg_id)
+            .copied()
+            .unwrap_or(0)
+            >= relay::RELAY_MAX_COPIES
 }
 
 fn note_own_rf_tx(rt: &Runtime, env: &Envelope) {
