@@ -1146,6 +1146,36 @@ impl Store {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
+    /// Stored ACK frames for `msg_id` keyed by stations other than `our_call`.
+    pub fn acks_for(&self, msg_id: &MsgId, our_call: &str) -> Result<Vec<StoredMsg>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT msg_id, kind, origin, dest, flags, hops_left, ts, seq, body, signature, rx_time, delivery
+             FROM messages
+             WHERE kind = 'ack' AND substr(body, 1, 8) = ?1 AND upper(origin) != upper(?2)",
+        )?;
+        let rows = stmt.query_map(params![msg_id.0.as_slice(), our_call], map_full_row)?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /// The latest ACK `our_call` keyed for `msg_id`, if it is still stored.
+    pub fn own_ack_for(&self, msg_id: &MsgId, our_call: &str) -> Result<Option<StoredMsg>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT msg_id, kind, origin, dest, flags, hops_left, ts, seq, body, signature, rx_time, delivery
+             FROM messages
+             WHERE kind = 'ack' AND substr(body, 1, 8) = ?1 AND upper(origin) = upper(?2)
+             ORDER BY seq DESC LIMIT 1",
+        )?;
+        Ok(stmt
+            .query_row(params![msg_id.0.as_slice(), our_call], map_full_row)
+            .optional()?)
+    }
+
     pub fn group_all_received(&self, group: &str, msg_id: &MsgId) -> Result<bool> {
         let members = self.group_members(group)?;
         if members.is_empty() {
@@ -1684,6 +1714,49 @@ mod tests {
         s.group_forget("net").unwrap();
         assert!(s.group_members("net").unwrap().is_empty());
         assert!(!s.group_list().unwrap().iter().any(|n| n == "net"));
+    }
+
+    #[test]
+    fn held_acks_are_found_by_the_message_they_answer() {
+        let s = Store::open_memory().unwrap();
+        let msg = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::from_raw("NET"),
+            1,
+            b"g1".to_vec(),
+            6,
+            Flags::new().with(crate::proto::FLAG_GROUP),
+        )
+        .unwrap();
+        let other = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::from_raw("NET"),
+            2,
+            b"g2".to_vec(),
+            6,
+            Flags::new().with(crate::proto::FLAG_GROUP),
+        )
+        .unwrap();
+        s.insert(&msg, Delivery::Queued).unwrap();
+        let d = Envelope::ack_for(&msg, Callsign::parse("M0DDD").unwrap(), 1, Some(9.0));
+        let e = Envelope::ack_for(&msg, Callsign::parse("G4EEE").unwrap(), 1, None);
+        let ours_old = Envelope::ack_for(&msg, Callsign::parse("2E0CCC").unwrap(), 3, None);
+        let ours = Envelope::ack_for(&msg, Callsign::parse("2E0CCC").unwrap(), 4, None);
+        let unrelated = Envelope::ack_for(&other, Callsign::parse("M0DDD").unwrap(), 2, None);
+        for a in [&d, &e, &ours_old, &ours, &unrelated] {
+            s.insert(a, Delivery::Queued).unwrap();
+        }
+        let mut held: Vec<String> = s
+            .acks_for(&msg.msg_id, "2e0ccc")
+            .unwrap()
+            .into_iter()
+            .map(|m| m.env.origin.to_string())
+            .collect();
+        held.sort();
+        assert_eq!(held, vec!["G4EEE", "M0DDD"]);
+        let own = s.own_ack_for(&msg.msg_id, "2e0ccc").unwrap().unwrap();
+        assert_eq!(own.env.msg_id, ours.msg_id);
+        assert!(s.own_ack_for(&other.msg_id, "2E0CCC").unwrap().is_none());
     }
 
     #[test]
