@@ -250,6 +250,13 @@ fn still_awaiting_ack(store: &Store, id: &crate::proto::MsgId) -> bool {
     }
 }
 
+/// A relay carried the line ([rl]), so its ACK walks back as far as the line
+/// walked out. The last wait runs one more interval before [no], so a late
+/// ACK does not turn [no] into [ok].
+fn ack_wait_runs_on(delivery: Delivery, retries: u32, max: u32) -> bool {
+    delivery == Delivery::Relayed && retries == max
+}
+
 /// `retry-n/max` is progress on a line nobody has carried or answered yet.
 /// After [rl], [gw] or [ok] the retries go on quietly: marks never move back.
 fn retry_mark_shows(delivery: Option<Delivery>) -> bool {
@@ -667,6 +674,14 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     for m in due {
                         if relay::walks_until_relayed(&m.env) {
                             finish_ack_walk(&rt_r, &m.env.msg_id);
+                            continue;
+                        }
+                        let retries = rt_r.store.retries_of(&m.env.msg_id).unwrap_or(0);
+                        if ack_wait_runs_on(m.delivery, retries, max) {
+                            let jitter = rt_r.cfg.lock().rf.retry_jitter;
+                            let next =
+                                relay::next_retry_hold_jittered(max, now, m.env.priority(), jitter);
+                            let _ = rt_r.store.bump_retry(&m.env.msg_id, next);
                             continue;
                         }
                         let _ = rt_r.store.set_hold(&m.env.msg_id, 0, 0);
@@ -3677,6 +3692,14 @@ mod tests {
         let mut members = store.group_members("qa").unwrap();
         members.sort();
         assert_eq!(members, ["G4AAA", "G4EEE", "M0CCC"]);
+    }
+
+    #[test]
+    fn a_relayed_line_waits_one_more_interval_before_no() {
+        assert!(ack_wait_runs_on(Delivery::Relayed, 3, 3));
+        assert!(!ack_wait_runs_on(Delivery::Relayed, 4, 3), "only once");
+        assert!(!ack_wait_runs_on(Delivery::Sent, 3, 3), "nobody carried it");
+        assert!(!ack_wait_runs_on(Delivery::Delivered, 3, 3));
     }
 
     #[test]
