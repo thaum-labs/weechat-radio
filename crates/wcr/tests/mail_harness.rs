@@ -336,6 +336,8 @@ async fn long_mail_recovers_a_lost_final_chunk() {
         TimedOpts {
             frame_ms: 2_000,
             count_tx: false,
+            collide: false,
+            csma_stuck_ms: 0,
         },
         drop_rx,
     )
@@ -419,6 +421,8 @@ async fn a_resend_keys_only_what_the_latest_report_lacks() {
         TimedOpts {
             frame_ms: 2_000,
             count_tx: true,
+            collide: false,
+            csma_stuck_ms: 0,
         },
         drop_rx,
     )

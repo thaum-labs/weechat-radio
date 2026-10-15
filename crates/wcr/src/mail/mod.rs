@@ -191,9 +191,34 @@ fn note_have_report(store: &store::MailStore, us: &str, incoming: &Incoming) -> 
     last
 }
 
+/// Record the gateway's acceptance the moment it is decoded. A retry lease
+/// already waiting for the channel then keys nothing.
+fn note_complete_ack(store: &store::MailStore, us: &str, incoming: &Incoming) -> bool {
+    let Incoming::Wire(w) = incoming else {
+        return false;
+    };
+    if w.op != proto::MailOp::CompleteAck || w.count > 1 {
+        return false;
+    }
+    if !w.meta.dest.is_empty() && !w.meta.dest.eq_ignore_ascii_case(us) {
+        return false;
+    }
+    if gateway::failure_text(&w.payload).is_some() {
+        return false;
+    }
+    let Ok(Some(row)) = store.get(&w.mail_id) else {
+        return false;
+    };
+    if row.folder != "outbox" || row.state == "sent" || row.state == "failed" {
+        return false;
+    }
+    store.set_outcome(&w.mail_id, "sent", "sent", "").is_ok()
+}
+
 pub async fn on_rf(mail: &MailHandle, incoming: Incoming) {
     let us = mail.cfg.lock().callsign.to_ascii_uppercase();
     let _ = note_have_report(&mail.store, &us, &incoming);
+    let _ = note_complete_ack(&mail.store, &us, &incoming);
     let during_burst = mail.keying.load(Ordering::Acquire);
     let _ = mail
         .cmd
@@ -678,6 +703,63 @@ mod tests {
             }
         });
         assert_eq!(note_have_report(&store, "M7TJF", &data), None);
+    }
+
+    #[test]
+    fn a_gateway_acceptance_is_noted_before_the_mail_loop_runs() {
+        let store = store::MailStore::open_memory().expect("store");
+        let row = |id: &str, state: &str| store::MailRow {
+            id: id.into(),
+            folder: "outbox".into(),
+            from_addr: "M7TJF@mail.weechatradio.com".into(),
+            to_addr: "a@b.co".into(),
+            subject: "s".into(),
+            body: "long".into(),
+            ts: 1,
+            state: state.into(),
+            unread: false,
+            ack: true,
+            retries: 1,
+            detail: String::new(),
+            chunks: 56,
+            got: String::new(),
+        };
+        store.insert(&row("m56", "tx")).unwrap();
+        store.insert(&row("bad", "tx")).unwrap();
+        let ack = |id: &str, dest: &str, payload: &str| {
+            Incoming::Wire(proto::MailWire {
+                op: MailOp::CompleteAck,
+                mail_id: id.into(),
+                idx: 0,
+                count: 1,
+                meta: MailMeta {
+                    dest: dest.into(),
+                    ..MailMeta::default()
+                },
+                payload: payload.into(),
+            })
+        };
+        assert!(!note_complete_ack(&store, "M7TJF", &ack("m56", "G4XYZ", "ok")));
+        assert_eq!(store.get("m56").unwrap().unwrap().state, "tx");
+        assert!(!note_complete_ack(
+            &store,
+            "M7TJF",
+            &ack("bad", "M7TJF", "fail Hub did not accept the message.")
+        ));
+        assert_eq!(store.get("bad").unwrap().unwrap().state, "tx");
+        assert!(note_complete_ack(&store, "M7TJF", &ack("m56", "M7TJF", "ok")));
+        let done = store.get("m56").unwrap().unwrap();
+        assert_eq!((done.folder.as_str(), done.state.as_str()), ("sent", "sent"));
+        assert!(!note_complete_ack(&store, "M7TJF", &ack("m56", "M7TJF", "ok")));
+    }
+
+    #[test]
+    fn the_lease_lets_an_inbound_frame_finish_before_keying() {
+        let steps = lease::lease_sequence();
+        let at = |s: &str| steps.iter().position(|x| *x == s).unwrap();
+        assert!(at("pause") < at("wait_clear"));
+        assert!(at("wait_clear") < at("snapshot"));
+        assert!(at("wait_clear") < at("send_frames"));
     }
 
     #[test]

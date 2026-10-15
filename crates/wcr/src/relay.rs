@@ -3,6 +3,7 @@
 
 use crate::error::Result;
 use crate::modes::Mode;
+use crate::presets::{Preset, Rung};
 use crate::proto::{Envelope, MsgType, Priority};
 use crate::store::{Delivery, Store};
 use rand::Rng;
@@ -215,7 +216,200 @@ pub fn copy_wants_new_ack(incoming_hops: u8, stored_hops: u8) -> bool {
 /// A duplicate from the originator's side is not a relay further along.
 /// It must not cancel our pending copy of a frame that walks hop by hop.
 pub fn duplicate_suppresses(env: &Envelope, incoming_hops: u8, stored_hops: u8) -> bool {
-    !(keeps_walking(env) && origin_retry(incoming_hops, stored_hops))
+    !((keeps_walking(env) || closed_group_walks(env)) && origin_retry(incoming_hops, stored_hops))
+}
+
+/// A closed-group line relayed for its members. One copy is often lost at
+/// the next station, and the originator's retries only reach it when every
+/// hop between carries them, so the relay walks it like a bulletin.
+pub fn closed_group_walks(env: &Envelope) -> bool {
+    matches!(
+        env.kind,
+        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status
+    ) && env.flags.group()
+        && !crate::slash::is_bulletin(env.dest.as_str())
+}
+
+/// Walk a closed-group relay again until a station further along is heard,
+/// every member's receipt is known here (the pump then stops on `[all]`),
+/// or the retries are spent.
+pub fn group_walk_continues(
+    env: &Envelope,
+    retries: u32,
+    max_retries: u32,
+    downstream_heard: bool,
+) -> bool {
+    closed_group_walks(env)
+        && env.hops_left > 0
+        && ack_walk_continues(downstream_heard, retries, max_retries)
+}
+
+/// Rung for the `step`-th copy this station relays without hearing it go
+/// further. Starts at the preset's ladder start, never faster. Steps only to
+/// a rung that still carries the preset's full frame: modem73 has one TX
+/// mode, and a narrower mode drops any wider frame still in its queue.
+pub fn relay_rung(preset: Preset, step: u32, widest: usize) -> Rung {
+    let mut idx = preset.ladder_start();
+    for _ in 0..step {
+        let next = idx + 1;
+        if next >= Rung::COUNT
+            || next > Rung::max_for_size(widest)
+            || Rung::from_index(next).payload_bytes() < preset.payload_bytes()
+        {
+            break;
+        }
+        idx = next;
+    }
+    Rung::from_index(idx)
+}
+
+/// Airtime of one full frame on the preset. modem73 frames are a fixed
+/// length per mode, so a short frame holds the channel this long too.
+pub fn frame_slot(preset: Preset) -> std::time::Duration {
+    std::time::Duration::from_secs_f64(crate::presets::airtime_secs(
+        preset,
+        preset.payload_bytes() as usize,
+        0,
+    ))
+}
+
+/// Frame slots a relay or group receipt picks from. Two neighbours that
+/// cannot hear each other both answer the frame between them at once; a
+/// station between them decodes neither. Carrier sense cannot help.
+pub fn spread_slots(priority: Priority) -> u32 {
+    match priority {
+        Priority::Emergency => 2,
+        Priority::Priority => 3,
+        Priority::Routine => 4,
+    }
+}
+
+/// Delay before keying a relay or group receipt: a whole random slot, so
+/// two stations that picked different slots do not overlap.
+pub fn spread_delay(preset: Preset, priority: Priority) -> std::time::Duration {
+    let slot = frame_slot(preset);
+    let pick = rand::thread_rng().gen_range(0..spread_slots(priority));
+    slot * pick
+}
+
+/// How long a neighbour heard keying its own frame counts as present.
+pub const NEIGHBOUR_FRESH_S: u32 = 900;
+/// Uptime before a lone known neighbour is taken as the keyer of every frame.
+pub const COVERAGE_WARMUP_S: u32 = 120;
+const COVERAGE_KEEP_S: u32 = 3_600;
+
+/// Which neighbours already hold a frame, from what was decoded on RF.
+///
+/// A neighbour is a station heard keying its own frame (a beacon, or a frame
+/// still at the top hop budget). A frame's origin holds it; an ACK's sender
+/// holds the ACK and the line it answers. When one neighbour is known and
+/// nothing suggests a second, every frame decoded came from that neighbour.
+/// Each station keys one id at one hop count, so copies of one id at two
+/// counts (other than our own) mean two keyers: a second neighbour exists
+/// even if it has never keyed its own frame.
+#[derive(Default)]
+pub struct Coverage {
+    started: u32,
+    neighbours: std::collections::HashMap<String, u32>,
+    holders: std::collections::HashMap<crate::proto::MsgId, (u32, Vec<String>)>,
+    hops: std::collections::HashMap<crate::proto::MsgId, (u32, Vec<u8>)>,
+    keyers_seen: (u32, usize),
+}
+
+impl Coverage {
+    pub fn new(now: u32) -> Self {
+        Self {
+            started: now,
+            ..Self::default()
+        }
+    }
+
+    fn hold(&mut self, id: crate::proto::MsgId, call: &str, now: u32) {
+        let e = self.holders.entry(id).or_insert((now, Vec::new()));
+        e.0 = now;
+        if !e.1.iter().any(|c| c.eq_ignore_ascii_case(call)) {
+            e.1.push(call.to_ascii_uppercase());
+        }
+    }
+
+    /// One frame decoded on RF. `ours` is the hop count we stored for it
+    /// before this copy, which is what our own relay keys.
+    pub fn heard(&mut self, env: &Envelope, ours: Option<u8>, now: u32) {
+        let origin = env.origin.as_str();
+        if env.kind == MsgType::Beacon
+            || (env.kind != MsgType::Frag && env.hops_left >= crate::emcomm::BULLETIN_TTL)
+        {
+            self.neighbours.insert(origin.to_ascii_uppercase(), now);
+        }
+        self.hold(env.msg_id, origin, now);
+        if env.kind == MsgType::Ack {
+            if let Some(id) = env.acked_id() {
+                self.hold(id, origin, now);
+            }
+        }
+        if ours != Some(env.hops_left) && env.kind != MsgType::Beacon {
+            let e = self.hops.entry(env.msg_id).or_insert((now, Vec::new()));
+            e.0 = now;
+            if !e.1.contains(&env.hops_left) {
+                e.1.push(env.hops_left);
+            }
+            let n = e.1.len();
+            if n >= self.keyers_floor(now) {
+                self.keyers_seen = (now, n);
+            }
+        }
+        self.prune(now);
+    }
+
+    fn prune(&mut self, now: u32) {
+        if self.holders.len() < 512 && self.hops.len() < 512 {
+            return;
+        }
+        self.holders
+            .retain(|_, (t, _)| now.saturating_sub(*t) < COVERAGE_KEEP_S);
+        self.hops
+            .retain(|_, (t, _)| now.saturating_sub(*t) < COVERAGE_KEEP_S);
+        self.neighbours
+            .retain(|_, t| now.saturating_sub(*t) < COVERAGE_KEEP_S);
+    }
+
+    fn fresh(&self, now: u32) -> Vec<&str> {
+        self.neighbours
+            .iter()
+            .filter(|(_, t)| now.saturating_sub(**t) < NEIGHBOUR_FRESH_S)
+            .map(|(c, _)| c.as_str())
+            .collect()
+    }
+
+    /// Most keyers seen for one id lately: a floor on how many neighbours exist.
+    fn keyers_floor(&self, now: u32) -> usize {
+        if now.saturating_sub(self.keyers_seen.0) < NEIGHBOUR_FRESH_S {
+            self.keyers_seen.1
+        } else {
+            0
+        }
+    }
+
+    /// Every neighbour we know of already holds `id`, so keying it again
+    /// reaches nobody new. False until a neighbour is known.
+    pub fn covered(&self, id: &crate::proto::MsgId, now: u32) -> bool {
+        let fresh = self.fresh(now);
+        if fresh.is_empty() || fresh.len() < self.keyers_floor(now) {
+            return false;
+        }
+        let holders = self.holders.get(id).map(|(_, h)| h.as_slice()).unwrap_or(&[]);
+        let named = fresh
+            .iter()
+            .all(|n| holders.iter().any(|h| h.eq_ignore_ascii_case(n)));
+        if named {
+            return true;
+        }
+        // One neighbour, nothing suggesting another: it keyed what we decoded.
+        fresh.len() == 1
+            && self.keyers_floor(now) <= 1
+            && now.saturating_sub(self.started) >= COVERAGE_WARMUP_S
+            && self.hops.contains_key(id)
+    }
 }
 
 pub fn jitter_ms(priority: Priority) -> u64 {

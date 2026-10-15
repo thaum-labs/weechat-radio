@@ -91,6 +91,10 @@ struct Runtime {
     gw_marked: Arc<Mutex<HashSet<MsgId>>>,
     /// Msgids that already painted [rl]. A neighbour relay does not paint it again.
     rl_painted: Arc<Mutex<HashSet<MsgId>>>,
+    /// Which neighbours already hold each frame, from RF decodes.
+    cover: Arc<Mutex<relay::Coverage>>,
+    /// Copies of someone else's frame this station has keyed.
+    relay_copies: Arc<Mutex<HashMap<MsgId, u32>>>,
 }
 
 impl Runtime {
@@ -130,6 +134,11 @@ impl Runtime {
         } else {
             false
         }
+    }
+
+    /// Every known neighbour already holds `id`. Another copy reaches no one.
+    fn covered(&self, id: &MsgId) -> bool {
+        self.cover.lock().covered(id, crate::proto::now_ts())
     }
 
     fn relay_due(&self, id: &MsgId, now: u32) -> bool {
@@ -429,6 +438,8 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         hub_marked: Arc::new(Mutex::new(HashSet::new())),
         gw_marked: Arc::new(Mutex::new(HashSet::new())),
         rl_painted: Arc::new(Mutex::new(HashSet::new())),
+        cover: Arc::new(Mutex::new(relay::Coverage::new(crate::proto::now_ts()))),
+        relay_copies: Arc::new(Mutex::new(HashMap::new())),
     };
     refresh_group_prios(&rt);
 
@@ -511,11 +522,22 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                             }
                             continue;
                         }
-                        let _ = dispatch(&rt_h, &m.env).await;
-                        let heard = rt_h.downstream_heard.lock().contains(&m.env.msg_id);
                         let retries = rt_h.store.retries_of(&m.env.msg_id).unwrap_or(0);
+                        // A first relay of a line still goes out: a silent
+                        // neighbour may need it. A receipt, or a repeat, that
+                        // every known neighbour already holds reaches nobody.
+                        let repeat = m.env.kind == MsgType::Ack || retries > 0;
+                        if repeat && rt_h.covered(&m.env.msg_id) {
+                            let _ = rt_h.store.set_hold(&m.env.msg_id, 0, m.env.hops_left);
+                            continue;
+                        }
+                        let _ = dispatch_spread(&rt_h, &m.env).await;
+                        let heard = rt_h.downstream_heard.lock().contains(&m.env.msg_id)
+                            || rt_h.covered(&m.env.msg_id);
                         let max = rt_h.cfg.lock().rf.max_retries;
-                        if relay::keep_relaying(&m.env, retries, max, heard) {
+                        if relay::keep_relaying(&m.env, retries, max, heard)
+                            || relay::group_walk_continues(&m.env, retries, max, heard)
+                        {
                             // Relayed, not Queued, so the echo of this copy does
                             // not cancel the next send.
                             let _ = rt_h
@@ -1313,15 +1335,22 @@ async fn dispatch_rf_at(
     // the pre-fragment envelope forces a split message onto OFDM, which a weak
     // or acoustic path never decodes.
     let widest = frames.iter().map(Vec::len).max().unwrap_or(bytes.len());
-    let rung = presets::rung_for(preset, stored, retries, widest);
-    let apply = env.origin.as_str() == rt.engine.our_call;
+    let own = env.origin.as_str() == rt.engine.our_call;
+    // A relay without a rung keyed in whatever mode an own retry left the
+    // modem in, and modem73 dropped a frame wider than that mode. For
+    // someone else's frame `retries` is how many copies we already relayed.
+    let rung = if own {
+        presets::rung_for(preset, stored, retries, widest)
+    } else {
+        relay::relay_rung(preset, retries, widest)
+    };
     enqueue_rf(
         rt,
         &rf_env,
         frames,
         preset,
         EnqueueOpts {
-            rung: if apply { Some(rung) } else { None },
+            rung: Some(rung),
             delay,
             copy,
         },
@@ -1463,10 +1492,39 @@ async fn send_rf(
 }
 
 async fn dispatch(rt: &Runtime, env: &Envelope) -> Result<()> {
-    dispatch_with(rt, env, false).await
+    dispatch_with(rt, env, false, RfSlot::default()).await
 }
 
-async fn dispatch_with(rt: &Runtime, env: &Envelope, force_inet: bool) -> Result<()> {
+/// When and on which ladder step a frame keys. Own frames go now on step 0.
+#[derive(Clone, Copy, Default)]
+struct RfSlot {
+    step: u32,
+    delay: Duration,
+}
+
+/// Key someone else's frame, or a group receipt, in a random frame slot so
+/// two neighbours answering the same frame do not land on top of each other
+/// at the station between them.
+async fn dispatch_spread(rt: &Runtime, env: &Envelope) -> Result<()> {
+    let preset = Preset::parse(&rt.cfg.lock().modem.preset).unwrap_or(Preset::VhfFm);
+    let delay = relay::spread_delay(preset, env.priority());
+    let foreign = !relay::is_own_origin(&rt.engine.our_call, env);
+    let step = if foreign {
+        let mut copies = rt.relay_copies.lock();
+        if copies.len() > 4096 {
+            copies.clear();
+        }
+        let n = copies.entry(env.msg_id).or_insert(0);
+        let step = *n;
+        *n = n.saturating_add(1);
+        step
+    } else {
+        0
+    };
+    dispatch_with(rt, env, false, RfSlot { step, delay }).await
+}
+
+async fn dispatch_with(rt: &Runtime, env: &Envelope, force_inet: bool, slot: RfSlot) -> Result<()> {
     let cfg = rt.cfg.lock().clone();
     let mut env = env.clone();
     stamp_own_mode_flags(&mut env, &rt.engine.our_call, cfg.mode);
@@ -1479,7 +1537,12 @@ async fn dispatch_with(rt: &Runtime, env: &Envelope, force_inet: bool) -> Result
         .as_str()
         .eq_ignore_ascii_case(&rt.engine.our_call);
     let mut relayed = false;
-    if cfg.mode.uses_radio() && dispatch_rf_rung(rt, &env, 0).await.unwrap_or(false) && foreign {
+    if cfg.mode.uses_radio()
+        && dispatch_rf_at(rt, &env, slot.step, slot.delay, 0)
+            .await
+            .unwrap_or(false)
+        && foreign
+    {
         relayed = true;
     }
     let via_inet =
@@ -1717,6 +1780,17 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
     // envelope must not enter chat delivery, retry, or the air queue.
     if env.kind == MsgType::Mail {
         return Ok(());
+    }
+    if medium == "rf" {
+        let ours = rt
+            .store
+            .get(&env.msg_id)
+            .ok()
+            .flatten()
+            .map(|m| m.env.hops_left);
+        rt.cover
+            .lock()
+            .heard(&env, ours, crate::proto::now_ts());
     }
     if env.origin.as_str() == rt.engine.our_call {
         // A relay closer to the destination has fewer hops than the copy we
@@ -2110,13 +2184,18 @@ async fn acknowledge(rt: &Runtime, env: &Envelope, snr: Option<f32>) -> Result<(
             let _ = rt.store.set_hold(&ack.msg_id, hold, ack.hops_left);
         }
     }
+    // Every member that heard the line answers it at once. Two of them on
+    // either side of the sender cannot hear each other, so a sub-frame
+    // dither still lands both receipts on the sender together.
     let dither = if env.flags.group() {
         let max = rt.cfg.lock().rf.ack_dither_ms as u64;
-        if max > 0 {
+        let fine = if max > 0 {
             Duration::from_millis(rand::thread_rng().gen_range(0..=max))
         } else {
             Duration::ZERO
-        }
+        };
+        let preset = Preset::parse(&cfg_now.modem.preset).unwrap_or(Preset::VhfFm);
+        relay::spread_delay(preset, env.priority()) + fine
     } else {
         Duration::ZERO
     };
@@ -2187,7 +2266,12 @@ async fn answer_again(rt: &Runtime, env: &Envelope, snr: Option<f32>) {
     if mode.uses_radio() && !mode.uses_internet() {
         if let Ok(Some(ack)) = rt.store.own_ack_for(&env.msg_id, &rt.engine.our_call) {
             rt.downstream_heard.lock().remove(&ack.env.msg_id);
-            let _ = dispatch(rt, &ack.env).await;
+            // Every member that heard the retry answers it at once.
+            if env.flags.group() {
+                let _ = dispatch_spread(rt, &ack.env).await;
+            } else {
+                let _ = dispatch(rt, &ack.env).await;
+            }
             return;
         }
     }
@@ -2203,7 +2287,7 @@ async fn relay_heard_retry(rt: &Runtime, env: &Envelope) {
     };
     if relay::heard_further(env.hops_left, stored.env.hops_left) {
         rt.downstream_heard.lock().insert(env.msg_id);
-        if relay::keeps_walking(&stored.env) {
+        if relay::keeps_walking(&stored.env) || relay::closed_group_walks(&stored.env) {
             let _ = rt.store.set_hold(&env.msg_id, 0, stored.env.hops_left);
             if let Some(air) = rt.air() {
                 air.cancel(env.msg_id);
@@ -2227,10 +2311,13 @@ async fn relay_heard_retry(rt: &Runtime, env: &Envelope) {
     if rt.downstream_heard.lock().contains(&env.msg_id) && !receipts_missing {
         return;
     }
+    if rt.covered(&env.msg_id) {
+        return;
+    }
     if relay::may_rebroadcast(&rt.engine.our_call, &stored.env, Some(stored.delivery))
         && rt.relay_due(&env.msg_id, now)
     {
-        let _ = dispatch(rt, &stored.env).await;
+        let _ = dispatch_spread(rt, &stored.env).await;
     }
 }
 
@@ -2242,13 +2329,16 @@ async fn resend_held_acks(rt: &Runtime, id: &MsgId, now: u32) {
         return;
     };
     for ack in acks {
-        if ack.env.hops_left == 0 || rt.downstream_heard.lock().contains(&ack.env.msg_id) {
+        if ack.env.hops_left == 0
+            || rt.downstream_heard.lock().contains(&ack.env.msg_id)
+            || rt.covered(&ack.env.msg_id)
+        {
             continue;
         }
         if relay::may_rebroadcast(&rt.engine.our_call, &ack.env, Some(ack.delivery))
             && rt.relay_due(&ack.env.msg_id, now)
         {
-            let _ = dispatch(rt, &ack.env).await;
+            let _ = dispatch_spread(rt, &ack.env).await;
         }
     }
 }
@@ -2574,7 +2664,7 @@ async fn send_group_status(
         let _ = rt.keys.sign_envelope(&mut env);
     }
     rt.store.insert(&env, Delivery::Queued)?;
-    dispatch_with(rt, &env, force_inet).await?;
+    dispatch_with(rt, &env, force_inet, RfSlot::default()).await?;
     rt.store.set_delivery(&env.msg_id, Delivery::Sent)?;
     if cfg_g.mode.uses_radio() && relay::is_channel_meta(&env) {
         // Nobody ACKs a roster. Repeat it until a relay is heard carrying it.
