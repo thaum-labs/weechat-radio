@@ -298,13 +298,15 @@ pub fn heard_direct(env: &Envelope, line: Option<&Envelope>) -> bool {
 /// from us reaches nobody new: we are the end of the chain for it.
 /// `holders` have it (its originator, and every member whose receipt we
 /// hold). With one neighbour and a relayed copy, that neighbour is the one
-/// that relayed it to us. With no neighbour known we cannot tell.
+/// that relayed it to us. With one neighbour and a first-hand copy, it is
+/// the originator, and a station beyond us whose beacons we lost would look
+/// the same, so we cannot tell. Nor with no neighbour known.
 pub fn neighbours_hold(neighbours: &[String], holders: &[String], came_relayed: bool) -> bool {
     if neighbours.is_empty() {
         return false;
     }
-    if came_relayed && neighbours.len() == 1 {
-        return true;
+    if neighbours.len() == 1 {
+        return came_relayed;
     }
     neighbours
         .iter()
@@ -1400,6 +1402,9 @@ mod tests {
         assert!(neighbours_hold(&n(&["M0BBB"]), &[], true));
         // A heard it from the originator itself: B may not have it.
         assert!(!neighbours_hold(&n(&["M0BBB"]), &[], false));
+        // B has heard only the originator A, not C beyond it (every C
+        // beacon lost): B cannot tell it is not the end.
+        assert!(!neighbours_hold(&n(&["G4AAA"]), &n(&["G4AAA"]), false));
         // B in the middle: A sent it, C has not answered yet.
         let b = n(&["G4AAA", "2E0CCC"]);
         assert!(!neighbours_hold(&b, &n(&["G4AAA"]), false));
