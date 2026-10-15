@@ -37,7 +37,7 @@ The receiver hears all of these at once. You can send `hf-weak` while they are s
 4. When an ACK comes back, it includes how strong they heard you. A good report steps the waveform back up.
 5. Lines that start with `!!` (emergency) go out twice, a moment apart, so a fade is less likely to take both.
 6. Group chat on HF is split into pieces. Any two of three pieces rebuild the message. If several internet gateways each hear a different piece, the hub stitches them.
-7. If the frequency is already busy, the program waits for a gap (status bar **PTT** reads `wait`). Beacons stay off while occupancy is high. Group ACKs and retries are staggered so they do not all key at once. An ACK still goes out after about 3 seconds if the channel never goes quiet. Chat and relays wait up to 15 seconds. `[rl]` does not stop the retries; only an ACK does. When the retries are used up the line shows `[no]`. A later ACK can still move it to `[ok]`.
+7. If the frequency is already busy, the program waits for a gap (status bar **PTT** reads `wait`). Beacons stay off while occupancy is high and for a minute after any traffic. Group ACKs and retries are staggered so they do not all key at once. An ACK still goes out after about 3 seconds if the channel never goes quiet. Chat and relays wait up to 15 seconds. `[rl]` does not stop the retries; only an ACK does. When the retries are used up the line shows `[no]`. A later ACK can still move it to `[ok]`.
 
 ## Busy channel
 
