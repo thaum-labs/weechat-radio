@@ -686,6 +686,49 @@ mod tests {
         }
     }
 
+    /// Every chunk of a 3.9 KB mail, the last one included, fits the rung it is
+    /// keyed on and decodes back to the same wire on each hf-poor try.
+    #[test]
+    fn every_chunk_of_a_long_mail_round_trips_on_each_rung() {
+        let para =
+            "Line one of the report, with words — and a tab\there.\nSecond line ends here\n\n";
+        let mut body = para.repeat(3900 / para.len() + 1);
+        while body.len() > 3900 {
+            body.pop();
+        }
+        let body = trim_body(&body).unwrap();
+        let meta = sample_meta();
+        let id = compute_mail_id(&meta.from, &meta.to, &meta.subject, &body, meta.ack);
+        let wires = chunk_to_limit(&id, &meta, &body, 170);
+        assert!(
+            wires.len() > 40,
+            "expected a long split, got {}",
+            wires.len()
+        );
+        let last = wires.last().unwrap();
+        assert_eq!(last.idx + 1, last.count);
+        for mtu in [170usize, 55] {
+            let mut back = Vec::new();
+            for w in &wires {
+                let frames = frames_for_mtu(&encode_chunk(w), mtu).unwrap();
+                assert!(frames.iter().all(|f| f.len() <= mtu));
+                let mut slices = Vec::new();
+                for f in &frames {
+                    match try_decode(f).expect("mail frame") {
+                        Incoming::Wire(got) => back.push(got),
+                        Incoming::Slice { part, data, .. } => slices.push((part, data)),
+                    }
+                }
+                if !slices.is_empty() {
+                    back.push(decode_chunk(&join_slices(&slices).unwrap()).unwrap());
+                }
+            }
+            assert_eq!(back, wires, "mtu {mtu}");
+            let (_, text, _) = assemble_chunks(back).unwrap();
+            assert_eq!(text, body, "mtu {mtu}");
+        }
+    }
+
     fn long_body(n: usize) -> String {
         let word = "hello mail ";
         let mut body = word.repeat(n / word.len());
