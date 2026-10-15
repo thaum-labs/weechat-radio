@@ -543,8 +543,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         // A repeat that every neighbour no longer needs stays
                         // off the air, and so does one past the cap. The
                         // first relay always goes.
-                        let spent =
-                            m.env.kind != MsgType::Ack && relay_copies_spent(&rt_h, &m.env.msg_id);
+                        let spent = relay_copies_spent(&rt_h, &m.env);
                         if retries > 0 && (heard || spent) {
                             let _ = rt_h.store.set_hold(&m.env.msg_id, 0, m.env.hops_left);
                             continue;
@@ -1556,9 +1555,14 @@ fn line_reached_neighbours(rt: &Runtime, line: &Envelope) -> bool {
     relay::neighbours_hold(&current_neighbours(rt), &holders, came_relayed)
 }
 
-/// We have keyed our cap of copies of someone else's line.
-fn relay_copies_spent(rt: &Runtime, id: &MsgId) -> bool {
-    rt.relay_copies.lock().get(id).copied().unwrap_or(0) >= relay::RELAY_MAX_COPIES
+/// We have keyed our cap of copies of someone else's line or receipt.
+fn relay_copies_spent(rt: &Runtime, env: &Envelope) -> bool {
+    rt.relay_copies
+        .lock()
+        .get(&env.msg_id)
+        .copied()
+        .unwrap_or(0)
+        >= relay::relay_copy_cap(env)
 }
 
 fn note_own_rf_tx(rt: &Runtime, env: &Envelope) {
@@ -1634,8 +1638,12 @@ async fn dispatch_with(
                 .sides
                 .lock()
                 .relaying(env.msg_id, std::time::Instant::now() + delay);
-            *rt.relay_copies.lock().entry(env.msg_id).or_insert(0) += 1;
         }
+        let mut copies = rt.relay_copies.lock();
+        if copies.len() > 4096 {
+            copies.clear();
+        }
+        *copies.entry(env.msg_id).or_insert(0) += 1;
     }
     let via_inet =
         force_inet || (cfg.mode.uses_internet() && env.flags.inet_ok() && inet_gap_for(rt, &env));
@@ -1891,6 +1899,16 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                     if let Some(air) = rt.air() {
                         air.cancel(env.msg_id);
                     }
+                }
+            }
+        }
+        // Our #bulletin carried on by another station: someone has it, which
+        // is all the sender waits for. The retries stop; the line keeps
+        // [rl] and still takes a late ACK, but it does not go to [no].
+        if relay::bulletin_keeps_walking(&env) {
+            if let Ok(Some(stored)) = rt.store.get(&env.msg_id) {
+                if relay::heard_further(env.hops_left, stored.env.hops_left) {
+                    let _ = rt.store.set_hold(&env.msg_id, 0, stored.env.hops_left);
                 }
             }
         }
@@ -2433,7 +2451,7 @@ async fn relay_heard_retry(rt: &Runtime, env: &Envelope) {
     }
     // Every neighbour has the line, so passing the retry on reaches nobody
     // new. The receipts we hold for it went out above.
-    if line_reached_neighbours(rt, &stored.env) || relay_copies_spent(rt, &env.msg_id) {
+    if line_reached_neighbours(rt, &stored.env) || relay_copies_spent(rt, &stored.env) {
         return;
     }
     if relay::may_rebroadcast(&rt.engine.our_call, &stored.env, Some(stored.delivery))
@@ -2458,6 +2476,7 @@ async fn resend_held_acks(rt: &Runtime, id: &MsgId, now: u32) {
             continue;
         }
         if relay::may_rebroadcast(&rt.engine.our_call, &ack.env, Some(ack.delivery))
+            && !relay_copies_spent(rt, &ack.env)
             && rt.relay_due(&ack.env.msg_id, now)
         {
             let _ = dispatch_spread(rt, &ack.env).await;

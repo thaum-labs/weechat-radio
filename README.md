@@ -74,7 +74,7 @@ How you know it worked: the status bar shows your callsign. Send a line in `#bul
 - `[tx]` sent
 - `[rl]` you heard your own frame on the radio again (a speaker echo or a relay, not a receipt). A noisy path can skip this. In `radio` mode this is as far as the frame goes: it is marked to stay off the internet, so a gateway will not upload it.
 - `[gw]` a gateway accepted the frame onto the hub. This is not an ACK. Retries keep going until `[ok]` or `[all]`.
-- `[ok]` delivered. A direct message stops here. `#bulletin` stops here too: it is public and has no member list, so it never reaches `[all]`.
+- `[ok]` delivered. A direct message stops here. `#bulletin` stops here too: it is public and has no member list, so it never reaches `[all]`. A bulletin also stops retrying once another station is heard relaying it; it keeps `[rl]` then, not `[no]`.
 - `[all]` every member of a closed group has acknowledged. Only a closed group can show this. The first member ACK paints `[ok]` and the retries continue until every stored member has ACKed, or the retries run out. A partial ACK does not paint `[no]`: the line stays `[ok]` until a late ACK makes it `[all]`. Marks never move back, so a retry after `[rl]` or `[ok]` goes out without a new mark.
 - `[no]` the hub refused the send, or the last copy went out and one more full retry interval passed with no acknowledgement
 - `[xN]` how many times this line was keyed, counted until `[rl]`, `[gw]` or `[ok]`. `[x1]` is the first send. With the default of 3 retries the last copy is `[x4]` (`retry-3/3`). `[no]` comes after that copy has waited one more interval, not in the same second, and one more again if a relay carried it (`[rl]`), so a late receipt does not turn `[no]` into `[ok]`.
