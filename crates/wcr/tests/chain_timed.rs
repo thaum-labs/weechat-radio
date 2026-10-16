@@ -923,25 +923,16 @@ async fn invite_reaches_the_far_end() {
 
 /// QA could not score the beacon pace on v0.1.92: the countdown looked as if
 /// it reset every minute. On a quiet chain at hf-poor timing, each station's
-/// countdown after the warm-up must name the moment its next beacon keys
-/// (within the carrier-sense hold), nothing keys before it, and that beacon
-/// comes at the idle pace (about 5 minutes after the warm-up's last).
+/// next beacon after the warm-up must key within the carrier-sense hold of the
+/// countdown showing when it fell due. One that falls due while a neighbour is
+/// on the air waits a pace, and its countdown says so (`busy`). Nothing keys
+/// before the countdown, and the beacon comes at the idle pace (about 5
+/// minutes after the warm-up's last).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn each_beacon_keys_when_its_countdown_says() {
     let chain = Chain::start(None).await;
     let sampled_at = Instant::now();
-    let sampled_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let mut due = Vec::new();
-    for p in &chain.status {
-        let snap = status_json(*p).await.expect("status");
-        due.push(snap.get("beacon_due").and_then(|x| x.as_u64()).unwrap_or(0));
-    }
-    let latest = due.iter().copied().max().unwrap_or(0);
-    let wait = latest.saturating_sub(sampled_unix) + 60;
-    tokio::time::sleep(Duration::from_secs(wait)).await;
+    let slack = Duration::from_secs(2);
     let beacons = |st: usize| -> Vec<Instant> {
         chain
             .log
@@ -953,26 +944,81 @@ async fn each_beacon_keys_when_its_countdown_says() {
             .map(|k| k.at)
             .collect()
     };
+    // Every countdown each station showed: when it said the beacon was due,
+    // and its note.
+    let mut seen: Vec<Vec<(Instant, String)>> = vec![Vec::new(); CALLS.len()];
+    let give_up = sampled_at + Duration::from_secs(600);
+    loop {
+        for (i, p) in chain.status.iter().enumerate() {
+            let Some(snap) = status_json(*p).await else {
+                continue;
+            };
+            let due = snap.get("beacon_due").and_then(|x| x.as_u64()).unwrap_or(0);
+            if due == 0 {
+                continue;
+            }
+            let at = Instant::now();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let due_at = if due >= now {
+                at + Duration::from_secs(due - now)
+            } else {
+                at - Duration::from_secs(now - due)
+            };
+            let note = snap
+                .get("beacon_note")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            seen[i].push((due_at, note));
+        }
+        let all_keyed = (0..CALLS.len()).all(|i| {
+            seen[i]
+                .first()
+                .is_some_and(|(d, _)| beacons(i).iter().any(|t| *t + slack >= *d))
+        });
+        if all_keyed || Instant::now() > give_up {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
     let mut report = String::new();
     let mut problems = Vec::new();
     for (i, call) in CALLS.iter().enumerate() {
         let keyed = beacons(i);
         let warm = keyed.iter().filter(|t| **t < sampled_at).count();
-        let ahead = due[i].saturating_sub(sampled_unix);
-        let due_at = sampled_at + Duration::from_secs(ahead);
-        let slack = Duration::from_secs(2);
-        // The beacon the countdown names, and the one keyed before it. A
-        // beacon handed to the modem just before the sample can still key
+        let Some(&(due_at, _)) = seen[i].first() else {
+            problems.push(format!("{call} showed no countdown"));
+            continue;
+        };
+        let ahead = due_at.saturating_duration_since(sampled_at).as_secs();
+        // The beacon the first countdown names, and the one keyed before it.
+        // A beacon handed to the modem just before the sample can still key
         // up to the carrier-sense hold later; only after that is a beacon
         // ahead of the countdown early.
         let next = keyed.iter().find(|t| **t + slack >= due_at).copied();
         let prev = keyed.iter().rev().find(|t| **t + slack < due_at).copied();
         let in_flight = sampled_at + Duration::from_secs(60);
         let early = keyed.iter().any(|t| *t >= in_flight && *t + slack < due_at);
-        let off = next.map(|t| t.saturating_duration_since(due_at).as_secs_f64());
+        // The countdown showing when it fell due: the latest one due by the
+        // time it keyed (a busy hold moves it on; the next round's is later).
+        let named = next.and_then(|n| {
+            seen[i]
+                .iter()
+                .map(|(d, _)| *d)
+                .filter(|d| *d <= n + slack)
+                .max()
+        });
+        let busy = seen[i].iter().any(|(_, note)| note == "busy");
+        let off = next
+            .zip(named)
+            .map(|(n, d)| n.saturating_duration_since(d).as_secs_f64());
         let gap = next.zip(prev).map(|(n, l)| n.duration_since(l).as_secs());
+        let held = if busy { ", held busy" } else { "" };
         report.push_str(&format!(
-            "\n  {call}: {warm} warm-up beacons, countdown {ahead}s ahead, keyed {off:?}s after it, idle gap {gap:?}s"
+            "\n  {call}: {warm} warm-up beacons, countdown {ahead}s ahead{held}, keyed {off:?}s after it, idle gap {gap:?}s"
         ));
         if !(2..=4).contains(&warm) {
             problems.push(format!("{call} keyed {warm} beacons in the warm-up"));
@@ -987,7 +1033,9 @@ async fn each_beacon_keys_when_its_countdown_says() {
         if early {
             problems.push(format!("{call} keyed a beacon before its countdown"));
         }
-        if gap.is_some_and(|g| !(240..=420).contains(&g)) {
+        // A busy hold adds a pace (at most 75 s) to the idle gap.
+        let max_gap = if busy { 500 } else { 420 };
+        if gap.is_some_and(|g| !(240..=max_gap).contains(&g)) {
             problems.push(format!("{call} idle gap {gap:?}s, not about 5 minutes"));
         }
     }
