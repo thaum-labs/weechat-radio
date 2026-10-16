@@ -447,8 +447,9 @@ fn first_msgid(client: &Client) -> Option<String> {
 }
 
 /// Marks only move forward: `retry-n` only before anyone carried or
-/// answered the line, and no `waiting`. `[no]` is final: never after `[ok]`,
-/// and no receipt overturns it.
+/// answered the line, and no `waiting`. `[no]` never comes after `[ok]`, and
+/// only a real receipt follows it: on a busy chain a receipt can arrive after
+/// the last wait, and the store lets it lift `[no]` to `[ok]`.
 fn marks_move_forward(marks: &[String]) -> bool {
     let rank = |m: &str| match m {
         "sent" => Some(1),
@@ -460,22 +461,40 @@ fn marks_move_forward(marks: &[String]) -> bool {
         _ => None,
     };
     let mut best = 0;
-    for (i, m) in marks.iter().enumerate() {
+    let mut failed = false;
+    for m in marks {
         if m == "failed" {
-            if best >= 5 || i + 1 != marks.len() {
+            if best >= 5 || failed {
                 return false;
             }
+            failed = true;
             continue;
         }
         let Some(r) = rank(m) else {
             return false;
         };
-        if r < best {
+        if r < best || (failed && r < 5) {
             return false;
         }
         best = r;
     }
     true
+}
+
+#[test]
+fn marks_check_takes_a_late_receipt_after_no() {
+    let forward = |s: &str| marks_move_forward(&s.split(' ').map(String::from).collect::<Vec<_>>());
+    assert!(forward("sent relayed delivered all"));
+    assert!(forward("sent retry-3/3 relayed failed"));
+    // A's invite to E in the busy replay on #48's msrv run.
+    assert!(forward(
+        "sent retry-1/3 retry-2/3 retry-3/3 relayed failed delivered"
+    ));
+    assert!(forward("sent failed delivered all"));
+    assert!(!forward("sent delivered failed"));
+    assert!(!forward("sent failed relayed"));
+    assert!(!forward("sent failed retry-3/3"));
+    assert!(!forward("sent relayed sent"));
 }
 
 /// Every station but `from` shows `body` exactly once.
