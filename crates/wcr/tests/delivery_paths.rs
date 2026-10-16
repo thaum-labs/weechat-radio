@@ -559,6 +559,29 @@ async fn radio_bulletin_reaches_ok_and_dm_ack_cancels_retry() {
 async fn radio_group_reaches_all() {
     let _suite = suite_lock().lock().await;
     let air = wcr::sim::SharedAir::new(0.0);
+    // Every frame on the air, for the failure message: which receipt was
+    // late, and what keyed before it.
+    let t0 = std::time::Instant::now();
+    let frames = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    {
+        let mut rx = air.subscribe();
+        let frames = frames.clone();
+        tokio::spawn(async move {
+            while let Ok(f) = rx.recv().await {
+                let Ok(e) = wcr::proto::Envelope::decode(&f) else {
+                    continue;
+                };
+                frames.lock().unwrap().push(format!(
+                    "{:6.2}s {:?} {} from {} hops {}",
+                    t0.elapsed().as_secs_f64(),
+                    e.kind,
+                    e.msg_id.hex(),
+                    e.origin,
+                    e.hops_left
+                ));
+            }
+        });
+    }
     let members = ["G4AAA", "M0BBB", "2E0CCC"];
     let mut nodes = Vec::new();
     let mut irc = Vec::new();
@@ -600,14 +623,16 @@ async fn radio_group_reaches_all() {
         .write_all(b"PRIVMSG #net :group-all-body\r\n")
         .await
         .unwrap();
+    let sent = t0.elapsed().as_secs_f64();
     let mut reader = tokio::io::BufReader::new(&mut sender);
     let got = read_lines_until(&mut reader, 30, |lines| {
         lines.iter().any(|l| l.contains("+radio/delivery=all"))
     })
     .await;
+    let frames = frames.lock().unwrap().join("\n  ");
     assert!(
         got.iter().any(|l| l.contains("+radio/delivery=all")),
-        "group never reached [all]: {got:?}"
+        "group never reached [all]: {got:?}\n  sent {sent:.2}s\n  {frames}"
     );
     for n in nodes {
         n.abort();

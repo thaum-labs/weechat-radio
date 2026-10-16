@@ -170,7 +170,15 @@ pub struct ReleaseInfo {
     pub sums_url: Option<String>,
 }
 
-pub async fn apply() -> Result<String> {
+/// What `wcr update` did: its message, the version now installed, and
+/// whether it restarted the station's service.
+pub struct Applied {
+    pub message: String,
+    pub version: String,
+    pub restarted: bool,
+}
+
+pub async fn apply() -> Result<Applied> {
     let client = github_client()?;
     let releases = fetch_releases(&client).await?;
     let current = current_version();
@@ -180,7 +188,11 @@ pub async fn apply() -> Result<String> {
                 "a newer release is still publishing for this platform — try again in a few minutes, or install manually from https://github.com/{REPO}/releases"
             )));
         }
-        return Ok(format!("already up to date ({current})"));
+        return Ok(Applied {
+            message: format!("already up to date ({current})"),
+            version: current.to_string(),
+            restarted: false,
+        });
     };
     let url = info
         .url
@@ -233,12 +245,38 @@ pub async fn apply() -> Result<String> {
     }
     let removed_mintty = remove_stray_minttyrc(&exe);
     let restarted = crate::service::restart_if_installed();
-    Ok(update_success_message(
-        &info.version,
-        &exe,
+    Ok(Applied {
+        message: update_success_message(&info.version, &exe, restarted, removed_mintty),
+        version: info.version.clone(),
         restarted,
-        removed_mintty,
-    ))
+    })
+}
+
+/// A station started by hand keeps running the old code after `wcr update`
+/// (only a service is restarted), while `wcr --version` already shows the new
+/// one. Ask the running station at `status_bind` which version it runs.
+pub async fn running_station_note(status_bind: &str, installed: &str) -> Option<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .ok()?;
+    let snap: serde_json::Value = client
+        .get(format!("http://{status_bind}/status"))
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+    stale_station_note(snap.get("version")?.as_str()?, installed)
+}
+
+fn stale_station_note(running: &str, installed: &str) -> Option<String> {
+    (running.trim_start_matches('v') != installed.trim_start_matches('v')).then(|| {
+        format!(
+            "the station still running is {running}: stop it and start it again to run {installed}"
+        )
+    })
 }
 
 fn update_success_message(
@@ -546,6 +584,14 @@ fn unsupported_platform_msg(version: &str) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_station_left_on_the_old_version_is_named() {
+        assert_eq!(stale_station_note("0.1.92", "0.1.92"), None);
+        assert_eq!(stale_station_note("0.1.92", "v0.1.92"), None);
+        let note = stale_station_note("0.1.91", "0.1.92").unwrap();
+        assert!(note.contains("0.1.91") && note.contains("start it again"));
+    }
 
     fn asset(name: &str) -> Asset {
         Asset {

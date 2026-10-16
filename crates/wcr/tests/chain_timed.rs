@@ -240,6 +240,7 @@ struct Chain {
     clients: Vec<Client>,
     log: TimedLog,
     t0: Instant,
+    status: Vec<u16>,
 }
 
 impl Chain {
@@ -306,6 +307,7 @@ impl Chain {
             clients,
             log,
             t0: Instant::now(),
+            status,
         };
         // A live chain has been up a while: every station has beaconed and
         // knows its neighbours before the first line.
@@ -856,6 +858,26 @@ async fn busy_chain_with_invites_reaches_everyone() {
             problems.push(format!("{} lists {names:?}", CALLS[i]));
         }
     }
+    // Receipts B carried to A. B is next to A, so each goes once unless A
+    // retried its line. Reported: QA v0.1.92 saw four or five of each.
+    let to_a: Vec<usize> = {
+        let log = chain.log.lock().unwrap();
+        let mut per = std::collections::HashMap::<String, usize>::new();
+        for k in log.iter().filter(|k| k.station == 2 && !k.dropped) {
+            if let Ok(e) = Envelope::decode(&k.payload) {
+                if e.kind == MsgType::Ack
+                    && e.dest.as_str() == CALLS[0]
+                    && e.origin.as_str() != CALLS[1]
+                {
+                    *per.entry(e.msg_id.hex()).or_default() += 1;
+                }
+            }
+        }
+        let mut v: Vec<usize> = per.into_values().collect();
+        v.sort_unstable();
+        v
+    };
+    report.push_str(&format!("\n  B keyed each far receipt to A {to_a:?} times"));
     // A roster queued behind an ARQ copy on a narrow rung can be dropped by
     // the modem when the mode switches. Reported here, not held to zero.
     report.push_str(&format!("\n  dropped {}", chain.dropped()));
@@ -897,4 +919,133 @@ async fn invite_reaches_the_far_end() {
         "E never got the invite, or A never got E's receipt: {marks:?}{trace}"
     );
     assert!(marks_move_forward(&marks), "marks moved back: {marks:?}");
+}
+
+/// QA could not score the beacon pace on v0.1.92: the countdown looked as if
+/// it reset every minute. On a quiet chain at hf-poor timing, each station's
+/// first idle beacon after the warm-up (the first countdown more than 2
+/// minutes ahead; warm-up and busy holds are never that long) must key within
+/// the carrier-sense hold of the countdown showing when it fell due. One that
+/// falls due while a neighbour is on the air waits a pace, and its countdown
+/// says so (`busy`). Nothing keys before the countdown, and the beacon comes
+/// at the idle pace (about 5 minutes after the one before).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn each_beacon_keys_when_its_countdown_says() {
+    let chain = Chain::start(None).await;
+    let sampled_at = Instant::now();
+    let slack = Duration::from_secs(2);
+    let beacons = |st: usize| -> Vec<Instant> {
+        chain
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|k| k.station == st as u64 + 1 && !k.dropped)
+            .filter(|k| Envelope::decode(&k.payload).is_ok_and(|e| e.kind == MsgType::Beacon))
+            .map(|k| k.at)
+            .collect()
+    };
+    // Every countdown each station showed: when we read it, when it said the
+    // beacon was due, and its note.
+    let mut seen: Vec<Vec<(Instant, Instant, String)>> = vec![Vec::new(); CALLS.len()];
+    let idle = |(at, due, _): &(Instant, Instant, String)| *due > *at + Duration::from_secs(120);
+    let give_up = sampled_at + Duration::from_secs(900);
+    loop {
+        for (i, p) in chain.status.iter().enumerate() {
+            let Some(snap) = status_json(*p).await else {
+                continue;
+            };
+            let due = snap.get("beacon_due").and_then(|x| x.as_u64()).unwrap_or(0);
+            if due == 0 {
+                continue;
+            }
+            let at = Instant::now();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let due_at = if due >= now {
+                at + Duration::from_secs(due - now)
+            } else {
+                at - Duration::from_secs(now - due)
+            };
+            let note = snap
+                .get("beacon_note")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            seen[i].push((at, due_at, note));
+        }
+        let all_keyed = (0..CALLS.len()).all(|i| {
+            seen[i]
+                .iter()
+                .find(|s| idle(s))
+                .is_some_and(|(_, d, _)| beacons(i).iter().any(|t| *t + slack >= *d))
+        });
+        if all_keyed || Instant::now() > give_up {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    let mut report = String::new();
+    let mut problems = Vec::new();
+    for (i, call) in CALLS.iter().enumerate() {
+        let keyed = beacons(i);
+        let warm = keyed.iter().filter(|t| **t < sampled_at).count();
+        let Some(&(shown_at, due_at, _)) = seen[i].iter().find(|s| idle(s)) else {
+            problems.push(format!("{call} showed no idle countdown"));
+            continue;
+        };
+        let ahead = due_at.saturating_duration_since(shown_at).as_secs();
+        // The beacon the first idle countdown names, and the one keyed before
+        // it. A beacon handed to the modem just before that countdown showed
+        // can still key up to the carrier-sense hold later; only after that is
+        // a beacon ahead of the countdown early.
+        let next = keyed.iter().find(|t| **t + slack >= due_at).copied();
+        let prev = keyed.iter().rev().find(|t| **t + slack < due_at).copied();
+        let in_flight = shown_at + Duration::from_secs(60);
+        let early = keyed.iter().any(|t| *t >= in_flight && *t + slack < due_at);
+        // The countdown showing when it fell due: the latest one due by the
+        // time it keyed (a busy hold moves it on; the next round's is later).
+        let named = next.and_then(|n| {
+            seen[i]
+                .iter()
+                .map(|(_, d, _)| *d)
+                .filter(|d| *d <= n + slack)
+                .max()
+        });
+        let busy = seen[i]
+            .iter()
+            .any(|(_, d, note)| note == "busy" && *d + slack >= due_at);
+        let off = next
+            .zip(named)
+            .map(|(n, d)| n.saturating_duration_since(d).as_secs_f64());
+        let gap = next.zip(prev).map(|(n, l)| n.duration_since(l).as_secs());
+        let held = if busy { ", held busy" } else { "" };
+        report.push_str(&format!(
+            "\n  {call}: {warm} warm-up beacons, countdown {ahead}s ahead{held}, keyed {off:?}s after it, idle gap {gap:?}s"
+        ));
+        if !(2..=4).contains(&warm) {
+            problems.push(format!("{call} keyed {warm} beacons in the warm-up"));
+        }
+        match off {
+            None => problems.push(format!("{call} never keyed the beacon its countdown named")),
+            Some(s) if s > 60.0 => {
+                problems.push(format!("{call} keyed {s:.0}s after its countdown"))
+            }
+            _ => {}
+        }
+        if early {
+            problems.push(format!("{call} keyed a beacon before its countdown"));
+        }
+        // A busy hold adds a pace (at most 75 s) to the idle gap.
+        let max_gap = if busy { 500 } else { 420 };
+        if gap.is_some_and(|g| !(240..=max_gap).contains(&g)) {
+            problems.push(format!("{call} idle gap {gap:?}s, not about 5 minutes"));
+        }
+    }
+    let trace = chain.trace();
+    chain.stop();
+    eprintln!("{report}");
+    assert!(problems.is_empty(), "{problems:?}{report}{trace}");
 }

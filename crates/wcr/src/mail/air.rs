@@ -219,6 +219,25 @@ impl Assembler {
         }
         self.last_rx = Some(now);
     }
+
+    /// The longest time any incomplete mail's sender may still be keying the
+    /// rest of its burst. `frame_secs` stands in for spacing not yet heard.
+    fn tail_wait_secs(&self, frame_secs: f64) -> f64 {
+        let spacing = if self.rx_spacing > 0.0 {
+            self.rx_spacing
+        } else {
+            frame_secs
+        };
+        self.buckets
+            .iter()
+            .filter(|(key, _)| key.starts_with("Data:") || key.starts_with("VoxData:"))
+            .filter_map(|(_, slot)| {
+                let count = slot.values().map(|w| w.count).min()?;
+                let highest = *slot.keys().filter(|i| **i < count).max()?;
+                Some(gateway::tail_wait_secs(count, highest, spacing))
+            })
+            .fold(0.0, f64::max)
+    }
 }
 
 pub(super) fn spawn(
@@ -739,6 +758,7 @@ async fn burst(
                         air.hold_for_mail();
                         held = true;
                     }
+                    lease::wait_ack_done(&ports, Duration::from_secs(20)).await;
                 }
                 "drain_before" => {
                     if let Some(c) = &ports.control {
@@ -955,7 +975,9 @@ fn arm_quiet(ctx: &TxCtx, asm: &Assembler) {
     let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor);
     let mtu = Rung::from_index(preset.ladder_start()).payload_bytes() as usize;
     let frame = keyed_airtime_secs(preset, std::iter::once(mtu), cfg.rf.turnaround_ms);
-    let gap = Duration::from_secs_f64(gateway::quiet_gap_heard_secs(frame, asm.rx_spacing));
+    // A sender held up mid-burst must not have its next chunks keyed over.
+    let gap = gateway::quiet_gap_heard_secs(frame, asm.rx_spacing) + asm.tail_wait_secs(frame);
+    let gap = Duration::from_secs_f64(gap);
     let tx = ctx.cmd_tx.clone();
     tokio::spawn(async move {
         tokio::time::sleep(gap).await;

@@ -285,6 +285,15 @@ struct Chain {
 
 impl Chain {
     async fn start(rules: Vec<Rule>, group: Option<(&str, &[&str])>) -> Self {
+        Self::start_tweaked(rules, group, |_, _| {}).await
+    }
+
+    /// Like [`Chain::start`], with `tweak` applied to station `i`'s config.
+    async fn start_tweaked(
+        rules: Vec<Rule>,
+        group: Option<(&str, &[&str])>,
+        tweak: impl Fn(usize, &mut Config),
+    ) -> Self {
         let air = wcr::sim::SharedAir::new(0.0);
         let tx = Arc::new(Mutex::new(Vec::new()));
         {
@@ -323,7 +332,8 @@ impl Chain {
         let mut irc = Vec::new();
         let mut status = Vec::new();
         for (i, (call, home, kiss, ctrl)) in prep.into_iter().enumerate() {
-            let cfg = radio_cfg(call, &home, kiss, ctrl, ports[i * 2], ports[i * 2 + 1]);
+            let mut cfg = radio_cfg(call, &home, kiss, ctrl, ports[i * 2], ports[i * 2 + 1]);
+            tweak(i, &mut cfg);
             nodes.push(tokio::spawn(async move {
                 wcr::node::run_node(cfg, false).await
             }));
@@ -625,5 +635,131 @@ async fn bulletin_keeps_walking_past_the_second_relay() {
     assert!(
         counts.iter().all(|(_, n)| *n == 1),
         "duplicate or missing bulletin lines: {counts:?}"
+    );
+}
+
+/// QA v0.1.92: B, next to A, keyed the far receipts of A's lines four or five
+/// times each. A got each the first time and never retried. Every extra copy
+/// is airtime in which B cannot hear A's next line. B carries D's receipt
+/// and repeats it once (A's last retry can key over the first copy), and
+/// keys it once more for each retry of A's (each asks for it again). A slow
+/// round trip on a loaded machine can let A's first retry go out.
+#[tokio::test]
+async fn the_station_next_to_the_sender_repeats_a_receipt_once() {
+    let _suite = suite_lock().lock().await;
+    let mut chain = Chain::start(Vec::new(), None).await;
+    chain.clients[0].send("PRIVMSG M0DDD :hello-d").await;
+    let ok = chain.clients[0]
+        .wait_for(120, |lines| {
+            lines
+                .iter()
+                .any(|l| l.contains("+radio/delivery=delivered"))
+        })
+        .await;
+    // Long enough for B's receipt walk to run three retry intervals.
+    tokio::time::sleep(Duration::from_secs(300)).await;
+    let line_keys = chain.keyed_by(1, |e| {
+        e.kind == MsgType::Msg && e.body_text().contains("hello-d")
+    });
+    let b_receipts = chain.keyed_by(2, |e| {
+        e.kind == MsgType::Ack && e.origin.as_str() == "M0DDD"
+    });
+    let trace = chain.trace();
+    chain.stop();
+    eprintln!("A keyed the line {line_keys}x, B keyed D's receipt {b_receipts}x{trace}");
+    assert!(ok, "A never reached [ok]{trace}");
+    assert!(
+        b_receipts <= line_keys + 1,
+        "B keyed D's receipt {b_receipts}x for {line_keys} copies of A's line{trace}"
+    );
+}
+
+/// CI on #50 (invite_reaches_the_far_end): B keyed E's receipt to A at the
+/// moment A keyed its last retry, so A never heard it, and nothing asked for
+/// it again. Here A has no retries and B's first copy of D's receipt is lost
+/// on the way to A. B repeats it once, a retry interval later.
+#[tokio::test]
+async fn a_receipt_lost_beside_the_sender_is_repeated() {
+    let _suite = suite_lock().lock().await;
+    let rules = vec![Rule {
+        from: 2,
+        to: 1,
+        copies: 1,
+        pred: Arc::new(|env: &Envelope| env.kind == MsgType::Ack),
+    }];
+    let mut chain = Chain::start_tweaked(rules, None, |i, cfg| {
+        if i == 0 {
+            cfg.rf.max_retries = 0;
+        }
+    })
+    .await;
+    chain.clients[0]
+        .send("PRIVMSG M0DDD :hello-lost-receipt")
+        .await;
+    let ok = chain.clients[0]
+        .wait_for(240, |lines| {
+            lines
+                .iter()
+                .any(|l| l.contains("+radio/delivery=delivered"))
+        })
+        .await;
+    let trace = chain.trace();
+    chain.stop();
+    eprintln!("{trace}");
+    assert!(
+        trace.contains("drop 2->1 Ack"),
+        "B's receipt was never dropped{trace}"
+    );
+    assert!(ok, "B's receipt was lost and never repeated{trace}");
+}
+
+/// QA v0.1.92: A's invite to E four hops out showed [rl], then [no], then
+/// [ok] 4 minutes later, when E's receipt came back after the last wait. A
+/// line a relay was heard carrying on keeps [rl] until its receipt comes.
+/// Here A gives up early (no retries) and D's receipt, three hops out, is
+/// held between D and C for its first 150 s, so it lands well after A's
+/// last wait.
+#[tokio::test]
+async fn a_late_receipt_after_a_relay_never_shows_no() {
+    let _suite = suite_lock().lock().await;
+    let t0 = std::time::Instant::now();
+    let rules = vec![Rule {
+        from: 4,
+        to: 3,
+        copies: u32::MAX,
+        pred: Arc::new(move |env: &Envelope| {
+            env.kind == MsgType::Ack && t0.elapsed() < Duration::from_secs(150)
+        }),
+    }];
+    let mut chain = Chain::start_tweaked(rules, None, |i, cfg| {
+        if i == 0 {
+            cfg.rf.max_retries = 0;
+        }
+    })
+    .await;
+    chain.clients[0].send("PRIVMSG M0DDD :hello-far-end").await;
+    let ok = chain.clients[0]
+        .wait_for(420, |lines| {
+            lines
+                .iter()
+                .any(|l| l.contains("+radio/delivery=delivered"))
+        })
+        .await;
+    let tags: Vec<String> = chain.clients[0]
+        .lines()
+        .into_iter()
+        .filter(|l| l.contains("+radio/delivery="))
+        .collect();
+    let trace = chain.trace();
+    chain.stop();
+    eprintln!("{tags:?}{trace}");
+    assert!(ok, "the receipt never reached A: {tags:?}{trace}");
+    assert!(
+        tags.iter().any(|l| l.contains("+radio/delivery=relayed")),
+        "A never heard its line carried on: {tags:?}"
+    );
+    assert!(
+        !tags.iter().any(|l| l.contains("+radio/delivery=failed")),
+        "[no] before the late receipt: {tags:?}"
     );
 }
