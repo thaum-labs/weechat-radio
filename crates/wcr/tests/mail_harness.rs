@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use wcr::config::Config;
 use wcr::modes::Mode;
@@ -157,6 +158,7 @@ struct Pair {
     log: TimedLog,
     posts: Arc<Mutex<Vec<serde_json::Value>>>,
     status: [u16; 2],
+    irc: [u16; 2],
     nodes: Vec<tokio::task::JoinHandle<wcr::error::Result<()>>>,
 }
 
@@ -211,6 +213,7 @@ impl Pair {
             log,
             posts,
             status: [ports[1], ports[3]],
+            irc: [ports[0], ports[2]],
             nodes,
         };
         pair.wait_mail().await;
@@ -624,4 +627,116 @@ async fn a_long_mail_at_real_airtime_is_accepted_on_the_first_pass() {
         keyed.values().all(|n| *n == 1),
         "the sender keyed over the acceptance and sent the mail again: {keyed:?}\n{trace}"
     );
+}
+
+/// QA's v0.1.92 big mail: about 3.9 KB (56 chunks) from a radio-plus sender to
+/// the gateway at real hf-poor airtime, with modem carrier sense stuck busy
+/// (it holds a frame up to 30 s, then keys anyway), as in QA's simulator.
+/// The mail must go out in one burst and reach Sent without a full resend.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_big_mail_with_stuck_carrier_sense_goes_in_one_burst() {
+    let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
+    let pair = Pair::start_with(
+        TimedOpts {
+            frame_ms: 4_000,
+            count_tx: true,
+            collide: true,
+            csma_stuck_ms: 30_000,
+            rung_airtime: true,
+        },
+        drop_rx,
+        Duration::from_secs(2),
+    )
+    .await;
+    let body = long_body();
+    let t0 = Instant::now();
+    let id = pair.compose(&body).await;
+    let row = pair.wait_state(&id, "sent", 900).await;
+    let trace = pair.trace(t0);
+    eprintln!("{trace}");
+    let row = row.expect("outbox row");
+    let state = row.get("state").and_then(|x| x.as_str()).unwrap_or("");
+    let posts = pair.posts.lock().unwrap().clone();
+    pair.stop();
+    assert_eq!(state, "sent", "row {row}\n{trace}");
+    assert_eq!(posts.len(), 1, "gateway posts: {posts:?}");
+}
+
+/// An IRC client on `port` as `nick` that keeps every line it reads.
+async fn irc(port: u16, nick: &str) -> (Arc<Mutex<Vec<String>>>, tokio::net::tcp::OwnedWriteHalf) {
+    let stream = TcpStream::connect(format!("127.0.0.1:{port}"))
+        .await
+        .unwrap();
+    let (r, mut w) = stream.into_split();
+    w.write_all(format!("NICK {nick}\r\nUSER {nick} 0 * :wcr mail\r\n").as_bytes())
+        .await
+        .unwrap();
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    let sink = lines.clone();
+    tokio::spawn(async move {
+        let mut reader = tokio::io::BufReader::new(r);
+        let mut line = String::new();
+        while reader.read_line(&mut line).await.is_ok_and(|n| n > 0) {
+            sink.lock().unwrap().push(line.trim_end().to_string());
+            line.clear();
+        }
+    });
+    (lines, w)
+}
+
+/// The gateway sends the sender a chat line, and the sender composes a big
+/// mail the moment it shows. The sender's receipt for that line is keyed
+/// while the mail lease starts. In v0.1.92 the receipt switched the modem to
+/// its own config and, 5 s later, restored chat's with carrier sense on, so
+/// the rest of the burst keyed at chat's rung and waited out the stuck
+/// carrier sense: QA's six-minute stall in the middle of a 56-chunk mail.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_receipt_keyed_as_a_mail_starts_leaves_the_burst_alone() {
+    let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
+    let pair = Pair::start_with(
+        TimedOpts {
+            frame_ms: 4_000,
+            count_tx: false,
+            collide: true,
+            csma_stuck_ms: 30_000,
+            rung_airtime: true,
+        },
+        drop_rx,
+        Duration::from_secs(2),
+    )
+    .await;
+    let (sender_lines, _sender_w) = irc(pair.irc[0], SENDER).await;
+    let (_gw_lines, mut gw_w) = irc(pair.irc[1], GATEWAY).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let t0 = Instant::now();
+    gw_w.write_all(format!("PRIVMSG {SENDER} :before-the-mail\r\n").as_bytes())
+        .await
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while !sender_lines
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|l| l.contains("before-the-mail"))
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the chat line never reached the sender"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let id = pair.compose(&long_body()).await;
+    let row = pair.wait_state(&id, "sent", 900).await;
+    let trace = pair.trace(t0);
+    eprintln!("{trace}");
+    let row = row.expect("outbox row");
+    let state = row.get("state").and_then(|x| x.as_str()).unwrap_or("");
+    let posts = pair.posts.lock().unwrap().clone();
+    let log = pair.log.lock().unwrap().clone();
+    pair.stop();
+    for k in log.iter().filter(|k| k.station == 1 && is_mail(&k.payload)) {
+        assert!(!k.csma, "a mail frame keyed with carrier sense on\n{trace}");
+    }
+    assert_eq!(state, "sent", "row {row}\n{trace}");
+    assert_eq!(posts.len(), 1, "gateway posts: {posts:?}");
 }

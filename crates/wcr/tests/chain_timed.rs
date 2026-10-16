@@ -240,6 +240,7 @@ struct Chain {
     clients: Vec<Client>,
     log: TimedLog,
     t0: Instant,
+    status: Vec<u16>,
 }
 
 impl Chain {
@@ -306,6 +307,7 @@ impl Chain {
             clients,
             log,
             t0: Instant::now(),
+            status,
         };
         // A live chain has been up a while: every station has beaconed and
         // knows its neighbours before the first line.
@@ -897,4 +899,74 @@ async fn invite_reaches_the_far_end() {
         "E never got the invite, or A never got E's receipt: {marks:?}{trace}"
     );
     assert!(marks_move_forward(&marks), "marks moved back: {marks:?}");
+}
+
+/// QA could not score the beacon pace on v0.1.92: the countdown looked as if
+/// it reset every minute. On a quiet chain at hf-poor timing, each station's
+/// countdown after the warm-up must name the moment its next beacon keys
+/// (within the carrier-sense hold), nothing keys before it, and that beacon
+/// comes at the idle pace (about 5 minutes after the warm-up's last).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn each_beacon_keys_when_its_countdown_says() {
+    let chain = Chain::start(None).await;
+    let sampled_at = Instant::now();
+    let sampled_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let mut due = Vec::new();
+    for p in &chain.status {
+        let snap = status_json(*p).await.expect("status");
+        due.push(snap.get("beacon_due").and_then(|x| x.as_u64()).unwrap_or(0));
+    }
+    let latest = due.iter().copied().max().unwrap_or(0);
+    let wait = latest.saturating_sub(sampled_unix) + 60;
+    tokio::time::sleep(Duration::from_secs(wait)).await;
+    let beacons = |st: usize| -> Vec<Instant> {
+        chain
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|k| k.station == st as u64 + 1 && !k.dropped)
+            .filter(|k| Envelope::decode(&k.payload).is_ok_and(|e| e.kind == MsgType::Beacon))
+            .map(|k| k.at)
+            .collect()
+    };
+    let mut report = String::new();
+    let mut problems = Vec::new();
+    for (i, call) in CALLS.iter().enumerate() {
+        let keyed = beacons(i);
+        let warm = keyed.iter().filter(|t| **t < sampled_at).count();
+        let ahead = due[i].saturating_sub(sampled_unix);
+        let due_at = sampled_at + Duration::from_secs(ahead);
+        let next = keyed.iter().find(|t| **t >= sampled_at).copied();
+        let last_warm = keyed.iter().filter(|t| **t < sampled_at).last().copied();
+        let off = next.map(|t| t.saturating_duration_since(due_at).as_secs_f64());
+        let early = next.is_some_and(|t| t + Duration::from_secs(2) < due_at);
+        let gap = next
+            .zip(last_warm)
+            .map(|(n, l)| n.duration_since(l).as_secs());
+        report.push_str(&format!(
+            "\n  {call}: {warm} warm-up beacons, countdown {ahead}s ahead, keyed {off:?}s after it, idle gap {gap:?}s"
+        ));
+        if !(2..=4).contains(&warm) {
+            problems.push(format!("{call} keyed {warm} beacons in the warm-up"));
+        }
+        match off {
+            None => problems.push(format!("{call} never keyed the beacon its countdown named")),
+            Some(_) if early => problems.push(format!("{call} keyed before its countdown")),
+            Some(s) if s > 60.0 => {
+                problems.push(format!("{call} keyed {s:.0}s after its countdown"))
+            }
+            _ => {}
+        }
+        if gap.is_some_and(|g| !(240..=420).contains(&g)) {
+            problems.push(format!("{call} idle gap {gap:?}s, not about 5 minutes"));
+        }
+    }
+    let trace = chain.trace();
+    chain.stop();
+    eprintln!("{report}");
+    assert!(problems.is_empty(), "{problems:?}{report}{trace}");
 }

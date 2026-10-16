@@ -118,6 +118,17 @@ pub fn quiet_gap_heard_secs(frame_secs: f64, heard_spacing_secs: f64) -> f64 {
         .min(MAX_QUIET_GAP_SECS)
 }
 
+/// Longest the gateway waits for the rest of a burst it has heard part of.
+pub const MAX_TAIL_WAIT_SECS: f64 = 180.0;
+
+/// Time the rest of a burst would take: the chunks past the highest index
+/// heard, at the spacing heard. Until then the sender may still be keying
+/// them, and a have-report keyed now lands on top of them.
+pub fn tail_wait_secs(count: u16, highest: u16, spacing_secs: f64) -> f64 {
+    let left = count.saturating_sub(highest.saturating_add(1));
+    (f64::from(left) * spacing_secs).min(MAX_TAIL_WAIT_SECS)
+}
+
 /// A retry with no gateway progress at all. More than this many chunks
 /// still missing, and the sender keys one chunk to ask what the gateway
 /// holds instead of the whole mail again.
@@ -307,6 +318,14 @@ mod tests {
 
     #[test]
     fn the_gateway_holds_its_reply_while_a_chunk_is_on_the_air() {
+        assert_eq!(tail_wait_secs(56, 55, 4.0), 0.0, "the tail was heard");
+        assert_eq!(
+            tail_wait_secs(48, 46, 2.0),
+            2.0,
+            "only the last chunk is due"
+        );
+        assert_eq!(tail_wait_secs(56, 32, 4.0), 92.0, "23 chunks still due");
+        assert_eq!(tail_wait_secs(500, 0, 4.0), MAX_TAIL_WAIT_SECS);
         assert!(quiet_defers(true, 0));
         assert!(quiet_defers(true, MAX_QUIET_DEFERS - 1));
         assert!(!quiet_defers(true, MAX_QUIET_DEFERS));
