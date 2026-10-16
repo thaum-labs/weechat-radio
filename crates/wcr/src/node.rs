@@ -98,7 +98,15 @@ struct Runtime {
     /// When this node started listening.
     started: u32,
     /// Copies of someone else's line this station has keyed.
-    relay_copies: Arc<Mutex<HashMap<MsgId, u32>>>,
+    relay_copies: Arc<Mutex<HashMap<MsgId, RelayCopies>>>,
+}
+
+/// How many copies of someone else's line we have handed to the modem, and
+/// when the last one went (after its slot delay).
+#[derive(Clone, Copy, Default)]
+struct RelayCopies {
+    count: u32,
+    last_at: u32,
 }
 
 impl Runtime {
@@ -546,6 +554,11 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         let spent = relay_copies_spent(&rt_h, &m.env);
                         if retries > 0 && (heard || spent) {
                             let _ = rt_h.store.set_hold(&m.env.msg_id, 0, m.env.hops_left);
+                            continue;
+                        }
+                        // Our last copy may still be at the modem: this one
+                        // waits for the next tick rather than keying behind it.
+                        if relay_copy_too_soon(&rt_h, &m.env, now) {
                             continue;
                         }
                         let slot = dispatch_spread(&rt_h, &m.env).await;
@@ -1563,9 +1576,21 @@ fn relay_copies_spent(rt: &Runtime, env: &Envelope) -> bool {
             .relay_copies
             .lock()
             .get(&env.msg_id)
-            .copied()
-            .unwrap_or(0)
-            >= relay::RELAY_MAX_COPIES
+            .is_some_and(|c| c.count >= relay::RELAY_MAX_COPIES)
+}
+
+/// Our last copy of someone else's line may still be waiting at the modem.
+/// One handed over now would key straight after it and share its collision.
+/// Receipts are not held back.
+fn relay_copy_too_soon(rt: &Runtime, env: &Envelope, now: u32) -> bool {
+    env.kind != MsgType::Ack
+        && rt.relay_copies.lock().get(&env.msg_id).is_some_and(|c| {
+            !relay::answer_again(
+                now,
+                Some(c.last_at),
+                relay::relay_copy_gap_s(env.priority()),
+            )
+        })
 }
 
 fn note_own_rf_tx(rt: &Runtime, env: &Envelope) {
@@ -1646,7 +1671,9 @@ async fn dispatch_with(
         if copies.len() > 4096 {
             copies.clear();
         }
-        *copies.entry(env.msg_id).or_insert(0) += 1;
+        let c = copies.entry(env.msg_id).or_default();
+        c.count += 1;
+        c.last_at = crate::proto::now_ts().saturating_add(delay.as_secs() as u32);
     }
     let via_inet =
         force_inet || (cfg.mode.uses_internet() && env.flags.inet_ok() && inet_gap_for(rt, &env));
@@ -2455,7 +2482,11 @@ async fn relay_heard_retry(rt: &Runtime, env: &Envelope) {
     }
     // Every neighbour has the line, so passing the retry on reaches nobody
     // new. The receipts we hold for it went out above.
-    if line_reached_neighbours(rt, &stored.env) || relay_copies_spent(rt, &stored.env) {
+    // Our own copy that went out a moment ago carries this retry too.
+    if line_reached_neighbours(rt, &stored.env)
+        || relay_copies_spent(rt, &stored.env)
+        || relay_copy_too_soon(rt, &stored.env, now)
+    {
         return;
     }
     if relay::may_rebroadcast(&rt.engine.our_call, &stored.env, Some(stored.delivery))
