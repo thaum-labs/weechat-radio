@@ -767,7 +767,7 @@ async fn a_late_receipt_after_a_relay_never_shows_no() {
 /// CI on #50 (invite_reaches_the_far_end): every warm-up beacon of D's keyed
 /// over one of C's, so C knew only B. Fed A's invite by its only neighbour, C
 /// took itself for the chain end, let A's retries go, and E never got it.
-/// Here D's beacons never reach C and C's first copy of A's line to E is lost
+/// Here D's beacons never reach C and C's first copy of A's line to D is lost
 /// at D. A's later retry has to get past C.
 #[tokio::test]
 async fn a_relay_that_missed_the_next_beacons_passes_a_retry_on() {
@@ -794,7 +794,7 @@ async fn a_relay_that_missed_the_next_beacons_passes_a_retry_on() {
         u64::from(wcr::relay::NEIGHBOUR_WARMUP_S) + 15,
     ))
     .await;
-    chain.clients[0].send("PRIVMSG G4EEE :hello-past-c").await;
+    chain.clients[0].send("PRIVMSG M0DDD :hello-past-c").await;
     let ok = chain.clients[0]
         .wait_for(360, |lines| {
             lines
@@ -812,5 +812,5 @@ async fn a_relay_that_missed_the_next_beacons_passes_a_retry_on() {
         trace.contains("drop 3->4 Msg"),
         "C's first copy was never dropped{trace}"
     );
-    assert!(ok, "A's line to E never got past C{trace}");
+    assert!(ok, "A's line to D never got past C{trace}");
 }
