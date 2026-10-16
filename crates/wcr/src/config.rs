@@ -410,7 +410,8 @@ pub struct RfConfig {
     pub congested_pct: u8,
     /// Random delay before a group ACK so responders do not collide.
     pub ack_dither_ms: u32,
-    /// Beacon interval is 60 s ± this many seconds.
+    /// Beacons go every 60 s for the first three minutes, then every 5 min,
+    /// each ± this many seconds.
     pub beacon_jitter_s: u32,
     /// Randomise ARQ retry hold (±25%).
     pub retry_jitter: bool,

@@ -511,16 +511,33 @@ pub const BEACON_MAX_S: i64 = 120;
 /// Longest a station goes without a beacon while traffic keeps it quiet.
 pub const BEACON_MAX_GAP_S: u32 = 600;
 
-/// A beacon goes out once `BEACON_MAX_GAP_S` has passed with no traffic
-/// keyed or decoded here (`last_traffic`, 0 for none), or when the last
-/// beacon (`last_beacon`) is that old. Traffic already tells the neighbours
-/// who is on the dial. A line's retries and receipts run for about that long,
-/// and a beacon keyed into a gap between them can deafen the station that
-/// should hear the next retry.
-pub fn beacon_due(now: u32, last_traffic: u32, last_beacon: Option<u32>) -> bool {
-    let quiet = last_traffic == 0 || now.saturating_sub(last_traffic) >= BEACON_MAX_GAP_S;
-    let overdue = last_beacon.is_none_or(|t| now.saturating_sub(t) >= BEACON_MAX_GAP_S);
-    quiet || overdue
+/// Gap between beacons on a quiet channel once the neighbour warm-up is over.
+pub const BEACON_IDLE_S: u32 = 300;
+
+/// When the next beacon is due. `pace` is this round's `beacon_interval_secs`
+/// roll (about a minute). The first beacon goes `pace` after `started`, and
+/// the next ones `pace` apart until `NEIGHBOUR_WARMUP_S` has passed, so one
+/// lost beacon still leaves the neighbours time to learn us. After that a
+/// quiet station beacons every `BEACON_IDLE_S`, with the same jitter: an idle
+/// beacon keyed while a line walks the chain can take a relay's copy at the
+/// station beside it. Traffic keyed or decoded here (`last_traffic`, 0 for
+/// none) holds the beacon back for `BEACON_MAX_GAP_S`, since a line's retries
+/// and receipts run for about that long, but never past `BEACON_MAX_GAP_S`
+/// after the last beacon.
+pub fn next_beacon_at(started: u32, last_traffic: u32, last_beacon: Option<u32>, pace: u32) -> u32 {
+    let Some(last) = last_beacon else {
+        return started.saturating_add(pace);
+    };
+    let gap = if last.saturating_sub(started) < NEIGHBOUR_WARMUP_S {
+        pace
+    } else {
+        (pace + BEACON_IDLE_S).saturating_sub(BEACON_BASE_S as u32)
+    };
+    let mut due = last.saturating_add(gap);
+    if last_traffic != 0 {
+        due = due.max(last_traffic.saturating_add(BEACON_MAX_GAP_S));
+    }
+    due.min(last.saturating_add(BEACON_MAX_GAP_S))
 }
 
 /// Next identity-beacon wait, 60 s ± jitter, clamped to 15–120 s.
@@ -1590,15 +1607,37 @@ mod tests {
 
     #[test]
     fn a_beacon_waits_for_a_quiet_channel() {
-        let gap = BEACON_MAX_GAP_S;
-        assert!(beacon_due(1_000, 0, Some(990)), "nothing heard yet");
-        assert!(!beacon_due(1_000, 990, Some(900)), "traffic 10 s ago");
-        assert!(
-            !beacon_due(1_000, 1_000 - 200, Some(990)),
-            "a line's retries are still running"
+        let start = 10_000;
+        let next = |traffic, last| next_beacon_at(start, traffic, last, 60);
+        assert_eq!(next(0, None), start + 60, "the first beacon goes a pace in");
+        assert_eq!(next(start + 30, None), start + 60, "even after traffic");
+        // A minute apart through the warm-up, so a lost one is made up.
+        assert_eq!(next(0, Some(start + 60)), start + 120);
+        assert_eq!(next(0, Some(start + 120)), start + 180);
+        // Then every five minutes on a quiet channel.
+        let warm = start + NEIGHBOUR_WARMUP_S;
+        assert_eq!(next(0, Some(warm)), warm + BEACON_IDLE_S);
+        assert_eq!(
+            next_beacon_at(start, 0, Some(warm), 75),
+            warm + BEACON_IDLE_S + 15,
+            "the idle gap keeps the round's jitter"
         );
-        assert!(beacon_due(1_000, 1_000 - gap, Some(990)));
-        assert!(beacon_due(1_000, 990, None), "the first beacon goes out");
-        assert!(beacon_due(1_000, 990, Some(1_000 - BEACON_MAX_GAP_S)));
+        // Traffic holds it back while a line's retries run.
+        let late = warm + 1_000;
+        assert_eq!(
+            next(late - 100, Some(late)),
+            late - 100 + BEACON_MAX_GAP_S,
+            "held until ten minutes after the traffic"
+        );
+        assert_eq!(
+            next(late - BEACON_MAX_GAP_S, Some(late)),
+            late + BEACON_IDLE_S,
+            "old traffic does not hold it"
+        );
+        assert_eq!(
+            next(late + 200, Some(late)),
+            late + BEACON_MAX_GAP_S,
+            "never more than ten minutes between beacons"
+        );
     }
 }

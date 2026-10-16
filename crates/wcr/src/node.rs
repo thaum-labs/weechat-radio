@@ -802,6 +802,8 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         let rt_b = rt.clone();
         tokio::spawn(async move {
             let mut last_beacon = None;
+            let mut pace = None;
+            let mut busy_until = 0;
             loop {
                 let (jitter_s, congested, uses_rf, vox) = {
                     let cfg = rt_b.cfg.lock();
@@ -829,33 +831,35 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     tokio::time::sleep(Duration::from_secs(2)).await;
                     continue;
                 }
-                let wait = relay::beacon_interval_secs(jitter_s);
-                let due_at = crate::proto::now_ts().saturating_add(wait as u32);
+                let pace_s =
+                    *pace.get_or_insert_with(|| relay::beacon_interval_secs(jitter_s) as u32);
+                let now = crate::proto::now_ts();
+                let traffic = rt_b.last_traffic.load(std::sync::atomic::Ordering::Relaxed);
+                let due = relay::next_beacon_at(rt_b.started, traffic, last_beacon, pace_s)
+                    .max(busy_until);
                 {
                     let mut s = rt_b.snap.lock();
-                    s.beacon_due = due_at;
-                    s.beacon_span = wait as u32;
+                    s.beacon_due = due;
+                    s.beacon_span = due
+                        .saturating_sub(last_beacon.unwrap_or(rt_b.started))
+                        .max(1);
                     s.beacon_note.clear();
                 }
-                tokio::time::sleep(Duration::from_secs(wait)).await;
-                let (uses_rf, vox) = {
-                    let cfg = rt_b.cfg.lock();
-                    (cfg.mode.uses_radio(), cfg.modem.is_vox())
-                };
-                if !uses_rf || vox {
+                // Traffic only moves the beacon later; look again every few
+                // seconds so the countdown and a mode change show promptly.
+                if now < due {
+                    let wait = u64::from(due - now).min(5);
+                    tokio::time::sleep(Duration::from_secs(wait)).await;
                     continue;
                 }
                 if let Some(s) = rt_b.sense() {
                     if s.occupancy_pct() >= congested {
+                        busy_until = now.saturating_add(pace_s);
                         continue;
                     }
                 }
-                let now = crate::proto::now_ts();
-                let traffic = rt_b.last_traffic.load(std::sync::atomic::Ordering::Relaxed);
-                if !relay::beacon_due(now, traffic, last_beacon) {
-                    continue;
-                }
                 last_beacon = Some(now);
+                pace = None;
                 let cfg = rt_b.cfg.lock().clone();
                 let Ok(seq) = rt_b.store.next_seq(&rt_b.engine.our_call) else {
                     continue;
