@@ -298,13 +298,15 @@ pub fn heard_direct(env: &Envelope, line: Option<&Envelope>) -> bool {
 /// from us reaches nobody new: we are the end of the chain for it.
 /// `holders` have it (its originator, and every member whose receipt we
 /// hold). With one neighbour and a relayed copy, that neighbour is the one
-/// that relayed it to us. With no neighbour known we cannot tell.
+/// that relayed it to us. With one neighbour and a first-hand copy, it is
+/// the originator, and a station beyond us whose beacons we lost would look
+/// the same, so we cannot tell. Nor with no neighbour known.
 pub fn neighbours_hold(neighbours: &[String], holders: &[String], came_relayed: bool) -> bool {
     if neighbours.is_empty() {
         return false;
     }
-    if came_relayed && neighbours.len() == 1 {
-        return true;
+    if neighbours.len() == 1 {
+        return came_relayed;
     }
     neighbours
         .iter()
@@ -315,6 +317,15 @@ pub fn neighbours_hold(neighbours: &[String], holders: &[String], came_relayed: 
 /// answer to the originator's retry. Receipts are not capped: each hop's
 /// repeats are what carries a far member's receipt home.
 pub const RELAY_MAX_COPIES: u32 = 3;
+
+/// Least gap between a relay's copies of one line: the line's own first
+/// retry interval (45 s routine). A modem whose carrier sense sticks holds a
+/// frame up to 30 s and then keys what is queued behind it in the same
+/// burst, so two copies handed over closer than that go out back to back
+/// and one collision takes both.
+pub fn relay_copy_gap_s(priority: Priority) -> u32 {
+    next_retry_hold_base(0, 0, priority)
+}
 
 /// A relay passes an originator's retry on unless a station further along
 /// already carried the line. A direct message is the exception: hearing it
@@ -1394,12 +1405,29 @@ mod tests {
     }
 
     #[test]
+    fn a_relay_spaces_its_copies_of_a_line() {
+        let gap = relay_copy_gap_s(Priority::Routine);
+        assert_eq!(gap, 45);
+        // A copy handed to the modem at 100 (after its slot): the next one
+        // waits until 145, so a stuck modem cannot key the two back to back.
+        assert!(!answer_again(130, Some(100), gap));
+        assert!(answer_again(145, Some(100), gap));
+        // A slot delay puts the last copy in the future: still too soon.
+        assert!(!answer_again(100, Some(108), gap));
+        // Urgent lines keep their own faster pace.
+        assert_eq!(relay_copy_gap_s(Priority::Emergency), 8);
+    }
+
+    #[test]
     fn the_end_of_a_chain_does_not_repeat_a_line() {
         let n = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         // A at the end hears only B, and B relayed the line to it.
         assert!(neighbours_hold(&n(&["M0BBB"]), &[], true));
         // A heard it from the originator itself: B may not have it.
         assert!(!neighbours_hold(&n(&["M0BBB"]), &[], false));
+        // B has heard only the originator A, not C beyond it (every C
+        // beacon lost): B cannot tell it is not the end.
+        assert!(!neighbours_hold(&n(&["G4AAA"]), &n(&["G4AAA"]), false));
         // B in the middle: A sent it, C has not answered yet.
         let b = n(&["G4AAA", "2E0CCC"]);
         assert!(!neighbours_hold(&b, &n(&["G4AAA"]), false));

@@ -20,7 +20,7 @@ use tokio::net::TcpStream;
 use wcr::config::Config;
 use wcr::modes::Mode;
 use wcr::proto::{Envelope, MsgType};
-use wcr::sim::{TimedLog, TimedOpts};
+use wcr::sim::{LinkDrop, TimedLog, TimedOpts};
 
 const CALLS: [&str; 5] = ["G4AAA", "M0BBB", "2E0CCC", "M0DDD", "G4EEE"];
 /// One hf-poor (RDM-600S) frame on the air. The node's own timers (ACK cap,
@@ -244,6 +244,11 @@ struct Chain {
 
 impl Chain {
     async fn start(group: Option<&str>) -> Self {
+        Self::start_with(group, None).await
+    }
+
+    /// Like [`Chain::start`], with `drop_rx` losing chosen frames per link.
+    async fn start_with(group: Option<&str>, drop_rx: Option<LinkDrop>) -> Self {
         let _setup = setup_lock().lock().await;
         let air = wcr::sim::SharedAir::new(0.0);
         let log: TimedLog = Arc::new(Mutex::new(Vec::new()));
@@ -267,7 +272,7 @@ impl Chain {
                 air.clone(),
                 st,
                 hear_set(st),
-                None,
+                drop_rx.clone(),
                 opts,
                 log.clone(),
             )
@@ -563,6 +568,64 @@ fn assert_relays_capped(from: usize, keys: &[(&'static str, usize)], trace: &str
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn group_line_from_the_near_end_reaches_all() {
     group_line_reaches_everyone(0, "g1-from-the-near-end").await;
+}
+
+/// G1 when B has never heard C (every C beacon lost at B, as on ubuntu CI
+/// for #45) and B's first relay is lost at C. B hears only the originator,
+/// so it cannot tell it is not the end of the chain: it keeps relaying.
+/// Before the fix it relayed once and dropped A's retries. Delivery is
+/// reported, not held: C's and D's idle beacons can still take B's later
+/// copies, or A's copies at B.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_relay_that_never_heard_beyond_keeps_relaying() {
+    let body = "g1-past-an-unheard-neighbour";
+    let copies_to_c = AtomicU64::new(0);
+    let drop_rx: LinkDrop = Arc::new(move |from, to, frame| {
+        let Ok(env) = Envelope::decode(frame) else {
+            return false;
+        };
+        match (from, to) {
+            (3, 2) => env.kind == MsgType::Beacon,
+            (2, 3) => {
+                env.kind == MsgType::Msg
+                    && env.body_text().contains(body)
+                    && copies_to_c.fetch_add(1, Ordering::SeqCst) == 0
+            }
+            _ => false,
+        }
+    });
+    let mut chain = Chain::start_with(Some("net"), Some(drop_rx)).await;
+    chain.join("#net").await;
+    chain.clients[0]
+        .send(&format!("PRIVMSG #net :{body}"))
+        .await;
+    chain
+        .wait(CASE_SECS, |c| {
+            seen_once(c, 0, body).iter().all(|(_, n)| *n >= 1)
+        })
+        .await;
+    chain.wait_quiet(90, 600).await;
+    let seen = seen_once(&chain, 0, body);
+    let id = first_msgid(&chain.clients[0]).unwrap_or_default();
+    let marks = marks_for(&chain.clients[0], &id);
+    let keys = chain.keys_of(&id);
+    let dropped = chain.dropped();
+    let trace = chain.trace();
+    eprintln!("{trace}\n  seen {seen:?}\n  marks {marks:?}\n  keys {keys:?}");
+    chain.stop();
+    // 0: A's copies never reached B, so the case did not happen.
+    let b_keys = keys[1].1;
+    assert!(b_keys != 1, "B relayed once and stopped: {keys:?}{trace}");
+    assert!(
+        seen.iter().all(|(_, n)| *n <= 1),
+        "line shown twice: {seen:?}{trace}"
+    );
+    assert!(marks_move_forward(&marks), "marks moved back: {marks:?}");
+    assert_relays_capped(0, &keys, &trace);
+    assert_eq!(
+        dropped, 0,
+        "modem dropped a frame wider than its mode{trace}"
+    );
 }
 
 /// G3 on the live chain: C keys a group line, B and D both relay it and
