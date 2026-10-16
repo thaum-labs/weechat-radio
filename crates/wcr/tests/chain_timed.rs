@@ -858,6 +858,26 @@ async fn busy_chain_with_invites_reaches_everyone() {
             problems.push(format!("{} lists {names:?}", CALLS[i]));
         }
     }
+    // Receipts B carried to A. B is next to A, so each goes once unless A
+    // retried its line. Reported: QA v0.1.92 saw four or five of each.
+    let to_a: Vec<usize> = {
+        let log = chain.log.lock().unwrap();
+        let mut per = std::collections::HashMap::<String, usize>::new();
+        for k in log.iter().filter(|k| k.station == 2 && !k.dropped) {
+            if let Ok(e) = Envelope::decode(&k.payload) {
+                if e.kind == MsgType::Ack
+                    && e.dest.as_str() == CALLS[0]
+                    && e.origin.as_str() != CALLS[1]
+                {
+                    *per.entry(e.msg_id.hex()).or_default() += 1;
+                }
+            }
+        }
+        let mut v: Vec<usize> = per.into_values().collect();
+        v.sort_unstable();
+        v
+    };
+    report.push_str(&format!("\n  B keyed each far receipt to A {to_a:?} times"));
     // A roster queued behind an ARQ copy on a narrow rung can be dropped by
     // the modem when the mode switches. Reported here, not held to zero.
     report.push_str(&format!("\n  dropped {}", chain.dropped()));
@@ -941,7 +961,7 @@ async fn each_beacon_keys_when_its_countdown_says() {
         let ahead = due[i].saturating_sub(sampled_unix);
         let due_at = sampled_at + Duration::from_secs(ahead);
         let next = keyed.iter().find(|t| **t >= sampled_at).copied();
-        let last_warm = keyed.iter().filter(|t| **t < sampled_at).last().copied();
+        let last_warm = keyed.iter().rev().find(|t| **t < sampled_at).copied();
         let off = next.map(|t| t.saturating_duration_since(due_at).as_secs_f64());
         let early = next.is_some_and(|t| t + Duration::from_secs(2) < due_at);
         let gap = next
