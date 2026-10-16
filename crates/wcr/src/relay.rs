@@ -523,11 +523,26 @@ pub const BEACON_IDLE_S: u32 = 300;
 /// station beside it. Traffic keyed or decoded here (`last_traffic`, 0 for
 /// none) holds the beacon back for `BEACON_MAX_GAP_S`, since a line's retries
 /// and receipts run for about that long, but never past `BEACON_MAX_GAP_S`
-/// after the last beacon.
-pub fn next_beacon_at(started: u32, last_traffic: u32, last_beacon: Option<u32>, pace: u32) -> u32 {
+/// after the last beacon. The first beacon goes whatever we hear, but our own
+/// mail (`own_mail`, 0 for none) holds it the same way, counted from start:
+/// keyed before the receiver's reply, it leaves us deaf to that reply.
+pub fn next_beacon_at(
+    started: u32,
+    last_traffic: u32,
+    own_mail: u32,
+    last_beacon: Option<u32>,
+    pace: u32,
+) -> u32 {
     let Some(last) = last_beacon else {
-        return started.saturating_add(pace);
+        let due = started.saturating_add(pace);
+        if own_mail == 0 {
+            return due;
+        }
+        return due
+            .max(own_mail.saturating_add(BEACON_MAX_GAP_S))
+            .min(started.saturating_add(BEACON_MAX_GAP_S));
     };
+    let last_traffic = last_traffic.max(own_mail);
     let gap = if last.saturating_sub(started) < NEIGHBOUR_WARMUP_S {
         pace
     } else {
@@ -1608,9 +1623,16 @@ mod tests {
     #[test]
     fn a_beacon_waits_for_a_quiet_channel() {
         let start = 10_000;
-        let next = |traffic, last| next_beacon_at(start, traffic, last, 60);
+        let next = |traffic, last| next_beacon_at(start, traffic, 0, last, 60);
         assert_eq!(next(0, None), start + 60, "the first beacon goes a pace in");
         assert_eq!(next(start + 30, None), start + 60, "even after traffic");
+        // Our own mail holds even the first beacon, so it does not key over
+        // the receiver's reply.
+        assert_eq!(
+            next_beacon_at(start, 0, start + 5, None, 60),
+            start + BEACON_MAX_GAP_S,
+            "held after our own mail"
+        );
         // A minute apart through the warm-up, so a lost one is made up.
         assert_eq!(next(0, Some(start + 60)), start + 120);
         assert_eq!(next(0, Some(start + 120)), start + 180);
@@ -1618,7 +1640,7 @@ mod tests {
         let warm = start + NEIGHBOUR_WARMUP_S;
         assert_eq!(next(0, Some(warm)), warm + BEACON_IDLE_S);
         assert_eq!(
-            next_beacon_at(start, 0, Some(warm), 75),
+            next_beacon_at(start, 0, 0, Some(warm), 75),
             warm + BEACON_IDLE_S + 15,
             "the idle gap keeps the round's jitter"
         );
@@ -1628,6 +1650,11 @@ mod tests {
             next(late - 100, Some(late)),
             late - 100 + BEACON_MAX_GAP_S,
             "held until ten minutes after the traffic"
+        );
+        assert_eq!(
+            next_beacon_at(start, 0, late - 100, Some(late), 60),
+            late - 100 + BEACON_MAX_GAP_S,
+            "and after our own mail"
         );
         assert_eq!(
             next(late - BEACON_MAX_GAP_S, Some(late)),
