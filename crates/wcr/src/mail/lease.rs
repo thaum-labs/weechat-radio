@@ -64,6 +64,18 @@ pub fn restore_config(preset: Preset) -> Value {
     preset.control_config()
 }
 
+/// A receipt that took the radio before the lease restores chat's config
+/// when it is done. Wait for that (at most `cap`) before setting mail's.
+pub async fn wait_ack_done(ports: &RadioPorts, cap: Duration) {
+    let Some(air) = &ports.air else {
+        return;
+    };
+    let start = Instant::now();
+    while air.is_paused() && start.elapsed() < cap {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 pub async fn wait_idle(ports: &RadioPorts, cap: Duration) -> bool {
     let start = Instant::now();
     loop {

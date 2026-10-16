@@ -134,10 +134,21 @@ impl KissClient {
     }
 
     pub async fn send(&self, payload: &[u8]) -> Result<()> {
+        note_beacon(payload);
         self.tx
             .send(payload.to_vec())
             .await
             .map_err(|_| Error::Modem("KISS send channel closed".into()))
+    }
+}
+
+/// Log each beacon as it goes to the modem, so its pace and its hold after
+/// traffic can be checked against the station log's timestamps.
+fn note_beacon(payload: &[u8]) {
+    if let Ok(env) = crate::proto::Envelope::decode(payload) {
+        if env.kind == crate::proto::MsgType::Beacon {
+            tracing::info!("beacon to modem: {}", env.origin);
+        }
     }
 }
 

@@ -81,6 +81,8 @@ struct Runtime {
     /// Ids we have heard from a station further along, or an ACK from
     /// someone else. A sender retry is not relayed again after that.
     downstream_heard: Arc<Mutex<HashSet<MsgId>>>,
+    /// Our own lines a relay was heard carrying on (fewer hops than we keyed).
+    carried_on: Arc<Mutex<HashSet<MsgId>>>,
     /// Message ids already counted in `relayed_unique` this process.
     relayed_ids: Arc<Mutex<HashSet<MsgId>>>,
     /// Frames already handed to the hub socket or the pending queue.
@@ -453,6 +455,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         ack_again: Arc::new(Mutex::new(HashMap::new())),
         relay_again: Arc::new(Mutex::new(HashMap::new())),
         downstream_heard: Arc::new(Mutex::new(HashSet::new())),
+        carried_on: Arc::new(Mutex::new(HashSet::new())),
         relayed_ids: Arc::new(Mutex::new(HashSet::new())),
         hub_offered: Arc::new(Mutex::new(HashSet::new())),
         hub_marked: Arc::new(Mutex::new(HashSet::new())),
@@ -708,6 +711,14 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         {
                             continue;
                         }
+                        // A relay was heard carrying the line on. On a long or
+                        // busy chain its receipt can take longer to come back
+                        // than the retries wait, and [no] then flipped to [ok].
+                        // It stays [rl] until the receipt comes, or until it
+                        // is `outbound_max_age_secs` old ([no]).
+                        if rt_r.carried_on.lock().contains(&m.env.msg_id) {
+                            continue;
+                        }
                         if rt_r
                             .store
                             .advance_delivery(&m.env.msg_id, Delivery::Failed)
@@ -834,21 +845,21 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 let pace_s =
                     *pace.get_or_insert_with(|| relay::beacon_interval_secs(jitter_s) as u32);
                 let now = crate::proto::now_ts();
-                // A mail burst is traffic too: a beacon keyed between the
-                // burst and the receiver's report deafens the sender to it.
-                let traffic = rt_b
-                    .last_traffic
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                    .max(rt_b.air().map_or(0, |a| a.last_mail()));
-                let due = relay::next_beacon_at(rt_b.started, traffic, last_beacon, pace_s)
-                    .max(busy_until);
+                // A mail burst is traffic too, and holds even the first
+                // beacon: one keyed between the burst and the receiver's
+                // report deafens the sender to it.
+                let traffic = rt_b.last_traffic.load(std::sync::atomic::Ordering::Relaxed);
+                let own_mail = rt_b.air().map_or(0, |a| a.last_mail());
+                let due =
+                    relay::next_beacon_at(rt_b.started, traffic, own_mail, last_beacon, pace_s)
+                        .max(busy_until);
                 {
                     let mut s = rt_b.snap.lock();
                     s.beacon_due = due;
                     s.beacon_span = due
                         .saturating_sub(last_beacon.unwrap_or(rt_b.started))
                         .max(1);
-                    s.beacon_note.clear();
+                    s.beacon_note = if busy_until > now { "busy" } else { "" }.into();
                 }
                 // Traffic only moves the beacon later; look again every few
                 // seconds so the countdown and a mode change show promptly.
@@ -858,8 +869,10 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     continue;
                 }
                 if let Some(s) = rt_b.sense() {
-                    if s.occupancy_pct() >= congested {
+                    let occ = s.occupancy_pct();
+                    if occ >= congested {
                         busy_until = now.saturating_add(pace_s);
+                        tracing::info!("beacon held: channel {occ}% busy, next try in {pace_s}s");
                         continue;
                     }
                 }
@@ -1931,6 +1944,11 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
         // A relay closer to the destination has fewer hops than the copy we
         // keyed. That is how an ACK or roster walk stops: our own echo has
         // the same count.
+        if let Ok(Some(stored)) = rt.store.get(&env.msg_id) {
+            if relay::heard_further(env.hops_left, stored.env.hops_left) {
+                rt.carried_on.lock().insert(env.msg_id);
+            }
+        }
         if relay::walks_until_relayed(&env) {
             if let Ok(Some(stored)) = rt.store.get(&env.msg_id) {
                 if relay::heard_further(env.hops_left, stored.env.hops_left) {
@@ -2262,7 +2280,16 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                     keep = true;
                 }
                 if !keep {
-                    let _ = rt.store.set_hold(&id, 0, 0);
+                    // Our relay of someone else's line keeps the hops we heard
+                    // it with. Zeroed, they said the line came from the far
+                    // end: the receipts we carry for it then walked as if the
+                    // originator were further on, and any later copy of the
+                    // line looked like the originator's retry.
+                    let hops = orig
+                        .as_ref()
+                        .filter(|o| !relay::is_own_origin(&rt.engine.our_call, &o.env))
+                        .map_or(0, |o| o.env.hops_left);
+                    let _ = rt.store.set_hold(&id, 0, hops);
                     if let Some(air) = rt.air() {
                         air.cancel(id);
                     }
