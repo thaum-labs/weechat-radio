@@ -285,6 +285,15 @@ struct Chain {
 
 impl Chain {
     async fn start(rules: Vec<Rule>, group: Option<(&str, &[&str])>) -> Self {
+        Self::start_tweaked(rules, group, |_, _| {}).await
+    }
+
+    /// Like [`Chain::start`], with `tweak` applied to station `i`'s config.
+    async fn start_tweaked(
+        rules: Vec<Rule>,
+        group: Option<(&str, &[&str])>,
+        tweak: impl Fn(usize, &mut Config),
+    ) -> Self {
         let air = wcr::sim::SharedAir::new(0.0);
         let tx = Arc::new(Mutex::new(Vec::new()));
         {
@@ -323,7 +332,8 @@ impl Chain {
         let mut irc = Vec::new();
         let mut status = Vec::new();
         for (i, (call, home, kiss, ctrl)) in prep.into_iter().enumerate() {
-            let cfg = radio_cfg(call, &home, kiss, ctrl, ports[i * 2], ports[i * 2 + 1]);
+            let mut cfg = radio_cfg(call, &home, kiss, ctrl, ports[i * 2], ports[i * 2 + 1]);
+            tweak(i, &mut cfg);
             nodes.push(tokio::spawn(async move {
                 wcr::node::run_node(cfg, false).await
             }));
@@ -658,4 +668,55 @@ async fn the_station_next_to_the_sender_carries_a_receipt_once() {
     assert!(ok, "A never reached [ok]{trace}");
     assert_eq!(line_keys, 1, "A retried a line that was answered{trace}");
     assert_eq!(b_receipts, 1, "B repeated D's receipt next to A{trace}");
+}
+
+/// QA v0.1.92: A's invite to E four hops out showed [rl], then [no], then
+/// [ok] 4 minutes later, when E's receipt came back after the last wait. A
+/// line a relay was heard carrying on keeps [rl] until its receipt comes.
+/// Here A gives up early (no retries) and D's receipt, three hops out, is
+/// held between D and C for its first 150 s, so it lands well after A's
+/// last wait.
+#[tokio::test]
+async fn a_late_receipt_after_a_relay_never_shows_no() {
+    let _suite = suite_lock().lock().await;
+    let t0 = std::time::Instant::now();
+    let rules = vec![Rule {
+        from: 4,
+        to: 3,
+        copies: u32::MAX,
+        pred: Arc::new(move |env: &Envelope| {
+            env.kind == MsgType::Ack && t0.elapsed() < Duration::from_secs(150)
+        }),
+    }];
+    let mut chain = Chain::start_tweaked(rules, None, |i, cfg| {
+        if i == 0 {
+            cfg.rf.max_retries = 0;
+        }
+    })
+    .await;
+    chain.clients[0].send("PRIVMSG M0DDD :hello-far-end").await;
+    let ok = chain.clients[0]
+        .wait_for(420, |lines| {
+            lines
+                .iter()
+                .any(|l| l.contains("+radio/delivery=delivered"))
+        })
+        .await;
+    let tags: Vec<String> = chain.clients[0]
+        .lines()
+        .into_iter()
+        .filter(|l| l.contains("+radio/delivery="))
+        .collect();
+    let trace = chain.trace();
+    chain.stop();
+    eprintln!("{tags:?}{trace}");
+    assert!(ok, "the receipt never reached A: {tags:?}{trace}");
+    assert!(
+        tags.iter().any(|l| l.contains("+radio/delivery=relayed")),
+        "A never heard its line carried on: {tags:?}"
+    );
+    assert!(
+        !tags.iter().any(|l| l.contains("+radio/delivery=failed")),
+        "[no] before the late receipt: {tags:?}"
+    );
 }

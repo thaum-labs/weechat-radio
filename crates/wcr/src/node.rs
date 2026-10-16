@@ -81,6 +81,8 @@ struct Runtime {
     /// Ids we have heard from a station further along, or an ACK from
     /// someone else. A sender retry is not relayed again after that.
     downstream_heard: Arc<Mutex<HashSet<MsgId>>>,
+    /// Our own lines a relay was heard carrying on (fewer hops than we keyed).
+    carried_on: Arc<Mutex<HashSet<MsgId>>>,
     /// Message ids already counted in `relayed_unique` this process.
     relayed_ids: Arc<Mutex<HashSet<MsgId>>>,
     /// Frames already handed to the hub socket or the pending queue.
@@ -453,6 +455,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         ack_again: Arc::new(Mutex::new(HashMap::new())),
         relay_again: Arc::new(Mutex::new(HashMap::new())),
         downstream_heard: Arc::new(Mutex::new(HashSet::new())),
+        carried_on: Arc::new(Mutex::new(HashSet::new())),
         relayed_ids: Arc::new(Mutex::new(HashSet::new())),
         hub_offered: Arc::new(Mutex::new(HashSet::new())),
         hub_marked: Arc::new(Mutex::new(HashSet::new())),
@@ -706,6 +709,14 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         if m.delivery == Delivery::Delivered
                             && group_still_waiting(&rt_r.store, &m.env)
                         {
+                            continue;
+                        }
+                        // A relay was heard carrying the line on. On a long or
+                        // busy chain its receipt can take longer to come back
+                        // than the retries wait, and [no] then flipped to [ok].
+                        // It stays [rl] until the receipt comes, or until it
+                        // is `outbound_max_age_secs` old ([no]).
+                        if rt_r.carried_on.lock().contains(&m.env.msg_id) {
                             continue;
                         }
                         if rt_r
@@ -1933,6 +1944,11 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
         // A relay closer to the destination has fewer hops than the copy we
         // keyed. That is how an ACK or roster walk stops: our own echo has
         // the same count.
+        if let Ok(Some(stored)) = rt.store.get(&env.msg_id) {
+            if relay::heard_further(env.hops_left, stored.env.hops_left) {
+                rt.carried_on.lock().insert(env.msg_id);
+            }
+        }
         if relay::walks_until_relayed(&env) {
             if let Ok(Some(stored)) = rt.store.get(&env.msg_id) {
                 if relay::heard_further(env.hops_left, stored.env.hops_left) {
