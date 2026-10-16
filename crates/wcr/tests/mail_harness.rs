@@ -168,6 +168,16 @@ impl Pair {
     }
 
     async fn start_with(opts: TimedOpts, drop_rx: LinkDrop, hub_delay: Duration) -> Self {
+        Self::start_tweaked(opts, drop_rx, hub_delay, |_, _| {}).await
+    }
+
+    /// `tweak` adjusts station `i`'s config (0 the sender, 1 the gateway).
+    async fn start_tweaked(
+        opts: TimedOpts,
+        drop_rx: LinkDrop,
+        hub_delay: Duration,
+        tweak: impl Fn(usize, &mut Config),
+    ) -> Self {
         let air = wcr::sim::SharedAir::new(0.0);
         let log: TimedLog = Arc::new(Mutex::new(Vec::new()));
         let posts = Arc::new(Mutex::new(Vec::new()));
@@ -192,7 +202,7 @@ impl Pair {
             .await
             .unwrap();
             let home = scratch(call);
-            let cfg = station_cfg(
+            let mut cfg = station_cfg(
                 call,
                 &home,
                 mode,
@@ -202,6 +212,7 @@ impl Pair {
                 ports[i * 2 + 1],
                 &hub_url,
             );
+            tweak(i, &mut cfg);
             nodes.push(tokio::spawn(async move {
                 wcr::node::run_node(cfg, false).await
             }));
@@ -626,6 +637,65 @@ async fn a_long_mail_at_real_airtime_is_accepted_on_the_first_pass() {
     assert!(
         keyed.values().all(|n| *n == 1),
         "the sender keyed over the acceptance and sent the mail again: {keyed:?}\n{trace}"
+    );
+}
+
+/// macOS CI on #50: the sender's first beacon after start keyed the moment
+/// the gateway keyed its acceptance, so the sender never heard it and sent the
+/// whole mail again. Its first beacon now waits after its own mail, as later
+/// ones do. Here the first beacon (no jitter, a minute after start) is due
+/// between the end of the burst and the gateway's reply.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_first_beacon_waits_for_the_reply_to_our_mail() {
+    let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
+    let pair = Pair::start_tweaked(
+        TimedOpts {
+            frame_ms: 4_000,
+            count_tx: false,
+            collide: false,
+            csma_stuck_ms: 0,
+            rung_airtime: true,
+        },
+        drop_rx,
+        Duration::from_secs(2),
+        |i, cfg| {
+            if i == 0 {
+                cfg.rf.beacon_jitter_s = 0;
+            }
+        },
+    )
+    .await;
+    // The burst takes about 48 s and the reply comes about 10 s after it.
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    let mut body = long_body();
+    body.truncate(800);
+    let body = body.trim().to_string();
+    let t0 = Instant::now();
+    let id = pair.compose(&body).await;
+    let row = pair.wait_state(&id, "sent", 240).await;
+    let trace = pair.trace(t0);
+    eprintln!("{trace}");
+    let log = pair.log.lock().unwrap().clone();
+    pair.stop();
+
+    let row = row.expect("outbox row");
+    let state = row.get("state").and_then(|x| x.as_str()).unwrap_or("");
+    assert_eq!(state, "sent", "row {row}\n{trace}");
+    let reply = log
+        .iter()
+        .find(|k| {
+            k.station == 2 && chunk_of(&k.payload).is_some_and(|(op, _, _)| op == 6 || op == 7)
+        })
+        .map(|k| k.at + k.len)
+        .expect("the gateway replied");
+    let keyed_before: Vec<_> = log
+        .iter()
+        .filter(|k| k.station == 1 && k.at >= t0 && k.at < reply && !is_mail(&k.payload))
+        .map(|k| (k.at - t0).as_secs_f64())
+        .collect();
+    assert!(
+        keyed_before.is_empty(),
+        "the sender keyed chat at {keyed_before:?} s before the gateway's reply ended\n{trace}"
     );
 }
 

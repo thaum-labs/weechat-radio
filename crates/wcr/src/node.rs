@@ -845,14 +845,14 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 let pace_s =
                     *pace.get_or_insert_with(|| relay::beacon_interval_secs(jitter_s) as u32);
                 let now = crate::proto::now_ts();
-                // A mail burst is traffic too: a beacon keyed between the
-                // burst and the receiver's report deafens the sender to it.
-                let traffic = rt_b
-                    .last_traffic
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                    .max(rt_b.air().map_or(0, |a| a.last_mail()));
-                let due = relay::next_beacon_at(rt_b.started, traffic, last_beacon, pace_s)
-                    .max(busy_until);
+                // A mail burst is traffic too, and holds even the first
+                // beacon: one keyed between the burst and the receiver's
+                // report deafens the sender to it.
+                let traffic = rt_b.last_traffic.load(std::sync::atomic::Ordering::Relaxed);
+                let own_mail = rt_b.air().map_or(0, |a| a.last_mail());
+                let due =
+                    relay::next_beacon_at(rt_b.started, traffic, own_mail, last_beacon, pace_s)
+                        .max(busy_until);
                 {
                     let mut s = rt_b.snap.lock();
                     s.beacon_due = due;
