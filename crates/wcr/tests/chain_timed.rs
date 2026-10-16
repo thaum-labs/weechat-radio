@@ -960,13 +960,17 @@ async fn each_beacon_keys_when_its_countdown_says() {
         let warm = keyed.iter().filter(|t| **t < sampled_at).count();
         let ahead = due[i].saturating_sub(sampled_unix);
         let due_at = sampled_at + Duration::from_secs(ahead);
-        let next = keyed.iter().find(|t| **t >= sampled_at).copied();
-        let last_warm = keyed.iter().rev().find(|t| **t < sampled_at).copied();
+        let slack = Duration::from_secs(2);
+        // The beacon the countdown names, and the one keyed before it. A
+        // beacon handed to the modem just before the sample can still key
+        // up to the carrier-sense hold later; only after that is a beacon
+        // ahead of the countdown early.
+        let next = keyed.iter().find(|t| **t + slack >= due_at).copied();
+        let prev = keyed.iter().rev().find(|t| **t + slack < due_at).copied();
+        let in_flight = sampled_at + Duration::from_secs(60);
+        let early = keyed.iter().any(|t| *t >= in_flight && *t + slack < due_at);
         let off = next.map(|t| t.saturating_duration_since(due_at).as_secs_f64());
-        let early = next.is_some_and(|t| t + Duration::from_secs(2) < due_at);
-        let gap = next
-            .zip(last_warm)
-            .map(|(n, l)| n.duration_since(l).as_secs());
+        let gap = next.zip(prev).map(|(n, l)| n.duration_since(l).as_secs());
         report.push_str(&format!(
             "\n  {call}: {warm} warm-up beacons, countdown {ahead}s ahead, keyed {off:?}s after it, idle gap {gap:?}s"
         ));
@@ -975,11 +979,13 @@ async fn each_beacon_keys_when_its_countdown_says() {
         }
         match off {
             None => problems.push(format!("{call} never keyed the beacon its countdown named")),
-            Some(_) if early => problems.push(format!("{call} keyed before its countdown")),
             Some(s) if s > 60.0 => {
                 problems.push(format!("{call} keyed {s:.0}s after its countdown"))
             }
             _ => {}
+        }
+        if early {
+            problems.push(format!("{call} keyed a beacon before its countdown"));
         }
         if gap.is_some_and(|g| !(240..=420).contains(&g)) {
             problems.push(format!("{call} idle gap {gap:?}s, not about 5 minutes"));
