@@ -343,9 +343,14 @@ pub fn acks_line(env: &Envelope) -> bool {
     !crate::slash::is_bulletin(env.dest.as_str()) || heard_from_origin(env, env.hops_left)
 }
 
+/// Repeats of a receipt we carry next to the originator. Nobody relays it on
+/// to tell us it arrived, and the originator's retries ask for it again; but
+/// its last retry can key over our copy, and then nothing asks.
+pub const NEXT_TO_ORIGIN_ACK_REPEATS: u32 = 1;
+
 /// Our relay of someone else's receipt keys again until a station closer to
-/// the originator is heard carrying it. Next to the originator nobody relays
-/// it on, so that copy goes once and the originator's retry asks again.
+/// the originator is heard carrying it. Next to the originator it repeats
+/// `NEXT_TO_ORIGIN_ACK_REPEATS` times, a retry interval apart.
 pub fn ack_relay_walks(
     ack: &Envelope,
     next_to_origin: bool,
@@ -353,10 +358,14 @@ pub fn ack_relay_walks(
     max_retries: u32,
     downstream_heard: bool,
 ) -> bool {
+    let max = if next_to_origin {
+        max_retries.min(NEXT_TO_ORIGIN_ACK_REPEATS)
+    } else {
+        max_retries
+    };
     ack.kind == MsgType::Ack
         && ack.hops_left > 0
-        && !next_to_origin
-        && ack_walk_continues(downstream_heard, retries, max_retries)
+        && ack_walk_continues(downstream_heard, retries, max)
 }
 
 /// A receipt that says where its sender heard the line (v0.1.90 on), against
@@ -1610,11 +1619,13 @@ mod tests {
     }
 
     #[test]
-    fn a_receipt_relay_walks_except_next_to_the_originator() {
+    fn a_receipt_relay_walks_and_repeats_once_next_to_the_originator() {
         let line = group_line();
         let ack = Envelope::ack_for(&line, Callsign::parse("M0DDD").unwrap(), 1, None);
         assert!(ack_relay_walks(&ack, false, 0, 3, false));
-        assert!(!ack_relay_walks(&ack, true, 0, 3, false));
+        assert!(ack_relay_walks(&ack, true, 0, 3, false), "one repeat");
+        assert!(!ack_relay_walks(&ack, true, 1, 3, false), "and no more");
+        assert!(!ack_relay_walks(&ack, true, 0, 0, false));
         assert!(!ack_relay_walks(&ack, false, 0, 3, true));
         assert!(!ack_relay_walks(&ack, false, 3, 3, false));
         assert!(!ack_relay_walks(&line, false, 0, 3, false));
