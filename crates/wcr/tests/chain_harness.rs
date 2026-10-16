@@ -627,3 +627,35 @@ async fn bulletin_keeps_walking_past_the_second_relay() {
         "duplicate or missing bulletin lines: {counts:?}"
     );
 }
+
+/// QA v0.1.92: B, next to A, keyed the far receipts of A's lines four or five
+/// times each. A got each the first time and never retried. Every extra copy
+/// is airtime in which B cannot hear A's next line. On a quiet chain B
+/// carries D's receipt to A once.
+#[tokio::test]
+async fn the_station_next_to_the_sender_carries_a_receipt_once() {
+    let _suite = suite_lock().lock().await;
+    let mut chain = Chain::start(Vec::new(), None).await;
+    chain.clients[0].send("PRIVMSG M0DDD :hello-d").await;
+    let ok = chain.clients[0]
+        .wait_for(120, |lines| {
+            lines
+                .iter()
+                .any(|l| l.contains("+radio/delivery=delivered"))
+        })
+        .await;
+    // Long enough for B's receipt walk to run three retry intervals.
+    tokio::time::sleep(Duration::from_secs(300)).await;
+    let line_keys = chain.keyed_by(1, |e| {
+        e.kind == MsgType::Msg && e.body_text().contains("hello-d")
+    });
+    let b_receipts = chain.keyed_by(2, |e| {
+        e.kind == MsgType::Ack && e.origin.as_str() == "M0DDD"
+    });
+    let trace = chain.trace();
+    chain.stop();
+    eprintln!("A keyed the line {line_keys}x, B keyed D's receipt {b_receipts}x{trace}");
+    assert!(ok, "A never reached [ok]{trace}");
+    assert_eq!(line_keys, 1, "A retried a line that was answered{trace}");
+    assert_eq!(b_receipts, 1, "B repeated D's receipt next to A{trace}");
+}

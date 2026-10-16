@@ -848,7 +848,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     s.beacon_span = due
                         .saturating_sub(last_beacon.unwrap_or(rt_b.started))
                         .max(1);
-                    s.beacon_note.clear();
+                    s.beacon_note = if busy_until > now { "busy" } else { "" }.into();
                 }
                 // Traffic only moves the beacon later; look again every few
                 // seconds so the countdown and a mode change show promptly.
@@ -858,8 +858,10 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     continue;
                 }
                 if let Some(s) = rt_b.sense() {
-                    if s.occupancy_pct() >= congested {
+                    let occ = s.occupancy_pct();
+                    if occ >= congested {
                         busy_until = now.saturating_add(pace_s);
+                        tracing::info!("beacon held: channel {occ}% busy, next try in {pace_s}s");
                         continue;
                     }
                 }
@@ -2262,7 +2264,16 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                     keep = true;
                 }
                 if !keep {
-                    let _ = rt.store.set_hold(&id, 0, 0);
+                    // Our relay of someone else's line keeps the hops we heard
+                    // it with. Zeroed, they said the line came from the far
+                    // end: the receipts we carry for it then walked as if the
+                    // originator were further on, and any later copy of the
+                    // line looked like the originator's retry.
+                    let hops = orig
+                        .as_ref()
+                        .filter(|o| !relay::is_own_origin(&rt.engine.our_call, &o.env))
+                        .map_or(0, |o| o.env.hops_left);
+                    let _ = rt.store.set_hold(&id, 0, hops);
                     if let Some(air) = rt.air() {
                         air.cancel(id);
                     }

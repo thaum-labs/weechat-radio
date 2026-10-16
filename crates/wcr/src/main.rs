@@ -82,7 +82,18 @@ async fn real_main() -> Result<()> {
         }
         Command::Update => {
             wcr::ui_style::panel("WEECHAT RADIO", "UPDATE");
-            println!("{}", wcr::update::apply().await?);
+            let applied = wcr::update::apply().await?;
+            println!("{}", applied.message);
+            if !applied.restarted {
+                if let Ok(cfg) = load_cfg(&cfg_path) {
+                    let bind = &cfg.status.bind;
+                    if let Some(note) =
+                        wcr::update::running_station_note(bind, &applied.version).await
+                    {
+                        println!("{note}");
+                    }
+                }
+            }
         }
         Command::Help { topic } => {
             print!("{}", wcr::help::render(topic.as_deref()));
