@@ -923,11 +923,12 @@ async fn invite_reaches_the_far_end() {
 
 /// QA could not score the beacon pace on v0.1.92: the countdown looked as if
 /// it reset every minute. On a quiet chain at hf-poor timing, each station's
-/// next beacon after the warm-up must key within the carrier-sense hold of the
-/// countdown showing when it fell due. One that falls due while a neighbour is
-/// on the air waits a pace, and its countdown says so (`busy`). Nothing keys
-/// before the countdown, and the beacon comes at the idle pace (about 5
-/// minutes after the warm-up's last).
+/// first idle beacon after the warm-up (the first countdown more than 2
+/// minutes ahead; warm-up and busy holds are never that long) must key within
+/// the carrier-sense hold of the countdown showing when it fell due. One that
+/// falls due while a neighbour is on the air waits a pace, and its countdown
+/// says so (`busy`). Nothing keys before the countdown, and the beacon comes
+/// at the idle pace (about 5 minutes after the one before).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn each_beacon_keys_when_its_countdown_says() {
     let chain = Chain::start(None).await;
@@ -944,10 +945,11 @@ async fn each_beacon_keys_when_its_countdown_says() {
             .map(|k| k.at)
             .collect()
     };
-    // Every countdown each station showed: when it said the beacon was due,
-    // and its note.
-    let mut seen: Vec<Vec<(Instant, String)>> = vec![Vec::new(); CALLS.len()];
-    let give_up = sampled_at + Duration::from_secs(600);
+    // Every countdown each station showed: when we read it, when it said the
+    // beacon was due, and its note.
+    let mut seen: Vec<Vec<(Instant, Instant, String)>> = vec![Vec::new(); CALLS.len()];
+    let idle = |(at, due, _): &(Instant, Instant, String)| *due > *at + Duration::from_secs(120);
+    let give_up = sampled_at + Duration::from_secs(900);
     loop {
         for (i, p) in chain.status.iter().enumerate() {
             let Some(snap) = status_json(*p).await else {
@@ -972,12 +974,13 @@ async fn each_beacon_keys_when_its_countdown_says() {
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string();
-            seen[i].push((due_at, note));
+            seen[i].push((at, due_at, note));
         }
         let all_keyed = (0..CALLS.len()).all(|i| {
             seen[i]
-                .first()
-                .is_some_and(|(d, _)| beacons(i).iter().any(|t| *t + slack >= *d))
+                .iter()
+                .find(|s| idle(s))
+                .is_some_and(|(_, d, _)| beacons(i).iter().any(|t| *t + slack >= *d))
         });
         if all_keyed || Instant::now() > give_up {
             break;
@@ -989,29 +992,31 @@ async fn each_beacon_keys_when_its_countdown_says() {
     for (i, call) in CALLS.iter().enumerate() {
         let keyed = beacons(i);
         let warm = keyed.iter().filter(|t| **t < sampled_at).count();
-        let Some(&(due_at, _)) = seen[i].first() else {
-            problems.push(format!("{call} showed no countdown"));
+        let Some(&(shown_at, due_at, _)) = seen[i].iter().find(|s| idle(s)) else {
+            problems.push(format!("{call} showed no idle countdown"));
             continue;
         };
-        let ahead = due_at.saturating_duration_since(sampled_at).as_secs();
-        // The beacon the first countdown names, and the one keyed before it.
-        // A beacon handed to the modem just before the sample can still key
-        // up to the carrier-sense hold later; only after that is a beacon
-        // ahead of the countdown early.
+        let ahead = due_at.saturating_duration_since(shown_at).as_secs();
+        // The beacon the first idle countdown names, and the one keyed before
+        // it. A beacon handed to the modem just before that countdown showed
+        // can still key up to the carrier-sense hold later; only after that is
+        // a beacon ahead of the countdown early.
         let next = keyed.iter().find(|t| **t + slack >= due_at).copied();
         let prev = keyed.iter().rev().find(|t| **t + slack < due_at).copied();
-        let in_flight = sampled_at + Duration::from_secs(60);
+        let in_flight = shown_at + Duration::from_secs(60);
         let early = keyed.iter().any(|t| *t >= in_flight && *t + slack < due_at);
         // The countdown showing when it fell due: the latest one due by the
         // time it keyed (a busy hold moves it on; the next round's is later).
         let named = next.and_then(|n| {
             seen[i]
                 .iter()
-                .map(|(d, _)| *d)
+                .map(|(_, d, _)| *d)
                 .filter(|d| *d <= n + slack)
                 .max()
         });
-        let busy = seen[i].iter().any(|(_, note)| note == "busy");
+        let busy = seen[i]
+            .iter()
+            .any(|(_, d, note)| note == "busy" && *d + slack >= due_at);
         let off = next
             .zip(named)
             .map(|(n, d)| n.saturating_duration_since(d).as_secs_f64());
