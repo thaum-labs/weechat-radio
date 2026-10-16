@@ -834,7 +834,12 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 let pace_s =
                     *pace.get_or_insert_with(|| relay::beacon_interval_secs(jitter_s) as u32);
                 let now = crate::proto::now_ts();
-                let traffic = rt_b.last_traffic.load(std::sync::atomic::Ordering::Relaxed);
+                // A mail burst is traffic too: a beacon keyed between the
+                // burst and the receiver's report deafens the sender to it.
+                let traffic = rt_b
+                    .last_traffic
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    .max(rt_b.air().map_or(0, |a| a.last_mail()));
                 let due = relay::next_beacon_at(rt_b.started, traffic, last_beacon, pace_s)
                     .max(busy_until);
                 {
@@ -945,6 +950,8 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             frame = recv_opt(&mut kiss_rx) => {
                 if let Some(payload) = frame {
                     if let Some(incoming) = crate::mail::try_decode(&payload) {
+                        rt.last_traffic
+                            .store(crate::proto::now_ts(), std::sync::atomic::Ordering::Relaxed);
                         crate::mail::on_rf(&rt.mail, incoming).await;
                     } else if let Ok(env) = Envelope::decode(&payload) {
                         let snr = rt.last_rx_snr.lock().take();

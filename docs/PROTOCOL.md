@@ -62,7 +62,7 @@ Slow HF presets (`hf-poor`, `hf-weak`, `hf-deep`) send unsigned on RF so a chat 
 
 ## BEACON
 
-Type BEACON. Body is UTF-8 `B|<mode>|<khz>` (example `B|internet-radio|144950`). The kHz field is the origin's dial so gateways and the map know which band a station is on. Legacy `B|<mode>` is still decoded; frequency is unknown. Beacons heard on RF are also tagged with the receiving station's own dial. A station beacons about once a minute for its first three minutes, so its neighbours learn it even if one beacon is lost, then every 5 minutes on a quiet channel. It skips its beacon for 10 minutes after any traffic it keyed or heard, and beacons at least every 10 minutes. An idle beacon keyed while a line walks the chain can take a relay's copy at the station beside it. A line's retries and receipts run for about that long, and a beacon keyed between them can leave a relay deaf to the next retry.
+Type BEACON. Body is UTF-8 `B|<mode>|<khz>` (example `B|internet-radio|144950`). The kHz field is the origin's dial so gateways and the map know which band a station is on. Legacy `B|<mode>` is still decoded; frequency is unknown. Beacons heard on RF are also tagged with the receiving station's own dial. A station beacons about once a minute for its first three minutes, so its neighbours learn it even if one beacon is lost, then every 5 minutes on a quiet channel. It skips its beacon for 10 minutes after any traffic it keyed or heard, mail bursts and reports included, and beacons at least every 10 minutes. An idle beacon keyed while a line walks the chain can take a relay's copy at the station beside it. A line's retries and receipts run for about that long, and a beacon keyed between them can leave a relay deaf to the next retry.
 
 ## Callsign packing
 
