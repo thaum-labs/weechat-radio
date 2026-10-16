@@ -1588,7 +1588,11 @@ fn line_reached_neighbours(rt: &Runtime, line: &Envelope) -> bool {
                 .unwrap_or_default(),
         );
     }
-    let came_relayed = !relay::heard_from_origin(line, line.hops_left.saturating_add(1));
+    // Fed by our only neighbour, we take ourselves for the chain end. Not for
+    // a direct line: only its addressee's ACK says it arrived, and a station
+    // beyond us whose beacons we all missed looks the same as none.
+    let came_relayed = !relay::is_direct_line(line)
+        && !relay::heard_from_origin(line, line.hops_left.saturating_add(1));
     relay::neighbours_hold(&current_neighbours(rt), &holders, came_relayed)
 }
 
