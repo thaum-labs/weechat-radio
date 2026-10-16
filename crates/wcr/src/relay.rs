@@ -327,13 +327,18 @@ pub fn relay_copy_gap_s(priority: Priority) -> u32 {
     next_retry_hold_base(0, 0, priority)
 }
 
+/// A line to one station (a direct message or an invite), not a channel line
+/// or a receipt. Only its addressee's ACK says it arrived.
+pub fn is_direct_line(env: &Envelope) -> bool {
+    env.kind != MsgType::Ack && !env.flags.group()
+}
+
 /// A relay passes an originator's retry on unless a station further along
 /// already carried the line. A direct message is the exception: hearing it
 /// one hop on says nothing about its addressee, whose ACK alone ends it (and
 /// marks our copy delivered, which stops the relay anyway).
 pub fn retry_passes_on(line: &Envelope, heard_further: bool, receipts_missing: bool) -> bool {
-    let direct = line.kind != MsgType::Ack && !line.flags.group();
-    !heard_further || receipts_missing || direct
+    !heard_further || receipts_missing || is_direct_line(line)
 }
 
 /// Only stations that heard a `#bulletin` from its originator ACK it. The
