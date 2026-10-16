@@ -328,6 +328,9 @@ struct QueueInner {
     paused: bool,
     /// Set only by the mail lease. An ACK's `resume` clears `paused`, not this.
     mail_lease: bool,
+    /// When a mail lease last started or ended (unix seconds, 0 for never).
+    /// The beacon counts it as traffic.
+    last_mail: u32,
 }
 
 #[derive(Clone)]
@@ -343,6 +346,7 @@ impl AirQueue {
                 items: Vec::new(),
                 paused: false,
                 mail_lease: false,
+                last_mail: 0,
             })),
             notify: Arc::new(Notify::new()),
         }
@@ -407,12 +411,23 @@ impl AirQueue {
     /// Hold chat for the whole mail lease. A chat ACK keyed meanwhile pauses
     /// and resumes the queue around itself; that must not end the lease.
     pub fn hold_for_mail(&self) {
-        self.inner.lock().mail_lease = true;
+        let mut g = self.inner.lock();
+        g.mail_lease = true;
+        g.last_mail = crate::proto::now_ts();
     }
 
     pub fn release_mail(&self) {
-        self.inner.lock().mail_lease = false;
+        {
+            let mut g = self.inner.lock();
+            g.mail_lease = false;
+            g.last_mail = crate::proto::now_ts();
+        }
         self.notify.notify_waiters();
+    }
+
+    /// When a mail lease last started or ended, 0 for never.
+    pub fn last_mail(&self) -> u32 {
+        self.inner.lock().last_mail
     }
 
     pub fn is_held_for_mail(&self) -> bool {
@@ -1144,6 +1159,17 @@ mod tests {
         assert!(q.pop_ready().is_none(), "chat keyed inside the mail lease");
         q.release_mail();
         assert!(q.pop_ready().is_some());
+    }
+
+    #[test]
+    fn a_mail_lease_is_traffic_for_the_beacon() {
+        let q = AirQueue::new();
+        assert_eq!(q.last_mail(), 0, "no mail yet");
+        let before = crate::proto::now_ts();
+        q.hold_for_mail();
+        assert!(q.last_mail() >= before, "the lease start counts");
+        q.release_mail();
+        assert!(q.last_mail() >= before, "and so does its end");
     }
 
     #[test]
