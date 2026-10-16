@@ -434,6 +434,17 @@ impl AirQueue {
         self.inner.lock().mail_lease
     }
 
+    /// Pause chat for a receipt, unless a mail lease holds the radio. Checked
+    /// and set together, so a receipt and a lease never both set the modem.
+    pub fn pause_for_ack(&self) -> bool {
+        let mut g = self.inner.lock();
+        if g.mail_lease {
+            return false;
+        }
+        g.paused = true;
+        true
+    }
+
     fn next_deadline(&self) -> Option<Instant> {
         let g = self.inner.lock();
         if g.mail_lease {
@@ -639,9 +650,22 @@ pub struct AckTx<'a> {
     pub drain_cap: Duration,
 }
 
+/// Longest a receipt waits for a mail lease to end before giving up. The
+/// line's next retry asks for it again.
+const ACK_MAIL_WAIT: Duration = Duration::from_secs(600);
+
 pub async fn transmit_ack(tx: AckTx<'_>) -> bool {
     if let Some(air) = tx.air {
-        air.pause();
+        // A mail lease has set the modem for its burst. A receipt keyed now
+        // switches the config for itself, then restores chat's (carrier sense
+        // on, chat's rung) while the rest of the burst is still queued.
+        let start = Instant::now();
+        while !air.pause_for_ack() {
+            if start.elapsed() >= ACK_MAIL_WAIT {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
     }
     let sent = transmit_ack_while_paused(&tx).await;
     if let Some(air) = tx.air {
@@ -1159,6 +1183,17 @@ mod tests {
         assert!(q.pop_ready().is_none(), "chat keyed inside the mail lease");
         q.release_mail();
         assert!(q.pop_ready().is_some());
+    }
+
+    #[test]
+    fn a_receipt_waits_for_the_mail_lease() {
+        let q = AirQueue::new();
+        q.hold_for_mail();
+        assert!(!q.pause_for_ack(), "a receipt took the radio mid-lease");
+        assert!(!q.is_paused());
+        q.release_mail();
+        assert!(q.pause_for_ack());
+        assert!(q.is_paused());
     }
 
     #[test]

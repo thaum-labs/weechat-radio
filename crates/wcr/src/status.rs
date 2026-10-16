@@ -229,6 +229,10 @@ impl StatusSnapshot {
             "vox" => DueLane::idle("off · vox"),
             "off" => DueLane::idle("off"),
             _ if self.beacon_due == 0 => DueLane::idle("—"),
+            "busy" => DueLane::live(
+                format!("busy {}", countdown_label(self.beacon_due, now)),
+                remaining_frac(self.beacon_due, self.beacon_span, now),
+            ),
             _ => DueLane::live(
                 countdown_label(self.beacon_due, now),
                 remaining_frac(self.beacon_due, self.beacon_span, now),
@@ -568,6 +572,9 @@ mod tests {
         let lane = s.beacon_lane(170.0);
         assert!(lane.live);
         assert_eq!(lane.label, "0:30");
+        s.beacon_note = "busy".into();
+        assert_eq!(s.beacon_lane(170.0).label, "busy 0:30");
+        s.beacon_note.clear();
         s.set_hold_due(250, "relay", 200);
         assert_eq!(s.hold_span, 50);
         s.set_hold_due(250, "relay", 220);
