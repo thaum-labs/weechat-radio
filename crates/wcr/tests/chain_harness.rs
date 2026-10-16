@@ -763,3 +763,54 @@ async fn a_late_receipt_after_a_relay_never_shows_no() {
         "[no] before the late receipt: {tags:?}"
     );
 }
+
+/// CI on #50 (invite_reaches_the_far_end): every warm-up beacon of D's keyed
+/// over one of C's, so C knew only B. Fed A's invite by its only neighbour, C
+/// took itself for the chain end, let A's retries go, and E never got it.
+/// Here D's beacons never reach C and C's first copy of A's line to E is lost
+/// at D. A's later retry has to get past C.
+#[tokio::test]
+async fn a_relay_that_missed_the_next_beacons_passes_a_retry_on() {
+    let _suite = suite_lock().lock().await;
+    let rules = vec![
+        Rule {
+            from: 4,
+            to: 3,
+            copies: u32::MAX,
+            pred: Arc::new(|env: &Envelope| env.kind == MsgType::Beacon),
+        },
+        Rule {
+            from: 3,
+            to: 4,
+            copies: 1,
+            pred: Arc::new(|env: &Envelope| {
+                env.kind == MsgType::Msg && env.body_text().contains("hello-past-c")
+            }),
+        },
+    ];
+    let mut chain = Chain::start(rules, None).await;
+    // C takes its neighbour list as complete from 3 minutes after start.
+    tokio::time::sleep(Duration::from_secs(
+        u64::from(wcr::relay::NEIGHBOUR_WARMUP_S) + 15,
+    ))
+    .await;
+    chain.clients[0].send("PRIVMSG G4EEE :hello-past-c").await;
+    let ok = chain.clients[0]
+        .wait_for(360, |lines| {
+            lines
+                .iter()
+                .any(|l| l.contains("+radio/delivery=delivered"))
+        })
+        .await;
+    let c_keys = chain.keyed_by(3, |e| {
+        e.kind == MsgType::Msg && e.body_text().contains("hello-past-c")
+    });
+    let trace = chain.trace();
+    chain.stop();
+    eprintln!("C keyed the line {c_keys}x{trace}");
+    assert!(
+        trace.contains("drop 3->4 Msg"),
+        "C's first copy was never dropped{trace}"
+    );
+    assert!(ok, "A's line to E never got past C{trace}");
+}
