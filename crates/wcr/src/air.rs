@@ -103,6 +103,9 @@ pub trait ChannelSense: Send + Sync {
     /// nothing on the air.
     fn since_last_decode(&self) -> Duration;
     fn note_rx(&self) {}
+    /// A frame arrived from the modem over KISS. Unlike `note_rx`, it leaves
+    /// the channel state to the modem's status.
+    fn note_decode(&self) {}
 }
 
 struct SenseInner {
@@ -245,6 +248,10 @@ impl ChannelSense for ModemSense {
     fn note_rx(&self) {
         self.inner.lock().note_rx();
     }
+
+    fn note_decode(&self) {
+        self.inner.lock().last_decode = Instant::now();
+    }
 }
 
 pub struct FakeSense {
@@ -289,6 +296,10 @@ impl ChannelSense for FakeSense {
 
     fn note_rx(&self) {
         self.inner.lock().note_rx();
+    }
+
+    fn note_decode(&self) {
+        self.inner.lock().last_decode = Instant::now();
     }
 }
 
@@ -1203,8 +1214,15 @@ mod tests {
         });
         assert!(s.since_last_rx() < Duration::from_secs(1));
         assert!(s.since_last_decode() >= Duration::from_secs(3600));
-        s.note_rx();
+        // A frame off KISS is decoded; the state stays what the modem says.
+        s.apply_status(&ModemStatus {
+            channel_state: "busy".into(),
+            occupancy_pct: 99,
+            ..ModemStatus::default()
+        });
+        s.note_decode();
         assert!(s.since_last_decode() < Duration::from_secs(1));
+        assert_eq!(s.state(), ChannelState::Idle);
     }
 
     #[tokio::test(start_paused = true)]
