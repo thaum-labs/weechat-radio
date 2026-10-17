@@ -850,9 +850,11 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 // report deafens the sender to it.
                 let traffic = rt_b.last_traffic.load(std::sync::atomic::Ordering::Relaxed);
                 let own_mail = rt_b.air().map_or(0, |a| a.last_mail());
+                let ceiling = relay::beacon_ceiling(rt_b.started, last_beacon);
                 let due =
                     relay::next_beacon_at(rt_b.started, traffic, own_mail, last_beacon, pace_s)
-                        .max(busy_until);
+                        .max(busy_until)
+                        .min(ceiling);
                 {
                     let mut s = rt_b.snap.lock();
                     s.beacon_due = due;
@@ -870,10 +872,23 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 }
                 if let Some(s) = rt_b.sense() {
                     let occ = s.occupancy_pct();
-                    if occ >= congested {
-                        busy_until = now.saturating_add(pace_s);
-                        tracing::info!("beacon held: channel {occ}% busy, next try in {pace_s}s");
+                    let since_decode = s.since_last_decode().as_secs();
+                    if relay::beacon_waits_for_channel(now, ceiling, occ >= congested, since_decode)
+                    {
+                        busy_until = now.saturating_add(pace_s).min(ceiling);
+                        tracing::info!(
+                            "beacon held: channel {occ}% busy, next try in {}s",
+                            busy_until - now
+                        );
                         continue;
+                    }
+                    if occ >= congested {
+                        let why = if now >= ceiling {
+                            "10 minutes since the last beacon".to_string()
+                        } else {
+                            format!("no frame decoded in {}s", relay::BEACON_BUSY_DECODE_S)
+                        };
+                        tracing::info!("beacon goes although the channel reads {occ}% busy: {why}");
                     }
                 }
                 last_beacon = Some(now);
