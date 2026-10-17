@@ -18,6 +18,11 @@ use tokio_util::sync::CancellationToken;
 const BASE_CW: u32 = 4;
 const RELAY_DEFER_MIN_S: u64 = 2;
 const RELAY_DEFER_MAX_S: u64 = 8;
+/// modem73 keys every frame it holds in its one current mode, and with its
+/// carrier sense stuck busy it holds each frame 30 s before keying it anyway.
+/// An item that switches to a mode too narrow for a frame handed over less
+/// than this long ago waits, or the modem drops that frame when it keys.
+const NARROW_MODE_WAIT: Duration = Duration::from_secs(45);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AirClass {
@@ -92,6 +97,11 @@ pub trait ChannelSense: Send + Sync {
     fn state(&self) -> ChannelState;
     fn occupancy_pct(&self) -> u8;
     fn since_last_rx(&self) -> Duration;
+    /// Time since a frame last decoded. Unlike `since_last_rx`, a modem
+    /// status of `rx` does not reset it: a carrier-sense line stuck high or
+    /// a noise floor can report `rx` or near 100% occupancy all day with
+    /// nothing on the air.
+    fn since_last_decode(&self) -> Duration;
     fn note_rx(&self) {}
 }
 
@@ -99,7 +109,27 @@ struct SenseInner {
     state: ChannelState,
     occupancy: u8,
     last_rx: Instant,
+    last_decode: Instant,
     ptt_on: bool,
+}
+
+impl SenseInner {
+    fn new() -> Self {
+        let long_ago = Instant::now() - Duration::from_secs(3600);
+        Self {
+            state: ChannelState::Idle,
+            occupancy: 0,
+            last_rx: long_ago,
+            last_decode: long_ago,
+            ptt_on: false,
+        }
+    }
+
+    fn note_rx(&mut self) {
+        self.state = ChannelState::Rx;
+        self.last_rx = Instant::now();
+        self.last_decode = self.last_rx;
+    }
 }
 
 pub struct ModemSense {
@@ -124,12 +154,7 @@ impl ModemSense {
 
     fn with_passive(passive: bool) -> Self {
         Self {
-            inner: Mutex::new(SenseInner {
-                state: ChannelState::Idle,
-                occupancy: 0,
-                last_rx: Instant::now() - Duration::from_secs(3600),
-                ptt_on: false,
-            }),
+            inner: Mutex::new(SenseInner::new()),
             passive,
         }
     }
@@ -213,10 +238,12 @@ impl ChannelSense for ModemSense {
         Instant::now().saturating_duration_since(self.inner.lock().last_rx)
     }
 
+    fn since_last_decode(&self) -> Duration {
+        Instant::now().saturating_duration_since(self.inner.lock().last_decode)
+    }
+
     fn note_rx(&self) {
-        let mut g = self.inner.lock();
-        g.state = ChannelState::Rx;
-        g.last_rx = Instant::now();
+        self.inner.lock().note_rx();
     }
 }
 
@@ -227,12 +254,7 @@ pub struct FakeSense {
 impl FakeSense {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            inner: Mutex::new(SenseInner {
-                state: ChannelState::Idle,
-                occupancy: 0,
-                last_rx: Instant::now() - Duration::from_secs(3600),
-                ptt_on: false,
-            }),
+            inner: Mutex::new(SenseInner::new()),
         })
     }
 
@@ -261,10 +283,12 @@ impl ChannelSense for FakeSense {
         Instant::now().saturating_duration_since(self.inner.lock().last_rx)
     }
 
+    fn since_last_decode(&self) -> Duration {
+        Instant::now().saturating_duration_since(self.inner.lock().last_decode)
+    }
+
     fn note_rx(&self) {
-        let mut g = self.inner.lock();
-        g.state = ChannelState::Rx;
-        g.last_rx = Instant::now();
+        self.inner.lock().note_rx();
     }
 }
 
@@ -279,6 +303,9 @@ pub struct AirItem {
     pub rung: Option<Rung>,
     pub preset: Preset,
     congest_deferred: bool,
+    /// The beacon loop holds a beacon for a busy channel itself, so a
+    /// congested channel does not drop it.
+    beacon: bool,
 }
 
 impl AirItem {
@@ -294,6 +321,7 @@ impl AirItem {
             rung: None,
             preset,
             congest_deferred: false,
+            beacon: env.kind == MsgType::Beacon,
         }
     }
 
@@ -320,6 +348,10 @@ impl AirItem {
     fn payload_len(&self) -> usize {
         self.frames.iter().map(|f| f.len()).sum()
     }
+
+    fn widest(&self) -> usize {
+        self.frames.iter().map(Vec::len).max().unwrap_or(0)
+    }
 }
 
 struct QueueInner {
@@ -331,6 +363,22 @@ struct QueueInner {
     /// When a mail lease last started or ended (unix seconds, 0 for never).
     /// The beacon counts it as traffic.
     last_mail: u32,
+    /// Widest frame of each item handed to the modem, and until when it may
+    /// still be waiting there (`NARROW_MODE_WAIT`).
+    handed: Vec<(usize, Instant)>,
+}
+
+impl QueueInner {
+    /// When `item` may set its mode: once every frame handed over lately that
+    /// its mode cannot carry has had time to key. `None`: it may now.
+    fn narrow_until(&self, item: &AirItem, now: Instant) -> Option<Instant> {
+        let cap = item.rung?.payload_bytes() as usize;
+        self.handed
+            .iter()
+            .filter(|(len, until)| *len > cap && *until > now)
+            .map(|(_, until)| *until)
+            .max()
+    }
 }
 
 #[derive(Clone)]
@@ -347,6 +395,7 @@ impl AirQueue {
                 paused: false,
                 mail_lease: false,
                 last_mail: 0,
+                handed: Vec::new(),
             })),
             notify: Arc::new(Notify::new()),
         }
@@ -390,7 +439,14 @@ impl AirQueue {
             return None;
         }
         let idx = g.items.iter().position(|x| x.not_before <= now)?;
-        Some(g.items.remove(idx))
+        // The items behind wait too, so a narrow one is never starved.
+        if g.narrow_until(&g.items[idx], now).is_some() {
+            return None;
+        }
+        let item = g.items.remove(idx);
+        g.handed.retain(|(_, until)| *until > now);
+        g.handed.push((item.widest(), now + NARROW_MODE_WAIT));
+        Some(item)
     }
 
     /// Hold the queue while Email has the radio. Does not drop queued chat.
@@ -450,6 +506,12 @@ impl AirQueue {
         if g.mail_lease {
             return None;
         }
+        let now = Instant::now();
+        if let Some(head) = g.items.iter().find(|x| x.not_before <= now) {
+            if let Some(until) = g.narrow_until(head, now) {
+                return Some(until);
+            }
+        }
         g.items.iter().map(|x| x.not_before).min()
     }
 
@@ -459,7 +521,10 @@ impl AirQueue {
         }
         let now = Instant::now();
         let mut g = self.inner.lock();
-        g.items.retain(|x| x.class != AirClass::Background);
+        // A noise floor or stuck carrier sense reads congested all day; a
+        // beacon dropped here never went at all.
+        g.items
+            .retain(|x| x.class != AirClass::Background || x.beacon);
         for item in g.items.iter_mut() {
             if item.class == AirClass::Relay && !item.congest_deferred {
                 let extra = rand::thread_rng().gen_range(RELAY_DEFER_MIN_S..=RELAY_DEFER_MAX_S);
@@ -809,6 +874,7 @@ mod tests {
             rung: None,
             preset: Preset::VhfFm,
             congest_deferred: false,
+            beacon: false,
         }
     }
 
@@ -1059,6 +1125,86 @@ mod tests {
         assert!(drain(&mut rx).await.is_empty());
         assert_eq!(q.depth(), 0);
         h.abort();
+    }
+
+    /// QA v0.1.93: the modem read 99% busy all day on a quiet channel, and
+    /// the queue dropped every beacon the beacon loop handed it.
+    #[tokio::test(start_paused = true)]
+    async fn a_beacon_is_kept_when_congested() {
+        use crate::proto::{Callsign, Flags};
+        let q = AirQueue::new();
+        let sense = FakeSense::new();
+        sense.set_occupancy(99);
+        let (tx, mut rx) = mpsc::channel(8);
+        let snap = status::new_shared();
+        let h = tokio::spawn(run_air_queue(
+            q.clone(),
+            tx,
+            sense.clone(),
+            None,
+            test_cfg(),
+            snap,
+            CancellationToken::new(),
+        ));
+        let mut beacon = Envelope::new_msg(
+            Callsign::parse("G4ABC").unwrap(),
+            Callsign::from_raw("BEACON"),
+            1,
+            b"B|radio|7074".to_vec(),
+            1,
+            Flags::new(),
+        )
+        .unwrap();
+        beacon.kind = MsgType::Beacon;
+        q.enqueue(AirItem::new(&beacon, "G4ABC", vec![vec![7]], Preset::VhfFm));
+        // Past the 15 s defer cap: the beacon has keyed by now.
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        assert_eq!(drain(&mut rx).await, vec![vec![7]]);
+        h.abort();
+    }
+
+    /// QA v0.1.93: an invite's first copy waited out the stuck carrier sense
+    /// at the modem while a roster repeat switched it to MFSK, and the modem
+    /// dropped the invite. A narrower mode waits until the wider frame keyed.
+    #[tokio::test(start_paused = true)]
+    async fn a_narrower_mode_waits_for_the_wider_frame_before_it() {
+        let q = AirQueue::new();
+        let sized = |n, len, rung| {
+            let mut x = item(AirClass::Own, n);
+            x.frames = vec![vec![0u8; len]];
+            x.rung = Some(rung);
+            x
+        };
+        q.enqueue(sized(1, 120, Rung::Rdm600S));
+        q.enqueue(sized(2, 30, Rung::Mfsk32R));
+        q.enqueue(sized(3, 120, Rung::Rdm600S));
+        let start = Instant::now();
+        assert_eq!(q.pop_ready().map(|x| x.msg_id), Some(mid(1)));
+        assert!(
+            q.pop_ready().is_none(),
+            "MFSK would drop the 120-byte frame still at the modem"
+        );
+        assert_eq!(q.next_deadline(), Some(start + NARROW_MODE_WAIT));
+        tokio::time::advance(NARROW_MODE_WAIT).await;
+        assert_eq!(q.pop_ready().map(|x| x.msg_id), Some(mid(2)));
+        // A mode wide enough for what went before goes at once.
+        assert_eq!(q.pop_ready().map(|x| x.msg_id), Some(mid(3)));
+    }
+
+    /// A modem status of `rx` is not a frame: a stuck carrier-sense line can
+    /// report it all day.
+    #[tokio::test(start_paused = true)]
+    async fn only_a_decoded_frame_counts_as_decoded() {
+        let s = ModemSense::new();
+        s.apply_status(&ModemStatus {
+            channel_state: "rx".into(),
+            occupancy_pct: 99,
+            ..ModemStatus::default()
+        });
+        assert!(s.since_last_rx() < Duration::from_secs(1));
+        assert!(s.since_last_decode() >= Duration::from_secs(3600));
+        s.note_rx();
+        assert!(s.since_last_decode() < Duration::from_secs(1));
     }
 
     #[tokio::test(start_paused = true)]
