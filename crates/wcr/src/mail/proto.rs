@@ -85,6 +85,20 @@ pub enum Incoming {
     },
 }
 
+impl Incoming {
+    /// The receiver's report on a burst, its acceptance, or a list reply:
+    /// each answers the frames before it. Chunks and requests ask.
+    pub fn answers(&self) -> bool {
+        match self {
+            Self::Wire(w) => matches!(
+                w.op,
+                MailOp::ChunkAck | MailOp::CompleteAck | MailOp::ListHdr
+            ),
+            Self::Slice { .. } => false,
+        }
+    }
+}
+
 pub fn wcr_address(callsign: &str) -> String {
     format!("{}@{}", callsign.trim().to_ascii_uppercase(), MAIL_DOMAIN)
 }

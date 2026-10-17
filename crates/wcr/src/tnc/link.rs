@@ -101,12 +101,14 @@ where
         .expect("spawn tnc link thread");
 
     let cfg_w = cfg.clone();
+    let keyed = kiss::keyed_feed();
+    let keyed_w = keyed.clone();
     std::thread::Builder::new()
         .name("tnc-write".into())
-        .spawn(move || writer_loop(cfg_w, state, out_rx))
+        .spawn(move || writer_loop(cfg_w, state, out_rx, keyed_w))
         .expect("spawn tnc writer thread");
 
-    (KissClient::from_sender(out_tx), in_rx)
+    (KissClient::from_sender(out_tx, keyed), in_rx)
 }
 
 fn set_status(snap: &SharedStatus, text: impl Into<String>, ok: bool) {
@@ -260,7 +262,12 @@ pub fn frame_hold(cfg: &Config, wire_len: usize) -> Duration {
     Duration::from_millis(ms)
 }
 
-fn writer_loop(cfg: Config, state: Arc<LinkState>, mut out_rx: mpsc::Receiver<Vec<u8>>) {
+fn writer_loop(
+    cfg: Config,
+    state: Arc<LinkState>,
+    mut out_rx: mpsc::Receiver<Vec<u8>>,
+    keyed: tokio::sync::broadcast::Sender<Vec<u8>>,
+) {
     let src = ax25::Address::from_station(&cfg.callsign);
     let dest = ax25::Address::from_station(&cfg.tnc.ax25_dest);
     while let Some(payload) = out_rx.blocking_recv() {
@@ -268,7 +275,7 @@ fn writer_loop(cfg: Config, state: Arc<LinkState>, mut out_rx: mpsc::Receiver<Ve
         let wire = if cfg.tnc.ax25 {
             ax25::wrap_ui(&src, &dest, &payload)
         } else {
-            payload
+            payload.clone()
         };
         let encoded = kiss::encode_frame(&wire);
 
@@ -278,7 +285,9 @@ fn writer_loop(cfg: Config, state: Arc<LinkState>, mut out_rx: mpsc::Receiver<Ve
                 let mut slot = state.writer.lock();
                 if let Some(w) = slot.as_mut() {
                     match w.write_all(&encoded).and_then(|_| w.flush()) {
-                        Ok(()) => {}
+                        Ok(()) => {
+                            let _ = keyed.send(payload.clone());
+                        }
                         Err(e) => {
                             tracing::warn!("tnc: write failed: {e}");
                             *slot = None;
