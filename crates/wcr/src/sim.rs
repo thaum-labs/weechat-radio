@@ -319,6 +319,8 @@ pub fn encode_over_air(env: &Envelope) -> Vec<u8> {
 pub struct TimedKey {
     pub station: u64,
     pub at: Instant,
+    /// When the node handed the frame to this modem over KISS.
+    pub handed: Instant,
     pub payload: Vec<u8>,
     /// Carrier sense was on when the frame keyed.
     pub csma: bool,
@@ -356,7 +358,7 @@ pub struct TimedOpts {
 }
 
 struct TimedState {
-    queue: std::collections::VecDeque<Vec<u8>>,
+    queue: std::collections::VecDeque<(Vec<u8>, Instant)>,
     keying: bool,
     keyed_until: Option<Instant>,
     heard_at: Option<Instant>,
@@ -475,7 +477,7 @@ pub async fn mock_modem73_timed(
         let mut burst_left = 0u8;
         loop {
             let next = tx_st.lock().expect("timed").queue.pop_front();
-            let Some(payload) = next else {
+            let Some((payload, handed)) = next else {
                 burst_left = 0;
                 tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
@@ -523,6 +525,7 @@ pub async fn mock_modem73_timed(
             tx_log.lock().expect("timed log").push(TimedKey {
                 station,
                 at: Instant::now(),
+                handed,
                 payload: payload.clone(),
                 csma,
                 cap,
@@ -561,7 +564,10 @@ pub async fn mock_modem73_timed(
                                 Ok(0) | Err(_) => break,
                                 Ok(n) => {
                                     for payload in dec.push(&buf[..n]) {
-                                        st.lock().expect("timed").queue.push_back(payload);
+                                        st.lock()
+                                            .expect("timed")
+                                            .queue
+                                            .push_back((payload, Instant::now()));
                                     }
                                 }
                             }

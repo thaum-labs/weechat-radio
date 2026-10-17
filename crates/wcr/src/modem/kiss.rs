@@ -5,7 +5,7 @@ use crate::error::{Error, Result};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 
 pub const FEND: u8 = 0xC0;
 pub const FESC: u8 = 0xDB;
@@ -102,20 +102,35 @@ impl KissDecoder {
 
 pub struct KissClient {
     pub tx: mpsc::Sender<Vec<u8>>,
+    /// Each frame as it is written to the modem.
+    keyed: broadcast::Sender<Vec<u8>>,
 }
 
 impl Clone for KissClient {
     fn clone(&self) -> Self {
         Self {
             tx: self.tx.clone(),
+            keyed: self.keyed.clone(),
         }
     }
 }
 
+/// A feed of the frames written to the modem, for [`KissClient::keyed`].
+pub fn keyed_feed() -> broadcast::Sender<Vec<u8>> {
+    broadcast::channel(256).0
+}
+
 impl KissClient {
-    /// Wrap an already-running transport (Bluetooth / serial link thread).
-    pub fn from_sender(tx: mpsc::Sender<Vec<u8>>) -> Self {
-        Self { tx }
+    /// Wrap an already-running transport (Bluetooth / serial link thread),
+    /// whose writer passes each frame it writes to `keyed`.
+    pub fn from_sender(tx: mpsc::Sender<Vec<u8>>, keyed: broadcast::Sender<Vec<u8>>) -> Self {
+        Self { tx, keyed }
+    }
+
+    /// Frames as they go to the modem. The air queue and the receipt path
+    /// hand frames over long before that on a busy channel.
+    pub fn keyed(&self) -> broadcast::Receiver<Vec<u8>> {
+        self.keyed.subscribe()
     }
 
     pub async fn connect(addr: &str) -> Result<(Self, mpsc::Receiver<Vec<u8>>)> {
@@ -128,9 +143,10 @@ impl KissClient {
         let (read, write) = stream.into_split();
         let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>(64);
         let (in_tx, in_rx) = mpsc::channel::<Vec<u8>>(64);
-        tokio::spawn(writer(write, out_rx));
+        let keyed = keyed_feed();
+        tokio::spawn(writer(write, out_rx, keyed.clone()));
         tokio::spawn(reader(read, in_tx));
-        Ok((Self { tx: out_tx }, in_rx))
+        Ok((Self { tx: out_tx, keyed }, in_rx))
     }
 
     pub async fn send(&self, payload: &[u8]) -> Result<()> {
@@ -164,7 +180,11 @@ pub fn note_keyed(payload: &[u8]) {
     }
 }
 
-async fn writer(mut write: OwnedWriteHalf, mut rx: mpsc::Receiver<Vec<u8>>) {
+async fn writer(
+    mut write: OwnedWriteHalf,
+    mut rx: mpsc::Receiver<Vec<u8>>,
+    keyed: broadcast::Sender<Vec<u8>>,
+) {
     while let Some(payload) = rx.recv().await {
         note_keyed(&payload);
         let frame = encode_frame(&payload);
@@ -172,6 +192,7 @@ async fn writer(mut write: OwnedWriteHalf, mut rx: mpsc::Receiver<Vec<u8>>) {
             break;
         }
         let _ = write.flush().await;
+        let _ = keyed.send(payload);
     }
 }
 

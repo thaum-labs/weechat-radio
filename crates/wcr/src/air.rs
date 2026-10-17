@@ -372,7 +372,8 @@ struct QueueInner {
     /// Set only by the mail lease. An ACK's `resume` clears `paused`, not this.
     mail_lease: bool,
     /// When a mail lease last started or ended (unix seconds, 0 for never).
-    /// The beacon counts it as traffic.
+    /// The burst goes to the modem at its start; the receiver answers after
+    /// its end, and a due beacon waits for that.
     last_mail: u32,
     /// Widest frame of each item handed to the modem, and until when it may
     /// still be waiting there (`NARROW_MODE_WAIT`).
@@ -441,6 +442,16 @@ impl AirQueue {
 
     pub fn depth(&self) -> usize {
         self.inner.lock().items.len()
+    }
+
+    /// `id` is still waiting here, not yet handed to the modem.
+    pub fn holds(&self, id: MsgId) -> bool {
+        self.inner.lock().items.iter().any(|x| x.msg_id == id)
+    }
+
+    /// A frame other than a beacon is waiting here.
+    pub fn holds_traffic(&self) -> bool {
+        self.inner.lock().items.iter().any(|x| !x.beacon)
     }
 
     pub fn pop_ready(&self) -> Option<AirItem> {
@@ -1361,7 +1372,7 @@ mod tests {
     }
 
     #[test]
-    fn a_mail_lease_is_traffic_for_the_beacon() {
+    fn a_mail_lease_is_stamped_for_the_beacon() {
         let q = AirQueue::new();
         assert_eq!(q.last_mail(), 0, "no mail yet");
         let before = crate::proto::now_ts();
