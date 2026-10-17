@@ -415,6 +415,10 @@ pub struct RfConfig {
     pub beacon_jitter_s: u32,
     /// Randomise ARQ retry hold (±25%).
     pub retry_jitter: bool,
+    /// Our own lines sent this many seconds after start wait until another
+    /// station has been heard: a neighbour started at the same time may not
+    /// be listening yet. `0` sends them at once.
+    pub startup_hold_s: u32,
     /// Unacked outbound older than this is marked `[no]` instead of being
     /// keyed again after a restart. `0` disables the limit.
     pub outbound_max_age_secs: u32,
@@ -440,6 +444,7 @@ impl Default for RfConfig {
             ack_dither_ms: 800,
             beacon_jitter_s: 15,
             retry_jitter: true,
+            startup_hold_s: crate::relay::STARTUP_HOLD_S,
             outbound_max_age_secs: 3600,
             frequency_khz: 0,
         }

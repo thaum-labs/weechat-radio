@@ -720,6 +720,8 @@ async fn the_first_beacon_waits_for_the_reply_to_our_mail() {
 /// the gateway at real hf-poor airtime, with modem carrier sense stuck busy
 /// (it holds a frame up to 30 s, then keys anyway), as in QA's simulator.
 /// The mail must go out in one burst and reach Sent without a full resend.
+/// QA v0.1.94: the gateway beaconed 27 s into the burst. Neither station
+/// beacons from the first chunk until the gateway's acceptance.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_big_mail_with_stuck_carrier_sense_goes_in_one_burst() {
     let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
@@ -745,9 +747,33 @@ async fn a_big_mail_with_stuck_carrier_sense_goes_in_one_burst() {
     let row = row.expect("outbox row");
     let state = row.get("state").and_then(|x| x.as_str()).unwrap_or("");
     let posts = pair.posts.lock().unwrap().clone();
+    let log = pair.log.lock().unwrap().clone();
     pair.stop();
     assert_eq!(state, "sent", "row {row}\n{trace}");
     assert_eq!(posts.len(), 1, "gateway posts: {posts:?}");
+    let burst = log
+        .iter()
+        .find(|k| k.station == 1 && is_mail(&k.payload))
+        .map(|k| k.at)
+        .expect("the burst");
+    let accepted = log
+        .iter()
+        .find(|k| k.station == 2 && chunk_of(&k.payload).is_some_and(|(op, _, _)| op == 7))
+        .map(|k| k.at + k.len)
+        .expect("the gateway's acceptance");
+    let beacons: Vec<String> = log
+        .iter()
+        .filter(|k| k.at >= burst && k.at < accepted)
+        .filter(|k| {
+            wcr::proto::Envelope::decode(&k.payload)
+                .is_ok_and(|e| e.kind == wcr::proto::MsgType::Beacon)
+        })
+        .map(|k| format!("station {} at {:.0}s", k.station, (k.at - t0).as_secs_f64()))
+        .collect();
+    assert!(
+        beacons.is_empty(),
+        "beacons between the first chunk and the acceptance: {beacons:?}\n{trace}"
+    );
 }
 
 /// An IRC client on `port` as `nick` that keeps every line it reads.
@@ -801,7 +827,10 @@ async fn a_receipt_keyed_as_a_mail_starts_leaves_the_burst_alone() {
     gw_w.write_all(format!("PRIVMSG {SENDER} :before-the-mail\r\n").as_bytes())
         .await
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(120);
+    // Sent just after start, the line waits until the gateway hears the
+    // sender's first beacon, at most the start-up hold.
+    let deadline =
+        Instant::now() + Duration::from_secs(u64::from(wcr::relay::STARTUP_HOLD_S) + 120);
     while !sender_lines
         .lock()
         .unwrap()

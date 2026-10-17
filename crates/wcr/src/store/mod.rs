@@ -636,6 +636,20 @@ impl Store {
         Ok(out)
     }
 
+    /// When `id` is next due to go again, 0 for not at all.
+    pub fn hold_until(&self, id: &MsgId) -> Result<u32> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT hold_until FROM messages WHERE msg_id = ?1 AND suppressed = 0",
+                params![id.hex()],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?
+            .unwrap_or(0)
+            .max(0) as u32)
+    }
+
     pub fn set_hold(&self, id: &MsgId, until: u32, hops: u8) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(

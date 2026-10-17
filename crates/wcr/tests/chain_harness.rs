@@ -100,6 +100,8 @@ fn radio_cfg(callsign: &str, home: &Path, kiss: u16, ctrl: u16, irc: u16, status
     cfg.rf.ack_dither_ms = 0;
     cfg.rf.retry_jitter = false;
     cfg.rf.beacon_jitter_s = 0;
+    // These modems listen from the first instant: no start-up hold.
+    cfg.rf.startup_hold_s = 0;
     cfg.rf.emergency_dup_ms = 60_000;
     cfg.rf.frequency_khz = 144_950;
     cfg.normalize();
