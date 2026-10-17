@@ -38,6 +38,15 @@ const BUSY_CASE_SECS: u64 = 1_200;
 /// been up a while: past the node's neighbour warm-up, with every first
 /// beacon on the air.
 const WARMUP_SECS: u64 = 300;
+/// The beacon case on a channel that reads busy: two idle rounds.
+const NOISY_CASE_SECS: u64 = 900;
+/// Longest gap between two beacons on the air: the node's 10-minute ceiling,
+/// plus the modem's carrier-sense hold and a little queue time.
+const MAX_BEACON_GAP_SECS: u64 = 600 + 45;
+/// An idle gap is a pace (60 s ± 15 s) plus 4 minutes. The modem's stuck
+/// carrier sense moves each key by up to 30 s, and a beacon falling due just
+/// after a neighbour's frame decoded waits up to 10 s.
+const IDLE_GAP_MAX_SECS: u64 = 420;
 /// Most copies of one line a middle relay keys: its relay, one repeat, and
 /// one answer to the originator's retry.
 const MIDDLE_RELAY_CAP: usize = 3;
@@ -250,6 +259,16 @@ impl Chain {
 
     /// Like [`Chain::start`], with `drop_rx` losing chosen frames per link.
     async fn start_with(group: Option<&str>, drop_rx: Option<LinkDrop>) -> Self {
+        Self::start_on(group, drop_rx, 0).await
+    }
+
+    /// Like [`Chain::start`], on a channel whose modems read `noise_pct`
+    /// occupancy with nothing on the air.
+    async fn start_noisy(noise_pct: i32) -> Self {
+        Self::start_on(None, None, noise_pct).await
+    }
+
+    async fn start_on(group: Option<&str>, drop_rx: Option<LinkDrop>, noise_pct: i32) -> Self {
         let _setup = setup_lock().lock().await;
         let air = wcr::sim::SharedAir::new(0.0);
         let log: TimedLog = Arc::new(Mutex::new(Vec::new()));
@@ -259,6 +278,7 @@ impl Chain {
             collide: true,
             csma_stuck_ms: CSMA_STUCK_MS,
             rung_airtime: false,
+            noise_pct,
         };
         let mut prep = Vec::new();
         for (i, call) in CALLS.iter().enumerate() {
@@ -895,7 +915,8 @@ fn got_invite(client: &Client, chan: &str) -> bool {
 }
 
 /// A→E is four hops, one past a direct message's three. An invite carries
-/// its group's six, so E gets it and E's receipt comes back to A.
+/// its group's six, so E gets it and E's receipt comes back to A. No copy is
+/// lost at A's own modem.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn invite_reaches_the_far_end() {
     let mut chain = Chain::start(None).await;
@@ -911,6 +932,7 @@ async fn invite_reaches_the_far_end() {
         })
         .await;
     let marks = marks_for(&chain.clients[0], &id);
+    let dropped = chain.dropped();
     let trace = chain.trace();
     eprintln!("{trace}\n  marks {marks:?}");
     chain.stop();
@@ -919,6 +941,12 @@ async fn invite_reaches_the_far_end() {
         "E never got the invite, or A never got E's receipt: {marks:?}{trace}"
     );
     assert!(marks_move_forward(&marks), "marks moved back: {marks:?}");
+    // QA v0.1.93: the invite's first copy waited out the stuck carrier sense
+    // at A's modem while a roster repeat switched it to MFSK, and was dropped.
+    assert_eq!(
+        dropped, 0,
+        "modem dropped a frame wider than its mode{trace}"
+    );
 }
 
 /// QA could not score the beacon pace on v0.1.92: the countdown looked as if
@@ -926,9 +954,10 @@ async fn invite_reaches_the_far_end() {
 /// first idle beacon after the warm-up (the first countdown more than 2
 /// minutes ahead; warm-up and busy holds are never that long) must key within
 /// the carrier-sense hold of the countdown showing when it fell due. One that
-/// falls due while a neighbour is on the air waits a pace, and its countdown
-/// says so (`busy`). Nothing keys before the countdown, and the beacon comes
-/// at the idle pace (about 5 minutes after the one before).
+/// falls due just after a neighbour's frame waits until that frame is 10 s
+/// old, and its countdown says so (`busy`). Nothing keys before the countdown,
+/// and the beacon comes at the idle pace (about 5 minutes after the one
+/// before).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn each_beacon_keys_when_its_countdown_says() {
     let chain = Chain::start(None).await;
@@ -1038,10 +1067,78 @@ async fn each_beacon_keys_when_its_countdown_says() {
         if early {
             problems.push(format!("{call} keyed a beacon before its countdown"));
         }
-        // A busy hold adds a pace (at most 75 s) to the idle gap.
-        let max_gap = if busy { 500 } else { 420 };
-        if gap.is_some_and(|g| !(240..=max_gap).contains(&g)) {
+        if gap.is_some_and(|g| !(240..=IDLE_GAP_MAX_SECS).contains(&g)) {
             problems.push(format!("{call} idle gap {gap:?}s, not about 5 minutes"));
+        }
+    }
+    let trace = chain.trace();
+    chain.stop();
+    eprintln!("{report}");
+    assert!(problems.is_empty(), "{problems:?}{report}{trace}");
+}
+
+/// QA v0.1.93: every modem on the live chain read 99% busy for 45 minutes,
+/// quiet spells included, and no station keyed a single beacon. Each one fell
+/// due, was held a pace for the busy channel, then held again. On a quiet
+/// chain whose modems read 99% from the noise floor, with carrier sense stuck
+/// busy, every station must still beacon through the warm-up, then about
+/// every 5 minutes, and never more than 10 minutes apart.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn beacons_go_on_a_channel_that_reads_busy() {
+    let chain = Chain::start_noisy(99).await;
+    let warm_end = Instant::now();
+    let beacons = |st: usize| -> Vec<Instant> {
+        chain
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|k| k.station == st as u64 + 1 && !k.dropped)
+            .filter(|k| Envelope::decode(&k.payload).is_ok_and(|e| e.kind == MsgType::Beacon))
+            .map(|k| k.at)
+            .collect()
+    };
+    let idle_keyed = |st: usize| beacons(st).iter().filter(|t| **t > warm_end).count();
+    chain
+        .wait(NOISY_CASE_SECS, |_| {
+            (0..CALLS.len()).all(|i| idle_keyed(i) >= 2)
+        })
+        .await;
+    let mut report = String::new();
+    let mut problems = Vec::new();
+    for (i, call) in CALLS.iter().enumerate() {
+        let keyed = beacons(i);
+        let warm = keyed.iter().filter(|t| **t <= warm_end).count();
+        let gaps: Vec<u64> = keyed
+            .windows(2)
+            .map(|w| w[1].duration_since(w[0]).as_secs())
+            .collect();
+        // Gaps that end after the harness warm-up. The node's own warm-up
+        // beacons go a pace apart in its first 3 minutes, and each keys within
+        // the 30 s carrier-sense hold, so all of them are on the air by then.
+        let idle: Vec<u64> = keyed
+            .windows(2)
+            .filter(|w| w[1] > warm_end)
+            .map(|w| w[1].duration_since(w[0]).as_secs())
+            .collect();
+        report.push_str(&format!(
+            "\n  {call}: {warm} warm-up beacons, {} after, gaps {gaps:?}s",
+            keyed.len() - warm
+        ));
+        if !(2..=4).contains(&warm) {
+            problems.push(format!("{call} keyed {warm} beacons in the warm-up"));
+        }
+        if keyed.len() - warm < 2 {
+            problems.push(format!(
+                "{call} keyed {} beacons after the warm-up",
+                keyed.len() - warm
+            ));
+        }
+        if let Some(g) = gaps.iter().find(|g| **g > MAX_BEACON_GAP_SECS) {
+            problems.push(format!("{call} went {g}s between beacons"));
+        }
+        if idle.iter().any(|g| !(240..=IDLE_GAP_MAX_SECS).contains(g)) {
+            problems.push(format!("{call} idle gaps {idle:?}s, not about 5 minutes"));
         }
     }
     let trace = chain.trace();
