@@ -125,7 +125,7 @@
         <li>When an ACK comes back, it includes how strong they heard you. A good report steps the waveform back up.</li>
         <li>Lines that start with <code>!!</code> (emergency) go out twice, a moment apart, so a fade is less likely to take both.</li>
         <li>Group chat on HF is split into pieces. Any two of three pieces rebuild the message. If several internet gateways each hear a different piece, the hub stitches them.</li>
-        <li>If the frequency is already busy, the program waits for a gap (status bar <strong>PTT</strong> reads <code>wait</code>). Beacons go every 5 minutes on a quiet channel and never more than 10 minutes apart. Traffic holds them for 10 minutes, and high occupancy only while frames are being decoded. Group ACKs and retries are staggered so they do not all key at once.</li>
+        <li>If the frequency is already busy, the program waits for a gap (status bar <strong>PTT</strong> reads <code>wait</code>). A station’s first three beacons go about a minute apart, then one every 5 minutes. A due beacon waits until an exchange in progress is over (a line and its receipt, a mail and its acceptance), and high occupancy holds it only while frames are being decoded. Beacons still go within 10 minutes of each other, plus at most one exchange. Lines sent in the first two minutes after start wait until another station has been heard. Group ACKs and retries are staggered so they do not all key at once.</li>
       </ol>
 
       <h2>Busy channel</h2>

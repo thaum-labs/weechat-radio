@@ -83,7 +83,10 @@ pub struct StatusSnapshot {
     /// Full wait for this beacon cycle (seconds).
     #[serde(default)]
     pub beacon_span: u32,
-    /// `vox`, `off`, or empty while a beacon is scheduled.
+    /// `vox`, `off`, or empty while a beacon is scheduled. `busy`: due, held
+    /// while frames decode on a busy channel. `exchange`: due, waiting for a
+    /// line's receipt or a mail's acceptance. `pending`: handed over, not yet
+    /// at the modem.
     #[serde(default)]
     pub beacon_note: String,
     /// Unix time of the next relay or ARQ retry hold. 0 = none.
@@ -229,6 +232,8 @@ impl StatusSnapshot {
             "vox" => DueLane::idle("off · vox"),
             "off" => DueLane::idle("off"),
             _ if self.beacon_due == 0 => DueLane::idle("—"),
+            "pending" => DueLane::live("pending".into(), 0.0),
+            "exchange" => DueLane::live("after exchange".into(), 0.0),
             "busy" => DueLane::live(
                 format!("busy {}", countdown_label(self.beacon_due, now)),
                 remaining_frac(self.beacon_due, self.beacon_span, now),
@@ -574,6 +579,10 @@ mod tests {
         assert_eq!(lane.label, "0:30");
         s.beacon_note = "busy".into();
         assert_eq!(s.beacon_lane(170.0).label, "busy 0:30");
+        s.beacon_note = "exchange".into();
+        assert_eq!(s.beacon_lane(210.0).label, "after exchange");
+        s.beacon_note = "pending".into();
+        assert_eq!(s.beacon_lane(215.0).label, "pending");
         s.beacon_note.clear();
         s.set_hold_due(250, "relay", 200);
         assert_eq!(s.hold_span, 50);
