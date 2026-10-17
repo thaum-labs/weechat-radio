@@ -708,18 +708,19 @@ impl Exchanges {
 }
 
 /// Own lines handed over this soon after start wait until another station
-/// has been heard. A neighbour started at the same time may not be listening
-/// yet, and every station's first beacon is on the air within about this
-/// long of its start.
+/// has been heard (`rf.startup_hold_s`). A neighbour started at the same time
+/// may not be listening yet, and every station's first beacon is on the air
+/// within about this long of its start.
 pub const STARTUP_HOLD_S: u32 = BEACON_MAX_S as u32;
 
-/// Seconds an own line still waits after start, 0 to go now.
-/// `heard_other`: a frame from another station has decoded here.
-pub fn startup_hold_s(now: u32, started: u32, heard_other: bool) -> u32 {
+/// Seconds an own line still waits after start, 0 to go now. `hold` is the
+/// configured hold; `heard_other`: a frame from another station has decoded
+/// here.
+pub fn startup_hold_s(now: u32, started: u32, hold: u32, heard_other: bool) -> u32 {
     if heard_other {
         return 0;
     }
-    started.saturating_add(STARTUP_HOLD_S).saturating_sub(now)
+    started.saturating_add(hold).saturating_sub(now)
 }
 
 /// Next identity-beacon wait, 60 s ± jitter, clamped to 15–120 s.
@@ -1921,17 +1922,15 @@ mod tests {
 
     #[test]
     fn own_lines_wait_for_another_station_after_start() {
-        let start = 10_000;
+        let (start, hold) = (10_000, STARTUP_HOLD_S);
+        assert_eq!(startup_hold_s(start + 10, start, hold, false), hold - 10);
         assert_eq!(
-            startup_hold_s(start + 10, start, false),
-            STARTUP_HOLD_S - 10
-        );
-        assert_eq!(
-            startup_hold_s(start + 10, start, true),
+            startup_hold_s(start + 10, start, hold, true),
             0,
             "someone was heard"
         );
-        assert_eq!(startup_hold_s(start + STARTUP_HOLD_S, start, false), 0);
+        assert_eq!(startup_hold_s(start + hold, start, hold, false), 0);
+        assert_eq!(startup_hold_s(start + 10, start, 0, false), 0, "turned off");
     }
 
     #[test]

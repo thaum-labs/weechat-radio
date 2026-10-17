@@ -53,13 +53,12 @@ const IDLE_GAP_MAX_SECS: u64 = 420;
 /// Most copies of one line a middle relay keys: its relay, one repeat, and
 /// one answer to the originator's retry.
 const MIDDLE_RELAY_CAP: usize = 3;
-/// The traffic case runs this long from start: the warm-up, then two idle
-/// rounds after E's line.
-const TRAFFIC_PACE_SECS: u64 = 1_140;
-/// An idle gap with traffic on the chain: about 5 minutes, plus one
-/// exchange the beacon waits for (a receipt's round trip, then the rest of
-/// the receipts), and the carrier-sense wait. The ceiling alone is 600 s.
-const IDLE_GAP_TRAFFIC_MAX_SECS: u64 = 300 + 15 + 75 + 35 + 15;
+/// Longest the traffic case waits for every station's fifth beacon: the
+/// warm-up, then two idle rounds after E's line.
+const TRAFFIC_PACE_SECS: u64 = 1_380;
+/// With traffic on the chain a beacon at the 10-minute ceiling waits for one
+/// more exchange at most: about 70 s at hf-poor.
+const MAX_BEACON_GAP_TRAFFIC_SECS: u64 = MAX_BEACON_GAP_SECS + 75;
 
 /// Reserved ports are free again until the nodes bind them, so chains start
 /// one at a time. Once up, the cases run side by side on their own air.
@@ -1782,8 +1781,8 @@ async fn a_line_sent_just_after_start_waits_for_another_station() {
 /// beaconed only at the 10-minute ceiling. Here every modem reads 99% busy,
 /// A sends a group line just after start and E another six minutes in.
 /// Each station must still key three warm-up beacons in its first seven
-/// minutes, then beacon about every five, waiting at most for an exchange in
-/// progress.
+/// minutes, then beacon about 5 minutes after the last once no exchange
+/// holds it, and never past the 10-minute ceiling and one more exchange.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn beacons_keep_their_pace_through_traffic() {
     let mut chain = Chain::start_cold(Some("net"), 99).await;
@@ -1795,7 +1794,6 @@ async fn beacons_keep_their_pace_through_traffic() {
     chain.clients[4]
         .send("PRIVMSG #net :g2-six-minutes-in")
         .await;
-    tokio::time::sleep_until((t0 + Duration::from_secs(TRAFFIC_PACE_SECS)).into()).await;
     let beacons = |st: usize| -> Vec<Instant> {
         chain
             .log
@@ -1807,6 +1805,10 @@ async fn beacons_keep_their_pace_through_traffic() {
             .map(|k| k.handed)
             .collect()
     };
+    let left = TRAFFIC_PACE_SECS.saturating_sub(t0.elapsed().as_secs());
+    chain
+        .wait(left, |_| (0..CALLS.len()).all(|i| beacons(i).len() >= 5))
+        .await;
     let mut report = String::new();
     let mut problems = Vec::new();
     for (i, call) in CALLS.iter().enumerate() {
@@ -1827,12 +1829,18 @@ async fn beacons_keep_their_pace_through_traffic() {
             ));
         }
         let idle: Vec<u64> = gaps.iter().skip(2).copied().collect();
-        if idle.is_empty() {
-            problems.push(format!("{call} keyed no beacon after its warm-up"));
-        }
-        if let Some(g) = idle.iter().find(|g| **g > IDLE_GAP_TRAFFIC_MAX_SECS) {
+        if idle.len() < 2 {
             problems.push(format!(
-                "{call} went {g}s between beacons, not about 5 minutes"
+                "{call} keyed {} beacons after its warm-up",
+                idle.len()
+            ));
+        }
+        if !idle.iter().any(|g| *g <= IDLE_GAP_MAX_SECS) {
+            problems.push(format!("{call} idle gaps {idle:?}s, never about 5 minutes"));
+        }
+        if let Some(g) = gaps.iter().find(|g| **g > MAX_BEACON_GAP_TRAFFIC_SECS) {
+            problems.push(format!(
+                "{call} went {g}s between beacons, past the ceiling and one exchange"
             ));
         }
     }
