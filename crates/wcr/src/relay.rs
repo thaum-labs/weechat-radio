@@ -316,6 +316,15 @@ pub fn neighbours_hold(neighbours: &[String], holders: &[String], came_relayed: 
         .all(|n| holders.iter().any(|h| h.eq_ignore_ascii_case(n)))
 }
 
+/// A receipt shows every neighbour has a line we relay, and `handed` copies
+/// of it have gone to our air queue (`retries` on its row). Only a repeat
+/// queued there may then be dropped: the first copy can still be waiting
+/// too, and the first relay always goes. A station beyond us whose beacons
+/// we all lost looks the same as the end of the chain.
+pub fn queued_repeat_unneeded(handed: u32) -> bool {
+    handed > 1
+}
+
 /// Most copies of one line a relay keys: its relay, one repeat, and one
 /// answer to the originator's retry. Receipts are not capped: each hop's
 /// repeats are what carries a far member's receipt home.
@@ -1755,6 +1764,19 @@ mod tests {
             late + BEACON_MAX_GAP_S,
             "never more than ten minutes between beacons"
         );
+    }
+
+    #[test]
+    fn a_receipt_never_drops_the_first_relay_from_the_queue() {
+        assert!(
+            !queued_repeat_unneeded(0),
+            "nothing handed to the queue yet"
+        );
+        assert!(
+            !queued_repeat_unneeded(1),
+            "the first relay may still be queued"
+        );
+        assert!(queued_repeat_unneeded(2), "a repeat is queued");
     }
 
     #[test]

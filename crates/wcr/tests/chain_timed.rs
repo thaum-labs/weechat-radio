@@ -19,7 +19,7 @@ use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::TcpStream;
 use wcr::config::Config;
 use wcr::modes::Mode;
-use wcr::proto::{Envelope, MsgType};
+use wcr::proto::{Callsign, Envelope, Flags, MsgType, FLAG_GROUP, FLAG_REQ_ACK};
 use wcr::sim::{LinkDrop, TimedLog, TimedOpts};
 
 const CALLS: [&str; 5] = ["G4AAA", "M0BBB", "2E0CCC", "M0DDD", "G4EEE"];
@@ -407,37 +407,7 @@ impl Chain {
     }
 
     fn trace(&self) -> String {
-        let mut out = String::new();
-        for k in self.log.lock().unwrap().iter() {
-            let what = match Envelope::decode(&k.payload) {
-                Ok(env) if env.kind == MsgType::Ack => format!(
-                    "ack {} by {} of {} hops {}",
-                    env.msg_id.hex(),
-                    env.origin,
-                    env.acked_id().map(|i| i.hex()).unwrap_or_default(),
-                    env.hops_left
-                ),
-                Ok(env) if env.kind == MsgType::Beacon => format!("beacon {}", env.origin),
-                Ok(env) => format!(
-                    "{:?} {} {}>{} hops {} {}",
-                    env.kind,
-                    env.msg_id.hex(),
-                    env.origin,
-                    env.dest,
-                    env.hops_left,
-                    env.body_text().chars().take(24).collect::<String>()
-                ),
-                Err(_) => format!("{} B", k.payload.len()),
-            };
-            out.push_str(&format!(
-                "\n  {:7.1}s {} cap={} {what}{}",
-                k.at.saturating_duration_since(self.t0).as_secs_f64(),
-                CALLS[(k.station - 1) as usize],
-                k.cap,
-                if k.dropped { " DROPPED" } else { "" }
-            ));
-        }
-        out
+        trace_of(&self.log, self.t0)
     }
 
     fn stop(self) {
@@ -445,6 +415,41 @@ impl Chain {
             n.abort();
         }
     }
+}
+
+/// Every frame keyed on `log`, with its time from `t0`.
+fn trace_of(log: &TimedLog, t0: Instant) -> String {
+    let mut out = String::new();
+    for k in log.lock().unwrap().iter() {
+        let what = match Envelope::decode(&k.payload) {
+            Ok(env) if env.kind == MsgType::Ack => format!(
+                "ack {} by {} of {} hops {}",
+                env.msg_id.hex(),
+                env.origin,
+                env.acked_id().map(|i| i.hex()).unwrap_or_default(),
+                env.hops_left
+            ),
+            Ok(env) if env.kind == MsgType::Beacon => format!("beacon {}", env.origin),
+            Ok(env) => format!(
+                "{:?} {} {}>{} hops {} {}",
+                env.kind,
+                env.msg_id.hex(),
+                env.origin,
+                env.dest,
+                env.hops_left,
+                env.body_text().chars().take(24).collect::<String>()
+            ),
+            Err(_) => format!("{} B", k.payload.len()),
+        };
+        out.push_str(&format!(
+            "\n  {:7.1}s {} cap={} {what}{}",
+            k.at.saturating_duration_since(t0).as_secs_f64(),
+            CALLS[(k.station - 1) as usize],
+            k.cap,
+            if k.dropped { " DROPPED" } else { "" }
+        ));
+    }
+    out
 }
 
 /// Delivery states for one line, in the order the sender's client got them.
@@ -667,6 +672,129 @@ async fn a_relay_that_never_heard_beyond_keeps_relaying() {
         dropped, 0,
         "modem dropped a frame wider than its mode{trace}"
     );
+}
+
+/// G1 on ubuntu CI for the v0.1.94 release. Each of D's beacons was lost at
+/// C (C keying, or B keying over D), so C knew only B. B's modem keyed its
+/// relay of A's line and its own receipt back to back. The receipt reached C
+/// while C's first relay was still in its air queue, and C, taking itself
+/// for the end of the chain, dropped that copy: D and E never got the line.
+/// Only C runs here, and B's two frames are played to it as they went on CI.
+/// C's modem reads its noise floor busy, so the relay always waits out a
+/// congested slot in the queue, and its carrier sense is not stuck, so C's
+/// own receipt waits for B's to end and C hears it. At the end of a chain it
+/// is one relay and no repeats.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_relay_that_knows_one_neighbour_still_relays_once() {
+    let setup = setup_lock().lock().await;
+    let air = wcr::sim::SharedAir::new(0.0);
+    let log: TimedLog = Arc::new(Mutex::new(Vec::new()));
+    let opts = TimedOpts {
+        frame_ms: FRAME_MS,
+        count_tx: true,
+        collide: true,
+        csma_stuck_ms: 0,
+        rung_airtime: false,
+        noise_pct: 99,
+    };
+    let c = 3;
+    let home = scratch(CALLS[2]);
+    let store = wcr::store::Store::open(&home.join("store.db"), 72, 10_000).unwrap();
+    let members: Vec<String> = CALLS.iter().map(|s| s.to_string()).collect();
+    store.group_create("net", &members).unwrap();
+    drop(store);
+    let (kiss, ctrl) =
+        wcr::sim::mock_modem73_timed(air.clone(), c, hear_set(c), None, opts, log.clone())
+            .await
+            .unwrap();
+    let ports = reserve_ports(2).await;
+    let cfg = radio_cfg(CALLS[2], &home, kiss, ctrl, ports[0], ports[1]);
+    let node = tokio::spawn(async move { wcr::node::run_node(cfg, false).await });
+    wait_tcp(ports[0], 20).await;
+    wait_radio(&ports[1..]).await;
+    drop(setup);
+    let t0 = Instant::now();
+
+    // C uses its neighbour list once every neighbour has had time to beacon.
+    // B's frames are played just after one of C's own beacons, while C
+    // listens: its next one is at least 45 s away, and none follows traffic.
+    let warm = t0 + Duration::from_secs(u64::from(wcr::relay::NEIGHBOUR_WARMUP_S) + 5);
+    let deadline = warm + Duration::from_secs(400);
+    loop {
+        let end = log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|k| k.station == c)
+            .map(|k| k.at + k.len)
+            .max();
+        if end.is_some_and(|e| e > warm && Instant::now() >= e + Duration::from_secs(1)) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "C never beaconed after its warm-up{}",
+            trace_of(&log, t0)
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    let line = Envelope::new_msg(
+        Callsign::parse(CALLS[0]).unwrap(),
+        Callsign::from_raw("NET"),
+        1,
+        b"g1-past-a-neighbour-never-heard".to_vec(),
+        6,
+        Flags::new().with(FLAG_REQ_ACK).with(FLAG_GROUP),
+    )
+    .unwrap();
+    let mut relayed = line.clone();
+    relayed.hops_left = 5;
+    let mut receipt = Envelope::ack_for(&line, Callsign::parse(CALLS[1]).unwrap(), 1, None);
+    receipt.hops_left = 6;
+    key_as(&air, &log, 2, &relayed).await;
+    key_as(&air, &log, 2, &receipt).await;
+
+    // Its slot and the congested wait, then long enough for a repeat a retry
+    // interval later.
+    let copies = || {
+        log.lock()
+            .unwrap()
+            .iter()
+            .filter(|k| {
+                k.station == c
+                    && Envelope::decode(&k.payload).is_ok_and(|e| e.msg_id == line.msg_id)
+            })
+            .count()
+    };
+    let deadline = Instant::now() + Duration::from_secs(90);
+    while copies() == 0 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    tokio::time::sleep(Duration::from_secs(90)).await;
+    let n = copies();
+    let trace = trace_of(&log, t0);
+    eprintln!("{trace}");
+    node.abort();
+    assert_eq!(n, 1, "C keyed the line {n} times, not one relay{trace}");
+}
+
+/// Play `env` as if `station` keyed it: the receivers hear the channel busy
+/// for a frame, then get it.
+async fn key_as(air: &wcr::sim::SharedAir, log: &TimedLog, station: u64, env: &Envelope) {
+    let payload = wcr::sim::encode_over_air(env);
+    let len = Duration::from_millis(FRAME_MS);
+    log.lock().unwrap().push(wcr::sim::TimedKey {
+        station,
+        at: Instant::now(),
+        payload: payload.clone(),
+        csma: true,
+        cap: 170,
+        dropped: false,
+        len,
+    });
+    tokio::time::sleep(len).await;
+    air.send_from(station, payload);
 }
 
 /// G3 on the live chain: C keys a group line, B and D both relay it and
