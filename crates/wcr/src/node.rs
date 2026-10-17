@@ -977,6 +977,11 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             }
             frame = recv_opt(&mut kiss_rx) => {
                 if let Some(payload) = frame {
+                    // A frame off KISS decoded here, mail included. The beacon's
+                    // busy hold counts these, not the modem's occupancy alone.
+                    if let Some(s) = rt.sense() {
+                        s.note_decode();
+                    }
                     if let Some(incoming) = crate::mail::try_decode(&payload) {
                         rt.last_traffic
                             .store(crate::proto::now_ts(), std::sync::atomic::Ordering::Relaxed);

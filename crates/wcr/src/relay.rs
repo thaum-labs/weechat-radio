@@ -217,9 +217,12 @@ pub fn copy_wants_new_ack(incoming_hops: u8, stored_hops: u8) -> bool {
 }
 
 /// A duplicate from the originator's side is not a relay further along.
-/// It must not cancel our pending copy of a frame that walks hop by hop.
+/// It must not cancel our pending copy, of a frame that walks hop by hop or
+/// of a direct line: a modem whose carrier sense sticks keys a line and its
+/// first retry back to back, before our copy has gone.
 pub fn duplicate_suppresses(env: &Envelope, incoming_hops: u8, stored_hops: u8) -> bool {
-    !((keeps_walking(env) || closed_group_walks(env)) && origin_retry(incoming_hops, stored_hops))
+    !((keeps_walking(env) || closed_group_walks(env) || is_direct_line(env))
+        && origin_retry(incoming_hops, stored_hops))
 }
 
 /// A closed-group line relayed for its members. One copy is often lost at
@@ -1009,7 +1012,52 @@ mod tests {
         let mut dm = bulletin.clone();
         dm.dest = Callsign::parse("M0DDD").unwrap();
         dm.flags = Flags::new();
-        assert!(duplicate_suppresses(&dm, 5, 4));
+        assert!(!duplicate_suppresses(&dm, 5, 4), "the sender's retry");
+        assert!(duplicate_suppresses(&dm, 4, 4));
+        assert!(duplicate_suppresses(&dm, 3, 4));
+    }
+
+    /// QA v0.1.93: A's stuck modem keyed an invite and its first retry back to
+    /// back. B took the retry for a relay further on and dropped its own copy,
+    /// so the invite went on only after A's next retry.
+    #[test]
+    fn the_senders_retry_keeps_our_relay_of_a_direct_line() {
+        let store = Arc::new(Store::open_memory().unwrap());
+        let engine = Engine::new(store.clone(), "M0BBB".into());
+        let line = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::parse("G4EEE").unwrap(),
+            1,
+            b"You are invited to #qa".to_vec(),
+            6,
+            Flags::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            engine.on_rx(&line, "rf", None, None).unwrap().action,
+            Action::Accept
+        );
+        assert_eq!(
+            engine.on_rx(&line, "rf", None, None).unwrap().action,
+            Action::Suppress
+        );
+        assert!(
+            store
+                .hold_due(u32::MAX)
+                .unwrap()
+                .iter()
+                .any(|m| m.env.msg_id == line.msg_id),
+            "our relay still goes"
+        );
+        // A copy with as few hops as ours is a relay beside or beyond us.
+        let mut relayed = line.clone();
+        relayed.hops_left = 5;
+        engine.on_rx(&relayed, "rf", None, None).unwrap();
+        assert!(!store
+            .hold_due(u32::MAX)
+            .unwrap()
+            .iter()
+            .any(|m| m.env.msg_id == line.msg_id));
     }
 
     #[test]
@@ -1432,7 +1480,8 @@ mod tests {
         let mut dm = group.clone();
         dm.flags = Flags::new();
         assert!(!closed_group_walks(&dm));
-        assert!(duplicate_suppresses(&dm, 5, 4));
+        assert!(!duplicate_suppresses(&dm, 5, 4));
+        assert!(duplicate_suppresses(&dm, 3, 4));
         assert!(!closed_group_walks(&{
             let mut b = group.clone();
             b.dest = Callsign::from_raw("BULLETIN");
