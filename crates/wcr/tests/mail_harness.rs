@@ -28,6 +28,16 @@ fn scratch(name: &str) -> PathBuf {
     p
 }
 
+/// Reserved ports are free again until the nodes bind them, and the mock
+/// modems and hub of a pair starting alongside can be given one. A node whose
+/// status port is taken runs without it, and its mail never shows as started.
+/// Pairs start one at a time.
+fn setup_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+    &LOCK
+}
+
 async fn reserve_ports(n: usize) -> Vec<u16> {
     let mut held = Vec::with_capacity(n);
     for _ in 0..n {
@@ -178,6 +188,7 @@ impl Pair {
         hub_delay: Duration,
         tweak: impl Fn(usize, &mut Config),
     ) -> Self {
+        let setup = setup_lock().lock().await;
         let air = wcr::sim::SharedAir::new(0.0);
         let log: TimedLog = Arc::new(Mutex::new(Vec::new()));
         let posts = Arc::new(Mutex::new(Vec::new()));
@@ -220,6 +231,7 @@ impl Pair {
         for p in [ports[1], ports[3]] {
             wait_tcp(p, 20).await;
         }
+        drop(setup);
         let pair = Self {
             log,
             posts,
