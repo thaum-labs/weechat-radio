@@ -801,7 +801,10 @@ async fn a_receipt_keyed_as_a_mail_starts_leaves_the_burst_alone() {
     gw_w.write_all(format!("PRIVMSG {SENDER} :before-the-mail\r\n").as_bytes())
         .await
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(120);
+    // Sent just after start, the line waits until the gateway hears the
+    // sender's first beacon, at most the start-up hold.
+    let deadline =
+        Instant::now() + Duration::from_secs(u64::from(wcr::relay::STARTUP_HOLD_S) + 120);
     while !sender_lines
         .lock()
         .unwrap()
