@@ -350,6 +350,9 @@ pub struct TimedOpts {
     /// `frame_ms` is the RDM-600S frame. A slower rung keys a longer frame,
     /// as on the air: RDM-300S about 1.85 times, MFSK-32R 1.2 times.
     pub rung_airtime: bool,
+    /// `occupancy_pct` reported with nothing decodable on the air: the noise
+    /// floor. 0 for a clean channel; QA's live chain read 99.
+    pub noise_pct: i32,
 }
 
 struct TimedState {
@@ -638,7 +641,11 @@ pub async fn mock_modem73_timed(
                                         "tx_frame_count": g.tx_count,
                                         "last_snr": 12.0,
                                         "audio_connected": true,
-                                        "occupancy_pct": if rx { 80 } else { 0 },
+                                        "occupancy_pct": if rx {
+                                            opts.noise_pct.max(80)
+                                        } else {
+                                            opts.noise_pct
+                                        },
                                         "input_level_db": if rx { -12.0 } else { -48.0 },
                                         "output_level_db": -80.0,
                                     })

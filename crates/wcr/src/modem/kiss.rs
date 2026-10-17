@@ -134,7 +134,6 @@ impl KissClient {
     }
 
     pub async fn send(&self, payload: &[u8]) -> Result<()> {
-        note_beacon(payload);
         self.tx
             .send(payload.to_vec())
             .await
@@ -142,18 +141,32 @@ impl KissClient {
     }
 }
 
-/// Log each beacon as it goes to the modem, so its pace and its hold after
-/// traffic can be checked against the station log's timestamps.
-fn note_beacon(payload: &[u8]) {
-    if let Ok(env) = crate::proto::Envelope::decode(payload) {
-        if env.kind == crate::proto::MsgType::Beacon {
-            tracing::info!("beacon to modem: {}", env.origin);
-        }
+/// Log each beacon and receipt as it goes to the modem, so their pace can be
+/// checked against the station log's timestamps. A receipt names the line it
+/// is for (the line's msgid), the line's sender and whose receipt it is. Called
+/// where frames are written: the air queue hands frames to the writer
+/// directly, not through [`KissClient::send`].
+pub fn note_keyed(payload: &[u8]) {
+    use crate::proto::MsgType;
+    let Ok(env) = crate::proto::Envelope::decode(payload) else {
+        return;
+    };
+    match env.kind {
+        MsgType::Beacon => tracing::info!("beacon to modem: {}", env.origin),
+        MsgType::Ack => tracing::info!(
+            "receipt to modem: line {} from {}, receipt by {}, {} hops left",
+            env.acked_id().map(|id| id.hex()).unwrap_or_default(),
+            env.dest,
+            env.origin,
+            env.hops_left
+        ),
+        _ => {}
     }
 }
 
 async fn writer(mut write: OwnedWriteHalf, mut rx: mpsc::Receiver<Vec<u8>>) {
     while let Some(payload) = rx.recv().await {
+        note_keyed(&payload);
         let frame = encode_frame(&payload);
         if write.write_all(&frame).await.is_err() {
             break;
@@ -204,6 +217,82 @@ mod tests {
             encode_param(CMD_PERSIST, FEND),
             vec![FEND, 0x02, FESC, TFEND, FEND]
         );
+    }
+
+    /// Captures what the station log would show.
+    #[derive(Clone, Default)]
+    struct LogBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogBuf {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// v0.1.93 logged beacons in `send`, which the air queue never calls, so
+    /// no queued beacon was logged. Frames handed to the writer directly, as
+    /// the air queue does, and through `send` must both be logged.
+    #[tokio::test]
+    async fn beacons_and_receipts_are_logged_as_they_go_to_the_modem() {
+        use crate::proto::{Callsign, Envelope, Flags, MsgType};
+        let logs = LogBuf::default();
+        let sink = logs.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_ansi(false)
+            .with_writer(move || sink.clone())
+            .finish();
+        let _log = tracing::subscriber::set_default(subscriber);
+
+        let modem = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = modem.local_addr().unwrap().to_string();
+        let accept = tokio::spawn(async move { modem.accept().await.unwrap().0 });
+        let (k, _rx) = KissClient::connect(&addr).await.unwrap();
+        let mut modem = accept.await.unwrap();
+
+        let a = Callsign::parse("G4AAA").unwrap();
+        let mut beacon = Envelope::new_msg(
+            Callsign::parse("M0BBB").unwrap(),
+            Callsign::from_raw("BEACON"),
+            1,
+            b"B|radio|7074".to_vec(),
+            1,
+            Flags::new(),
+        )
+        .unwrap();
+        beacon.kind = MsgType::Beacon;
+        let line = Envelope::new_msg(
+            a.clone(),
+            Callsign::parse("M0DDD").unwrap(),
+            7,
+            b"hi".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        let receipt = Envelope::ack_for(&line, Callsign::parse("M0DDD").unwrap(), 2, None);
+        k.tx.send(beacon.encode().unwrap()).await.unwrap();
+        k.send(&receipt.encode().unwrap()).await.unwrap();
+
+        let mut dec = KissDecoder::new();
+        let mut got = Vec::new();
+        let mut buf = [0u8; 1024];
+        while got.len() < 2 {
+            let n = modem.read(&mut buf).await.unwrap();
+            assert!(n > 0, "the modem got {} frames", got.len());
+            got.extend(dec.push(&buf[..n]));
+        }
+        let text = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        assert!(text.contains("beacon to modem: M0BBB"), "{text}");
+        let want = format!(
+            "receipt to modem: line {} from G4AAA, receipt by M0DDD, ",
+            line.msg_id.hex()
+        );
+        assert!(text.contains(&want), "{text}");
     }
 
     #[test]

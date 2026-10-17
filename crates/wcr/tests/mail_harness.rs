@@ -28,6 +28,16 @@ fn scratch(name: &str) -> PathBuf {
     p
 }
 
+/// Reserved ports are free again until the nodes bind them, and the mock
+/// modems and hub of a pair starting alongside can be given one. A node whose
+/// status port is taken runs without it, and its mail never shows as started.
+/// Pairs start one at a time.
+fn setup_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+        std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+    &LOCK
+}
+
 async fn reserve_ports(n: usize) -> Vec<u16> {
     let mut held = Vec::with_capacity(n);
     for _ in 0..n {
@@ -178,6 +188,7 @@ impl Pair {
         hub_delay: Duration,
         tweak: impl Fn(usize, &mut Config),
     ) -> Self {
+        let setup = setup_lock().lock().await;
         let air = wcr::sim::SharedAir::new(0.0);
         let log: TimedLog = Arc::new(Mutex::new(Vec::new()));
         let posts = Arc::new(Mutex::new(Vec::new()));
@@ -220,6 +231,7 @@ impl Pair {
         for p in [ports[1], ports[3]] {
             wait_tcp(p, 20).await;
         }
+        drop(setup);
         let pair = Self {
             log,
             posts,
@@ -359,6 +371,7 @@ async fn long_mail_recovers_a_lost_final_chunk() {
             collide: false,
             csma_stuck_ms: 0,
             rung_airtime: false,
+            noise_pct: 0,
         },
         drop_rx,
     )
@@ -445,6 +458,7 @@ async fn a_resend_keys_only_what_the_latest_report_lacks() {
             collide: false,
             csma_stuck_ms: 0,
             rung_airtime: false,
+            noise_pct: 0,
         },
         drop_rx,
     )
@@ -520,6 +534,7 @@ async fn a_lost_acceptance_is_answered_by_one_probe() {
             collide: false,
             csma_stuck_ms: 0,
             rung_airtime: false,
+            noise_pct: 0,
         },
         drop_rx,
     )
@@ -600,6 +615,7 @@ async fn a_long_mail_at_real_airtime_is_accepted_on_the_first_pass() {
             collide: false,
             csma_stuck_ms: 0,
             rung_airtime: true,
+            noise_pct: 0,
         },
         drop_rx,
         Duration::from_secs(2),
@@ -655,6 +671,7 @@ async fn the_first_beacon_waits_for_the_reply_to_our_mail() {
             collide: false,
             csma_stuck_ms: 0,
             rung_airtime: true,
+            noise_pct: 0,
         },
         drop_rx,
         Duration::from_secs(2),
@@ -713,6 +730,7 @@ async fn a_big_mail_with_stuck_carrier_sense_goes_in_one_burst() {
             collide: true,
             csma_stuck_ms: 30_000,
             rung_airtime: true,
+            noise_pct: 0,
         },
         drop_rx,
         Duration::from_secs(2),
@@ -770,6 +788,7 @@ async fn a_receipt_keyed_as_a_mail_starts_leaves_the_burst_alone() {
             collide: true,
             csma_stuck_ms: 30_000,
             rung_airtime: true,
+            noise_pct: 0,
         },
         drop_rx,
         Duration::from_secs(2),

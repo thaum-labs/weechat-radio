@@ -264,6 +264,7 @@ fn writer_loop(cfg: Config, state: Arc<LinkState>, mut out_rx: mpsc::Receiver<Ve
     let src = ax25::Address::from_station(&cfg.callsign);
     let dest = ax25::Address::from_station(&cfg.tnc.ax25_dest);
     while let Some(payload) = out_rx.blocking_recv() {
+        kiss::note_keyed(&payload);
         let wire = if cfg.tnc.ax25 {
             ax25::wrap_ui(&src, &dest, &payload)
         } else {
