@@ -905,9 +905,17 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                             .note(relay::ExchangeKey::Mail, false, mail);
                     }
                 }
-                // Our own frames still queued start an exchange as soon as
-                // they go; a beacon handed over now would key behind them.
-                let exchange = rt_b
+                let pace_s =
+                    *pace.get_or_insert_with(|| relay::beacon_interval_secs(jitter_s) as u32);
+                // When this beacon fell due, before any hold.
+                let scheduled =
+                    relay::next_beacon_at(rt_b.started, last_beacon, sent, pace_s).min(ceiling);
+                // An exchange this station is part of, or our own frames still
+                // queued: they start one as soon as they go, and a beacon
+                // handed over now would key behind them. A due beacon waits
+                // for one exchange at most, and for a mail until its
+                // acceptance.
+                let open = rt_b
                     .exchanges
                     .lock()
                     .in_progress(
@@ -920,8 +928,19 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         rt_b.air()
                             .is_some_and(|a| a.holds_traffic())
                             .then(|| "our own frames queued ahead of it".to_string())
-                    })
-                    .filter(|_| relay::beacon_waits_for_exchange(now, ceiling, preset));
+                    });
+                let mail = rt_b.exchanges.lock().is_open(
+                    relay::ExchangeKey::Mail,
+                    now,
+                    relay::exchange_wait_s(preset),
+                    relay::exchange_settle_s(preset),
+                );
+                let exchange = if mail && relay::beacon_waits_for_mail(now, ceiling, preset) {
+                    Some(relay::ExchangeKey::Mail.to_string())
+                } else {
+                    open.clone()
+                        .filter(|_| relay::beacon_waits_for_exchange(now, scheduled, preset))
+                };
                 // Handed to the air queue: the countdown stays at "pending"
                 // until the beacon reaches the modem, and the next one counts
                 // from then. One still queued when an exchange starts is
@@ -963,11 +982,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     continue;
                 }
-                let pace_s =
-                    *pace.get_or_insert_with(|| relay::beacon_interval_secs(jitter_s) as u32);
-                let due = relay::next_beacon_at(rt_b.started, last_beacon, sent, pace_s)
-                    .max(busy_until)
-                    .min(ceiling);
+                let due = scheduled.max(busy_until).min(ceiling);
                 let note = if now >= due && exchange.is_some() {
                     "exchange"
                 } else if busy_until > now {
@@ -1018,14 +1033,11 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         tracing::info!("beacon goes although the channel reads {occ}% busy: {why}");
                     }
                 }
-                if now >= ceiling {
-                    if let Some(x) = rt_b.exchanges.lock().in_progress(
-                        now,
-                        relay::exchange_wait_s(preset),
-                        relay::exchange_settle_s(preset),
-                    ) {
-                        tracing::info!("beacon goes during {x}: 10 minutes since the last beacon");
-                    }
+                if let Some(x) = open {
+                    tracing::info!(
+                        "beacon goes during {x}: it waited {}s, one exchange",
+                        now.saturating_sub(scheduled)
+                    );
                 }
                 let cfg = rt_b.cfg.lock().clone();
                 let Ok(seq) = rt_b.store.next_seq(&rt_b.engine.our_call) else {

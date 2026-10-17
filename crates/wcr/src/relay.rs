@@ -617,10 +617,25 @@ pub fn exchange_settle_s(preset: Preset) -> u32 {
     spread_window_secs(preset).ceil() as u32
 }
 
-/// A due beacon waits for an exchange in progress, at most one exchange's
-/// wait past its 10-minute `ceiling`.
-pub fn beacon_waits_for_exchange(now: u32, ceiling: u32, preset: Preset) -> bool {
+/// Longest a due beacon waits for exchanges in progress: one exchange, a
+/// receipt's round trip and the rest of its receipts. About 100 s at hf-poor.
+pub fn beacon_exchange_wait_s(preset: Preset) -> u32 {
+    exchange_wait_s(preset) + exchange_settle_s(preset)
+}
+
+/// A mail keeps a due beacon until its acceptance: one keyed between the
+/// burst and the receiver's report leaves the sender deaf to it, and the
+/// whole mail goes again. At most one exchange past the 10-minute `ceiling`.
+pub fn beacon_waits_for_mail(now: u32, ceiling: u32, preset: Preset) -> bool {
     now < ceiling.saturating_add(exchange_wait_s(preset))
+}
+
+/// A beacon that fell due at `due` still waits for an exchange in progress.
+/// It waits for one at most: back-to-back exchanges on a busy chain would
+/// otherwise hold it to the 10-minute ceiling, and every station hears it
+/// about every 5 minutes.
+pub fn beacon_waits_for_exchange(now: u32, due: u32, preset: Preset) -> bool {
+    now < due.saturating_add(beacon_exchange_wait_s(preset))
 }
 
 /// What an exchange's frames have in common: the line a receipt answers, or
@@ -675,6 +690,11 @@ impl ExchangeTimes {
     fn last(&self) -> u32 {
         self.asked.max(self.answered)
     }
+
+    fn running(&self, now: u32, wait: u32, settle: u32) -> bool {
+        (self.answered < self.asked && now < self.asked.saturating_add(wait))
+            || now < self.last().saturating_add(settle)
+    }
 }
 
 impl Exchanges {
@@ -699,11 +719,15 @@ impl Exchanges {
             .retain(|_, t| now < t.last().saturating_add(wait.max(settle)));
         self.open
             .iter()
-            .find(|(_, t)| {
-                (t.answered < t.asked && now < t.asked.saturating_add(wait))
-                    || now < t.last().saturating_add(settle)
-            })
+            .find(|(_, t)| t.running(now, wait, settle))
             .map(|(k, _)| *k)
+    }
+
+    /// Exchange `key` is in progress at `now`, as [`Exchanges::in_progress`].
+    pub fn is_open(&self, key: ExchangeKey, now: u32, wait: u32, settle: u32) -> bool {
+        self.open
+            .get(&key)
+            .is_some_and(|t| t.running(now, wait, settle))
     }
 }
 
@@ -1908,16 +1932,24 @@ mod tests {
             x.in_progress(t + 550, wait, settle),
             Some(ExchangeKey::Mail)
         );
+        assert!(x.is_open(ExchangeKey::Mail, t + 550, wait, settle));
+        assert!(!x.is_open(line, t + 550, wait, settle));
         x.note(ExchangeKey::Mail, true, t + 560);
         assert_eq!(
             x.in_progress(t + 560 + settle, wait, settle),
             None,
             "accepted"
         );
-        // At most one exchange's wait past the 10-minute ceiling.
-        let ceiling = t + 600;
-        assert!(beacon_waits_for_exchange(ceiling + wait - 1, ceiling, p));
-        assert!(!beacon_waits_for_exchange(ceiling + wait, ceiling, p));
+        // One exchange at most past when it fell due.
+        let due = t + 600;
+        let most = beacon_exchange_wait_s(p);
+        assert_eq!(most, wait + settle);
+        assert!(beacon_waits_for_exchange(due + most - 1, due, p));
+        assert!(!beacon_waits_for_exchange(due + most, due, p));
+        // A mail holds it until the 10-minute ceiling and one exchange.
+        let ceiling = due + 300;
+        assert!(beacon_waits_for_mail(ceiling + wait - 1, ceiling, p));
+        assert!(!beacon_waits_for_mail(ceiling + wait, ceiling, p));
     }
 
     #[test]
