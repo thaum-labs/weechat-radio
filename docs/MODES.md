@@ -109,9 +109,9 @@ Versus JS8, FT8, Olivia, and APRS: [compare modes](https://weechatradio.com/docs
 When several stations talk at once, frames would otherwise pile onto the KISS port and key over each other. Two layers stop that:
 
 1. **modem73 CSMA** is on for every preset (VHF and HF). The modem itself waits for a quiet carrier before PTT.
-2. **`wcr` air queue** serialises our own traffic. It waits while the channel is `rx`/`tx`, spreads retries and group ACKs so they do not land on the same slot, skips beacons when occupancy is high, and leaves a turnaround gap after each TX so an ACK can be heard. An ACK skips that queue. Once `emergency_max_defer_ms` (3 s) has elapsed it is keyed with modem carrier sense off for that frame only, including when this station's sense is idle. If the modem reports undecodable busy, carrier sense is turned off for the ACK immediately. It stays on while a frame is being received. Emergency chat still uses the 3 s cap inside the queue. Other chat and relays use `max_defer_ms` (15 s). The wait itself is a slot backoff, not a single sleep.
+2. **`wcr` air queue** serialises our own traffic. It waits while the channel is `rx`/`tx`, spreads retries and group ACKs so they do not land on the same slot, holds a beacon while occupancy is high and frames are being decoded (never more than 10 minutes after the last), and leaves a turnaround gap after each TX so an ACK can be heard. modem73 keys every frame it holds in its one current mode and drops one wider than that mode, so an item that would switch it to a mode too narrow for a frame handed over in the last 45 s waits until then. An ACK skips that queue. Once `emergency_max_defer_ms` (3 s) has elapsed it is keyed with modem carrier sense off for that frame only, including when this station's sense is idle. If the modem reports undecodable busy, carrier sense is turned off for the ACK immediately. It stays on while a frame is being received. Emergency chat still uses the 3 s cap inside the queue. Other chat and relays use `max_defer_ms` (15 s). The wait itself is a slot backoff, not a single sleep.
 
-The status bar **PTT** field shows `wait` while the queue is holding a frame. **OCC** is occupancy 0–100 from the modem. **QUEUE** includes how many frames are in the air queue (`air N`).
+The status bar **PTT** field shows `wait` while the queue is holding a frame. **OCC** is occupancy 0–100 from the modem. **QUEUE** includes how many frames are in the air queue (`air N`). The station log shows each beacon and receipt as it goes to the modem: `beacon to modem: CALL` and `receipt to modem: line ID from CALL, receipt by CALL, N hops left`, where ID is the line's msgid.
 
 ```
 [rf]
@@ -121,7 +121,7 @@ quiet_ms = 300
 max_defer_ms = 15000          # chat and relays; then send anyway
 emergency_max_defer_ms = 3000 # emergency and ACKs; then send anyway
 turnaround_ms = 250
-congested_pct = 60            # drop beacons / defer relays at or above this
+congested_pct = 60            # hold beacons (frames decoding) / defer relays at or above this
 ack_dither_ms = 800
 beacon_jitter_s = 15
 retry_jitter = true
