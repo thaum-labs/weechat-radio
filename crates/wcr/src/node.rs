@@ -2282,8 +2282,9 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                         keep = group_still_waiting(&rt.store, &orig.env);
                         // Our relay of someone else's line: once every
                         // neighbour has it, a queued repeat reaches nobody new.
+                        // The first relay may be queued still: it always goes.
                         if !relay::is_own_origin(&rt.engine.our_call, &orig.env)
-                            && rt.store.retries_of(&id).unwrap_or(0) > 0
+                            && relay::queued_repeat_unneeded(rt.store.retries_of(&id).unwrap_or(0))
                             && line_reached_neighbours(rt, &orig.env)
                         {
                             let _ = rt.store.set_hold(&id, 0, orig.env.hops_left);
