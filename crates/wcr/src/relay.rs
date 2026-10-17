@@ -580,21 +580,20 @@ pub fn beacon_ceiling(started: u32, last_beacon: Option<u32>) -> u32 {
         .saturating_add(BEACON_MAX_GAP_S)
 }
 
-/// A busy channel holds a beacon only if a frame decoded this recently.
-pub const BEACON_BUSY_DECODE_S: u64 = 30;
+/// A busy channel holds a due beacon until a frame decoded here is this old.
+pub const BEACON_BUSY_DECODE_S: u64 = 10;
 
-/// Whether a beacon that has fallen due waits a pace for the channel. The
-/// modem's occupancy alone reads near 100% on a steady noise floor or with
-/// its carrier sense stuck high, and that held every beacon for good. So
-/// `congested` holds it only while we also decode frames (`since_decode_s`,
-/// seconds since the last one), and never at or past `ceiling`.
-pub fn beacon_waits_for_channel(
-    now: u32,
-    ceiling: u32,
-    congested: bool,
-    since_decode_s: u64,
-) -> bool {
-    now < ceiling && congested && since_decode_s < BEACON_BUSY_DECODE_S
+/// How many seconds a beacon that has fallen due waits for the channel, 0 to
+/// go now. The modem's occupancy alone reads near 100% on a steady noise
+/// floor or with its carrier sense stuck high, and that held every beacon for
+/// good. So `congested` holds it only while traffic is on the air: until
+/// `BEACON_BUSY_DECODE_S` after the last frame we decoded (`since_decode_s`
+/// ago), and never past `ceiling`.
+pub fn beacon_channel_wait(now: u32, ceiling: u32, congested: bool, since_decode_s: u64) -> u32 {
+    if now >= ceiling || !congested || since_decode_s >= BEACON_BUSY_DECODE_S {
+        return 0;
+    }
+    ((BEACON_BUSY_DECODE_S - since_decode_s) as u32).min(ceiling - now)
 }
 
 /// Next identity-beacon wait, 60 s ± jitter, clamped to 15–120 s.
@@ -1766,18 +1765,22 @@ mod tests {
         let ceiling = beacon_ceiling(start, Some(last));
         assert_eq!(ceiling, last + BEACON_MAX_GAP_S);
         let due = last + BEACON_IDLE_S;
-        assert!(
-            beacon_waits_for_channel(due, ceiling, true, 5),
-            "busy with frames we decode"
+        assert_eq!(
+            beacon_channel_wait(due, ceiling, true, 3),
+            7,
+            "busy with a frame decoded 3 s ago: wait until it is 10 s old"
         );
-        assert!(
-            !beacon_waits_for_channel(due, ceiling, true, 3_600),
+        assert_eq!(
+            beacon_channel_wait(due, ceiling, true, 3_600),
+            0,
             "a noise floor or stuck carrier sense: busy, nothing decoded"
         );
-        assert!(!beacon_waits_for_channel(due, ceiling, false, 5), "quiet");
-        assert!(
-            !beacon_waits_for_channel(ceiling, ceiling, true, 5),
-            "never more than ten minutes between beacons, busy or not"
+        assert_eq!(beacon_channel_wait(due, ceiling, false, 3), 0, "quiet");
+        assert_eq!(
+            beacon_channel_wait(ceiling - 2, ceiling, true, 0),
+            2,
+            "never past ten minutes between beacons"
         );
+        assert_eq!(beacon_channel_wait(ceiling, ceiling, true, 0), 0);
     }
 }

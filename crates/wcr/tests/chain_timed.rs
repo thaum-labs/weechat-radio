@@ -43,9 +43,10 @@ const NOISY_CASE_SECS: u64 = 900;
 /// Longest gap between two beacons on the air: the node's 10-minute ceiling,
 /// plus the modem's carrier-sense hold and a little queue time.
 const MAX_BEACON_GAP_SECS: u64 = 600 + 45;
-/// An idle gap is a pace (60 s ± 15 s) plus 4 minutes. A beacon falling due
-/// just after a neighbour's frame decoded waits one more pace.
-const IDLE_GAP_MAX_SECS: u64 = 315 + 75 + 30;
+/// An idle gap is a pace (60 s ± 15 s) plus 4 minutes. The modem's stuck
+/// carrier sense moves each key by up to 30 s, and a beacon falling due just
+/// after a neighbour's frame decoded waits up to 10 s.
+const IDLE_GAP_MAX_SECS: u64 = 420;
 /// Most copies of one line a middle relay keys: its relay, one repeat, and
 /// one answer to the originator's retry.
 const MIDDLE_RELAY_CAP: usize = 3;
@@ -953,9 +954,10 @@ async fn invite_reaches_the_far_end() {
 /// first idle beacon after the warm-up (the first countdown more than 2
 /// minutes ahead; warm-up and busy holds are never that long) must key within
 /// the carrier-sense hold of the countdown showing when it fell due. One that
-/// falls due while a neighbour is on the air waits a pace, and its countdown
-/// says so (`busy`). Nothing keys before the countdown, and the beacon comes
-/// at the idle pace (about 5 minutes after the one before).
+/// falls due just after a neighbour's frame waits until that frame is 10 s
+/// old, and its countdown says so (`busy`). Nothing keys before the countdown,
+/// and the beacon comes at the idle pace (about 5 minutes after the one
+/// before).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn each_beacon_keys_when_its_countdown_says() {
     let chain = Chain::start(None).await;
@@ -1065,9 +1067,7 @@ async fn each_beacon_keys_when_its_countdown_says() {
         if early {
             problems.push(format!("{call} keyed a beacon before its countdown"));
         }
-        // A busy hold adds a pace (at most 75 s) to the idle gap.
-        let max_gap = if busy { 500 } else { 420 };
-        if gap.is_some_and(|g| !(240..=max_gap).contains(&g)) {
+        if gap.is_some_and(|g| !(240..=IDLE_GAP_MAX_SECS).contains(&g)) {
             problems.push(format!("{call} idle gap {gap:?}s, not about 5 minutes"));
         }
     }

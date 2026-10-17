@@ -873,13 +873,11 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 if let Some(s) = rt_b.sense() {
                     let occ = s.occupancy_pct();
                     let since_decode = s.since_last_decode().as_secs();
-                    if relay::beacon_waits_for_channel(now, ceiling, occ >= congested, since_decode)
-                    {
-                        busy_until = now.saturating_add(pace_s).min(ceiling);
-                        tracing::info!(
-                            "beacon held: channel {occ}% busy, next try in {}s",
-                            busy_until - now
-                        );
+                    let wait =
+                        relay::beacon_channel_wait(now, ceiling, occ >= congested, since_decode);
+                    if wait > 0 {
+                        busy_until = now.saturating_add(wait);
+                        tracing::info!("beacon held: channel {occ}% busy, next try in {wait}s");
                         continue;
                     }
                     if occ >= congested {
