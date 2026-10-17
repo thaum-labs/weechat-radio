@@ -217,9 +217,12 @@ pub fn copy_wants_new_ack(incoming_hops: u8, stored_hops: u8) -> bool {
 }
 
 /// A duplicate from the originator's side is not a relay further along.
-/// It must not cancel our pending copy of a frame that walks hop by hop.
+/// It must not cancel our pending copy, of a frame that walks hop by hop or
+/// of a direct line: a modem whose carrier sense sticks keys a line and its
+/// first retry back to back, before our copy has gone.
 pub fn duplicate_suppresses(env: &Envelope, incoming_hops: u8, stored_hops: u8) -> bool {
-    !((keeps_walking(env) || closed_group_walks(env)) && origin_retry(incoming_hops, stored_hops))
+    !((keeps_walking(env) || closed_group_walks(env) || is_direct_line(env))
+        && origin_retry(incoming_hops, stored_hops))
 }
 
 /// A closed-group line relayed for its members. One copy is often lost at
@@ -567,6 +570,30 @@ pub fn next_beacon_at(
         due = due.max(last_traffic.saturating_add(BEACON_MAX_GAP_S));
     }
     due.min(last.saturating_add(BEACON_MAX_GAP_S))
+}
+
+/// Latest a beacon may go: `BEACON_MAX_GAP_S` after the last one, or after
+/// start for the first. A busy channel holds a beacon until then, no later.
+pub fn beacon_ceiling(started: u32, last_beacon: Option<u32>) -> u32 {
+    last_beacon
+        .unwrap_or(started)
+        .saturating_add(BEACON_MAX_GAP_S)
+}
+
+/// A busy channel holds a due beacon until a frame decoded here is this old.
+pub const BEACON_BUSY_DECODE_S: u64 = 10;
+
+/// How many seconds a beacon that has fallen due waits for the channel, 0 to
+/// go now. The modem's occupancy alone reads near 100% on a steady noise
+/// floor or with its carrier sense stuck high, and that held every beacon for
+/// good. So `congested` holds it only while traffic is on the air: until
+/// `BEACON_BUSY_DECODE_S` after the last frame we decoded (`since_decode_s`
+/// ago), and never past `ceiling`.
+pub fn beacon_channel_wait(now: u32, ceiling: u32, congested: bool, since_decode_s: u64) -> u32 {
+    if now >= ceiling || !congested || since_decode_s >= BEACON_BUSY_DECODE_S {
+        return 0;
+    }
+    ((BEACON_BUSY_DECODE_S - since_decode_s) as u32).min(ceiling - now)
 }
 
 /// Next identity-beacon wait, 60 s ± jitter, clamped to 15–120 s.
@@ -984,7 +1011,52 @@ mod tests {
         let mut dm = bulletin.clone();
         dm.dest = Callsign::parse("M0DDD").unwrap();
         dm.flags = Flags::new();
-        assert!(duplicate_suppresses(&dm, 5, 4));
+        assert!(!duplicate_suppresses(&dm, 5, 4), "the sender's retry");
+        assert!(duplicate_suppresses(&dm, 4, 4));
+        assert!(duplicate_suppresses(&dm, 3, 4));
+    }
+
+    /// QA v0.1.93: A's stuck modem keyed an invite and its first retry back to
+    /// back. B took the retry for a relay further on and dropped its own copy,
+    /// so the invite went on only after A's next retry.
+    #[test]
+    fn the_senders_retry_keeps_our_relay_of_a_direct_line() {
+        let store = Arc::new(Store::open_memory().unwrap());
+        let engine = Engine::new(store.clone(), "M0BBB".into());
+        let line = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::parse("G4EEE").unwrap(),
+            1,
+            b"You are invited to #qa".to_vec(),
+            6,
+            Flags::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            engine.on_rx(&line, "rf", None, None).unwrap().action,
+            Action::Accept
+        );
+        assert_eq!(
+            engine.on_rx(&line, "rf", None, None).unwrap().action,
+            Action::Suppress
+        );
+        assert!(
+            store
+                .hold_due(u32::MAX)
+                .unwrap()
+                .iter()
+                .any(|m| m.env.msg_id == line.msg_id),
+            "our relay still goes"
+        );
+        // A copy with as few hops as ours is a relay beside or beyond us.
+        let mut relayed = line.clone();
+        relayed.hops_left = 5;
+        engine.on_rx(&relayed, "rf", None, None).unwrap();
+        assert!(!store
+            .hold_due(u32::MAX)
+            .unwrap()
+            .iter()
+            .any(|m| m.env.msg_id == line.msg_id));
     }
 
     #[test]
@@ -1407,7 +1479,8 @@ mod tests {
         let mut dm = group.clone();
         dm.flags = Flags::new();
         assert!(!closed_group_walks(&dm));
-        assert!(duplicate_suppresses(&dm, 5, 4));
+        assert!(!duplicate_suppresses(&dm, 5, 4));
+        assert!(duplicate_suppresses(&dm, 3, 4));
         assert!(!closed_group_walks(&{
             let mut b = group.clone();
             b.dest = Callsign::from_raw("BULLETIN");
@@ -1682,5 +1755,32 @@ mod tests {
             late + BEACON_MAX_GAP_S,
             "never more than ten minutes between beacons"
         );
+    }
+
+    #[test]
+    fn a_busy_channel_holds_a_beacon_only_while_frames_decode() {
+        let start = 10_000;
+        assert_eq!(beacon_ceiling(start, None), start + BEACON_MAX_GAP_S);
+        let last = start + 400;
+        let ceiling = beacon_ceiling(start, Some(last));
+        assert_eq!(ceiling, last + BEACON_MAX_GAP_S);
+        let due = last + BEACON_IDLE_S;
+        assert_eq!(
+            beacon_channel_wait(due, ceiling, true, 3),
+            7,
+            "busy with a frame decoded 3 s ago: wait until it is 10 s old"
+        );
+        assert_eq!(
+            beacon_channel_wait(due, ceiling, true, 3_600),
+            0,
+            "a noise floor or stuck carrier sense: busy, nothing decoded"
+        );
+        assert_eq!(beacon_channel_wait(due, ceiling, false, 3), 0, "quiet");
+        assert_eq!(
+            beacon_channel_wait(ceiling - 2, ceiling, true, 0),
+            2,
+            "never past ten minutes between beacons"
+        );
+        assert_eq!(beacon_channel_wait(ceiling, ceiling, true, 0), 0);
     }
 }
