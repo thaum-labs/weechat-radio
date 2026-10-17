@@ -679,11 +679,13 @@ async fn a_relay_that_never_heard_beyond_keeps_relaying() {
 /// relay of A's line and its own receipt back to back. The receipt reached C
 /// while C's first relay was still in its air queue, and C, taking itself
 /// for the end of the chain, dropped that copy: D and E never got the line.
-/// Only C runs here, and B's two frames are played to it as they went on CI.
-/// C's modem reads its noise floor busy, so the relay always waits out a
-/// congested slot in the queue, and its carrier sense is not stuck, so C's
-/// own receipt waits for B's to end and C hears it. At the end of a chain it
-/// is one relay and no repeats.
+/// Only C runs here, as a relay outside the group, so it keys no receipt of
+/// its own over B's (on main CI C's receipt did, C never learnt B, and it
+/// rightly kept relaying). B's relay is played to it, then B's receipt once
+/// C's copy is queued. C's modem reads its noise floor busy, so that copy
+/// waits out a congested slot of at least 2 s and the receipt, a second
+/// later, lands while it is still queued. At the end of a chain it is one
+/// relay and no repeats.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_relay_that_knows_one_neighbour_still_relays_once() {
     let setup = setup_lock().lock().await;
@@ -700,7 +702,11 @@ async fn a_relay_that_knows_one_neighbour_still_relays_once() {
     let c = 3;
     let home = scratch(CALLS[2]);
     let store = wcr::store::Store::open(&home.join("store.db"), 72, 10_000).unwrap();
-    let members: Vec<String> = CALLS.iter().map(|s| s.to_string()).collect();
+    let members: Vec<String> = CALLS
+        .iter()
+        .filter(|s| **s != CALLS[2])
+        .map(|s| s.to_string())
+        .collect();
     store.group_create("net", &members).unwrap();
     drop(store);
     let (kiss, ctrl) =
@@ -752,8 +758,25 @@ async fn a_relay_that_knows_one_neighbour_still_relays_once() {
     relayed.hops_left = 5;
     let mut receipt = Envelope::ack_for(&line, Callsign::parse(CALLS[1]).unwrap(), 1, None);
     receipt.hops_left = 6;
-    key_as(&air, &log, 2, &relayed).await;
-    key_as(&air, &log, 2, &receipt).await;
+    let frame = Duration::from_millis(FRAME_MS);
+    key_as(&air, &log, 2, &relayed, frame).await;
+    let queued = Instant::now() + Duration::from_secs(15);
+    loop {
+        let depth = status_json(ports[1])
+            .await
+            .and_then(|v| v.get("queue_air").and_then(|x| x.as_u64()))
+            .unwrap_or(0);
+        if depth > 0 {
+            break;
+        }
+        assert!(
+            Instant::now() < queued,
+            "C never queued its relay{}",
+            trace_of(&log, t0)
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    key_as(&air, &log, 2, &receipt, Duration::from_secs(1)).await;
 
     // Its slot and the congested wait, then long enough for a repeat a retry
     // interval later.
@@ -780,10 +803,15 @@ async fn a_relay_that_knows_one_neighbour_still_relays_once() {
 }
 
 /// Play `env` as if `station` keyed it: the receivers hear the channel busy
-/// for a frame, then get it.
-async fn key_as(air: &wcr::sim::SharedAir, log: &TimedLog, station: u64, env: &Envelope) {
+/// for `len`, then get it.
+async fn key_as(
+    air: &wcr::sim::SharedAir,
+    log: &TimedLog,
+    station: u64,
+    env: &Envelope,
+    len: Duration,
+) {
     let payload = wcr::sim::encode_over_air(env);
-    let len = Duration::from_millis(FRAME_MS);
     log.lock().unwrap().push(wcr::sim::TimedKey {
         station,
         at: Instant::now(),
