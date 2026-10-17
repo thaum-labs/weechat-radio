@@ -540,45 +540,27 @@ pub const BEACON_MAX_GAP_S: u32 = 600;
 /// Gap between beacons on a quiet channel once the neighbour warm-up is over.
 pub const BEACON_IDLE_S: u32 = 300;
 
+/// A station's first beacons go a pace apart, so one lost beacon still
+/// leaves its neighbours time to learn it.
+pub const BEACON_WARMUP_COUNT: u32 = 3;
+
 /// When the next beacon is due. `pace` is this round's `beacon_interval_secs`
 /// roll (about a minute). The first beacon goes `pace` after `started`, and
-/// the next ones `pace` apart until `NEIGHBOUR_WARMUP_S` has passed, so one
-/// lost beacon still leaves the neighbours time to learn us. After that a
-/// quiet station beacons every `BEACON_IDLE_S`, with the same jitter: an idle
-/// beacon keyed while a line walks the chain can take a relay's copy at the
-/// station beside it. Traffic keyed or decoded here (`last_traffic`, 0 for
-/// none) holds the beacon back for `BEACON_MAX_GAP_S`, since a line's retries
-/// and receipts run for about that long, but never past `BEACON_MAX_GAP_S`
-/// after the last beacon. The first beacon goes whatever we hear, but our own
-/// mail (`own_mail`, 0 for none) holds it the same way, counted from start:
-/// keyed before the receiver's reply, it leaves us deaf to that reply.
-pub fn next_beacon_at(
-    started: u32,
-    last_traffic: u32,
-    own_mail: u32,
-    last_beacon: Option<u32>,
-    pace: u32,
-) -> u32 {
+/// the next ones `pace` after the one before until `BEACON_WARMUP_COUNT`
+/// have reached the modem (`sent`). After that a station beacons every
+/// `BEACON_IDLE_S`, with the same jitter. `last_beacon` is when the last one
+/// reached the modem. Traffic does not move the schedule: a beacon that falls
+/// due while an exchange is in progress waits for it (see [`Exchanges`]).
+pub fn next_beacon_at(started: u32, last_beacon: Option<u32>, sent: u32, pace: u32) -> u32 {
     let Some(last) = last_beacon else {
-        let due = started.saturating_add(pace);
-        if own_mail == 0 {
-            return due;
-        }
-        return due
-            .max(own_mail.saturating_add(BEACON_MAX_GAP_S))
-            .min(started.saturating_add(BEACON_MAX_GAP_S));
+        return started.saturating_add(pace);
     };
-    let last_traffic = last_traffic.max(own_mail);
-    let gap = if last.saturating_sub(started) < NEIGHBOUR_WARMUP_S {
+    let gap = if sent < BEACON_WARMUP_COUNT {
         pace
     } else {
         (pace + BEACON_IDLE_S).saturating_sub(BEACON_BASE_S as u32)
     };
-    let mut due = last.saturating_add(gap);
-    if last_traffic != 0 {
-        due = due.max(last_traffic.saturating_add(BEACON_MAX_GAP_S));
-    }
-    due.min(last.saturating_add(BEACON_MAX_GAP_S))
+    last.saturating_add(gap)
 }
 
 /// Latest a beacon may go: `BEACON_MAX_GAP_S` after the last one, or after
@@ -603,6 +585,141 @@ pub fn beacon_channel_wait(now: u32, ceiling: u32, congested: bool, since_decode
         return 0;
     }
     ((BEACON_BUSY_DECODE_S - since_decode_s) as u32).min(ceiling - now)
+}
+
+/// modem73 holds a frame this long when its carrier sense is stuck busy on
+/// the noise floor, then keys it anyway.
+pub const MODEM_STUCK_HOLD_S: u32 = 30;
+
+/// Allowance for a receipt's carrier-sense cap (3 s) and dither.
+const RECEIPT_CAP_S: f64 = 5.0;
+
+/// Spread window of a routine relay or group receipt: every slot it picks from.
+fn spread_window_secs(preset: Preset) -> f64 {
+    frame_slot(preset).as_secs_f64() * 1.25 * f64::from(spread_slots(Priority::Routine))
+}
+
+/// How long a line or mail frame keyed or heard here waits for its answer:
+/// a receipt's round trip. The line can wait `MODEM_STUCK_HOLD_S` at the
+/// modem, takes a frame on the air, and its receipt picks a slot of the
+/// spread window, waits out its carrier-sense cap and takes another frame.
+/// About 70 s at hf-poor.
+pub fn exchange_wait_s(preset: Preset) -> u32 {
+    let slot = frame_slot(preset).as_secs_f64();
+    (f64::from(MODEM_STUCK_HOLD_S) + 2.0 * slot + spread_window_secs(preset) + RECEIPT_CAP_S).ceil()
+        as u32
+}
+
+/// How long an exchange stays in progress after its last frame: the rest
+/// of a group's receipts land in the same spread window as the first, and
+/// receipts carried from further on follow it. About 30 s at hf-poor.
+pub fn exchange_settle_s(preset: Preset) -> u32 {
+    spread_window_secs(preset).ceil() as u32
+}
+
+/// A due beacon waits for an exchange in progress, at most one exchange's
+/// wait past its 10-minute `ceiling`.
+pub fn beacon_waits_for_exchange(now: u32, ceiling: u32, preset: Preset) -> bool {
+    now < ceiling.saturating_add(exchange_wait_s(preset))
+}
+
+/// What an exchange's frames have in common: the line a receipt answers, or
+/// the mail on the air.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ExchangeKey {
+    Line(MsgId),
+    Mail,
+}
+
+impl std::fmt::Display for ExchangeKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Line(id) => write!(f, "line {} and its receipt", id.hex()),
+            Self::Mail => f.write_str("a mail and its acceptance"),
+        }
+    }
+}
+
+/// A chat frame's part in an exchange: `(key, answer)`. A line that asks
+/// for a receipt opens its exchange, and a receipt for it answers it.
+pub fn exchange_step(env: &Envelope) -> Option<(ExchangeKey, bool)> {
+    match env.kind {
+        MsgType::Ack => env.acked_id().map(|id| (ExchangeKey::Line(id), true)),
+        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status
+            if env.flags.req_ack() =>
+        {
+            Some((ExchangeKey::Line(env.msg_id), false))
+        }
+        _ => None,
+    }
+}
+
+/// Exchanges this station takes part in: a line keyed or heard here and its
+/// receipt, a mail and its acceptance. A beacon keyed in between leaves this
+/// station deaf to the answer, or collides with it at a neighbour, so a due
+/// beacon waits until none is in progress.
+#[derive(Default)]
+pub struct Exchanges {
+    open: HashMap<ExchangeKey, ExchangeTimes>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct ExchangeTimes {
+    /// When a frame asking for an answer last went or came, 0 for never.
+    asked: u32,
+    /// When an answer last went or came, 0 for never.
+    answered: u32,
+}
+
+impl ExchangeTimes {
+    fn last(&self) -> u32 {
+        self.asked.max(self.answered)
+    }
+}
+
+impl Exchanges {
+    /// A frame of exchange `key` keyed or heard here at `now`.
+    pub fn note(&mut self, key: ExchangeKey, answer: bool, now: u32) {
+        if self.open.len() > 4096 && !self.open.contains_key(&key) {
+            self.open.clear();
+        }
+        let times = self.open.entry(key).or_default();
+        if answer {
+            times.answered = times.answered.max(now);
+        } else {
+            times.asked = times.asked.max(now);
+        }
+    }
+
+    /// An exchange still in progress at `now`: one that asked less than
+    /// `wait` ago and has not been answered since, or whose last frame went
+    /// or came less than `settle` ago.
+    pub fn in_progress(&mut self, now: u32, wait: u32, settle: u32) -> Option<ExchangeKey> {
+        self.open
+            .retain(|_, t| now < t.last().saturating_add(wait.max(settle)));
+        self.open
+            .iter()
+            .find(|(_, t)| {
+                (t.answered < t.asked && now < t.asked.saturating_add(wait))
+                    || now < t.last().saturating_add(settle)
+            })
+            .map(|(k, _)| *k)
+    }
+}
+
+/// Own lines handed over this soon after start wait until another station
+/// has been heard. A neighbour started at the same time may not be listening
+/// yet, and every station's first beacon is on the air within about this
+/// long of its start.
+pub const STARTUP_HOLD_S: u32 = BEACON_MAX_S as u32;
+
+/// Seconds an own line still waits after start, 0 to go now.
+/// `heard_other`: a frame from another station has decoded here.
+pub fn startup_hold_s(now: u32, started: u32, heard_other: bool) -> u32 {
+    if heard_other {
+        return 0;
+    }
+    started.saturating_add(STARTUP_HOLD_S).saturating_sub(now)
 }
 
 /// Next identity-beacon wait, 60 s ± jitter, clamped to 15–120 s.
@@ -1719,51 +1836,102 @@ mod tests {
     }
 
     #[test]
-    fn a_beacon_waits_for_a_quiet_channel() {
+    fn beacons_keep_their_pace_whatever_the_traffic() {
         let start = 10_000;
-        let next = |traffic, last| next_beacon_at(start, traffic, 0, last, 60);
-        assert_eq!(next(0, None), start + 60, "the first beacon goes a pace in");
-        assert_eq!(next(start + 30, None), start + 60, "even after traffic");
-        // Our own mail holds even the first beacon, so it does not key over
-        // the receiver's reply.
+        assert_eq!(next_beacon_at(start, None, 0, 60), start + 60, "a pace in");
+        // A pace after the one before, counted from when it reached the
+        // modem, until three have gone: one held back still counts.
+        assert_eq!(next_beacon_at(start, Some(start + 75), 1, 60), start + 135);
+        assert_eq!(next_beacon_at(start, Some(start + 400), 2, 60), start + 460);
+        // Then every five minutes, with the round's jitter. Traffic no
+        // longer holds it for ten minutes.
         assert_eq!(
-            next_beacon_at(start, 0, start + 5, None, 60),
-            start + BEACON_MAX_GAP_S,
-            "held after our own mail"
-        );
-        // A minute apart through the warm-up, so a lost one is made up.
-        assert_eq!(next(0, Some(start + 60)), start + 120);
-        assert_eq!(next(0, Some(start + 120)), start + 180);
-        // Then every five minutes on a quiet channel.
-        let warm = start + NEIGHBOUR_WARMUP_S;
-        assert_eq!(next(0, Some(warm)), warm + BEACON_IDLE_S);
-        assert_eq!(
-            next_beacon_at(start, 0, 0, Some(warm), 75),
-            warm + BEACON_IDLE_S + 15,
-            "the idle gap keeps the round's jitter"
-        );
-        // Traffic holds it back while a line's retries run.
-        let late = warm + 1_000;
-        assert_eq!(
-            next(late - 100, Some(late)),
-            late - 100 + BEACON_MAX_GAP_S,
-            "held until ten minutes after the traffic"
+            next_beacon_at(start, Some(start + 500), 3, 60),
+            start + 500 + BEACON_IDLE_S
         );
         assert_eq!(
-            next_beacon_at(start, 0, late - 100, Some(late), 60),
-            late - 100 + BEACON_MAX_GAP_S,
-            "and after our own mail"
+            next_beacon_at(start, Some(start + 500), 3, 75),
+            start + 500 + BEACON_IDLE_S + 15
+        );
+    }
+
+    #[test]
+    fn a_line_and_its_receipt_make_an_exchange() {
+        let line = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::from_raw("NET"),
+            1,
+            b"g".to_vec(),
+            6,
+            Flags::new()
+                .with(crate::proto::FLAG_GROUP)
+                .with(crate::proto::FLAG_REQ_ACK),
+        )
+        .unwrap();
+        let key = ExchangeKey::Line(line.msg_id);
+        assert_eq!(exchange_step(&line), Some((key, false)));
+        let ack = Envelope::ack_for(&line, Callsign::parse("M0DDD").unwrap(), 1, None);
+        assert_eq!(exchange_step(&ack), Some((key, true)));
+        let mut beacon = line.clone();
+        beacon.kind = MsgType::Beacon;
+        assert_eq!(exchange_step(&beacon), None);
+        assert_eq!(exchange_step(&group_line()), None, "asks for no receipt");
+    }
+
+    #[test]
+    fn a_due_beacon_waits_for_an_exchange_in_progress() {
+        let p = Preset::HfPoor;
+        let (wait, settle) = (exchange_wait_s(p), exchange_settle_s(p));
+        assert!((60..=80).contains(&wait), "a receipt's round trip: {wait}");
+        assert!((25..=35).contains(&settle), "a spread window: {settle}");
+        let line = ExchangeKey::Line(MsgId::from_bytes([1; 8]));
+        let mut x = Exchanges::default();
+        let t = 50_000;
+        x.note(line, false, t);
+        assert_eq!(
+            x.in_progress(t + 60, wait, settle),
+            Some(line),
+            "no receipt yet"
+        );
+        assert_eq!(x.in_progress(t + wait, wait, settle), None, "it never came");
+        x.note(line, false, t + 100);
+        x.note(line, true, t + 130);
+        assert_eq!(
+            x.in_progress(t + 129 + settle, wait, settle),
+            Some(line),
+            "the rest of the receipts land in the same window"
+        );
+        assert_eq!(x.in_progress(t + 130 + settle, wait, settle), None);
+        x.note(ExchangeKey::Mail, false, t + 500);
+        assert_eq!(
+            x.in_progress(t + 550, wait, settle),
+            Some(ExchangeKey::Mail)
+        );
+        x.note(ExchangeKey::Mail, true, t + 560);
+        assert_eq!(
+            x.in_progress(t + 560 + settle, wait, settle),
+            None,
+            "accepted"
+        );
+        // At most one exchange's wait past the 10-minute ceiling.
+        let ceiling = t + 600;
+        assert!(beacon_waits_for_exchange(ceiling + wait - 1, ceiling, p));
+        assert!(!beacon_waits_for_exchange(ceiling + wait, ceiling, p));
+    }
+
+    #[test]
+    fn own_lines_wait_for_another_station_after_start() {
+        let start = 10_000;
+        assert_eq!(
+            startup_hold_s(start + 10, start, false),
+            STARTUP_HOLD_S - 10
         );
         assert_eq!(
-            next(late - BEACON_MAX_GAP_S, Some(late)),
-            late + BEACON_IDLE_S,
-            "old traffic does not hold it"
+            startup_hold_s(start + 10, start, true),
+            0,
+            "someone was heard"
         );
-        assert_eq!(
-            next(late + 200, Some(late)),
-            late + BEACON_MAX_GAP_S,
-            "never more than ten minutes between beacons"
-        );
+        assert_eq!(startup_hold_s(start + STARTUP_HOLD_S, start, false), 0);
     }
 
     #[test]

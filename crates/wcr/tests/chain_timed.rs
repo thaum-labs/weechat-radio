@@ -9,7 +9,7 @@
 //! Lines start in the middle (C) and at the far end (E), so a fix that only
 //! works for traffic flowing away from A cannot pass.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -43,6 +43,9 @@ const NOISY_CASE_SECS: u64 = 900;
 /// Longest gap between two beacons on the air: the node's 10-minute ceiling,
 /// plus the modem's carrier-sense hold and a little queue time.
 const MAX_BEACON_GAP_SECS: u64 = 600 + 45;
+/// A warm-up gap is a pace (60 s ± 15 s) and the air queue's carrier-sense
+/// backoff.
+const WARMUP_GAP_MAX_SECS: u64 = 120;
 /// An idle gap is a pace (60 s ± 15 s) plus 4 minutes. The modem's stuck
 /// carrier sense moves each key by up to 30 s, and a beacon falling due just
 /// after a neighbour's frame decoded waits up to 10 s.
@@ -50,6 +53,13 @@ const IDLE_GAP_MAX_SECS: u64 = 420;
 /// Most copies of one line a middle relay keys: its relay, one repeat, and
 /// one answer to the originator's retry.
 const MIDDLE_RELAY_CAP: usize = 3;
+/// The traffic case runs this long from start: the warm-up, then two idle
+/// rounds after E's line.
+const TRAFFIC_PACE_SECS: u64 = 1_140;
+/// An idle gap with traffic on the chain: about 5 minutes, plus one
+/// exchange the beacon waits for (a receipt's round trip, then the rest of
+/// the receipts), and the carrier-sense wait. The ceiling alone is 600 s.
+const IDLE_GAP_TRAFFIC_MAX_SECS: u64 = 300 + 15 + 75 + 35 + 15;
 
 /// Reserved ports are free again until the nodes bind them, so chains start
 /// one at a time. Once up, the cases run side by side on their own air.
@@ -268,7 +278,22 @@ impl Chain {
         Self::start_on(None, None, noise_pct).await
     }
 
+    /// Like [`Chain::start_on`], returning as soon as the stations are up,
+    /// before any of them has beaconed.
+    async fn start_cold(group: Option<&str>, noise_pct: i32) -> Self {
+        Self::start_at(group, None, noise_pct, false).await
+    }
+
     async fn start_on(group: Option<&str>, drop_rx: Option<LinkDrop>, noise_pct: i32) -> Self {
+        Self::start_at(group, drop_rx, noise_pct, true).await
+    }
+
+    async fn start_at(
+        group: Option<&str>,
+        drop_rx: Option<LinkDrop>,
+        noise_pct: i32,
+        warm: bool,
+    ) -> Self {
         let _setup = setup_lock().lock().await;
         let air = wcr::sim::SharedAir::new(0.0);
         let log: TimedLog = Arc::new(Mutex::new(Vec::new()));
@@ -332,7 +357,9 @@ impl Chain {
         // A live chain has been up a while: every station has beaconed and
         // knows its neighbours before the first line.
         drop(_setup);
-        tokio::time::sleep(Duration::from_secs(WARMUP_SECS)).await;
+        if warm {
+            tokio::time::sleep(Duration::from_secs(WARMUP_SECS)).await;
+        }
         chain
     }
 
@@ -567,6 +594,7 @@ async fn group_line_reaches_everyone(from: usize, body: &str) {
     let keys = chain.keys_of(&id);
     let dropped = chain.dropped();
     let trace = chain.trace();
+    let chain_log = chain.log.clone();
     eprintln!("{trace}\n  marks {marks:?}\n  keys {keys:?}");
     chain.stop();
     assert!(
@@ -585,10 +613,67 @@ async fn group_line_reaches_everyone(from: usize, body: &str) {
     );
     assert!(marks_move_forward(&marks), "marks moved back: {marks:?}");
     assert_relays_capped(from, &keys, &trace);
+    assert_receipts_not_doubled(&chain_log, from, &id, &trace);
     assert_eq!(
         dropped, 0,
         "modem dropped a frame wider than its mode{trace}"
     );
+}
+
+/// QA v0.1.94: B passed on 10 receipts from further down the chain for one
+/// group line. A receipt a station carries goes again only a retry interval
+/// after its last copy, never because another copy of it came in, and next
+/// to the originator at most twice (its relay and one repeat), plus once
+/// for each of the originator's copies keyed after it.
+fn assert_receipts_not_doubled(log: &TimedLog, from: usize, line: &str, trace: &str) {
+    let log = log.lock().unwrap();
+    let origin = from as u64 + 1;
+    let line_keys: Vec<Instant> = log
+        .iter()
+        .filter(|k| k.station == origin && !k.dropped)
+        .filter(|k| {
+            Envelope::decode(&k.payload)
+                .is_ok_and(|e| e.kind != MsgType::Ack && e.msg_id.hex() == line)
+        })
+        .map(|k| k.at)
+        .collect();
+    for (i, call) in CALLS.iter().enumerate() {
+        let st = i as u64 + 1;
+        let mut carried: HashMap<String, (String, Vec<Instant>)> = HashMap::new();
+        for k in log.iter().filter(|k| k.station == st && !k.dropped) {
+            let Ok(e) = Envelope::decode(&k.payload) else {
+                continue;
+            };
+            if e.kind != MsgType::Ack
+                || e.origin.as_str() == *call
+                || e.acked_id().map(|id| id.hex()).as_deref() != Some(line)
+            {
+                continue;
+            }
+            carried
+                .entry(e.msg_id.hex())
+                .or_insert_with(|| (e.origin.to_string(), Vec::new()))
+                .1
+                .push(k.at);
+        }
+        for (by, times) in carried.values() {
+            for w in times.windows(2) {
+                let gap = w[1].duration_since(w[0]).as_secs_f64();
+                assert!(
+                    gap >= 30.0,
+                    "{call} keyed {by}'s receipt twice {gap:.1}s apart{trace}"
+                );
+            }
+            if st.abs_diff(origin) == 1 {
+                let asked = line_keys.iter().filter(|t| **t > times[0]).count();
+                assert!(
+                    times.len() <= 2 + asked,
+                    "{call} carried {by}'s receipt {} times, with {asked} copies of the line after its first{trace}",
+                    times.len()
+                );
+            }
+        }
+    }
 }
 
 /// A station at the end of the chain has nobody to pass a line on to: one
@@ -815,6 +900,7 @@ async fn key_as(
     log.lock().unwrap().push(wcr::sim::TimedKey {
         station,
         at: Instant::now(),
+        handed: Instant::now(),
         payload: payload.clone(),
         csma: true,
         cap: 170,
@@ -1257,44 +1343,497 @@ async fn beacons_go_on_a_channel_that_reads_busy() {
     let idle_keyed = |st: usize| beacons(st).iter().filter(|t| **t > warm_end).count();
     chain
         .wait(NOISY_CASE_SECS, |_| {
-            (0..CALLS.len()).all(|i| idle_keyed(i) >= 2)
+            (0..CALLS.len()).all(|i| beacons(i).len() >= 5 && idle_keyed(i) >= 2)
         })
         .await;
     let mut report = String::new();
     let mut problems = Vec::new();
     for (i, call) in CALLS.iter().enumerate() {
         let keyed = beacons(i);
-        let warm = keyed.iter().filter(|t| **t <= warm_end).count();
         let gaps: Vec<u64> = keyed
             .windows(2)
             .map(|w| w[1].duration_since(w[0]).as_secs())
             .collect();
-        // Gaps that end after the harness warm-up. The node's own warm-up
-        // beacons go a pace apart in its first 3 minutes, and each keys within
-        // the 30 s carrier-sense hold, so all of them are on the air by then.
-        let idle: Vec<u64> = keyed
-            .windows(2)
-            .filter(|w| w[1] > warm_end)
-            .map(|w| w[1].duration_since(w[0]).as_secs())
-            .collect();
         report.push_str(&format!(
-            "\n  {call}: {warm} warm-up beacons, {} after, gaps {gaps:?}s",
-            keyed.len() - warm
+            "\n  {call}: {} beacons, gaps {gaps:?}s",
+            keyed.len()
         ));
-        if !(2..=4).contains(&warm) {
-            problems.push(format!("{call} keyed {warm} beacons in the warm-up"));
+        // The first three go a pace apart (60 s ± 15), each counted from
+        // when the one before reached the modem, then one about every 5
+        // minutes.
+        if keyed.len() < 5 {
+            problems.push(format!("{call} keyed {} beacons", keyed.len()));
         }
-        if keyed.len() - warm < 2 {
-            problems.push(format!(
-                "{call} keyed {} beacons after the warm-up",
-                keyed.len() - warm
-            ));
+        if let Some(g) = gaps.iter().take(2).find(|g| **g > WARMUP_GAP_MAX_SECS) {
+            problems.push(format!("{call} warm-up gap {g}s, not about a minute"));
         }
         if let Some(g) = gaps.iter().find(|g| **g > MAX_BEACON_GAP_SECS) {
             problems.push(format!("{call} went {g}s between beacons"));
         }
+        let idle: Vec<u64> = gaps.iter().skip(2).copied().collect();
         if idle.iter().any(|g| !(240..=IDLE_GAP_MAX_SECS).contains(g)) {
             problems.push(format!("{call} idle gaps {idle:?}s, not about 5 minutes"));
+        }
+    }
+    let trace = chain.trace();
+    chain.stop();
+    eprintln!("{report}");
+    assert!(problems.is_empty(), "{problems:?}{report}{trace}");
+}
+
+/// Unix time of `at`, to set against the node's countdown.
+fn unix_of(at: Instant) -> f64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64();
+    let now_at = Instant::now();
+    if at <= now_at {
+        now - now_at.duration_since(at).as_secs_f64()
+    } else {
+        now + at.duration_since(now_at).as_secs_f64()
+    }
+}
+
+/// Sleep until unix time `t`.
+async fn sleep_until_unix(t: f64) {
+    let wait = t - unix_of(Instant::now());
+    if wait > 0.0 {
+        tokio::time::sleep(Duration::from_secs_f64(wait)).await;
+    }
+}
+
+/// The beacon countdown a node shows: `(due, span, note)`, `due` in unix
+/// seconds, `span` the seconds it counts down from.
+async fn countdown(status: u16) -> Option<(f64, u64, String)> {
+    let snap = status_json(status).await?;
+    let due = snap.get("beacon_due").and_then(|x| x.as_u64())?;
+    let span = snap
+        .get("beacon_span")
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0);
+    let note = snap
+        .get("beacon_note")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    Some((due as f64, span, note))
+}
+
+/// One real node at station `st` on its own air. The harness plays its
+/// neighbours with [`key_as`].
+struct Solo {
+    node: tokio::task::JoinHandle<wcr::error::Result<()>>,
+    st: u64,
+    air: wcr::sim::SharedAir,
+    log: TimedLog,
+    irc: u16,
+    status: u16,
+    t0: Instant,
+}
+
+impl Solo {
+    /// Its modem reads `noise_pct` busy with nothing on the air and holds
+    /// each frame `CSMA_STUCK_MS`, as on QA's chain. `tweak` sets the config.
+    async fn start(st: u64, noise_pct: i32, tweak: impl FnOnce(&mut Config)) -> Self {
+        let setup = setup_lock().lock().await;
+        let air = wcr::sim::SharedAir::new(0.0);
+        let log: TimedLog = Arc::new(Mutex::new(Vec::new()));
+        let opts = TimedOpts {
+            frame_ms: FRAME_MS,
+            count_tx: true,
+            collide: true,
+            csma_stuck_ms: CSMA_STUCK_MS,
+            rung_airtime: false,
+            noise_pct,
+        };
+        let call = CALLS[(st - 1) as usize];
+        let home = scratch(call);
+        let (kiss, ctrl) =
+            wcr::sim::mock_modem73_timed(air.clone(), st, hear_set(st), None, opts, log.clone())
+                .await
+                .unwrap();
+        let ports = reserve_ports(2).await;
+        let mut cfg = radio_cfg(call, &home, kiss, ctrl, ports[0], ports[1]);
+        tweak(&mut cfg);
+        let node = tokio::spawn(async move { wcr::node::run_node(cfg, false).await });
+        wait_tcp(ports[0], 20).await;
+        wait_radio(&ports[1..]).await;
+        drop(setup);
+        Self {
+            node,
+            st,
+            air,
+            log,
+            irc: ports[0],
+            status: ports[1],
+            t0: Instant::now(),
+        }
+    }
+
+    /// When each of this station's beacons reached its modem.
+    fn beacons(&self) -> Vec<Instant> {
+        self.log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|k| k.station == self.st && !k.dropped)
+            .filter(|k| Envelope::decode(&k.payload).is_ok_and(|e| e.kind == MsgType::Beacon))
+            .map(|k| k.handed)
+            .collect()
+    }
+
+    /// When this station's copies of `id` (not its receipts) reached its modem.
+    fn copies_of(&self, id: &wcr::proto::MsgId) -> Vec<Instant> {
+        self.log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|k| k.station == self.st)
+            .filter(|k| {
+                Envelope::decode(&k.payload)
+                    .is_ok_and(|e| e.kind != MsgType::Ack && e.msg_id == *id)
+            })
+            .map(|k| k.handed)
+            .collect()
+    }
+
+    /// The unix time of the first idle beacon's countdown: three warm-up
+    /// beacons have gone and the next is minutes away.
+    async fn idle_due(&self) -> f64 {
+        let deadline = Instant::now() + Duration::from_secs(600);
+        loop {
+            if self.beacons().len() >= 3 {
+                if let Some((due, _, note)) = countdown(self.status).await {
+                    if note.is_empty() && due > unix_of(Instant::now()) + 120.0 {
+                        return due;
+                    }
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "no idle beacon countdown{}",
+                self.trace()
+            );
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    fn trace(&self) -> String {
+        trace_of(&self.log, self.t0)
+    }
+
+    fn stop(self) {
+        self.node.abort();
+    }
+}
+
+fn beacon_from(st: usize) -> Envelope {
+    let mut env = Envelope::new_msg(
+        Callsign::parse(CALLS[st - 1]).unwrap(),
+        Callsign::from_raw("BEACON"),
+        1,
+        b"B|radio|7074".to_vec(),
+        1,
+        Flags::new(),
+    )
+    .unwrap();
+    env.kind = MsgType::Beacon;
+    env
+}
+
+/// QA v0.1.94: C beaconed 19 s after G3 went past it and 50 s before G3's
+/// receipt came back, and B beaconed between a mail and its acceptance. A
+/// beacon keyed then leaves the station deaf to the answer, or lands on it at
+/// a neighbour. Here C's idle beacon falls due while a line B passed it waits
+/// for its receipt from D: the beacon waits for the receipt, then goes, at
+/// hf-poor timing on a channel that reads 99% busy with carrier sense stuck.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_due_beacon_waits_for_the_receipt() {
+    let solo = Solo::start(3, 99, |_| {}).await;
+    let due = solo.idle_due().await;
+    let line = Envelope::new_msg(
+        Callsign::parse(CALLS[0]).unwrap(),
+        Callsign::parse(CALLS[4]).unwrap(),
+        1,
+        b"a-line-waits-for-its-receipt".to_vec(),
+        6,
+        Flags::new().with(FLAG_REQ_ACK),
+    )
+    .unwrap();
+    let mut relayed = line.clone();
+    relayed.hops_left = 5;
+    sleep_until_unix(due - 15.0).await;
+    key_as(
+        &solo.air,
+        &solo.log,
+        2,
+        &relayed,
+        Duration::from_millis(FRAME_MS),
+    )
+    .await;
+    // C passes the line on. E's receipt comes back through D after that has
+    // keyed, and at least 45 s after C's beacon fell due.
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let relay_end = loop {
+        let keyed = solo
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|k| {
+                k.station == solo.st
+                    && Envelope::decode(&k.payload).is_ok_and(|e| e.msg_id == line.msg_id)
+            })
+            .map(|k| k.at + k.len);
+        if let Some(end) = keyed {
+            break end;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "C never relayed the line{}",
+            solo.trace()
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    };
+    sleep_until_unix((due + 45.0).max(unix_of(relay_end) + 1.0)).await;
+    let mut receipt = Envelope::ack_for(&line, Callsign::parse(CALLS[4]).unwrap(), 1, None);
+    receipt.hops_left = 2;
+    key_as(&solo.air, &solo.log, 4, &receipt, Duration::from_secs(1)).await;
+    let answered = unix_of(Instant::now());
+    let deadline = Instant::now() + Duration::from_secs(300);
+    let beacon = loop {
+        if let Some(b) = solo
+            .beacons()
+            .into_iter()
+            .find(|b| unix_of(*b) > due - 30.0)
+        {
+            break unix_of(b);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "C never beaconed{}",
+            solo.trace()
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    };
+    let trace = solo.trace();
+    eprintln!("due {due:.0}, receipt {answered:.0}, beacon {beacon:.0}{trace}");
+    solo.stop();
+    assert!(
+        beacon >= answered,
+        "C's beacon reached the modem {:.0}s before the receipt it waited for{trace}",
+        answered - beacon
+    );
+    assert!(
+        beacon <= answered + 90.0,
+        "C held its beacon {:.0}s past the receipt{trace}",
+        beacon - answered
+    );
+}
+
+/// QA v0.1.94: a station's countdown restarted when it decided to beacon,
+/// while the beacon could reach the modem up to 39 s later (A's first, 7
+/// minutes later, behind its invites). The countdown now says `pending` until
+/// the beacon reaches the modem, and the next one counts from there. Here B
+/// keys a long frame as C's idle beacon falls due, so C's carrier sense holds
+/// the beacon off its modem for the air queue's 15 s cap.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_countdown_says_pending_until_the_beacon_reaches_the_modem() {
+    let solo = Solo::start(3, 99, |_| {}).await;
+    let due = solo.idle_due().await;
+    sleep_until_unix(due - 3.0).await;
+    let long = Duration::from_secs(25);
+    let air = solo.air.clone();
+    let log = solo.log.clone();
+    let play = tokio::spawn(async move { key_as(&air, &log, 2, &beacon_from(2), long).await });
+    let mut samples = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let handed = loop {
+        if let Some(c) = countdown(solo.status).await {
+            samples.push((unix_of(Instant::now()), c));
+        }
+        if let Some(b) = solo
+            .beacons()
+            .into_iter()
+            .find(|b| unix_of(*b) > due - 30.0)
+        {
+            let b = unix_of(b);
+            if unix_of(Instant::now()) > b + 5.0 {
+                break b;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "C never beaconed{}",
+            solo.trace()
+        );
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    };
+    let _ = play.await;
+    let trace = solo.trace();
+    solo.stop();
+    let shown: Vec<String> = samples
+        .iter()
+        .filter(|(at, _)| *at > due - 2.0)
+        .map(|(at, (d, span, note))| {
+            format!("{:.1}: due {:.0} span {span} {note:?}", at - due, d - due)
+        })
+        .collect();
+    let report = format!(
+        "\n  handed {:.1}s after due\n  {}",
+        handed - due,
+        shown.join("\n  ")
+    );
+    assert!(
+        handed - due >= 10.0,
+        "the beacon was not held off the modem{report}{trace}"
+    );
+    let early = samples.iter().find(|(at, (d, _, note))| {
+        *at > due + 1.0 && *at < handed - 1.0 && note.is_empty() && *d > *at + 60.0
+    });
+    assert!(
+        early.is_none(),
+        "the next countdown started before the beacon reached the modem{report}"
+    );
+    assert!(
+        samples
+            .iter()
+            .any(|(at, (_, _, note))| *at > due && *at < handed && note == "pending"),
+        "no pending countdown while the beacon waited{report}"
+    );
+    let (d, span, _) = samples
+        .iter()
+        .find(|(at, (d, _, note))| *at > handed + 1.0 && note.is_empty() && *d > *at + 60.0)
+        .map(|(_, c)| c.clone())
+        .expect("a countdown after the beacon");
+    let from = d - span as f64;
+    assert!(
+        (from - handed).abs() <= 2.0,
+        "the next countdown counts from {:.1}s, the beacon reached the modem at {:.1}s{report}",
+        from - due,
+        handed - due
+    );
+}
+
+/// QA v0.1.94: A sent four invites 10-25 s after start and B decoded none:
+/// a neighbour started with A was not listening yet. A station's own lines
+/// now wait until another station has been heard, at most two minutes after
+/// start. Here A starts alone, its client sends a line 15 s in, and B's
+/// first beacon is played 35 s in: the line reaches A's modem only after it,
+/// and the line's first retry does not follow straight behind it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_line_sent_just_after_start_waits_for_another_station() {
+    let solo = Solo::start(1, 99, |cfg| cfg.rf.beacon_jitter_s = 0).await;
+    let mut client = Client::connect(solo.irc, CALLS[0]).await;
+    tokio::time::sleep_until((solo.t0 + Duration::from_secs(15)).into()).await;
+    client
+        .send(&format!("PRIVMSG {} :sent-just-after-start", CALLS[1]))
+        .await;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let id = loop {
+        if let Some(id) = first_msgid(&client) {
+            break wcr::proto::MsgId::parse_hex(&id).expect("msgid");
+        }
+        assert!(Instant::now() < deadline, "the line was never tagged");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    };
+    tokio::time::sleep_until((solo.t0 + Duration::from_secs(35)).into()).await;
+    key_as(
+        &solo.air,
+        &solo.log,
+        2,
+        &beacon_from(2),
+        Duration::from_millis(FRAME_MS),
+    )
+    .await;
+    let heard = Instant::now();
+    let deadline = heard + Duration::from_secs(150);
+    while solo.copies_of(&id).len() < 2 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    let copies = solo.copies_of(&id);
+    let trace = solo.trace();
+    eprintln!("{trace}");
+    solo.stop();
+    let first = *copies.first().expect("A never keyed its line");
+    assert!(
+        first >= heard,
+        "A's line reached its modem {:.0}s before it heard another station{trace}",
+        heard.duration_since(first).as_secs_f64()
+    );
+    assert!(
+        first <= heard + Duration::from_secs(30),
+        "A held its line {:.0}s after hearing B{trace}",
+        first.duration_since(heard).as_secs_f64()
+    );
+    if let Some(second) = copies.get(1) {
+        assert!(
+            second.duration_since(first) >= Duration::from_secs(30),
+            "A's first retry followed {:.0}s behind its first copy{trace}",
+            second.duration_since(first).as_secs_f64()
+        );
+    }
+}
+
+/// QA v0.1.94 on a channel that read 79-99% busy with carrier sense stuck:
+/// traffic from the start held every beacon after the first for ten
+/// minutes, so A, B and C keyed one warm-up beacon and every station then
+/// beaconed only at the 10-minute ceiling. Here every modem reads 99% busy,
+/// A sends a group line just after start and E another six minutes in.
+/// Each station must still key three warm-up beacons in its first seven
+/// minutes, then beacon about every five, waiting at most for an exchange in
+/// progress.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn beacons_keep_their_pace_through_traffic() {
+    let mut chain = Chain::start_cold(Some("net"), 99).await;
+    chain.join("#net").await;
+    let t0 = chain.t0;
+    tokio::time::sleep_until((t0 + Duration::from_secs(20)).into()).await;
+    chain.clients[0].send("PRIVMSG #net :g1-at-start").await;
+    tokio::time::sleep_until((t0 + Duration::from_secs(360)).into()).await;
+    chain.clients[4]
+        .send("PRIVMSG #net :g2-six-minutes-in")
+        .await;
+    tokio::time::sleep_until((t0 + Duration::from_secs(TRAFFIC_PACE_SECS)).into()).await;
+    let beacons = |st: usize| -> Vec<Instant> {
+        chain
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|k| k.station == st as u64 + 1 && !k.dropped)
+            .filter(|k| Envelope::decode(&k.payload).is_ok_and(|e| e.kind == MsgType::Beacon))
+            .map(|k| k.handed)
+            .collect()
+    };
+    let mut report = String::new();
+    let mut problems = Vec::new();
+    for (i, call) in CALLS.iter().enumerate() {
+        let handed = beacons(i);
+        let at: Vec<u64> = handed
+            .iter()
+            .map(|b| b.saturating_duration_since(t0).as_secs())
+            .collect();
+        let gaps: Vec<u64> = handed
+            .windows(2)
+            .map(|w| w[1].duration_since(w[0]).as_secs())
+            .collect();
+        report.push_str(&format!("\n  {call}: beacons at {at:?}s, gaps {gaps:?}s"));
+        let warm = at.iter().filter(|t| **t <= 420).count();
+        if warm < 3 {
+            problems.push(format!(
+                "{call} keyed {warm} beacons in its first 7 minutes"
+            ));
+        }
+        let idle: Vec<u64> = gaps.iter().skip(2).copied().collect();
+        if idle.is_empty() {
+            problems.push(format!("{call} keyed no beacon after its warm-up"));
+        }
+        if let Some(g) = idle.iter().find(|g| **g > IDLE_GAP_TRAFFIC_MAX_SECS) {
+            problems.push(format!(
+                "{call} went {g}s between beacons, not about 5 minutes"
+            ));
         }
     }
     let trace = chain.trace();
