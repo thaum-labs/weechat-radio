@@ -306,26 +306,28 @@ impl Chain {
         Self::start_modems(group, drop_rx, noise_pct, warm, false).await
     }
 
-    /// Like [`Chain::start_at`]. `rx_after_decode` has each modem report
-    /// `rx` only just after a frame decodes, as upstream modem73 does.
+    /// Like [`Chain::start_at`]. `upstream` has each modem behave as upstream
+    /// modem73 does: `tx_frame_count` stays 0, so frames handed over pile up
+    /// at the modem and key back to back, and `rx` reads only just after a
+    /// frame decodes.
     async fn start_modems(
         group: Option<&str>,
         drop_rx: Option<LinkDrop>,
         noise_pct: i32,
         warm: bool,
-        rx_after_decode: bool,
+        upstream: bool,
     ) -> Self {
         let _setup = setup_lock().lock().await;
         let air = wcr::sim::SharedAir::new(0.0);
         let log: TimedLog = Arc::new(Mutex::new(Vec::new()));
         let opts = TimedOpts {
             frame_ms: FRAME_MS,
-            count_tx: true,
+            count_tx: !upstream,
             collide: true,
             csma_stuck_ms: CSMA_STUCK_MS,
             rung_airtime: false,
             noise_pct,
-            rx_after_decode,
+            rx_after_decode: upstream,
         };
         let mut prep = Vec::new();
         for (i, call) in CALLS.iter().enumerate() {
@@ -1990,9 +1992,10 @@ async fn beacons_keep_their_pace_through_traffic() {
 /// B got A's invite only on A's second retry, keyed its receipt three times,
 /// and A heard none: the invite ended failed although B had it. Here A sends
 /// a direct message to B and invites B..E in its first 25 s. The modems
-/// report `rx` as upstream modem73 does: only just after a frame decodes,
-/// not while the sender's next frame is on the air. B must get both, A must
-/// hear B's receipts, and neither line may ever show failed.
+/// behave as upstream modem73: A's frames pile up and key back to back, and
+/// `rx` reads only just after a frame decodes, not while A's next frame is
+/// on the air. B must get both, A must hear B's receipts, and neither line
+/// may ever show failed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_early_line_to_the_neighbour_is_delivered() {
     let mut chain = Chain::start_modems(None, None, 99, false, true).await;
