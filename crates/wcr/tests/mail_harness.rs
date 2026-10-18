@@ -716,6 +716,104 @@ async fn the_first_beacon_waits_for_the_reply_to_our_mail() {
     );
 }
 
+/// A chat frame taken off the air queue waits out carrier sense, which the
+/// station's own mail burst keeps busy once it keys, for up to 15 s. It then
+/// set chat's modem config, carrier sense on, just before it went, and the
+/// rest of the burst keyed under it: two chunks every 38 s on a stuck modem.
+/// Here the sender's first beacon (no jitter, a minute after start) has just
+/// been handed to the air queue when the mail starts. It keys first, and the
+/// burst keeps carrier sense off.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_beacon_on_its_way_when_a_mail_starts_keys_before_the_burst() {
+    async fn beacon_note(port: u16) -> String {
+        let Ok(resp) = reqwest::get(format!("http://127.0.0.1:{port}/status")).await else {
+            return String::new();
+        };
+        resp.json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|v| v.get("beacon_note")?.as_str().map(str::to_string))
+            .unwrap_or_default()
+    }
+
+    let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
+    let pair = Pair::start_tweaked(
+        TimedOpts {
+            frame_ms: 4_000,
+            count_tx: false,
+            collide: false,
+            csma_stuck_ms: 30_000,
+            rung_airtime: true,
+            noise_pct: 99,
+        },
+        drop_rx,
+        Duration::from_secs(2),
+        |i, cfg| {
+            if i == 0 {
+                cfg.rf.beacon_jitter_s = 0;
+            }
+        },
+    )
+    .await;
+    // The countdown reads pending from when the beacon is handed to the air
+    // queue until it reaches the modem.
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while beacon_note(pair.status[0]).await != "pending" {
+        assert!(
+            Instant::now() < deadline,
+            "the sender's first beacon never went"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let t0 = Instant::now();
+    let mut body = long_body();
+    body.truncate(800);
+    let body = body.trim().to_string();
+    pair.compose(&body).await;
+    // The burst ends with its last chunk. Whether the gateway heard it all is
+    // not the point here: its own beacon, held by its stuck modem since
+    // before the mail, can key into the burst.
+    let last_chunk = |log: &[wcr::sim::TimedKey]| {
+        log.iter().position(|k| {
+            k.station == 1 && chunk_of(&k.payload).is_some_and(|(_, idx, n)| idx + 1 == n)
+        })
+    };
+    let deadline = Instant::now() + Duration::from_secs(300);
+    while last_chunk(&pair.log.lock().unwrap()).is_none() && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let trace = pair.trace(t0);
+    eprintln!("{trace}");
+    let log = pair.log.lock().unwrap().clone();
+    pair.stop();
+
+    let end = last_chunk(&log).unwrap_or_else(|| panic!("the burst never ended\n{trace}"));
+    for k in log[..=end]
+        .iter()
+        .filter(|k| k.station == 1 && is_mail(&k.payload))
+    {
+        assert!(!k.csma, "a mail frame keyed with carrier sense on\n{trace}");
+    }
+    let first_chunk = log
+        .iter()
+        .find(|k| k.station == 1 && is_mail(&k.payload))
+        .map(|k| k.at)
+        .expect("the sender keyed its mail");
+    let beacon = log
+        .iter()
+        .find(|k| {
+            k.station == 1
+                && k.at >= t0
+                && wcr::proto::Envelope::decode(&k.payload)
+                    .is_ok_and(|e| e.kind == wcr::proto::MsgType::Beacon)
+        })
+        .map(|k| k.at);
+    assert!(
+        beacon.is_some_and(|b| b < first_chunk),
+        "the beacon did not key before the burst\n{trace}"
+    );
+}
+
 /// QA's v0.1.92 big mail: about 3.9 KB (56 chunks) from a radio-plus sender to
 /// the gateway at real hf-poor airtime, with modem carrier sense stuck busy
 /// (it holds a frame up to 30 s, then keys anyway), as in QA's simulator.

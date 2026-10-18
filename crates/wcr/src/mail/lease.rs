@@ -76,6 +76,20 @@ pub async fn wait_ack_done(ports: &RadioPorts, cap: Duration) {
     }
 }
 
+/// A chat frame taken off the air queue just before the lease may still be
+/// waiting out carrier sense. It sets chat's config, carrier sense on, just
+/// before it goes to the modem. Wait for that (at most `cap`) before setting
+/// mail's, or it lands under the burst.
+pub async fn wait_chat_handed(ports: &RadioPorts, cap: Duration) {
+    let Some(air) = &ports.air else {
+        return;
+    };
+    let start = Instant::now();
+    while air.chat_in_flight() && start.elapsed() < cap {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 pub async fn wait_idle(ports: &RadioPorts, cap: Duration) -> bool {
     let start = Instant::now();
     loop {
@@ -195,6 +209,89 @@ pub async fn wait_clear(ports: &RadioPorts, cap: Duration) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A chat frame taken off the air queue just before a mail lease waits
+    /// out carrier sense, then sets chat's modem config and goes to the
+    /// modem. The lease waits until the frame has gone, so chat's config
+    /// cannot land under the burst.
+    #[tokio::test]
+    async fn a_mail_lease_waits_for_the_chat_frame_on_its_way() {
+        use crate::air::{run_air_queue, AirItem, ChannelState, FakeSense};
+        use crate::proto::{Callsign, Envelope, Flags};
+
+        let q = AirQueue::new();
+        let env = Envelope::new_msg(
+            Callsign::parse("G4AAA").unwrap(),
+            Callsign::parse("M0BBB").unwrap(),
+            1,
+            b"chat".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        let frame = env.encode().unwrap();
+        q.enqueue(AirItem::new(
+            &env,
+            "G4AAA",
+            vec![frame.clone()],
+            Preset::HfPoor,
+        ));
+        let sense = FakeSense::new();
+        sense.set_state(ChannelState::Rx);
+        let mut cfg = crate::config::Config::default();
+        cfg.rf.slot_ms = 50;
+        cfg.rf.quiet_ms = 50;
+        cfg.rf.turnaround_ms = 0;
+        let (air_tx, mut air_rx) = tokio::sync::mpsc::channel(8);
+        let worker = tokio::spawn(run_air_queue(
+            q.clone(),
+            air_tx,
+            sense.clone(),
+            None,
+            Arc::new(parking_lot::Mutex::new(cfg)),
+            crate::status::new_shared(),
+            tokio_util::sync::CancellationToken::new(),
+        ));
+        // What reaches the modem, as the KISS writer reports it.
+        let keyed = q.clone();
+        let handed = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let seen = handed.clone();
+        tokio::spawn(async move {
+            while let Some(f) = air_rx.recv().await {
+                seen.lock().push(f.clone());
+                keyed.note_keyed(&f);
+            }
+        });
+        while !q.chat_in_flight() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        // The lease starts while the frame waits out one being received.
+        q.hold_for_mail();
+        let clear = sense.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            clear.set_state(ChannelState::Idle);
+        });
+        let ports = RadioPorts {
+            kiss: None,
+            control: None,
+            air: Some(q.clone()),
+            sense: None,
+        };
+        let started = Instant::now();
+        wait_chat_handed(&ports, Duration::from_secs(5)).await;
+        let waited = started.elapsed();
+        worker.abort();
+        assert!(
+            waited >= Duration::from_millis(250),
+            "the lease went on after {waited:?}, with the chat frame still waiting"
+        );
+        assert_eq!(
+            handed.lock().clone(),
+            vec![frame],
+            "the chat frame went to the modem before the lease went on"
+        );
+    }
 
     fn upstream(channel: &str, ptt: bool, queue: u64) -> ModemStatus {
         ModemStatus {

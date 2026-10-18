@@ -378,6 +378,9 @@ struct QueueInner {
     /// Widest frame of each item handed to the modem, and until when it may
     /// still be waiting there (`NARROW_MODE_WAIT`).
     handed: Vec<(usize, Instant)>,
+    /// First frame of the item `pop_ready` handed out last, until that frame
+    /// reaches the modem or the queue asks for the next item.
+    in_flight: Option<Vec<u8>>,
 }
 
 impl QueueInner {
@@ -408,6 +411,7 @@ impl AirQueue {
                 mail_lease: false,
                 last_mail: 0,
                 handed: Vec::new(),
+                in_flight: None,
             })),
             notify: Arc::new(Notify::new()),
         }
@@ -457,6 +461,8 @@ impl AirQueue {
     pub fn pop_ready(&self) -> Option<AirItem> {
         let now = Instant::now();
         let mut g = self.inner.lock();
+        // The air queue asks for the next item only once the last one is done.
+        g.in_flight = None;
         if g.paused || g.mail_lease {
             return None;
         }
@@ -468,7 +474,24 @@ impl AirQueue {
         let item = g.items.remove(idx);
         g.handed.retain(|(_, until)| *until > now);
         g.handed.push((item.widest(), now + NARROW_MODE_WAIT));
+        g.in_flight = item.frames.first().cloned();
         Some(item)
+    }
+
+    /// A frame reached the modem. The item handed out last is on its way
+    /// once its first frame is.
+    pub fn note_keyed(&self, frame: &[u8]) {
+        let mut g = self.inner.lock();
+        if g.in_flight.as_deref() == Some(frame) {
+            g.in_flight = None;
+        }
+    }
+
+    /// An item taken off the queue has not reached the modem yet. It may
+    /// still be waiting out carrier sense, and it sets chat's modem config,
+    /// carrier sense on, just before its frames go.
+    pub fn chat_in_flight(&self) -> bool {
+        self.inner.lock().in_flight.is_some()
     }
 
     /// Hold the queue while Email has the radio. Does not drop queued chat.
@@ -1400,6 +1423,27 @@ mod tests {
         q.release_mail();
         assert!(q.pause_for_ack());
         assert!(q.is_paused());
+    }
+
+    #[test]
+    fn an_item_is_in_flight_until_its_first_frame_reaches_the_modem() {
+        let q = AirQueue::new();
+        q.enqueue(item(AirClass::Own, 1));
+        assert!(!q.chat_in_flight());
+        let first = q.pop_ready().unwrap().frames[0].clone();
+        assert!(q.chat_in_flight(), "taken off the queue, not at the modem");
+        q.note_keyed(&[9]);
+        assert!(q.chat_in_flight(), "another frame reached the modem");
+        q.note_keyed(&first);
+        assert!(!q.chat_in_flight(), "its first frame reached the modem");
+        // The air queue asks for the next item only once the last is done,
+        // even while a mail lease holds it.
+        q.enqueue(item(AirClass::Own, 2));
+        q.pop_ready().unwrap();
+        q.hold_for_mail();
+        assert!(q.chat_in_flight());
+        assert!(q.pop_ready().is_none());
+        assert!(!q.chat_in_flight());
     }
 
     #[test]
