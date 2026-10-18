@@ -716,13 +716,13 @@ async fn the_first_beacon_waits_for_the_reply_to_our_mail() {
     );
 }
 
-/// On QA's chain the channel reads 99% busy, so a chat frame taken off the
-/// air queue waits out carrier sense for 15 s, then sets chat's modem config,
-/// carrier sense on, just before it goes. A mail started in those 15 s had
-/// the rest of its burst keyed under that config: two chunks every 38 s on a
-/// stuck modem. Here the sender's first beacon (no jitter, a minute after
-/// start) is on its way when the mail starts. It keys first, and the burst
-/// keeps carrier sense off.
+/// A chat frame taken off the air queue waits out carrier sense, which the
+/// station's own mail burst keeps busy once it keys, for up to 15 s. It then
+/// set chat's modem config, carrier sense on, just before it went, and the
+/// rest of the burst keyed under it: two chunks every 38 s on a stuck modem.
+/// Here the sender's first beacon (no jitter, a minute after start) has just
+/// been handed to the air queue when the mail starts. It keys first, and the
+/// burst keeps carrier sense off.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_beacon_on_its_way_when_a_mail_starts_keys_before_the_burst() {
     async fn beacon_note(port: u16) -> String {
