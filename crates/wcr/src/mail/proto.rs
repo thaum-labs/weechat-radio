@@ -365,6 +365,11 @@ pub fn decode_chunk(bytes: &[u8]) -> Result<MailWire> {
     })
 }
 
+/// A mail chunk or slice on the wire, whether or not it decodes.
+pub fn looks_like_mail(payload: &[u8]) -> bool {
+    payload.starts_with(b"WCRM\t") || payload.starts_with(b"WCRP\t")
+}
+
 pub fn try_decode(payload: &[u8]) -> Option<Incoming> {
     if payload.starts_with(b"WCRM\t") {
         return decode_chunk(payload).ok().map(Incoming::Wire);
