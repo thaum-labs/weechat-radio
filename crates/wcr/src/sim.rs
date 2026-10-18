@@ -355,6 +355,10 @@ pub struct TimedOpts {
     /// `occupancy_pct` reported with nothing decodable on the air: the noise
     /// floor. 0 for a clean channel; QA's live chain read 99.
     pub noise_pct: i32,
+    /// `channel_state` reads `rx` only for half a second after a frame
+    /// decodes, as upstream modem73 reports it (its 0.5 s RX lockout), not
+    /// while a neighbour's next frame is still on the air.
+    pub rx_after_decode: bool,
 }
 
 struct TimedState {
@@ -362,6 +366,8 @@ struct TimedState {
     keying: bool,
     keyed_until: Option<Instant>,
     heard_at: Option<Instant>,
+    /// When a frame last decoded here: upstream modem73's RX lockout.
+    decoded_at: Option<Instant>,
     cap: usize,
     /// Airtime of one frame in the current mode, relative to `frame_ms`.
     scale: f64,
@@ -460,6 +466,7 @@ pub async fn mock_modem73_timed(
         keying: false,
         keyed_until: None,
         heard_at: None,
+        decoded_at: None,
         cap: 170,
         scale: 1.0,
         csma: true,
@@ -591,6 +598,7 @@ pub async fn mock_modem73_timed(
                             {
                                 continue;
                             }
+                            st.lock().expect("timed").decoded_at = Some(Instant::now());
                             if stream.write_all(&encode_frame(&payload)).await.is_err() {
                                 break;
                             }
@@ -631,9 +639,16 @@ pub async fn mock_modem73_timed(
                                         || g.heard_at.is_some_and(|t| {
                                             t.elapsed() < Duration::from_millis(400)
                                         });
+                                    let rx_state = if opts.rx_after_decode {
+                                        g.decoded_at.is_some_and(|t| {
+                                            t.elapsed() < Duration::from_millis(500)
+                                        })
+                                    } else {
+                                        rx
+                                    };
                                     let state = if g.keying {
                                         "tx"
-                                    } else if rx {
+                                    } else if rx_state {
                                         "rx"
                                     } else if opts.csma_stuck_ms > 0 {
                                         "busy"

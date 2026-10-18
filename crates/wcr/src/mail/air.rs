@@ -441,9 +441,11 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
         chunks.push((w.idx, proto::frames_for_mtu(&proto::encode_chunk(w), mtu)?));
     }
     if probe {
-        // Any chunk gets the gateway's answer. The one with the fewest frames
-        // keeps this station deaf for the shortest time.
-        chunks.sort_by_key(|(_, frames)| frames.len());
+        // The first chunk is the only one that names this station. A gateway
+        // that missed it holds the rest but cannot address a report, so the
+        // probe is the first chunk. With it, the gateway answers with its
+        // acceptance or what it still lacks.
+        chunks.retain(|(idx, _)| *idx == 0);
         chunks.truncate(1);
     }
     if chunks.is_empty() {
@@ -871,6 +873,12 @@ async fn on_incoming(ctx: &TxCtx, asm: &mut Assembler, incoming: Incoming, durin
         );
     if gateway_reply && matches!(wire.op, MailOp::Data | MailOp::VoxData) {
         if let Some(origin) = accepted_origin(ctx, &wire.mail_id) {
+            tracing::info!(
+                "mail chunk {} {}/{} ignored: already accepted",
+                wire.mail_id,
+                wire.idx + 1,
+                wire.count
+            );
             asm.buckets
                 .remove(&format!("{:?}:{}", wire.op, wire.mail_id));
             asm.reack.insert(wire.mail_id, origin);
@@ -1143,6 +1151,12 @@ fn log_chunk(ctx: &TxCtx, asm: &Assembler, wire: &MailWire) {
         return;
     }
     let Some(from) = asm.from.get(&wire.mail_id) else {
+        tracing::info!(
+            "mail received chunk {} {}/{}, sender not known until chunk 1 arrives",
+            wire.mail_id,
+            wire.idx + 1,
+            wire.count
+        );
         return;
     };
     let to = asm.to.get(&wire.mail_id).map(String::as_str).unwrap_or("");

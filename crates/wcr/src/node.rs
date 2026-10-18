@@ -910,11 +910,9 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 // When this beacon fell due, before any hold.
                 let scheduled =
                     relay::next_beacon_at(rt_b.started, last_beacon, sent, pace_s).min(ceiling);
-                // An exchange this station is part of, or our own frames still
-                // queued: they start one as soon as they go, and a beacon
-                // handed over now would key behind them. A due beacon waits
-                // for one exchange at most, and for a mail until its
-                // acceptance.
+                // An exchange this station is part of. A due beacon waits for
+                // one exchange at most, and for a mail until its acceptance.
+                // Our own queued frames do not hold it: it goes ahead of them.
                 let open = rt_b
                     .exchanges
                     .lock()
@@ -923,12 +921,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         relay::exchange_wait_s(preset),
                         relay::exchange_settle_s(preset),
                     )
-                    .map(|x| x.to_string())
-                    .or_else(|| {
-                        rt_b.air()
-                            .is_some_and(|a| a.holds_traffic())
-                            .then(|| "our own frames queued ahead of it".to_string())
-                    });
+                    .map(|x| x.to_string());
                 let mail = rt_b.exchanges.lock().is_open(
                     relay::ExchangeKey::Mail,
                     now,
@@ -1137,6 +1130,11 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     if let Some(incoming) = crate::mail::try_decode(&payload) {
                         note_exchange(&rt, None, Some(&incoming));
                         crate::mail::on_rf(&rt.mail, incoming).await;
+                    } else if crate::mail::looks_like_mail(&payload) {
+                        tracing::info!(
+                            "mail frame dropped: {} bytes that do not decode",
+                            payload.len()
+                        );
                     } else if let Ok(env) = Envelope::decode(&payload) {
                         let snr = rt.last_rx_snr.lock().take();
                         let _ = on_envelope(&rt, env, "rf", snr).await;

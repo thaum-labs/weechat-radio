@@ -50,6 +50,10 @@ const WARMUP_GAP_MAX_SECS: u64 = 120;
 /// carrier sense moves each key by up to 30 s, and a beacon falling due just
 /// after a neighbour's frame decoded waits up to 10 s.
 const IDLE_GAP_MAX_SECS: u64 = 420;
+/// QA v0.1.95 saw quiet gaps of 285 s. Jitter only adds to the 5 minutes,
+/// each counted from when the last beacon reached the modem; the beacon loop
+/// looks once a second.
+const IDLE_GAP_MIN_SECS: u64 = 298;
 /// Most copies of one line a middle relay keys: its relay, one repeat, and
 /// one answer to the originator's retry.
 const MIDDLE_RELAY_CAP: usize = 3;
@@ -60,6 +64,11 @@ const TRAFFIC_PACE_SECS: u64 = 1_380;
 /// (about 100 s at hf-poor), and can then queue behind our own frames. Its
 /// gaps stay under 9 minutes: v0.1.94 beaconed only at the 10-minute ceiling.
 const TRAFFIC_GAP_MAX_SECS: u64 = 540;
+/// A warm-up gap with our own lines queued and awaiting receipts: a pace
+/// (60 s), one exchange waited out (about 100 s at hf-poor), the frame
+/// already at the modem with its 30 s carrier-sense hold, and up to two
+/// frames' wait on a congested channel. Not the queue behind it.
+const WARMUP_QUEUE_GAP_MAX_SECS: u64 = 240;
 
 /// Reserved ports are free again until the nodes bind them, so chains start
 /// one at a time. Once up, the cases run side by side on their own air.
@@ -294,6 +303,18 @@ impl Chain {
         noise_pct: i32,
         warm: bool,
     ) -> Self {
+        Self::start_modems(group, drop_rx, noise_pct, warm, false).await
+    }
+
+    /// Like [`Chain::start_at`]. `rx_after_decode` has each modem report
+    /// `rx` only just after a frame decodes, as upstream modem73 does.
+    async fn start_modems(
+        group: Option<&str>,
+        drop_rx: Option<LinkDrop>,
+        noise_pct: i32,
+        warm: bool,
+        rx_after_decode: bool,
+    ) -> Self {
         let _setup = setup_lock().lock().await;
         let air = wcr::sim::SharedAir::new(0.0);
         let log: TimedLog = Arc::new(Mutex::new(Vec::new()));
@@ -304,6 +325,7 @@ impl Chain {
             csma_stuck_ms: CSMA_STUCK_MS,
             rung_airtime: false,
             noise_pct,
+            rx_after_decode,
         };
         let mut prep = Vec::new();
         for (i, call) in CALLS.iter().enumerate() {
@@ -791,6 +813,7 @@ async fn a_relay_that_knows_one_neighbour_still_relays_once() {
         csma_stuck_ms: 0,
         rung_airtime: false,
         noise_pct: 99,
+        rx_after_decode: false,
     };
     let c = 3;
     let home = scratch(CALLS[2]);
@@ -969,6 +992,7 @@ async fn a_receipt_behind_queued_frames_keys_straight_after_them() {
         csma_stuck_ms: CSMA_STUCK_MS,
         rung_airtime: false,
         noise_pct: 99,
+        rx_after_decode: false,
     };
     let air = wcr::sim::SharedAir::new(0.0);
     let (kiss_port, ctrl_port) =
@@ -1428,7 +1452,9 @@ async fn each_beacon_keys_when_its_countdown_says() {
 /// due, was held a pace for the busy channel, then held again. On a quiet
 /// chain whose modems read 99% from the noise floor, with carrier sense stuck
 /// busy, every station must still beacon through the warm-up, then about
-/// every 5 minutes, and never more than 10 minutes apart.
+/// every 5 minutes, and never more than 10 minutes apart. QA v0.1.95 saw
+/// quiet gaps of 285 s: one never goes sooner than 5 minutes after the last
+/// reached the modem.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn beacons_go_on_a_channel_that_reads_busy() {
     let chain = Chain::start_noisy(99).await;
@@ -1441,7 +1467,7 @@ async fn beacons_go_on_a_channel_that_reads_busy() {
             .iter()
             .filter(|k| k.station == st as u64 + 1 && !k.dropped)
             .filter(|k| Envelope::decode(&k.payload).is_ok_and(|e| e.kind == MsgType::Beacon))
-            .map(|k| k.at)
+            .map(|k| k.handed)
             .collect()
     };
     let idle_keyed = |st: usize| beacons(st).iter().filter(|t| **t > warm_end).count();
@@ -1475,7 +1501,10 @@ async fn beacons_go_on_a_channel_that_reads_busy() {
             problems.push(format!("{call} went {g}s between beacons"));
         }
         let idle: Vec<u64> = gaps.iter().skip(2).copied().collect();
-        if idle.iter().any(|g| !(240..=IDLE_GAP_MAX_SECS).contains(g)) {
+        if idle
+            .iter()
+            .any(|g| !(IDLE_GAP_MIN_SECS..=IDLE_GAP_MAX_SECS).contains(g))
+        {
             problems.push(format!("{call} idle gaps {idle:?}s, not about 5 minutes"));
         }
     }
@@ -1550,6 +1579,7 @@ impl Solo {
             csma_stuck_ms: CSMA_STUCK_MS,
             rung_airtime: false,
             noise_pct,
+            rx_after_decode: false,
         };
         let call = CALLS[(st - 1) as usize];
         let home = scratch(call);
@@ -1953,4 +1983,123 @@ async fn beacons_keep_their_pace_through_traffic() {
     chain.stop();
     eprintln!("{report}");
     assert!(problems.is_empty(), "{problems:?}{report}{trace}");
+}
+
+/// QA v0.1.95, a fresh start on a channel that reads busy: A's client sent
+/// invites 10-25 s after start and B decoded none of their first copies.
+/// B got A's invite only on A's second retry, keyed its receipt three times,
+/// and A heard none: the invite ended failed although B had it. Here A sends
+/// a direct message to B and invites B..E in its first 25 s. The modems
+/// report `rx` as upstream modem73 does: only just after a frame decodes,
+/// not while the sender's next frame is on the air. B must get both, A must
+/// hear B's receipts, and neither line may ever show failed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_early_line_to_the_neighbour_is_delivered() {
+    let mut chain = Chain::start_modems(None, None, 99, false, true).await;
+    let started = chain.t0;
+    chain.clients[0].send("JOIN #qa95a").await;
+    tokio::time::sleep_until((started + Duration::from_secs(10)).into()).await;
+    let invite_b = send_tracked(&mut chain, 0, "INVITE M0BBB #qa95a").await;
+    tokio::time::sleep_until((started + Duration::from_secs(15)).into()).await;
+    let dm = send_tracked(&mut chain, 0, "PRIVMSG M0BBB :early-dm-to-b").await;
+    for (n, call) in CALLS[2..].iter().enumerate() {
+        tokio::time::sleep_until((started + Duration::from_secs(18 + 3 * n as u64)).into()).await;
+        chain.clients[0]
+            .send(&format!("INVITE {call} #qa95a"))
+            .await;
+    }
+    let delivered = |c: &Chain, id: &str| {
+        marks_for(&c.clients[0], id)
+            .iter()
+            .any(|m| m == "delivered" || m == "all")
+    };
+    chain
+        .wait(CASE_SECS, |c| {
+            c.clients[1].shows("early-dm-to-b") >= 1
+                && got_invite(&c.clients[1], "#qa95a")
+                && delivered(c, &dm)
+                && delivered(c, &invite_b)
+        })
+        .await;
+    let trace = chain.trace();
+    let mut problems = Vec::new();
+    let mut report = String::new();
+    for (what, id) in [("dm", &dm), ("invite to B", &invite_b)] {
+        let marks = marks_for(&chain.clients[0], id);
+        let keys = chain.keys_of(id);
+        report.push_str(&format!("\n  {what}: marks {marks:?} keys {keys:?}"));
+        if !delivered(&chain, id) {
+            problems.push(format!("A never saw B's receipt for the {what}"));
+        }
+        if marks.iter().any(|m| m == "failed") {
+            problems.push(format!("the {what} showed failed although B is next to A"));
+        }
+        if keys[0].1 > 2 {
+            problems.push(format!("A keyed the {what} {} times", keys[0].1));
+        }
+    }
+    if chain.clients[1].shows("early-dm-to-b") == 0 {
+        problems.push("B never showed the direct message".into());
+    }
+    if !got_invite(&chain.clients[1], "#qa95a") {
+        problems.push("B never got the invite".into());
+    }
+    eprintln!("{trace}{report}");
+    chain.stop();
+    assert!(problems.is_empty(), "{problems:?}{report}{trace}");
+}
+
+/// QA v0.1.95: the busiest stations' third warm-up beacon waited behind
+/// their own queued frames. A's beacons went 14:14:16, 14:15:30, then
+/// 14:24:17, and B's third was taken back from the air queue four times. Here
+/// A hears B's beacon 5 s after start and its client queues eight direct
+/// messages to B, which never answers, at hf-poor timing with carrier sense
+/// stuck. A's warm-up beacons must each wait out one exchange at most, then
+/// go ahead of the queued lines.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn warm_up_beacons_go_between_queued_frames() {
+    let solo = Solo::start(1, 99, |cfg| cfg.rf.beacon_jitter_s = 0).await;
+    let mut client = Client::connect(solo.irc, CALLS[0]).await;
+    tokio::time::sleep_until((solo.t0 + Duration::from_secs(5)).into()).await;
+    key_as(
+        &solo.air,
+        &solo.log,
+        2,
+        &beacon_from(2),
+        Duration::from_millis(FRAME_MS),
+    )
+    .await;
+    for n in 0..8 {
+        client
+            .send(&format!("PRIVMSG {} :queued-line-{n}", CALLS[1]))
+            .await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    let deadline = solo.t0 + Duration::from_secs(900);
+    while solo.beacons().len() < 3 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    let beacons = solo.beacons();
+    let trace = solo.trace();
+    let t0 = solo.t0;
+    solo.stop();
+    let at: Vec<u64> = beacons
+        .iter()
+        .map(|b| b.saturating_duration_since(t0).as_secs())
+        .collect();
+    let gaps: Vec<u64> = beacons
+        .windows(2)
+        .map(|w| w[1].duration_since(w[0]).as_secs())
+        .collect();
+    eprintln!("{trace}\n  beacons at {at:?}s, gaps {gaps:?}s");
+    assert!(
+        beacons.len() >= 3,
+        "A keyed {} warm-up beacons{trace}",
+        beacons.len()
+    );
+    assert!(
+        at[0] <= WARMUP_QUEUE_GAP_MAX_SECS
+            && gaps.iter().take(2).all(|g| *g <= WARMUP_QUEUE_GAP_MAX_SECS),
+        "warm-up beacons at {at:?}s, gaps {gaps:?}s: a beacon waited behind A's queue{trace}"
+    );
 }
