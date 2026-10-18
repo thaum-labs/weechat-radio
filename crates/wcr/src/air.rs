@@ -24,6 +24,17 @@ const RELAY_DEFER_MAX_S: u64 = 8;
 /// than this long ago waits, or the modem drops that frame when it keys.
 const NARROW_MODE_WAIT: Duration = Duration::from_secs(45);
 
+/// Longest random wait an item gets before it leaves the queue on a channel
+/// that reads congested. There the modem's carrier sense holds every frame
+/// its fixed time and then keys it anyway, so neighbours handing frames over
+/// on the same beat key over each other at the station between them on every
+/// try (QA v0.1.95: B heard none of A's first invite copies under C's
+/// relays). Up to two frames of airtime breaks the beat. Beacons already
+/// go on their own jittered schedule and do not wait again.
+pub fn beat_break_max(preset: Preset) -> Duration {
+    Duration::from_secs_f64(airtime_secs(preset, preset.payload_bytes() as usize, 0) * 2.0)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AirClass {
     Emergency = 0,
@@ -314,6 +325,8 @@ pub struct AirItem {
     pub rung: Option<Rung>,
     pub preset: Preset,
     congest_deferred: bool,
+    /// Already waited its random beat-break on a congested channel.
+    beat_broken: bool,
     /// The beacon loop holds a beacon for a busy channel itself, so a
     /// congested channel does not drop it.
     beacon: bool,
@@ -332,6 +345,7 @@ impl AirItem {
             rung: None,
             preset,
             congest_deferred: false,
+            beat_broken: false,
             beacon: env.kind == MsgType::Beacon,
         }
     }
@@ -363,6 +377,18 @@ impl AirItem {
     fn widest(&self) -> usize {
         self.frames.iter().map(Vec::len).max().unwrap_or(0)
     }
+
+    /// Place in the queue, lowest first. The beacon loop hands a beacon over
+    /// only once it is due, so it goes ahead of our own and relayed lines:
+    /// behind them, a busy station's warm-up waited minutes. Receipts and
+    /// priority traffic still go first.
+    fn queue_rank(&self) -> u8 {
+        if self.beacon {
+            AirClass::Own as u8 * 2 - 1
+        } else {
+            self.class as u8 * 2
+        }
+    }
 }
 
 struct QueueInner {
@@ -381,6 +407,8 @@ struct QueueInner {
     /// First frame of the item `pop_ready` handed out last, until that frame
     /// reaches the modem or the queue asks for the next item.
     in_flight: Option<Vec<u8>>,
+    /// The channel read congested at the last look.
+    congested: bool,
 }
 
 impl QueueInner {
@@ -412,6 +440,7 @@ impl AirQueue {
                 last_mail: 0,
                 handed: Vec::new(),
                 in_flight: None,
+                congested: false,
             })),
             notify: Arc::new(Notify::new()),
         }
@@ -429,7 +458,7 @@ impl AirQueue {
         let pos = g
             .items
             .iter()
-            .position(|x| x.class > item.class)
+            .position(|x| x.queue_rank() > item.queue_rank())
             .unwrap_or(g.items.len());
         g.items.insert(pos, item);
         drop(g);
@@ -453,11 +482,6 @@ impl AirQueue {
         self.inner.lock().items.iter().any(|x| x.msg_id == id)
     }
 
-    /// A frame other than a beacon is waiting here.
-    pub fn holds_traffic(&self) -> bool {
-        self.inner.lock().items.iter().any(|x| !x.beacon)
-    }
-
     pub fn pop_ready(&self) -> Option<AirItem> {
         let now = Instant::now();
         let mut g = self.inner.lock();
@@ -469,6 +493,14 @@ impl AirQueue {
         let idx = g.items.iter().position(|x| x.not_before <= now)?;
         // The items behind wait too, so a narrow one is never starved.
         if g.narrow_until(&g.items[idx], now).is_some() {
+            return None;
+        }
+        let congested = g.congested;
+        let head = &mut g.items[idx];
+        if congested && !head.beat_broken && head.class != AirClass::Emergency && !head.beacon {
+            head.beat_broken = true;
+            let wait = rand::thread_rng().gen_range(Duration::ZERO..=beat_break_max(head.preset));
+            head.not_before = now + wait;
             return None;
         }
         let item = g.items.remove(idx);
@@ -561,6 +593,7 @@ impl AirQueue {
     }
 
     fn apply_congestion(&self, occ: u8, congested_pct: u8) {
+        self.inner.lock().congested = occ >= congested_pct;
         if occ < congested_pct {
             return;
         }
@@ -806,11 +839,42 @@ pub fn ack_forces_csma_off(cap_elapsed: bool, modem_busy: bool, rx_in_progress: 
     cap_elapsed || (modem_busy && !rx_in_progress)
 }
 
+/// A frame decoded this recently may be the first of a run its sender is
+/// still keying: modem73 reports `rx` only for half a second after each
+/// decode, not while the next frame is on the air. A receipt keyed over that
+/// frame is lost at the sender, which is still keying. One full frame of
+/// airtime and a second with nothing decoded means the run has ended.
+pub fn ack_listen_window(preset: Preset) -> Duration {
+    Duration::from_secs_f64(airtime_secs(preset, preset.payload_bytes() as usize, 0) + 1.0)
+}
+
+/// Longest a run of frames holds a receipt: three frames.
+const ACK_LISTEN_FRAMES: u32 = 3;
+
+/// The receipt still listens for the rest of the sender's run: a frame
+/// decoded within `window`, and the receipt has waited less than `max`.
+pub fn ack_still_listening(
+    since_decode: Duration,
+    window: Duration,
+    waited: Duration,
+    max: Duration,
+) -> bool {
+    since_decode < window && waited < max
+}
+
 async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
     let started = Instant::now();
     let mut force = false;
+    let window = ack_listen_window(tx.preset);
+    let listen_max = window * ACK_LISTEN_FRAMES;
     if tx.csma {
         loop {
+            if tx.sense.is_some_and(|s| {
+                ack_still_listening(s.since_last_decode(), window, started.elapsed(), listen_max)
+            }) {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
             let status = match tx.control {
                 Some(c) => c.get_status().await.ok(),
                 None => None,
@@ -950,6 +1014,7 @@ mod tests {
             rung: None,
             preset: Preset::VhfFm,
             congest_deferred: false,
+            beat_broken: false,
             beacon: false,
         }
     }
@@ -998,6 +1063,25 @@ mod tests {
         assert_eq!(q.pop_ready().unwrap().class, AirClass::Emergency);
         assert_eq!(q.pop_ready().unwrap().class, AirClass::Own);
         assert_eq!(q.pop_ready().unwrap().class, AirClass::Background);
+    }
+
+    /// QA v0.1.95: A's third warm-up beacon waited 8m47s behind its own
+    /// queued frames. A due beacon goes ahead of our lines and relays, still
+    /// behind receipts and priority traffic.
+    #[test]
+    fn a_beacon_goes_ahead_of_queued_lines() {
+        let q = AirQueue::new();
+        assert!(q.enqueue(item(AirClass::Own, 1)));
+        assert!(q.enqueue(item(AirClass::Relay, 2)));
+        assert!(q.enqueue(item(AirClass::Priority, 3)));
+        let mut beacon = item(AirClass::Background, 4);
+        beacon.beacon = true;
+        assert!(q.enqueue(beacon));
+        assert!(q.enqueue(item(AirClass::Emergency, 5)));
+        let order: Vec<u8> = std::iter::from_fn(|| q.pop_ready())
+            .map(|x| x.frames[0][0])
+            .collect();
+        assert_eq!(order, vec![5, 3, 4, 1, 2]);
     }
 
     #[test]
@@ -1474,6 +1558,52 @@ mod tests {
             restored.get("robust_mode").and_then(|v| v.as_i64()),
             Some(6)
         );
+    }
+
+    /// QA v0.1.95: B keyed its receipt for A's invite three times, each
+    /// straight after one of A's frames while A's next was already on the
+    /// air, and A heard none. A receipt waits until a frame's airtime and a
+    /// second have passed with nothing decoded, at most three frames.
+    #[test]
+    fn a_receipt_waits_out_the_rest_of_the_senders_run() {
+        let window = ack_listen_window(Preset::HfPoor);
+        let frame = airtime_secs(Preset::HfPoor, Preset::HfPoor.payload_bytes() as usize, 0);
+        assert_eq!(window, Duration::from_secs_f64(frame + 1.0));
+        let max = window * ACK_LISTEN_FRAMES;
+        let s = Duration::from_secs;
+        assert!(ack_still_listening(s(0), window, s(0), max), "just decoded");
+        assert!(
+            !ack_still_listening(window, window, window, max),
+            "the run ended"
+        );
+        assert!(
+            !ack_still_listening(s(0), window, max, max),
+            "a channel that keeps decoding holds it three frames at most"
+        );
+    }
+
+    #[test]
+    fn a_congested_channel_breaks_the_modems_beat() {
+        let q = AirQueue::new();
+        q.enqueue(item(AirClass::Own, 1));
+        q.enqueue(item(AirClass::Emergency, 2));
+        q.apply_congestion(99, 60);
+        let first = q.pop_ready().unwrap();
+        assert_eq!(first.frames[0][0], 2, "emergency traffic does not wait");
+        // The line waits up to two frames once, then goes.
+        let limit = Instant::now() + beat_break_max(Preset::VhfFm);
+        let line = loop {
+            if let Some(x) = q.pop_ready() {
+                break x;
+            }
+            assert!(Instant::now() <= limit + Duration::from_millis(50));
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(line.frames[0][0], 1);
+        // A clear channel: carrier sense spaces frames itself.
+        q.apply_congestion(10, 60);
+        q.enqueue(item(AirClass::Own, 3));
+        assert_eq!(q.pop_ready().unwrap().frames[0][0], 3);
     }
 
     #[test]
