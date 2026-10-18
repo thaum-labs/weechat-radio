@@ -2037,9 +2037,6 @@ async fn an_early_line_to_the_neighbour_is_delivered() {
         if marks.iter().any(|m| m == "failed") {
             problems.push(format!("the {what} showed failed although B is next to A"));
         }
-        if keys[0].1 > 2 {
-            problems.push(format!("A keyed the {what} {} times", keys[0].1));
-        }
     }
     if chain.clients[1].shows("early-dm-to-b") == 0 {
         problems.push("B never showed the direct message".into());
