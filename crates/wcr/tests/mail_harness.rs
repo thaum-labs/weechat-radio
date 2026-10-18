@@ -372,6 +372,7 @@ async fn long_mail_recovers_a_lost_final_chunk() {
             csma_stuck_ms: 0,
             rung_airtime: false,
             noise_pct: 0,
+            rx_after_decode: false,
         },
         drop_rx,
     )
@@ -459,6 +460,7 @@ async fn a_resend_keys_only_what_the_latest_report_lacks() {
             csma_stuck_ms: 0,
             rung_airtime: false,
             noise_pct: 0,
+            rx_after_decode: false,
         },
         drop_rx,
     )
@@ -535,6 +537,7 @@ async fn a_lost_acceptance_is_answered_by_one_probe() {
             csma_stuck_ms: 0,
             rung_airtime: false,
             noise_pct: 0,
+            rx_after_decode: false,
         },
         drop_rx,
     )
@@ -616,6 +619,7 @@ async fn a_long_mail_at_real_airtime_is_accepted_on_the_first_pass() {
             csma_stuck_ms: 0,
             rung_airtime: true,
             noise_pct: 0,
+            rx_after_decode: false,
         },
         drop_rx,
         Duration::from_secs(2),
@@ -672,6 +676,7 @@ async fn the_first_beacon_waits_for_the_reply_to_our_mail() {
             csma_stuck_ms: 0,
             rung_airtime: true,
             noise_pct: 0,
+            rx_after_decode: false,
         },
         drop_rx,
         Duration::from_secs(2),
@@ -745,6 +750,7 @@ async fn a_beacon_on_its_way_when_a_mail_starts_keys_before_the_burst() {
             csma_stuck_ms: 30_000,
             rung_airtime: true,
             noise_pct: 99,
+            rx_after_decode: false,
         },
         drop_rx,
         Duration::from_secs(2),
@@ -831,6 +837,7 @@ async fn a_big_mail_with_stuck_carrier_sense_goes_in_one_burst() {
             csma_stuck_ms: 30_000,
             rung_airtime: true,
             noise_pct: 0,
+            rx_after_decode: false,
         },
         drop_rx,
         Duration::from_secs(2),
@@ -913,6 +920,7 @@ async fn a_receipt_keyed_as_a_mail_starts_leaves_the_burst_alone() {
             csma_stuck_ms: 30_000,
             rung_airtime: true,
             noise_pct: 0,
+            rx_after_decode: false,
         },
         drop_rx,
         Duration::from_secs(2),
@@ -958,4 +966,109 @@ async fn a_receipt_keyed_as_a_mail_starts_leaves_the_burst_alone() {
     }
     assert_eq!(state, "sent", "row {row}\n{trace}");
     assert_eq!(posts.len(), 1, "gateway posts: {posts:?}");
+}
+
+/// QA v0.1.95: the 56-chunk mail composed 48 s after start, on a clean
+/// channel at real hf-poor airtime with carrier sense stuck. Both stations'
+/// warm-up beacons fall due during the burst. The mail must reach Sent with
+/// one post, and no chunk keyed more than twice.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_big_mail_started_just_after_start_reaches_the_gateway() {
+    let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
+    let started = Instant::now();
+    let pair = Pair::start_with(
+        TimedOpts {
+            frame_ms: 4_000,
+            count_tx: false,
+            collide: true,
+            csma_stuck_ms: 30_000,
+            rung_airtime: true,
+            noise_pct: 0,
+            rx_after_decode: false,
+        },
+        drop_rx,
+        Duration::from_secs(2),
+    )
+    .await;
+    tokio::time::sleep_until((started + Duration::from_secs(48)).into()).await;
+    let t0 = Instant::now();
+    let id = pair.compose(&long_body()).await;
+    let row = pair.wait_state(&id, "sent", 900).await;
+    let trace = pair.trace(t0);
+    eprintln!("{trace}");
+    let row = row.expect("outbox row");
+    let state = row.get("state").and_then(|x| x.as_str()).unwrap_or("");
+    let posts = pair.posts.lock().unwrap().clone();
+    let log = pair.log.lock().unwrap().clone();
+    pair.stop();
+    assert_eq!(state, "sent", "row {row}\n{trace}");
+    assert_eq!(posts.len(), 1, "gateway posts: {posts:?}");
+    let mut keyed = std::collections::BTreeMap::<u16, u32>::new();
+    for k in log.iter().filter(|k| k.station == 1) {
+        if let Some((_, idx, _)) = chunk_of(&k.payload).filter(|c| is_data_op(c.0)) {
+            *keyed.entry(idx).or_default() += 1;
+        }
+    }
+    assert!(
+        keyed.values().all(|n| *n <= 2),
+        "the mail was sent again: {keyed:?}\n{trace}"
+    );
+}
+
+/// A gateway that missed the first chunk, the only one that names the
+/// sender, kept every other chunk but could not address a report, so each
+/// probe went unanswered and the mail failed. A slice of the first chunk to
+/// the gateway is lost once here, at real hf-poor airtime with carrier sense
+/// stuck.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_gateway_that_missed_the_first_chunk_still_gets_the_mail() {
+    let lost = Arc::new(AtomicU64::new(0));
+    let lost_c = lost.clone();
+    let drop_rx: LinkDrop = Arc::new(move |from, to, frame| {
+        // The first chunk carries the sender's address and goes as two
+        // slices; the burst opens with them.
+        let first = from == 1 && to == 2 && frame.starts_with(b"WCRP\t");
+        first && lost_c.fetch_add(1, Ordering::SeqCst) == 0
+    });
+    let pair = Pair::start_with(
+        TimedOpts {
+            frame_ms: 4_000,
+            count_tx: false,
+            collide: true,
+            csma_stuck_ms: 30_000,
+            rung_airtime: true,
+            noise_pct: 0,
+            rx_after_decode: false,
+        },
+        drop_rx,
+        Duration::from_secs(2),
+    )
+    .await;
+    let t0 = Instant::now();
+    let id = pair.compose(&long_body()).await;
+    let row = pair.wait_state(&id, "sent", 900).await;
+    let trace = pair.trace(t0);
+    eprintln!("{trace}");
+    let row = row.expect("outbox row");
+    let state = row.get("state").and_then(|x| x.as_str()).unwrap_or("");
+    let posts = pair.posts.lock().unwrap().clone();
+    let log = pair.log.lock().unwrap().clone();
+    pair.stop();
+    assert!(
+        lost.load(Ordering::SeqCst) >= 1,
+        "the first chunk never keyed"
+    );
+    assert_eq!(state, "sent", "row {row}\n{trace}");
+    assert_eq!(posts.len(), 1, "gateway posts: {posts:?}");
+    let mut keyed = std::collections::BTreeMap::<u16, u32>::new();
+    for k in log.iter().filter(|k| k.station == 1) {
+        if let Some((_, idx, _)) = chunk_of(&k.payload).filter(|c| is_data_op(c.0)) {
+            *keyed.entry(idx).or_default() += 1;
+        }
+    }
+    // The first chunk goes as slices, so it is not counted here.
+    assert!(
+        keyed.values().all(|n| *n == 1),
+        "only the lost first chunk goes again: {keyed:?}\n{trace}"
+    );
 }
