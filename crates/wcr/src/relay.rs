@@ -548,7 +548,7 @@ pub const BEACON_WARMUP_COUNT: u32 = 3;
 /// roll (about a minute). The first beacon goes `pace` after `started`, and
 /// the next ones `pace` after the one before until `BEACON_WARMUP_COUNT`
 /// have reached the modem (`sent`). After that a station beacons every
-/// `BEACON_IDLE_S`, with the same jitter. `last_beacon` is when the last one
+/// `BEACON_IDLE_S` plus the round's jitter, never less. `last_beacon` is when the last one
 /// reached the modem. Traffic does not move the schedule: a beacon that falls
 /// due while an exchange is in progress waits for it (see [`Exchanges`]).
 pub fn next_beacon_at(started: u32, last_beacon: Option<u32>, sent: u32, pace: u32) -> u32 {
@@ -558,7 +558,7 @@ pub fn next_beacon_at(started: u32, last_beacon: Option<u32>, sent: u32, pace: u
     let gap = if sent < BEACON_WARMUP_COUNT {
         pace
     } else {
-        (pace + BEACON_IDLE_S).saturating_sub(BEACON_BASE_S as u32)
+        BEACON_IDLE_S + pace.abs_diff(BEACON_BASE_S as u32)
     };
     last.saturating_add(gap)
 }
@@ -1876,6 +1876,12 @@ mod tests {
         );
         assert_eq!(
             next_beacon_at(start, Some(start + 500), 3, 75),
+            start + 500 + BEACON_IDLE_S + 15
+        );
+        // QA v0.1.95: a short roll took quiet gaps to 285 s. Jitter only
+        // adds to the five minutes.
+        assert_eq!(
+            next_beacon_at(start, Some(start + 500), 3, 45),
             start + 500 + BEACON_IDLE_S + 15
         );
     }

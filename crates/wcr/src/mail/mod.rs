@@ -32,8 +32,8 @@ use tokio::sync::{broadcast, mpsc};
 
 pub use api::{router, MailSlot};
 pub use proto::{
-    callsign_from_wcr, pull_token, trim_body, try_decode, validate_internet_addr, wcr_address,
-    Incoming, MAIL_DOMAIN, WCR_COPY_HEADER,
+    callsign_from_wcr, looks_like_mail, pull_token, trim_body, try_decode, validate_internet_addr,
+    wcr_address, Incoming, MAIL_DOMAIN, WCR_COPY_HEADER,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
