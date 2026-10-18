@@ -845,7 +845,15 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
                 Err(_) => break,
                 _ => {}
             }
-            if start.elapsed() >= cap {
+            // A mail lease waits at most 20 s for this receipt, then sets the
+            // modem for its burst. Waiting out the frames ahead must not
+            // outlast that, or this restore lands under the burst.
+            let limit = if tx.air.is_some_and(|a| a.is_held_for_mail()) {
+                tx.drain_cap
+            } else {
+                cap
+            };
+            if start.elapsed() >= limit {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -1655,6 +1663,16 @@ mod tests {
     /// always, but `tx_frame_count` moves only while carrier sense is off —
     /// the same hold modem73 applies when its detector is busy and CSMA is on.
     async fn spawn_ack_modem(channel_state: &'static str, occupancy: i32) -> AckModem {
+        spawn_ack_modem_behind(channel_state, occupancy, 0).await
+    }
+
+    /// Like [`spawn_ack_modem`], with `ahead` frames already at the modem
+    /// that never leave: one on the air and the rest waiting behind it.
+    async fn spawn_ack_modem_behind(
+        channel_state: &'static str,
+        occupancy: i32,
+        ahead: u64,
+    ) -> AckModem {
         use crate::modem::control::{decode_control_frames, encode_control_frame};
         use crate::modem::kiss::KissDecoder;
         use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -1699,6 +1717,8 @@ mod tests {
                                     "channel_state": channel_state,
                                     "occupancy_pct": occupancy,
                                     "tx_frame_count": tx_c.load(AtomicOrdering::SeqCst),
+                                    "ptt_on": ahead > 0,
+                                    "tx_queue": ahead.saturating_sub(1),
                                     "audio_connected": true
                                 })
                             } else {
@@ -1802,6 +1822,50 @@ mod tests {
             "carrier sense must be restored: {:?}",
             modem.csma_seen.lock()
         );
+    }
+
+    /// Two frames are at the modem ahead of the receipt, so carrier sense
+    /// stays off while they key. A mail lease that starts meanwhile waits at
+    /// most 20 s for the receipt; it gets the radio after the usual drain,
+    /// or the receipt's restore would land under the burst.
+    #[tokio::test]
+    async fn a_receipt_hands_the_radio_to_a_waiting_mail_lease() {
+        let modem = spawn_ack_modem_behind("busy", 99, 2).await;
+        let q = AirQueue::new();
+        let lease = q.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            lease.hold_for_mail();
+        });
+        let ack = vec![vec![0xD4]];
+        let started = Instant::now();
+        let keyed = transmit_ack(AckTx {
+            frames: &ack,
+            preset: Preset::HfPoor,
+            air: Some(&q),
+            sense: None,
+            control: Some(&modem.control),
+            kiss: Some(&modem.kiss),
+            cap: Duration::from_secs(3),
+            slot: Duration::from_millis(20),
+            quiet: Duration::from_millis(50),
+            csma: true,
+            drain_cap: Duration::from_millis(800),
+        })
+        .await;
+        let elapsed = started.elapsed();
+        assert!(keyed, "ACK was not handed to the modem");
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "the receipt kept the radio {elapsed:?} from a waiting mail lease"
+        );
+        assert_eq!(
+            modem.csma_seen.lock().last().copied(),
+            Some(true),
+            "carrier sense must be restored before the lease sets its own: {:?}",
+            modem.csma_seen.lock()
+        );
+        assert!(!q.is_paused(), "the receipt left chat paused");
     }
 
     /// Quiet channel, modem channel_state `rx`: another station's frame is on
