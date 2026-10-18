@@ -29,7 +29,8 @@ const NARROW_MODE_WAIT: Duration = Duration::from_secs(45);
 /// its fixed time and then keys it anyway, so neighbours handing frames over
 /// on the same beat key over each other at the station between them on every
 /// try (QA v0.1.95: B heard none of A's first invite copies under C's
-/// relays). Up to two frames of airtime breaks the beat.
+/// relays). Up to two frames of airtime breaks the beat. Beacons already
+/// go on their own jittered schedule and do not wait again.
 pub fn beat_break_max(preset: Preset) -> Duration {
     Duration::from_secs_f64(airtime_secs(preset, preset.payload_bytes() as usize, 0) * 2.0)
 }
@@ -496,7 +497,7 @@ impl AirQueue {
         }
         let congested = g.congested;
         let head = &mut g.items[idx];
-        if congested && !head.beat_broken && head.class != AirClass::Emergency {
+        if congested && !head.beat_broken && head.class != AirClass::Emergency && !head.beacon {
             head.beat_broken = true;
             let wait = rand::thread_rng().gen_range(Duration::ZERO..=beat_break_max(head.preset));
             head.not_before = now + wait;

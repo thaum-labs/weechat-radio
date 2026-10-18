@@ -570,12 +570,18 @@ async fn a_lost_acceptance_is_answered_by_one_probe() {
     );
     let mut keyed = std::collections::BTreeMap::<u16, u32>::new();
     let mut acks = 0u32;
+    // The first chunk names the sender, so it is the probe. It is wider
+    // than a frame and goes as slices.
+    let mut slices = 0u32;
     for k in log.iter().filter(|k| is_mail(&k.payload)) {
         assert!(!k.dropped, "mail frame dropped by the modem\n{trace}");
         if k.station == 2 && chunk_of(&k.payload).is_some_and(|c| c.0 == 7) {
             acks += 1;
         }
         if k.station == 1 {
+            if k.payload.starts_with(b"WCRP\t") {
+                slices += 1;
+            }
             if let Some((op, idx, _)) = chunk_of(&k.payload) {
                 if is_data_op(op) {
                     *keyed.entry(idx).or_default() += 1;
@@ -583,19 +589,13 @@ async fn a_lost_acceptance_is_answered_by_one_probe() {
             }
         }
     }
-    let again: Vec<u16> = keyed
-        .iter()
-        .filter(|(_, n)| **n > 1)
-        .map(|(i, _)| *i)
-        .collect();
     assert!(
         keyed.len() > 4,
         "the mail was too short to prove the probe: {keyed:?}"
     );
-    assert_eq!(
-        again.len(),
-        1,
-        "a lost acceptance must cost one probe chunk, not the whole mail: {keyed:?}\n{trace}"
+    assert!(
+        keyed.values().all(|n| *n == 1) && slices == 4,
+        "a lost acceptance must cost one probe chunk, not the whole mail: {keyed:?}, {slices} slices\n{trace}"
     );
     assert!(
         acks >= 2,
