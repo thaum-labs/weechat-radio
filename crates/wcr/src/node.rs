@@ -1809,6 +1809,9 @@ fn watch_keyed(rt: &Runtime, kiss: &KissClient, cancel: CancellationToken) {
                     Err(broadcast::error::RecvError::Closed) => return,
                 },
             };
+            if let Some(a) = rt.air() {
+                a.note_keyed(&payload);
+            }
             if let Some(m) = crate::mail::try_decode(&payload) {
                 note_exchange(&rt, None, Some(&m));
             } else if let Ok(env) = Envelope::decode(&payload) {
