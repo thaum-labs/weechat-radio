@@ -828,9 +828,11 @@ async fn a_receipt_keyed_as_a_mail_starts_leaves_the_burst_alone() {
         .await
         .unwrap();
     // Sent just after start, the line waits until the gateway hears the
-    // sender's first beacon, at most the start-up hold.
+    // sender's first beacon, at most the start-up hold. Each copy then waits
+    // out the stuck carrier sense, and one keyed while the sender keys a
+    // warm-up beacon is lost: room for all three copies.
     let deadline =
-        Instant::now() + Duration::from_secs(u64::from(wcr::relay::STARTUP_HOLD_S) + 120);
+        Instant::now() + Duration::from_secs(u64::from(wcr::relay::STARTUP_HOLD_S) + 240);
     while !sender_lines
         .lock()
         .unwrap()
@@ -839,7 +841,8 @@ async fn a_receipt_keyed_as_a_mail_starts_leaves_the_burst_alone() {
     {
         assert!(
             Instant::now() < deadline,
-            "the chat line never reached the sender"
+            "the chat line never reached the sender\n{}",
+            pair.trace(t0)
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
