@@ -76,6 +76,20 @@ pub async fn wait_ack_done(ports: &RadioPorts, cap: Duration) {
     }
 }
 
+/// A chat frame taken off the air queue just before the lease may still be
+/// waiting out carrier sense. It sets chat's config, carrier sense on, just
+/// before it goes to the modem. Wait for that (at most `cap`) before setting
+/// mail's, or it lands under the burst.
+pub async fn wait_chat_handed(ports: &RadioPorts, cap: Duration) {
+    let Some(air) = &ports.air else {
+        return;
+    };
+    let start = Instant::now();
+    while air.chat_in_flight() && start.elapsed() < cap {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 pub async fn wait_idle(ports: &RadioPorts, cap: Duration) -> bool {
     let start = Instant::now();
     loop {
