@@ -736,7 +736,13 @@ async fn burst(
     let Some(kiss) = ports.kiss.clone() else {
         return Err(Error::Modem("Radio is not running.".into()));
     };
-    let turnaround_ms = ctx.cfg.lock().rf.turnaround_ms;
+    let (turnaround_ms, chat_defer) = {
+        let rf = &ctx.cfg.lock().rf;
+        (
+            rf.turnaround_ms,
+            Duration::from_millis(u64::from(rf.max_defer_ms)) + Duration::from_secs(5),
+        )
+    };
     let mut held = false;
     let mut snapshot = None;
     let mut mode_set = false;
@@ -759,6 +765,7 @@ async fn burst(
                         held = true;
                     }
                     lease::wait_ack_done(&ports, Duration::from_secs(20)).await;
+                    lease::wait_chat_handed(&ports, chat_defer).await;
                 }
                 "drain_before" => {
                     if let Some(c) = &ports.control {
