@@ -823,7 +823,7 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
         }
     }
     let before = match tx.control {
-        Some(c) => c.get_status().await.ok().map(|s| s.tx_frame_count),
+        Some(c) => c.get_status().await.ok(),
         None => None,
     };
     let mut sent = false;
@@ -836,15 +836,16 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
         }
     }
     if let (Some(c), Some(before)) = (tx.control, before) {
-        let target = before.saturating_add(tx.frames.len() as u64);
+        let target = before.tx_frame_count.saturating_add(tx.frames.len() as u64);
+        let cap = ack_drain_cap(tx.preset, tx.drain_cap, frames_ahead(&before));
         let start = Instant::now();
         loop {
             match c.get_status().await {
-                Ok(st) if st.tx_frame_count >= target => break,
+                Ok(st) if ack_left_queue(&st, target) => break,
                 Err(_) => break,
                 _ => {}
             }
-            if start.elapsed() >= tx.drain_cap {
+            if start.elapsed() >= cap {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -856,6 +857,28 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
         }
     }
     sent
+}
+
+/// The receipt has left the modem's queue: the frame counter has reached it
+/// and nothing waits behind the frame on the air. A frame queued ahead of
+/// the receipt moves the counter first, and carrier sense back on then
+/// would hold the receipt for the modem's whole carrier-sense time.
+pub fn ack_left_queue(st: &ModemStatus, target: u64) -> bool {
+    st.tx_frame_count >= target && st.tx_queue.is_none_or(|n| n == 0)
+}
+
+/// Frames the modem already holds ahead of one handed over now: the one on
+/// the air and those waiting behind it.
+pub fn frames_ahead(st: &ModemStatus) -> u64 {
+    st.tx_queue.unwrap_or(0) + u64::from(st.ptt_on)
+}
+
+/// Longest carrier sense stays off for a receipt: `drain_cap` for its own
+/// frames, and for each frame ahead of it a full frame at up to twice the
+/// preset's airtime (a line's retry can key on a slower rung).
+pub fn ack_drain_cap(preset: Preset, drain_cap: Duration, ahead: u64) -> Duration {
+    let frame = airtime_secs(preset, preset.payload_bytes() as usize, 0) * 2.0;
+    drain_cap + Duration::from_secs_f64(frame * ahead as f64)
 }
 
 /// Wait until the modem reports `target` transmitted frames, or `cap` elapses.
@@ -1428,6 +1451,33 @@ mod tests {
             occupancy_pct: 0,
             ..ModemStatus::default()
         }));
+    }
+
+    #[test]
+    fn a_receipt_keeps_carrier_sense_off_until_it_leaves_the_queue() {
+        let st = |count: u64, queue: Option<u64>, ptt_on: bool| ModemStatus {
+            tx_frame_count: count,
+            tx_queue: queue,
+            ptt_on,
+            ..ModemStatus::default()
+        };
+        // A line queued ahead keys first and moves the counter to the target.
+        // The receipt still waits behind it.
+        assert!(!ack_left_queue(&st(2, Some(1), true), 2));
+        assert!(ack_left_queue(&st(3, Some(0), true), 2));
+        assert!(!ack_left_queue(&st(1, Some(0), true), 2));
+        // A modem that does not report its queue: the counter alone.
+        assert!(ack_left_queue(&st(2, None, true), 2));
+        // One frame on the air and one waiting behind it.
+        assert_eq!(frames_ahead(&st(0, Some(1), true)), 2);
+        assert_eq!(frames_ahead(&st(0, None, false)), 0);
+        let base = Duration::from_secs(5);
+        let frame = airtime_secs(Preset::HfPoor, 170, 0);
+        assert_eq!(ack_drain_cap(Preset::HfPoor, base, 0), base);
+        assert_eq!(
+            ack_drain_cap(Preset::HfPoor, base, 2),
+            base + Duration::from_secs_f64(frame * 4.0)
+        );
     }
 
     /// Steady noise, occupancy stuck high, and a full air queue. The ACK must
