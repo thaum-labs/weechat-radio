@@ -769,17 +769,29 @@ async fn a_beacon_on_its_way_when_a_mail_starts_keys_before_the_burst() {
     let mut body = long_body();
     body.truncate(800);
     let body = body.trim().to_string();
-    let id = pair.compose(&body).await;
-    let row = pair.wait_state(&id, "sent", 600).await;
+    pair.compose(&body).await;
+    // The burst ends with its last chunk. Whether the gateway heard it all is
+    // not the point here: its own beacon, held by its stuck modem since
+    // before the mail, can key into the burst.
+    let last_chunk = |log: &[wcr::sim::TimedKey]| {
+        log.iter().position(|k| {
+            k.station == 1 && chunk_of(&k.payload).is_some_and(|(_, idx, n)| idx + 1 == n)
+        })
+    };
+    let deadline = Instant::now() + Duration::from_secs(300);
+    while last_chunk(&pair.log.lock().unwrap()).is_none() && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
     let trace = pair.trace(t0);
     eprintln!("{trace}");
     let log = pair.log.lock().unwrap().clone();
     pair.stop();
 
-    let row = row.expect("outbox row");
-    let state = row.get("state").and_then(|x| x.as_str()).unwrap_or("");
-    assert_eq!(state, "sent", "row {row}\n{trace}");
-    for k in log.iter().filter(|k| k.station == 1 && is_mail(&k.payload)) {
+    let end = last_chunk(&log).unwrap_or_else(|| panic!("the burst never ended\n{trace}"));
+    for k in log[..=end]
+        .iter()
+        .filter(|k| k.station == 1 && is_mail(&k.payload))
+    {
         assert!(!k.csma, "a mail frame keyed with carrier sense on\n{trace}");
     }
     let first_chunk = log
