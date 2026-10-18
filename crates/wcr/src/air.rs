@@ -846,7 +846,7 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
         }
     }
     let before = match tx.control {
-        Some(c) => c.get_status().await.ok().map(|s| s.tx_frame_count),
+        Some(c) => c.get_status().await.ok(),
         None => None,
     };
     let mut sent = false;
@@ -859,15 +859,24 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
         }
     }
     if let (Some(c), Some(before)) = (tx.control, before) {
-        let target = before.saturating_add(tx.frames.len() as u64);
+        let target = before.tx_frame_count.saturating_add(tx.frames.len() as u64);
+        let cap = ack_drain_cap(tx.preset, tx.drain_cap, frames_ahead(&before));
         let start = Instant::now();
         loop {
             match c.get_status().await {
-                Ok(st) if st.tx_frame_count >= target => break,
+                Ok(st) if ack_left_queue(&st, target) => break,
                 Err(_) => break,
                 _ => {}
             }
-            if start.elapsed() >= tx.drain_cap {
+            // A mail lease waits at most 20 s for this receipt, then sets the
+            // modem for its burst. Waiting out the frames ahead must not
+            // outlast that, or this restore lands under the burst.
+            let limit = if tx.air.is_some_and(|a| a.is_held_for_mail()) {
+                tx.drain_cap
+            } else {
+                cap
+            };
+            if start.elapsed() >= limit {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -879,6 +888,28 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
         }
     }
     sent
+}
+
+/// The receipt has left the modem's queue: the frame counter has reached it
+/// and nothing waits behind the frame on the air. A frame queued ahead of
+/// the receipt moves the counter first, and carrier sense back on then
+/// would hold the receipt for the modem's whole carrier-sense time.
+pub fn ack_left_queue(st: &ModemStatus, target: u64) -> bool {
+    st.tx_frame_count >= target && st.tx_queue.is_none_or(|n| n == 0)
+}
+
+/// Frames the modem already holds ahead of one handed over now: the one on
+/// the air and those waiting behind it.
+pub fn frames_ahead(st: &ModemStatus) -> u64 {
+    st.tx_queue.unwrap_or(0) + u64::from(st.ptt_on)
+}
+
+/// Longest carrier sense stays off for a receipt: `drain_cap` for its own
+/// frames, and for each frame ahead of it a full frame at up to twice the
+/// preset's airtime (a line's retry can key on a slower rung).
+pub fn ack_drain_cap(preset: Preset, drain_cap: Duration, ahead: u64) -> Duration {
+    let frame = airtime_secs(preset, preset.payload_bytes() as usize, 0) * 2.0;
+    drain_cap + Duration::from_secs_f64(frame * ahead as f64)
 }
 
 /// Wait until the modem reports `target` transmitted frames, or `cap` elapses.
@@ -1474,6 +1505,33 @@ mod tests {
         }));
     }
 
+    #[test]
+    fn a_receipt_keeps_carrier_sense_off_until_it_leaves_the_queue() {
+        let st = |count: u64, queue: Option<u64>, ptt_on: bool| ModemStatus {
+            tx_frame_count: count,
+            tx_queue: queue,
+            ptt_on,
+            ..ModemStatus::default()
+        };
+        // A line queued ahead keys first and moves the counter to the target.
+        // The receipt still waits behind it.
+        assert!(!ack_left_queue(&st(2, Some(1), true), 2));
+        assert!(ack_left_queue(&st(3, Some(0), true), 2));
+        assert!(!ack_left_queue(&st(1, Some(0), true), 2));
+        // A modem that does not report its queue: the counter alone.
+        assert!(ack_left_queue(&st(2, None, true), 2));
+        // One frame on the air and one waiting behind it.
+        assert_eq!(frames_ahead(&st(0, Some(1), true)), 2);
+        assert_eq!(frames_ahead(&st(0, None, false)), 0);
+        let base = Duration::from_secs(5);
+        let frame = airtime_secs(Preset::HfPoor, 170, 0);
+        assert_eq!(ack_drain_cap(Preset::HfPoor, base, 0), base);
+        assert_eq!(
+            ack_drain_cap(Preset::HfPoor, base, 2),
+            base + Duration::from_secs_f64(frame * 4.0)
+        );
+    }
+
     /// Steady noise, occupancy stuck high, and a full air queue. The ACK must
     /// be keyed (CSMA off) within the short cap, and the backlog must stay queued.
     #[tokio::test]
@@ -1649,6 +1707,16 @@ mod tests {
     /// always, but `tx_frame_count` moves only while carrier sense is off —
     /// the same hold modem73 applies when its detector is busy and CSMA is on.
     async fn spawn_ack_modem(channel_state: &'static str, occupancy: i32) -> AckModem {
+        spawn_ack_modem_behind(channel_state, occupancy, 0).await
+    }
+
+    /// Like [`spawn_ack_modem`], with `ahead` frames already at the modem
+    /// that never leave: one on the air and the rest waiting behind it.
+    async fn spawn_ack_modem_behind(
+        channel_state: &'static str,
+        occupancy: i32,
+        ahead: u64,
+    ) -> AckModem {
         use crate::modem::control::{decode_control_frames, encode_control_frame};
         use crate::modem::kiss::KissDecoder;
         use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -1693,6 +1761,8 @@ mod tests {
                                     "channel_state": channel_state,
                                     "occupancy_pct": occupancy,
                                     "tx_frame_count": tx_c.load(AtomicOrdering::SeqCst),
+                                    "ptt_on": ahead > 0,
+                                    "tx_queue": ahead.saturating_sub(1),
                                     "audio_connected": true
                                 })
                             } else {
@@ -1796,6 +1866,50 @@ mod tests {
             "carrier sense must be restored: {:?}",
             modem.csma_seen.lock()
         );
+    }
+
+    /// Two frames are at the modem ahead of the receipt, so carrier sense
+    /// stays off while they key. A mail lease that starts meanwhile waits at
+    /// most 20 s for the receipt; it gets the radio after the usual drain,
+    /// or the receipt's restore would land under the burst.
+    #[tokio::test]
+    async fn a_receipt_hands_the_radio_to_a_waiting_mail_lease() {
+        let modem = spawn_ack_modem_behind("busy", 99, 2).await;
+        let q = AirQueue::new();
+        let lease = q.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            lease.hold_for_mail();
+        });
+        let ack = vec![vec![0xD4]];
+        let started = Instant::now();
+        let keyed = transmit_ack(AckTx {
+            frames: &ack,
+            preset: Preset::HfPoor,
+            air: Some(&q),
+            sense: None,
+            control: Some(&modem.control),
+            kiss: Some(&modem.kiss),
+            cap: Duration::from_secs(3),
+            slot: Duration::from_millis(20),
+            quiet: Duration::from_millis(50),
+            csma: true,
+            drain_cap: Duration::from_millis(800),
+        })
+        .await;
+        let elapsed = started.elapsed();
+        assert!(keyed, "ACK was not handed to the modem");
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "the receipt kept the radio {elapsed:?} from a waiting mail lease"
+        );
+        assert_eq!(
+            modem.csma_seen.lock().last().copied(),
+            Some(true),
+            "carrier sense must be restored before the lease sets its own: {:?}",
+            modem.csma_seen.lock()
+        );
+        assert!(!q.is_paused(), "the receipt left chat paused");
     }
 
     /// Quiet channel, modem channel_state `rx`: another station's frame is on

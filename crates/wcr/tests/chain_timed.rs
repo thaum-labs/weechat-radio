@@ -468,11 +468,19 @@ fn trace_of(log: &TimedLog, t0: Instant) -> String {
             ),
             Err(_) => format!("{} B", k.payload.len()),
         };
+        // A frame the modem held shows how long: a receipt held its whole
+        // carrier-sense time keys late, next to its own repeat.
+        let held = k.at.saturating_duration_since(k.handed).as_secs_f64();
         out.push_str(&format!(
-            "\n  {:7.1}s {} cap={} {what}{}",
+            "\n  {:7.1}s {} cap={} {what}{}{}",
             k.at.saturating_duration_since(t0).as_secs_f64(),
             CALLS[(k.station - 1) as usize],
             k.cap,
+            if held >= 1.0 {
+                format!(" (held {held:.0}s)")
+            } else {
+                String::new()
+            },
             if k.dropped { " DROPPED" } else { "" }
         ));
     }
@@ -923,6 +931,102 @@ async fn group_line_from_the_middle_reaches_all() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn group_line_from_the_far_end_reaches_all() {
     group_line_reaches_everyone(4, "g2-from-the-far-end").await;
+}
+
+/// G1 on main CI for v0.1.95: D had its own receipt on the air and its relay
+/// of the line queued behind it when it handed over E's receipt. The line
+/// moved the modem's frame counter, D turned carrier sense back on, and the
+/// modem held E's receipt its whole 30 s: it keyed 24 s before D's repeat of
+/// it. A receipt keeps carrier sense off until it has left the modem's
+/// queue, so it keys straight after the frames ahead of it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_receipt_behind_queued_frames_keys_straight_after_them() {
+    use wcr::modem::{ControlClient, KissClient};
+
+    async fn key_receipt(kiss: &KissClient, control: &ControlClient, frame: &[u8]) -> bool {
+        let frames = [frame.to_vec()];
+        wcr::air::transmit_ack(wcr::air::AckTx {
+            frames: &frames,
+            preset: wcr::presets::Preset::HfPoor,
+            air: None,
+            sense: None,
+            control: Some(control),
+            kiss: Some(kiss),
+            cap: Duration::from_secs(3),
+            slot: Duration::from_millis(100),
+            quiet: Duration::from_millis(500),
+            csma: true,
+            drain_cap: Duration::from_secs(5),
+        })
+        .await
+    }
+
+    let log: TimedLog = Arc::new(Mutex::new(Vec::new()));
+    let opts = TimedOpts {
+        frame_ms: FRAME_MS,
+        count_tx: true,
+        collide: false,
+        csma_stuck_ms: CSMA_STUCK_MS,
+        rung_airtime: false,
+        noise_pct: 99,
+    };
+    let air = wcr::sim::SharedAir::new(0.0);
+    let (kiss_port, ctrl_port) =
+        wcr::sim::mock_modem73_timed(air, 4, HashSet::new(), None, opts, log.clone())
+            .await
+            .unwrap();
+    let (kiss, _heard) = KissClient::connect(&format!("127.0.0.1:{kiss_port}"))
+        .await
+        .unwrap();
+    let (control, _events) = ControlClient::connect(&format!("127.0.0.1:{ctrl_port}"))
+        .await
+        .unwrap();
+    let t0 = Instant::now();
+    let (own, line, carried) = (
+        b"D's own receipt".as_slice(),
+        b"D's relay of the line".as_slice(),
+        b"E's receipt carried by D".as_slice(),
+    );
+    assert!(key_receipt(&kiss, &control, own).await);
+    kiss.send(line).await.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while control
+        .get_status()
+        .await
+        .is_ok_and(|st| st.tx_queue != Some(1))
+    {
+        assert!(Instant::now() < deadline, "the line never queued");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(key_receipt(&kiss, &control, carried).await);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while log.lock().unwrap().len() < 3 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let keys = log.lock().unwrap().clone();
+    let trace: String = keys
+        .iter()
+        .map(|k| {
+            format!(
+                "\n  {:6.1}s {} (handed over at {:.1}s, carrier sense {})",
+                k.at.duration_since(t0).as_secs_f64(),
+                String::from_utf8_lossy(&k.payload),
+                k.handed.duration_since(t0).as_secs_f64(),
+                if k.csma { "on" } else { "off" }
+            )
+        })
+        .collect();
+    let order: Vec<&[u8]> = keys.iter().map(|k| k.payload.as_slice()).collect();
+    assert_eq!(order, vec![own, line, carried], "keyed out of order{trace}");
+    let after = keys[2].at.duration_since(keys[1].at).as_secs_f64();
+    assert!(
+        after <= FRAME_MS as f64 / 1000.0 + 1.5,
+        "the receipt keyed {after:.1}s after the line ahead of it{trace}"
+    );
+    assert!(
+        !keys[2].csma,
+        "the receipt keyed with carrier sense on{trace}"
+    );
 }
 
 /// B2 on the live chain: E's bulletin reached D only.
