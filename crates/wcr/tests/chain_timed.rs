@@ -2265,7 +2265,8 @@ fn keyed_around(log: &TimedLog, st: u64, at: f64) -> bool {
 /// that met a frame of B's own or of C's at B is no miss of B's: by then
 /// A's rosters and invites are being relayed down the chain, and C's relay
 /// of one can land on B together with A's frame (it did on CI). The
-/// invite's first copy is not held to that at all.
+/// invite's first copy is not held to that at all, and a line none of
+/// whose copies reached B clear gets no verdict.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_early_direct_message_reaches_the_neighbour_first_time() {
     let (chain, dm, invite) = qa96_early_start().await;
@@ -2290,27 +2291,36 @@ async fn an_early_direct_message_reaches_the_neighbour_first_time() {
         let keyed = copies_keyed(&chain.log, 1, id);
         let shown = shown_at(&chain.clients[1], id);
         let t0 = unix_of(chain.t0);
+        // A copy B keyed over itself (half duplex), or that met a frame
+        // from C at B, is no miss of B's. With every frame waiting out the
+        // same 30 s carrier-sense hold, two stations' frames land together
+        // more often than chance: on CI all four copies of the direct
+        // message did. A run with no clear copy proves nothing here.
+        let clear: Vec<f64> = keyed
+            .iter()
+            .copied()
+            .filter(|k| !keyed_around(&chain.log, 2, *k) && !keyed_around(&chain.log, 3, *k))
+            .collect();
         report.push_str(&format!(
-            "\n  {what}: A keyed at {:?}s, B showed at {:?}s, marks {marks:?}",
+            "\n  {what}: A keyed at {:?}s (clear of B's and C's frames: {:?}s), B showed at {:?}s, marks {marks:?}",
             keyed.iter().map(|t| (t - t0).round()).collect::<Vec<_>>(),
+            clear.iter().map(|t| (t - t0).round()).collect::<Vec<_>>(),
             shown.map(|t| (t - t0).round())
         ));
+        if clear.is_empty() {
+            report.push_str(&format!(
+                "\n  no copy of the {what} reached B clear: no verdict"
+            ));
+            continue;
+        }
         match shown {
             None => problems.push(format!("B never showed the {what}")),
             Some(at) if id == &dm => {
-                // A copy B keyed over itself (half duplex), or that met a
-                // frame from C at B, is no miss of B's.
-                let heard = keyed
-                    .iter()
-                    .filter(|k| **k < at)
-                    .filter(|k| {
-                        !keyed_around(&chain.log, 2, **k) && !keyed_around(&chain.log, 3, **k)
-                    })
-                    .count();
+                let heard = clear.iter().filter(|k| **k < at).count();
                 let before = keyed.iter().filter(|k| **k < at).count();
                 if heard != 1 {
                     problems.push(format!(
-                        "B showed the {what} after A's copy {before}, not its first"
+                        "B showed the {what} after A's copy {before}, not the first it could hear"
                     ));
                 }
             }
