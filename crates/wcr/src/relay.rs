@@ -326,9 +326,30 @@ pub fn queued_repeat_unneeded(handed: u32) -> bool {
 }
 
 /// Most copies of one line a relay keys: its relay, one repeat, and one
-/// answer to the originator's retry. Receipts are not capped: each hop's
-/// repeats are what carries a far member's receipt home.
+/// answer to the originator's retry.
 pub const RELAY_MAX_COPIES: u32 = 3;
+
+/// Most copies of someone else's receipt a station carries: its relay and
+/// one repeat. Receipts used to be uncapped, and a station next to the
+/// originator answered each retry with one more copy of every receipt it
+/// held (QA v0.1.97: B carried C's receipt for one line three times).
+pub const RELAY_ACK_MAX_COPIES: u32 = 2;
+
+/// How many copies of someone else's frame this station keys at most.
+pub fn relay_max_copies(env: &Envelope) -> u32 {
+    if env.kind == MsgType::Ack {
+        RELAY_ACK_MAX_COPIES
+    } else {
+        RELAY_MAX_COPIES
+    }
+}
+
+/// Our own receipt for a line goes once, plus once for each retry of the
+/// line heard from its originator's side. A copy that came some other way
+/// (a hub echo of a line we answered on the air) asks for nothing.
+pub fn own_receipt_allowed(keyed: u32, retries_heard: u32) -> bool {
+    keyed < 1 + retries_heard
+}
 
 /// Least gap between a relay's copies of one line: the line's own first
 /// retry interval (45 s routine). A modem whose carrier sense sticks holds a
@@ -649,19 +670,40 @@ pub fn beacon_waits_for_mail(now: u32, ceiling: u32, preset: Preset) -> bool {
     now < ceiling.saturating_add(exchange_wait_s(preset))
 }
 
+/// Longest between two warm-up beacons reaching the modem, whatever is in
+/// progress: the pace's ceiling. QA v0.1.97: A's third warm-up beacon waited
+/// 48 s for a direct message's receipt and went 127 s after its second.
+pub const WARMUP_GAP_MAX_S: u32 = BEACON_MAX_S as u32;
+
+/// Latest a warm-up beacon is handed to the air queue so that it reaches
+/// the modem within `WARMUP_GAP_MAX_S` of the last one (`last`): the air
+/// queue waits out carrier sense for up to `defer_s` first, the beacon loop
+/// looks every few seconds, and a frame just taken off the queue ahead of
+/// it still has to go.
+pub fn warm_up_latest(last: u32, defer_s: u32) -> u32 {
+    last.saturating_add(WARMUP_GAP_MAX_S.saturating_sub(defer_s + 10))
+}
+
 /// A beacon that fell due at `due` still waits for an exchange in progress.
 /// It waits for one at most: back-to-back exchanges on a busy chain would
 /// otherwise hold it to the 10-minute ceiling, and every station hears it
 /// about every 5 minutes. A warm-up beacon is how neighbours learn this
 /// station, so it waits one receipt's round trip at most (QA v0.1.96: a
-/// busy station's warm-up gaps reached 270 s).
-pub fn beacon_waits_for_exchange(now: u32, due: u32, preset: Preset, warm_up: bool) -> bool {
+/// busy station's warm-up gaps reached 270 s), and never past `latest`
+/// ([`warm_up_latest`]; `u32::MAX` once the warm-up is over).
+pub fn beacon_waits_for_exchange(
+    now: u32,
+    due: u32,
+    preset: Preset,
+    warm_up: bool,
+    latest: u32,
+) -> bool {
     let most = if warm_up {
         exchange_wait_s(preset)
     } else {
         beacon_exchange_wait_s(preset)
     };
-    now < due.saturating_add(most)
+    now < due.saturating_add(most) && now < latest
 }
 
 /// The exchange a due beacon waits for: the one it chose this round while
@@ -814,12 +856,17 @@ pub fn beacon_interval_secs(jitter_s: u32) -> u64 {
 
 pub fn next_retry_hold_jittered(retries: u32, now: u32, priority: Priority, jitter: bool) -> u32 {
     let target = next_retry_hold_base(retries, 0, priority);
-    let delay = if jitter {
+    let mut delay = if jitter {
         let factor = rand::thread_rng().gen_range(0.75f64..=1.25);
         ((target as f64) * factor).round() as u32
     } else {
         target
     };
+    // The jitter never undercuts the floor: a routine first retry at 34 s
+    // was handed over while the modem still held the copy before it.
+    if priority != Priority::Emergency {
+        delay = delay.max(RETRY_HOLD_FLOOR_S);
+    }
     now.saturating_add(delay)
 }
 
@@ -1638,7 +1685,7 @@ mod tests {
         let now = 1_000u32;
         for retries in 0..5u32 {
             let base = next_retry_hold_base(retries, 0, Priority::Routine);
-            let lo = ((base as f64) * 0.75).floor() as u32;
+            let lo = (((base as f64) * 0.75).floor() as u32).max(RETRY_HOLD_FLOOR_S);
             let hi = ((base as f64) * 1.25).ceil() as u32;
             for _ in 0..40 {
                 let t = next_retry_hold(retries, now, Priority::Routine);
@@ -1744,6 +1791,21 @@ mod tests {
         // first still waits out the 30 s hold.
         assert_eq!(relay_copy_gap_s(Priority::Priority), RETRY_HOLD_FLOOR_S);
         assert_eq!(next_retry_hold_base(1, 0, Priority::Priority), 40);
+    }
+
+    /// QA v0.1.97: B carried C's receipt for G1 three times and keyed its
+    /// own three times, with A's copies of G1 the only thing asking.
+    #[test]
+    fn receipts_are_capped() {
+        let line = group_line();
+        assert_eq!(relay_max_copies(&line), 3);
+        let receipt = Envelope::ack_for(&line, Callsign::parse("M0DDD").unwrap(), 1, None);
+        assert_eq!(relay_max_copies(&receipt), 2, "a relay and one repeat");
+        // Our own receipt: once, and once more per retry heard.
+        assert!(own_receipt_allowed(0, 0));
+        assert!(!own_receipt_allowed(1, 0), "a hub echo asks for nothing");
+        assert!(own_receipt_allowed(1, 1));
+        assert!(!own_receipt_allowed(2, 1));
     }
 
     #[test]
@@ -2027,11 +2089,30 @@ mod tests {
         let due = t + 600;
         let most = beacon_exchange_wait_s(p);
         assert_eq!(most, wait + settle);
-        assert!(beacon_waits_for_exchange(due + most - 1, due, p, false));
-        assert!(!beacon_waits_for_exchange(due + most, due, p, false));
+        let open = u32::MAX;
+        assert!(beacon_waits_for_exchange(
+            due + most - 1,
+            due,
+            p,
+            false,
+            open
+        ));
+        assert!(!beacon_waits_for_exchange(due + most, due, p, false, open));
         // A warm-up beacon waits one receipt's round trip at most.
-        assert!(beacon_waits_for_exchange(due + wait - 1, due, p, true));
-        assert!(!beacon_waits_for_exchange(due + wait, due, p, true));
+        assert!(beacon_waits_for_exchange(
+            due + wait - 1,
+            due,
+            p,
+            true,
+            open
+        ));
+        assert!(!beacon_waits_for_exchange(due + wait, due, p, true, open));
+        // And never past the warm-up pace's ceiling after the last beacon.
+        let last = due - 60;
+        let latest = warm_up_latest(last, 15);
+        assert_eq!(latest, last + 95, "2 minutes less the carrier-sense wait");
+        assert!(beacon_waits_for_exchange(latest - 1, due, p, true, latest));
+        assert!(!beacon_waits_for_exchange(latest, due, p, true, latest));
         // A mail holds it until the 10-minute ceiling and one exchange.
         let ceiling = due + 300;
         assert!(beacon_waits_for_mail(ceiling + wait - 1, ceiling, p));

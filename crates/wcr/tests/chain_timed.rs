@@ -57,6 +57,18 @@ const IDLE_GAP_MIN_SECS: u64 = 298;
 /// Most copies of one line a middle relay keys: its relay, one repeat, and
 /// one answer to the originator's retry.
 const MIDDLE_RELAY_CAP: usize = 3;
+/// Most copies of someone else's receipt a station carries: its relay and
+/// one repeat (QA v0.1.97).
+const CARRIED_RECEIPT_CAP: usize = 2;
+/// Most copies of its own receipt a station away from the originator keys:
+/// the receipt and `rf.max_retries` (3) walks until a closer station is
+/// heard carrying it.
+const OWN_RECEIPT_WALK_CAP: usize = 4;
+/// Least gap between a line's copies at its sender's modem: its last copy
+/// waits out the modem's 30 s carrier-sense hold, and its neighbour's
+/// receipt then takes a frame, its own hold and a frame back. About 70 s at
+/// hf-poor; a retry handed over sooner lands on the receipt (QA v0.1.97).
+const RETRY_GAP_MIN_SECS: u64 = 60;
 /// Longest the traffic case waits for every station's fifth beacon: the
 /// warm-up, then two idle rounds after E's line.
 const TRAFFIC_PACE_SECS: u64 = 1_380;
@@ -657,9 +669,12 @@ async fn group_line_reaches_everyone(from: usize, body: &str) {
 
 /// QA v0.1.94: B passed on 10 receipts from further down the chain for one
 /// group line. A receipt a station carries goes again only a retry interval
-/// after its last copy, never because another copy of it came in, and next
-/// to the originator at most twice (its relay and one repeat), plus once
-/// for each of the originator's copies keyed after it.
+/// after its last copy, never because another copy of it came in. QA
+/// v0.1.97: B carried C's receipt three times and keyed its own three times.
+/// A carried receipt goes `CARRIED_RECEIPT_CAP` times at most (its relay and
+/// one repeat). Next to the originator a station's own receipt goes once,
+/// plus once for each of the originator's copies keyed after it; further
+/// away it walks home like the line, `OWN_RECEIPT_WALK_CAP` copies at most.
 fn assert_receipts_not_doubled(log: &TimedLog, from: usize, line: &str, trace: &str) {
     let log = log.lock().unwrap();
     let origin = from as u64 + 1;
@@ -675,14 +690,16 @@ fn assert_receipts_not_doubled(log: &TimedLog, from: usize, line: &str, trace: &
     for (i, call) in CALLS.iter().enumerate() {
         let st = i as u64 + 1;
         let mut carried: HashMap<String, (String, Vec<Instant>)> = HashMap::new();
+        let mut own: Vec<Instant> = Vec::new();
         for k in log.iter().filter(|k| k.station == st && !k.dropped) {
             let Ok(e) = Envelope::decode(&k.payload) else {
                 continue;
             };
-            if e.kind != MsgType::Ack
-                || e.origin.as_str() == *call
-                || e.acked_id().map(|id| id.hex()).as_deref() != Some(line)
-            {
+            if e.kind != MsgType::Ack || e.acked_id().map(|id| id.hex()).as_deref() != Some(line) {
+                continue;
+            }
+            if e.origin.as_str() == *call {
+                own.push(k.at);
                 continue;
             }
             carried
@@ -699,14 +716,40 @@ fn assert_receipts_not_doubled(log: &TimedLog, from: usize, line: &str, trace: &
                     "{call} keyed {by}'s receipt twice {gap:.1}s apart{trace}"
                 );
             }
-            if st.abs_diff(origin) == 1 {
-                let asked = line_keys.iter().filter(|t| **t > times[0]).count();
+            assert!(
+                times.len() <= CARRIED_RECEIPT_CAP,
+                "{call} carried {by}'s receipt {} times (cap {CARRIED_RECEIPT_CAP}){trace}",
+                times.len()
+            );
+        }
+        let Some(first) = own.first() else {
+            continue;
+        };
+        if i.abs_diff(from) == 1 {
+            // Next to the originator nobody carries our receipt on: it
+            // goes once, plus once per copy of the line keyed after it.
+            let asked = line_keys.iter().filter(|t| *t > first).count();
+            assert!(
+                own.len() <= 1 + asked,
+                "{call} keyed its own receipt {} times, with {asked} copies of the line after its first{trace}",
+                own.len()
+            );
+        } else {
+            // Further away the receipt walks home hop by hop like the line:
+            // it keys again, a retry interval apart (35 s less the 25 %
+            // jitter), until a closer station is heard carrying it.
+            for w in own.windows(2) {
+                let gap = w[1].duration_since(w[0]).as_secs_f64();
                 assert!(
-                    times.len() <= 2 + asked,
-                    "{call} carried {by}'s receipt {} times, with {asked} copies of the line after its first{trace}",
-                    times.len()
+                    gap >= 25.0,
+                    "{call} keyed its own receipt twice {gap:.1}s apart{trace}"
                 );
             }
+            assert!(
+                own.len() <= OWN_RECEIPT_WALK_CAP,
+                "{call} keyed its own receipt {} times (cap {OWN_RECEIPT_WALK_CAP}){trace}",
+                own.len()
+            );
         }
     }
 }
@@ -2397,4 +2440,219 @@ async fn warm_up_beacons_keep_their_pace_with_five_lines_queued() {
     chain.stop();
     eprintln!("{report}");
     assert!(problems.is_empty(), "{problems:?}{report}{trace}");
+}
+
+/// When station `st` keyed each receipt for line `id`, unix time.
+fn receipts_keyed(log: &TimedLog, st: u64, id: &str) -> Vec<f64> {
+    log.lock()
+        .unwrap()
+        .iter()
+        .filter(|k| k.station == st && !k.dropped)
+        .filter(|k| {
+            Envelope::decode(&k.payload).is_ok_and(|e| {
+                e.kind == MsgType::Ack && e.acked_id().map(|i| i.hex()).as_deref() == Some(id)
+            })
+        })
+        .map(|k| unix_of(k.at))
+        .collect()
+}
+
+/// When station `st` handed each copy of line `id` (not its receipts) to
+/// its modem, unix time.
+fn copies_handed(log: &TimedLog, st: u64, id: &str) -> Vec<f64> {
+    log.lock()
+        .unwrap()
+        .iter()
+        .filter(|k| k.station == st && !k.dropped)
+        .filter(|k| {
+            Envelope::decode(&k.payload)
+                .is_ok_and(|e| e.kind != MsgType::Ack && e.msg_id.hex() == id)
+        })
+        .map(|k| unix_of(k.handed))
+        .collect()
+}
+
+/// QA v0.1.97: B decoded A's early invite, and A keyed retry-1 three
+/// seconds later, over B's receipt; A's early direct message reached B only
+/// through a relay, minutes on. A line's retry timer ran from when its copy
+/// reached the modem, but the copy then waited out the modem's 30 s
+/// carrier-sense hold and the receipt its own, so the retry was keyed while
+/// the receipt was still due; and a retry handed over while the copy
+/// waited out carrier sense in the air queue keyed straight behind it. Here
+/// A sends B a direct message 5 s after start on QA's channel, and B's
+/// first receipt is lost at A, so A has to retry. B must show the line on
+/// A's first copy, A's copies must reach its modem a receipt's round trip
+/// apart, and none may go out within a frame of B's receipt.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_retry_waits_for_the_neighbours_receipt() {
+    let lost = Arc::new(AtomicU64::new(0));
+    let drop_first_receipt: LinkDrop = {
+        let lost = lost.clone();
+        Arc::new(move |from, to, frame| {
+            let receipt = from == 2
+                && to == 1
+                && Envelope::decode(frame).is_ok_and(|e| e.kind == MsgType::Ack);
+            receipt && lost.fetch_add(1, Ordering::SeqCst) == 0
+        })
+    };
+    let mut chain = Chain::start_modems(None, Some(drop_first_receipt), 99, false, true).await;
+    let started = chain.t0;
+    tokio::time::sleep_until((started + Duration::from_secs(5)).into()).await;
+    let dm = send_tracked(&mut chain, 0, "PRIVMSG M0BBB :early-dm-to-b").await;
+    let delivered = |c: &Chain| {
+        marks_for(&c.clients[0], &dm)
+            .iter()
+            .any(|m| m == "delivered")
+    };
+    chain.wait(CASE_SECS, delivered).await;
+    let t0 = unix_of(chain.t0);
+    let marks = marks_for(&chain.clients[0], &dm);
+    let handed = copies_handed(&chain.log, 1, &dm);
+    let keyed = copies_keyed(&chain.log, 1, &dm);
+    let receipts = receipts_keyed(&chain.log, 2, &dm);
+    let shown = shown_at(&chain.clients[1], &dm);
+    let trace = chain.trace();
+    let rel = |ts: &[f64]| ts.iter().map(|t| (t - t0).round()).collect::<Vec<_>>();
+    let report = format!(
+        "\n  A handed copies at {:?}s, keyed at {:?}s; B's receipts at {:?}s; B showed at {:?}s; marks {marks:?}",
+        rel(&handed),
+        rel(&keyed),
+        rel(&receipts),
+        shown.map(|t| (t - t0).round())
+    );
+    eprintln!("{trace}{report}");
+    let mut problems = Vec::new();
+    if !marks.iter().any(|m| m == "delivered") {
+        problems.push("A never saw B's receipt".to_string());
+    }
+    if marks.iter().any(|m| m == "failed") {
+        problems.push("the line showed failed although B is next to A".to_string());
+    }
+    // A copy that met a frame of B's own or of C's at B is no miss of B's
+    // (see `an_early_direct_message_reaches_the_neighbour_first_time`).
+    let clear: Vec<f64> = keyed
+        .iter()
+        .copied()
+        .filter(|k| !keyed_around(&chain.log, 2, *k) && !keyed_around(&chain.log, 3, *k))
+        .collect();
+    match shown {
+        None => problems.push("B never showed the line".to_string()),
+        Some(at) if !clear.is_empty() => {
+            let heard = clear.iter().filter(|k| **k < at).count();
+            let before = keyed.iter().filter(|k| **k < at).count();
+            if heard != 1 {
+                problems.push(format!(
+                    "B showed the line after A's copy {before}, not the first it could hear"
+                ));
+            }
+        }
+        Some(_) => {}
+    }
+    if handed.len() < 2 {
+        problems.push(format!(
+            "A keyed the line {} times although B's first receipt was lost",
+            handed.len()
+        ));
+    }
+    for w in handed.windows(2) {
+        let gap = w[1] - w[0];
+        if gap < RETRY_GAP_MIN_SECS as f64 {
+            problems.push(format!(
+                "A's retry reached its modem {gap:.0}s after the copy before it"
+            ));
+        }
+    }
+    let frame = FRAME_MS as f64 / 1000.0;
+    for r in &receipts {
+        if keyed.iter().any(|k| (k - r).abs() < frame) {
+            problems.push(format!(
+                "A keyed a copy of the line over B's receipt at {:.0}s",
+                r - t0
+            ));
+        }
+    }
+    chain.stop();
+    assert!(problems.is_empty(), "{problems:?}{report}{trace}");
+}
+
+/// QA v0.1.97: A's third warm-up beacon waited 48 s for a direct message's
+/// receipt and went 127 s after its second. A warm-up beacon still waits
+/// for an exchange, but never past two minutes after the last beacon. Here
+/// A hears B's beacon 5 s after start and its client queues one direct
+/// message to B, which never answers, so a copy of the line is awaiting
+/// its receipt whenever a beacon falls due. The first beacon and the two
+/// warm-up gaps after it stay within two minutes, by when each reached the
+/// modem.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn warm_up_beacons_keep_their_pace_with_a_direct_message_queued() {
+    let solo = Solo::start(1, 99, |cfg| cfg.rf.beacon_jitter_s = 0).await;
+    let mut client = Client::connect(solo.irc, CALLS[0]).await;
+    tokio::time::sleep_until((solo.t0 + Duration::from_secs(5)).into()).await;
+    key_as(
+        &solo.air,
+        &solo.log,
+        2,
+        &beacon_from(2),
+        Duration::from_millis(FRAME_MS),
+    )
+    .await;
+    client
+        .send(&format!("PRIVMSG {} :queued-line", CALLS[1]))
+        .await;
+    let deadline = solo.t0 + Duration::from_secs(600);
+    while solo.beacons().len() < 3 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    let beacons = solo.beacons();
+    let trace = solo.trace();
+    let t0 = solo.t0;
+    solo.stop();
+    let at: Vec<u64> = beacons
+        .iter()
+        .map(|b| b.saturating_duration_since(t0).as_secs())
+        .collect();
+    let gaps: Vec<u64> = beacons
+        .windows(2)
+        .map(|w| w[1].duration_since(w[0]).as_secs())
+        .collect();
+    eprintln!("{trace}\n  beacons at {at:?}s, gaps {gaps:?}s");
+    assert!(
+        beacons.len() >= 3,
+        "A keyed {} warm-up beacons{trace}",
+        beacons.len()
+    );
+    assert!(
+        at[0] <= WARMUP_GAP_MAX_SECS && gaps.iter().take(2).all(|g| *g <= WARMUP_GAP_MAX_SECS),
+        "warm-up beacons at {at:?}s, gaps {gaps:?}s: one waited past two minutes for the line's receipt{trace}"
+    );
+}
+
+/// QA v0.1.97: for one group line B carried C's receipt three times and
+/// keyed its own three times, while D's and E's receipts went twice. Here A
+/// keys a group line on a warm chain and every station's receipts are
+/// counted once the chain is quiet: a carried receipt goes twice at most,
+/// and a station's own receipt once plus once per copy of the line A keyed
+/// after it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn receipts_for_a_group_line_are_capped() {
+    let mut chain = Chain::start(Some("net")).await;
+    chain.join("#net").await;
+    let id = send_tracked(&mut chain, 0, "PRIVMSG #net :g1-receipts-capped").await;
+    let settled = |c: &Chain| {
+        marks_for(&c.clients[0], &id)
+            .iter()
+            .any(|m| m == "all" || m == "failed")
+    };
+    chain.wait(CASE_SECS, settled).await;
+    chain.wait_quiet(90, 600).await;
+    let marks = marks_for(&chain.clients[0], &id);
+    let trace = chain.trace();
+    let log = chain.log.clone();
+    chain.stop();
+    eprintln!("{trace}\n  marks {marks:?}");
+    assert!(
+        marks.iter().any(|m| m == "delivered" || m == "all"),
+        "A never saw a receipt: {marks:?}{trace}"
+    );
+    assert_receipts_not_doubled(&log, 0, &id, &trace);
 }
