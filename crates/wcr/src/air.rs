@@ -379,12 +379,13 @@ impl AirItem {
     }
 
     /// Place in the queue, lowest first. The beacon loop hands a beacon over
-    /// only once it is due, so it goes ahead of our own and relayed lines:
-    /// behind them, a busy station's warm-up waited minutes. Receipts and
-    /// priority traffic still go first.
+    /// only once it is due, so it goes ahead of our own lines, invites and
+    /// relays: behind them, a busy station's warm-up waited minutes (QA
+    /// v0.1.96: behind three invites and their rosters, three). Receipts
+    /// and emergency traffic still go first.
     fn queue_rank(&self) -> u8 {
         if self.beacon {
-            AirClass::Own as u8 * 2 - 1
+            AirClass::Priority as u8 * 2 - 1
         } else {
             self.class as u8 * 2
         }
@@ -1075,8 +1076,8 @@ mod tests {
     }
 
     /// QA v0.1.95: A's third warm-up beacon waited 8m47s behind its own
-    /// queued frames. A due beacon goes ahead of our lines and relays, still
-    /// behind receipts and priority traffic.
+    /// queued frames. A due beacon goes ahead of our lines, invites and
+    /// relays, still behind receipts and emergency traffic.
     #[test]
     fn a_beacon_goes_ahead_of_queued_lines() {
         let q = AirQueue::new();
@@ -1090,7 +1091,7 @@ mod tests {
         let order: Vec<u8> = std::iter::from_fn(|| q.pop_ready())
             .map(|x| x.frames[0][0])
             .collect();
-        assert_eq!(order, vec![5, 3, 4, 1, 2]);
+        assert_eq!(order, vec![5, 4, 3, 1, 2]);
     }
 
     #[test]
