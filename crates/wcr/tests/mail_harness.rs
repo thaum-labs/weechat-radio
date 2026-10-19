@@ -734,23 +734,37 @@ async fn beacon_note(port: u16) -> String {
         .unwrap_or_default()
 }
 
+/// Has station `i` heard the other one yet?
+async fn heard_someone(port: u16) -> bool {
+    let Ok(resp) = reqwest::get(format!("http://127.0.0.1:{port}/status")).await else {
+        return false;
+    };
+    resp.json::<serde_json::Value>()
+        .await
+        .ok()
+        .and_then(|v| v.get("heard")?.as_array().map(|h| !h.is_empty()))
+        .unwrap_or(false)
+}
+
 /// Wait until station `i`'s next beacon has just been handed to the air
 /// queue. The countdown reads `pending` from the handover until the beacon
-/// reaches the modem, 15 s later on a stuck channel, so a beacon found
-/// already pending may be at the modem before the test goes on (msrv CI: the
-/// gateway's first beacon was written just before the burst started and
-/// keyed between the chunks, which the beacon loop cannot take back). The
-/// countdown is seen first, then the handover; a warm-up beacon goes a
-/// minute after the one before, so the wait is at most two of them.
+/// reaches the modem, so a beacon found already pending may be at the modem
+/// before the test goes on (msrv CI: the gateway's first beacon was written
+/// just before the burst started and keyed between the chunks, which the
+/// beacon loop cannot take back). The countdown is seen first, then the
+/// handover. The station has heard the other one by then, so with
+/// [`beacon_held_a_while`] the beacon waits out carrier sense on the air
+/// queue, where the mail can take it back. A warm-up beacon goes a minute
+/// after the one before, so the wait is at most two of them.
 async fn wait_beacon_pending(pair: &Pair, i: usize) {
-    let deadline = Instant::now() + Duration::from_secs(180);
+    let deadline = Instant::now() + Duration::from_secs(240);
     let mut counting_down = false;
     loop {
         let note = beacon_note(pair.status[i]).await;
         if note == "pending" && counting_down {
             return;
         }
-        counting_down |= note != "pending";
+        counting_down |= note != "pending" && heard_someone(pair.status[i]).await;
         assert!(
             Instant::now() < deadline,
             "station {}'s beacon never went",
@@ -758,6 +772,19 @@ async fn wait_beacon_pending(pair: &Pair, i: usize) {
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+/// The stuck modem reads `busy`, which the air queue's own carrier sense
+/// takes as idle, so a beacon taken off the queue goes to the modem on the
+/// first p-persistence roll it wins: within a second one time in five, and
+/// a beacon at the modem cannot be taken back. With the channel counted as
+/// busy for ten minutes after anything heard, a frame taken off the queue
+/// waits out the whole defer cap, six seconds, which is long enough for
+/// the mail to take it back and short enough not to hold up a receipt.
+fn beacon_held_a_while(cfg: &mut Config) {
+    cfg.rf.beacon_jitter_s = 0;
+    cfg.rf.quiet_ms = 600_000;
+    cfg.rf.max_defer_ms = 6_000;
 }
 
 /// When `station` keyed a beacon at or after `t0`.
@@ -805,7 +832,7 @@ async fn a_beacon_on_its_way_when_a_mail_starts_waits_for_the_acceptance() {
         Duration::from_secs(2),
         |i, cfg| {
             if i == 0 {
-                cfg.rf.beacon_jitter_s = 0;
+                beacon_held_a_while(cfg);
             }
         },
     )
@@ -876,7 +903,7 @@ async fn the_gateway_takes_its_beacon_back_when_mail_chunks_arrive() {
         Duration::from_secs(2),
         |i, cfg| {
             if i == 1 {
-                cfg.rf.beacon_jitter_s = 0;
+                beacon_held_a_while(cfg);
             }
         },
     )
