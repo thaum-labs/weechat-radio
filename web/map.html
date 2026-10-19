@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>WeeChat Radio — live map</title>
+  <meta name="description" content="Live messaging chat powered by radio. HF, VHF, UHF and handhelds via VOX. Non-ham operators can get involved with just an internet connection." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="WeeChat Radio" />
+  <meta property="og:title" content="WeeChat Radio — live map" />
+  <meta property="og:description" content="Live messaging chat powered by radio. HF, VHF, UHF and handhelds via VOX. Non-ham operators can get involved with just an internet connection." />
+  <meta property="og:url" content="https://weechatradio.com/map.html" />
+  <meta property="og:image" content="https://weechatradio.com/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="WeeChat Radio. Live messaging chat powered by radio." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://weechatradio.com/og.png" />
+  <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" />
+  <link rel="stylesheet" href="/styles.css?v=31" />
+</head>
+<body class="page-map">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/map.html">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/why.html">why</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="topbar-end">
+      <div class="clock-mod">
+        <div id="clock-utc">UTC --:--:--</div>
+        <div class="sub" id="clock-local">LCL --:--</div>
+      </div>
+      <div id="stats"><span>nodes <b id="n-online">—</b></span><span>tx <b id="n-tx">—</b></span></div>
+    </div>
+  </header>
+  <div class="workspace">
+    <section class="mod_column" id="mod_column_left">
+      <article class="mod">
+        <h3 class="title"><p>HUB</p><p id="hub-meta">—</p></h3>
+        <div id="hub-panel" class="mod-body"></div>
+      </article>
+      <article class="mod">
+        <h3 class="title"><p>NODES BY MODE</p><p id="mode-meta">0</p></h3>
+        <div id="mode-grid" class="mod-body"></div>
+      </article>
+      <article class="mod">
+        <h3 class="title"><p>BANDS</p><p id="band-meta">0</p></h3>
+        <div id="band-grid" class="mod-body"></div>
+      </article>
+      <article class="mod">
+        <h3 class="title"><p>TRAFFIC</p><p>24H</p></h3>
+        <canvas id="spark" width="320" height="80" class="mod-body"></canvas>
+      </article>
+      <article class="mod grow">
+        <h3 class="title"><p>STATIONS</p><p id="station-count">0</p></h3>
+        <div id="station-list" class="mod-body scroll"></div>
+      </article>
+    </section>
+    <section id="main_shell">
+      <article class="map-panel">
+        <h3 class="title">
+          <p>LIVE MAP</p>
+          <div class="map-tools">
+            <label class="map-night">
+              <input type="checkbox" id="map-night" checked />
+              night
+            </label>
+            <label class="map-style">
+              <select id="map-style" aria-label="Map type">
+                <option value="voyager">voyager</option>
+                <option value="light">light</option>
+                <option value="dark">dark</option>
+                <option value="terrain">terrain</option>
+                <option value="satellite" selected>satellite</option>
+              </select>
+            </label>
+          </div>
+        </h3>
+        <div id="map"></div>
+        <details id="map-key" class="map-key">
+          <summary>Map key</summary>
+          <div class="map-key-body">
+            <ul class="map-key-lines" aria-label="Lines between stations">
+              <li data-link="rf">
+                <svg class="map-key-line" viewBox="0 0 36 12" aria-hidden="true" focusable="false">
+                  <line x1="1" y1="6" x2="35" y2="6" />
+                </svg>
+                <span>dashed RF</span>
+              </li>
+              <li data-link="inet">
+                <svg class="map-key-line" viewBox="0 0 36 12" aria-hidden="true" focusable="false">
+                  <line x1="1" y1="6" x2="35" y2="6" />
+                </svg>
+                <span>solid internet</span>
+              </li>
+              <li data-link="mail">
+                <svg class="map-key-line" viewBox="0 0 36 12" aria-hidden="true" focusable="false">
+                  <line x1="1" y1="6" x2="35" y2="6" />
+                </svg>
+                <span>dotted mail</span>
+              </li>
+            </ul>
+            <ul class="map-key-modes" aria-label="Station colours">
+              <li data-mode="internet"><span class="map-key-pin" aria-hidden="true"></span><span>cyan internet</span></li>
+              <li data-mode="internet-radio"><span class="map-key-pin" aria-hidden="true"></span><span>green internet-radio</span></li>
+              <li data-mode="radio"><span class="map-key-pin" aria-hidden="true"></span><span>amber radio</span></li>
+              <li data-mode="radio-plus"><span class="map-key-pin" aria-hidden="true"></span><span>magenta radio-plus</span></li>
+            </ul>
+            <p class="map-key-note">Lines glow while live, then fade faintly over 48h.</p>
+          </div>
+        </details>
+        <div id="card" class="station-pop" hidden></div>
+      </article>
+      <article class="log-panel">
+        <h3 class="title"><p>24H TAPE</p><p id="tape-clock-meta">LIVE</p></h3>
+        <div class="tape">
+          <button type="button" id="play" aria-label="Play last 24 hours of traffic" aria-pressed="false">Play</button>
+          <div class="tape-copy">
+            <div class="tape-title">Last 24 hours of traffic</div>
+            <div class="tape-hint" id="tape-clock">LIVE · drag to rewind, or press Play to replay the day</div>
+          </div>
+        </div>
+        <div class="scrub-row">
+          <span>24h ago</span>
+          <input id="scrub" type="range" min="0" max="1440" value="1440" aria-valuemin="0" aria-valuemax="1440" aria-label="Traffic timeline, 24 hours ago to now" />
+          <span>now</span>
+        </div>
+      </article>
+    </section>
+    <section class="mod_column" id="mod_column_right">
+      <article class="mod grow">
+        <h3 class="title"><p>PUBLIC LOG</p><p id="ws-state">IDLE</p></h3>
+        <div id="ticker" class="mod-body scroll reel" aria-live="polite"></div>
+      </article>
+      <article class="mod">
+        <h3 class="title"><p>CONN</p><p>INFO</p></h3>
+        <div id="conn-info" class="mod-body"></div>
+      </article>
+    </section>
+  </div>
+  <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+  <script src="/shell.js?v=9"></script>
+  <script src="/app.js?v=32"></script>
+</body>
+</html>

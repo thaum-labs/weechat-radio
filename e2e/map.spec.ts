@@ -122,7 +122,7 @@ test("home map runs from the US east coast to 100 km east of Moscow", async ({
   page,
 }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto("/");
+  await page.goto("/map.html");
   const view = await homeCamera(page);
   expectHomeFrame(view);
 
@@ -133,14 +133,14 @@ test("home map runs from the US east coast to 100 km east of Moscow", async ({
 
   await page.evaluate(() => window.WCR.map.jumpTo({ center: [139.7, 35.7], zoom: 5 }));
   await page.goto("/why.html");
-  await page.goto("/");
+  await page.goto("/map.html");
   const returned = await homeCamera(page);
   expectHomeFrame(returned);
 });
 
 test("home map keeps the same places in frame on a phone", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/");
+  await page.goto("/map.html");
   const view = await homeCamera(page);
   expectHomeFrame(view);
   await dismissBoot(page);
@@ -150,7 +150,7 @@ test("home map keeps the same places in frame on a phone", async ({ page }, test
 });
 
 test("live map shell loads", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/map.html");
   await expect(page.locator("#map")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("LIVE MAP")).toBeVisible();
   await expect(page.locator("#hub-panel")).toBeAttached();
@@ -220,7 +220,7 @@ test("internet-radio tower pin shows the dial frequency", async ({ page }, testI
     await route.fulfill({ json: {} });
   });
 
-  await page.goto("/");
+  await page.goto("/map.html");
   const tower = page.locator(".map-mark-wrap.tower");
   await expect(tower).toHaveCount(1, { timeout: 15_000 });
   await expect(tower.locator(".tower-freq")).toHaveText("144.950");
@@ -234,7 +234,7 @@ test("internet-radio tower pin shows the dial frequency", async ({ page }, testI
 });
 
 test("radio and radio-plus contacts draw the RF line", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/map.html");
   const style = await page.evaluate(() => {
     const nodes = [
       { callsign: "RFSIMA", mode: "radio" },
@@ -263,7 +263,7 @@ test("radio and radio-plus contacts draw the RF line", async ({ page }) => {
 });
 
 test("bulletin and group traffic do not draw arcs to every station", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/map.html");
   const links = await page.evaluate(() => {
     const pins = ["~RFSIMA", "M7TJF", "TF101", "~QATST10", "~NHTEST"];
     const link = window.WCR.stationLinkCall;
@@ -289,7 +289,7 @@ test("bulletin and group traffic do not draw arcs to every station", async ({ pa
 });
 
 test("lines glow for a few seconds, settle, stay faint through 48h, then go", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/map.html");
   const fade = await page.evaluate(() => {
     const active = window.WCR.ACTIVE_MS;
     const hold = window.WCR.HOLD_MS;
@@ -387,7 +387,7 @@ test("station pins dim with age and the sidebar lists who is reporting first", a
     await route.fulfill({ json: {} });
   });
 
-  await page.goto("/");
+  await page.goto("/map.html");
   const rows = page.locator("#station-list .station");
   await expect(rows).toHaveCount(2, { timeout: 15_000 });
   await expect(rows.nth(0)).toContainText("G4NEW");
@@ -431,7 +431,7 @@ test("station pins dim with age and the sidebar lists who is reporting first", a
 
 test("map key explains line styles, pin colours, and the 48h fade", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto("/");
+  await page.goto("/map.html");
   await dismissBoot(page);
   const key = page.locator("#map-key");
   await expect(key).toBeVisible();
@@ -619,7 +619,7 @@ test("a live line is kept when the events cache has not caught up", async ({ pag
     await route.fulfill({ json: {} });
   });
 
-  await page.goto("/");
+  await page.goto("/map.html");
   await expect(page.locator(".map-mark-wrap")).toHaveCount(2, { timeout: 15_000 });
   const kept = await page.evaluate(() => {
     const at = Date.now() - 60_000;
