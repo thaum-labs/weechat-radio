@@ -69,6 +69,9 @@ const TRAFFIC_GAP_MAX_SECS: u64 = 540;
 /// already at the modem with its 30 s carrier-sense hold, and up to two
 /// frames' wait on a congested channel. Not the queue behind it.
 const WARMUP_QUEUE_GAP_MAX_SECS: u64 = 240;
+/// Longest the send queue takes to empty once the chain is quiet: an own
+/// line's last retry interval and its wait for a receipt.
+const QUEUE_DRAIN_SECS: u64 = 420;
 
 /// Reserved ports are free again until the nodes bind them, so chains start
 /// one at a time. Once up, the cases run side by side on their own air.
@@ -2102,4 +2105,296 @@ async fn warm_up_beacons_go_between_queued_frames() {
             && gaps.iter().take(2).all(|g| *g <= WARMUP_QUEUE_GAP_MAX_SECS),
         "warm-up beacons at {at:?}s, gaps {gaps:?}s: a beacon waited behind A's queue{trace}"
     );
+}
+
+/// Each station's `(queue_out, queue_hold)` from its status page.
+async fn queue_counts(status: &[u16]) -> Vec<(u64, u64)> {
+    let mut out = Vec::new();
+    for p in status {
+        let v = status_json(*p).await.unwrap_or_default();
+        let n = |k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(u64::MAX);
+        out.push((n("queue_out"), n("queue_hold")));
+    }
+    out
+}
+
+/// How many beacons each station has keyed.
+fn beacon_counts(log: &TimedLog) -> Vec<usize> {
+    let log = log.lock().unwrap();
+    (1..=CALLS.len() as u64)
+        .map(|st| {
+            log.iter()
+                .filter(|k| k.station == st && !k.dropped)
+                .filter(|k| Envelope::decode(&k.payload).is_ok_and(|e| e.kind == MsgType::Beacon))
+                .count()
+        })
+        .collect()
+}
+
+/// QA v0.1.96: `queue_out` rose all run on every station and kept rising
+/// after the last line (B 8 at 22:00, 20 at 22:30, with only beacons on the
+/// air from 22:16). Every frame heard is stored `queued`, beacons included,
+/// and the count took them all. Here A sends a direct message to C and C a
+/// group line on a warm chain, both are settled (answered, carried on, or
+/// given up after the retries: on CI two of B's relays of C's receipt met
+/// A's own frames at A), and then only beacons go. Every station's queue and hold counts must
+/// fall to 0 and stay there while each station keys and hears another beacon.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_send_queue_empties_after_traffic_stops() {
+    let mut chain = Chain::start(Some("net")).await;
+    chain.join("#net").await;
+    let dm = send_tracked(&mut chain, 0, "PRIVMSG 2E0CCC :dm-two-hops").await;
+    // Not in the same breath: sent together, the two lines met at B copy
+    // after copy on CI (the first retry and the modem's stuck hold are fixed).
+    tokio::time::sleep(Duration::from_secs(20)).await;
+    let line = send_tracked(&mut chain, 2, "PRIVMSG #net :group-from-c").await;
+    // Settled: answered, given up, or carried on with the retries spent
+    // (a line stays [rl] until its receipt comes, with nothing left to key).
+    let settled = |c: &Chain, i: usize, id: &str| {
+        marks_for(&c.clients[i], id)
+            .iter()
+            .any(|m| m == "delivered" || m == "all" || m == "failed" || m == "relayed")
+    };
+    let both = chain
+        .wait(CASE_SECS, |c| settled(c, 0, &dm) && settled(c, 2, &line))
+        .await;
+    let marks = (
+        marks_for(&chain.clients[0], &dm),
+        marks_for(&chain.clients[2], &line),
+    );
+    chain.wait_quiet(90, 600).await;
+    let deadline = Instant::now() + Duration::from_secs(QUEUE_DRAIN_SECS);
+    let mut counts = queue_counts(&chain.status).await;
+    while counts.iter().any(|c| *c != (0, 0)) && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        counts = queue_counts(&chain.status).await;
+    }
+    let drained = counts.clone();
+    // Another round of beacons: each one heard used to add 1.
+    let before = beacon_counts(&chain.log);
+    chain
+        .wait(IDLE_GAP_MAX_SECS + 60, |c| {
+            beacon_counts(&c.log)
+                .iter()
+                .zip(&before)
+                .all(|(n, b)| n > b)
+        })
+        .await;
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    let after = queue_counts(&chain.status).await;
+    let trace = chain.trace();
+    chain.stop();
+    eprintln!("{trace}\n  marks {marks:?}\n  drained {drained:?} after beacons {after:?}");
+    assert!(both, "the lines were never settled{trace}");
+    assert!(
+        drained.iter().all(|c| *c == (0, 0)),
+        "(queue, hold) per station {drained:?} {QUEUE_DRAIN_SECS}s after the last line{trace}"
+    );
+    assert!(
+        after.iter().all(|c| *c == (0, 0)),
+        "(queue, hold) per station rose to {after:?} with only beacons on the air{trace}"
+    );
+}
+
+/// QA v0.1.96's start, a full stop and start on a channel that reads busy
+/// with the modems as upstream modem73: A opens #qa96a, sends B a direct
+/// message 5 s after start and invites B, C, D and E at 10-25 s, so five
+/// lines (and a roster for each invite) wait out A's start-up hold. Returns
+/// the chain and the ids of the direct message and the invite to B.
+async fn qa96_early_start() -> (Chain, String, String) {
+    let mut chain = Chain::start_modems(None, None, 99, false, true).await;
+    let started = chain.t0;
+    chain.clients[0].send("JOIN #qa96a").await;
+    tokio::time::sleep_until((started + Duration::from_secs(5)).into()).await;
+    let dm = send_tracked(&mut chain, 0, "PRIVMSG M0BBB :early-dm-to-b").await;
+    tokio::time::sleep_until((started + Duration::from_secs(10)).into()).await;
+    let invite = send_tracked(&mut chain, 0, "INVITE M0BBB #qa96a").await;
+    for (n, call) in CALLS[2..].iter().enumerate() {
+        tokio::time::sleep_until((started + Duration::from_secs(15 + 5 * n as u64)).into()).await;
+        chain.clients[0]
+            .send(&format!("INVITE {call} #qa96a"))
+            .await;
+    }
+    (chain, dm, invite)
+}
+
+/// Unix time `client` was first shown line `id`, from its server-time tag.
+fn shown_at(client: &Client, id: &str) -> Option<f64> {
+    client.lines().iter().find_map(|l| {
+        let tags = l.strip_prefix('@')?.split_once(' ')?.0;
+        if !tags.split(';').any(|t| t == format!("msgid={id}")) {
+            return None;
+        }
+        let time = tags
+            .split(';')
+            .find_map(|t| t.strip_prefix("server-time="))?;
+        let at = chrono::DateTime::parse_from_rfc3339(time).ok()?;
+        Some(at.timestamp_millis() as f64 / 1000.0)
+    })
+}
+
+/// When station `st` started keying each copy of line `id`, unix time.
+fn copies_keyed(log: &TimedLog, st: u64, id: &str) -> Vec<f64> {
+    log.lock()
+        .unwrap()
+        .iter()
+        .filter(|k| k.station == st && !k.dropped)
+        .filter(|k| {
+            Envelope::decode(&k.payload)
+                .is_ok_and(|e| e.kind != MsgType::Ack && e.msg_id.hex() == id)
+        })
+        .map(|k| unix_of(k.at))
+        .collect()
+}
+
+/// Whether station `st` keyed anything within a frame of unix time `at`.
+fn keyed_around(log: &TimedLog, st: u64, at: f64) -> bool {
+    let frame = FRAME_MS as f64 / 1000.0;
+    log.lock()
+        .unwrap()
+        .iter()
+        .filter(|k| k.station == st && !k.dropped)
+        .any(|k| (unix_of(k.at) - at).abs() < frame)
+}
+
+/// QA v0.1.96: B got A's early direct message only after A's retry-1, and
+/// A's invite only after retry-2. After A's start-up hold released, a roster
+/// for each of A's four invites went ahead of A's lines as priority traffic,
+/// each repeated until relayed, and the lines' retry timers ran while their
+/// first copies still waited in A's air queue. Here, with QA's timing, B
+/// must show the direct message from the first copy it could hear and get
+/// the invite, A must hear B's receipts, and neither may show failed. A copy
+/// that met a frame of B's own or of C's at B is no miss of B's: by then
+/// A's rosters and invites are being relayed down the chain, and C's relay
+/// of one can land on B together with A's frame (it did on CI). The
+/// invite's first copy is not held to that at all, and a line none of
+/// whose copies reached B clear gets no verdict.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_early_direct_message_reaches_the_neighbour_first_time() {
+    let (chain, dm, invite) = qa96_early_start().await;
+    let delivered = |c: &Chain, id: &str| {
+        marks_for(&c.clients[0], id)
+            .iter()
+            .any(|m| m == "delivered" || m == "all")
+    };
+    chain
+        .wait(CASE_SECS, |c| {
+            shown_at(&c.clients[1], &dm).is_some()
+                && shown_at(&c.clients[1], &invite).is_some()
+                && delivered(c, &dm)
+                && delivered(c, &invite)
+        })
+        .await;
+    let trace = chain.trace();
+    let mut problems = Vec::new();
+    let mut report = String::new();
+    for (what, id) in [("direct message", &dm), ("invite to B", &invite)] {
+        let marks = marks_for(&chain.clients[0], id);
+        let keyed = copies_keyed(&chain.log, 1, id);
+        let shown = shown_at(&chain.clients[1], id);
+        let t0 = unix_of(chain.t0);
+        // A copy B keyed over itself (half duplex), or that met a frame
+        // from C at B, is no miss of B's. With every frame waiting out the
+        // same 30 s carrier-sense hold, two stations' frames land together
+        // more often than chance: on CI all four copies of the direct
+        // message did. A run with no clear copy proves nothing here.
+        let clear: Vec<f64> = keyed
+            .iter()
+            .copied()
+            .filter(|k| !keyed_around(&chain.log, 2, *k) && !keyed_around(&chain.log, 3, *k))
+            .collect();
+        report.push_str(&format!(
+            "\n  {what}: A keyed at {:?}s (clear of B's and C's frames: {:?}s), B showed at {:?}s, marks {marks:?}",
+            keyed.iter().map(|t| (t - t0).round()).collect::<Vec<_>>(),
+            clear.iter().map(|t| (t - t0).round()).collect::<Vec<_>>(),
+            shown.map(|t| (t - t0).round())
+        ));
+        if clear.is_empty() {
+            report.push_str(&format!(
+                "\n  no copy of the {what} reached B clear: no verdict"
+            ));
+            continue;
+        }
+        match shown {
+            None => problems.push(format!("B never showed the {what}")),
+            Some(at) if id == &dm => {
+                let heard = clear.iter().filter(|k| **k < at).count();
+                let before = keyed.iter().filter(|k| **k < at).count();
+                if heard != 1 {
+                    problems.push(format!(
+                        "B showed the {what} after A's copy {before}, not the first it could hear"
+                    ));
+                }
+            }
+            Some(_) => {}
+        }
+        if !delivered(&chain, id) {
+            problems.push(format!("A never saw B's receipt for the {what}"));
+        }
+        if marks.iter().any(|m| m == "failed") {
+            problems.push(format!("the {what} showed failed although B is next to A"));
+        }
+    }
+    eprintln!("{trace}{report}");
+    chain.stop();
+    assert!(problems.is_empty(), "{problems:?}{report}{trace}");
+}
+
+/// QA v0.1.96: with its own direct message and invites queued, A's warm-up
+/// beacons went 270 s and 164 s apart and B's 149 s and 195 s, while C, D
+/// and E went about a minute apart. A's second waited out its direct
+/// message's whole exchange, and its third was taken back from the air queue
+/// for one invite, then another; on a slow runner it then queued behind
+/// three invites and their rosters, as priority traffic. Here, with QA's
+/// timing, every station's
+/// three warm-up beacons go a pace apart plus one receipt's round trip at
+/// most, while A's five lines are in progress: under
+/// `WARMUP_QUEUE_GAP_MAX_SECS`, as for the eight queued lines above.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn warm_up_beacons_keep_their_pace_with_five_lines_queued() {
+    let (chain, _, _) = qa96_early_start().await;
+    let t0 = chain.t0;
+    let beacons = |st: usize| -> Vec<Instant> {
+        chain
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|k| k.station == st as u64 + 1 && !k.dropped)
+            .filter(|k| Envelope::decode(&k.payload).is_ok_and(|e| e.kind == MsgType::Beacon))
+            .map(|k| k.handed)
+            .collect()
+    };
+    chain
+        .wait(CASE_SECS, |_| {
+            (0..CALLS.len()).all(|i| beacons(i).len() >= 3)
+        })
+        .await;
+    let mut report = String::new();
+    let mut problems = Vec::new();
+    for (i, call) in CALLS.iter().enumerate() {
+        let handed = beacons(i);
+        let at: Vec<u64> = handed
+            .iter()
+            .map(|b| b.saturating_duration_since(t0).as_secs())
+            .collect();
+        let gaps: Vec<u64> = handed
+            .windows(2)
+            .map(|w| w[1].duration_since(w[0]).as_secs())
+            .take(2)
+            .collect();
+        report.push_str(&format!(
+            "\n  {call}: beacons at {at:?}s, warm-up gaps {gaps:?}s"
+        ));
+        if gaps.len() < 2 {
+            problems.push(format!("{call} keyed {} warm-up beacons", handed.len()));
+        }
+        if let Some(g) = gaps.iter().find(|g| **g > WARMUP_QUEUE_GAP_MAX_SECS) {
+            problems.push(format!("{call} went {g}s between warm-up beacons"));
+        }
+    }
+    let trace = chain.trace();
+    chain.stop();
+    eprintln!("{report}");
+    assert!(problems.is_empty(), "{problems:?}{report}{trace}");
 }

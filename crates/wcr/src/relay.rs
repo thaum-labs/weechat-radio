@@ -515,13 +515,23 @@ pub fn retries_exhausted(sent: u32, max: u32) -> bool {
     max > 0 && sent >= max
 }
 
+/// A priority line's first retry (20 s) came sooner than modem73's stuck
+/// carrier-sense hold (30 s): the retry was handed over while the first copy
+/// still waited, and the modem keyed both back to back (QA v0.1.96: rosters
+/// and invites went out twice 4 s apart). Priority and routine retries wait
+/// at least the hold and a frame; emergency keeps its own pace.
+pub const RETRY_HOLD_FLOOR_S: u32 = MODEM_STUCK_HOLD_S + 5;
+
 pub fn next_retry_hold_base(retries: u32, now: u32, priority: Priority) -> u32 {
     let base: u32 = match priority {
         Priority::Emergency => 8,
         Priority::Priority => 20,
         Priority::Routine => 45,
     };
-    let delay = base.saturating_mul(1u32 << retries.min(4));
+    let mut delay = base.saturating_mul(1u32 << retries.min(4));
+    if priority != Priority::Emergency {
+        delay = delay.max(RETRY_HOLD_FLOOR_S);
+    }
     now.saturating_add(delay)
 }
 
@@ -617,6 +627,15 @@ pub fn exchange_settle_s(preset: Preset) -> u32 {
     spread_window_secs(preset).ceil() as u32
 }
 
+/// How long the last copy of a walk (a receipt or roster keyed again until
+/// a station further on is heard carrying it) stays on the queue: long
+/// enough for that station's relay, a slot, its carrier-sense hold and a
+/// frame. A line's retry interval here left a finished walk on the send
+/// queue for six minutes after the last copy (QA v0.1.96).
+pub fn walk_last_wait_s(preset: Preset) -> u32 {
+    exchange_wait_s(preset)
+}
+
 /// Longest a due beacon waits for exchanges in progress: one exchange, a
 /// receipt's round trip and the rest of its receipts. About 100 s at hf-poor.
 pub fn beacon_exchange_wait_s(preset: Preset) -> u32 {
@@ -633,9 +652,36 @@ pub fn beacon_waits_for_mail(now: u32, ceiling: u32, preset: Preset) -> bool {
 /// A beacon that fell due at `due` still waits for an exchange in progress.
 /// It waits for one at most: back-to-back exchanges on a busy chain would
 /// otherwise hold it to the 10-minute ceiling, and every station hears it
-/// about every 5 minutes.
-pub fn beacon_waits_for_exchange(now: u32, due: u32, preset: Preset) -> bool {
-    now < due.saturating_add(beacon_exchange_wait_s(preset))
+/// about every 5 minutes. A warm-up beacon is how neighbours learn this
+/// station, so it waits one receipt's round trip at most (QA v0.1.96: a
+/// busy station's warm-up gaps reached 270 s).
+pub fn beacon_waits_for_exchange(now: u32, due: u32, preset: Preset, warm_up: bool) -> bool {
+    let most = if warm_up {
+        exchange_wait_s(preset)
+    } else {
+        beacon_exchange_wait_s(preset)
+    };
+    now < due.saturating_add(most)
+}
+
+/// The exchange a due beacon waits for: the one it chose this round while
+/// that is still in progress (`chosen_running`), or before it has chosen,
+/// any in progress (`open`). Exchanges that start later do not hold it again.
+pub fn beacon_exchange(
+    chosen: Option<ExchangeKey>,
+    chosen_running: bool,
+    open: Option<ExchangeKey>,
+) -> Option<ExchangeKey> {
+    match chosen {
+        Some(k) => chosen_running.then_some(k),
+        None => open,
+    }
+}
+
+/// A beacon still in the air queue is taken back to wait for `exchange` only
+/// if it has not waited one out this round, so once at most.
+pub fn beacon_taken_back(chosen: Option<ExchangeKey>, exchange: Option<ExchangeKey>) -> bool {
+    chosen.is_none() && exchange.is_some()
 }
 
 /// What an exchange's frames have in common: the line a receipt answers, or
@@ -709,6 +755,14 @@ impl Exchanges {
         } else {
             times.asked = times.asked.max(now);
         }
+    }
+
+    /// Exchange `key` asked less than `wait` ago and has not been answered
+    /// since: its receipt is still to come.
+    pub fn awaits_answer(&self, key: ExchangeKey, now: u32, wait: u32) -> bool {
+        self.open
+            .get(&key)
+            .is_some_and(|t| t.answered < t.asked && now < t.asked.saturating_add(wait))
     }
 
     /// An exchange still in progress at `now`: one that asked less than
@@ -1686,6 +1740,10 @@ mod tests {
         assert!(!answer_again(100, Some(108), gap));
         // Urgent lines keep their own faster pace.
         assert_eq!(relay_copy_gap_s(Priority::Emergency), 8);
+        // A priority line's 20 s would hand the next copy over while the
+        // first still waits out the 30 s hold.
+        assert_eq!(relay_copy_gap_s(Priority::Priority), RETRY_HOLD_FLOOR_S);
+        assert_eq!(next_retry_hold_base(1, 0, Priority::Priority), 40);
     }
 
     #[test]
@@ -1886,6 +1944,25 @@ mod tests {
         );
     }
 
+    /// QA v0.1.96: A's second warm-up beacon waited out its direct message,
+    /// and its third was taken back from the air queue for one invite, then
+    /// another. A beacon waits out one exchange and is taken back once.
+    #[test]
+    fn a_beacon_waits_out_one_exchange_and_is_taken_back_once() {
+        let dm = ExchangeKey::Line(MsgId([1; 8]));
+        let invite = ExchangeKey::Line(MsgId([2; 8]));
+        assert_eq!(beacon_exchange(None, false, Some(dm)), Some(dm));
+        assert_eq!(beacon_exchange(Some(dm), true, Some(invite)), Some(dm));
+        assert_eq!(
+            beacon_exchange(Some(dm), false, Some(invite)),
+            None,
+            "the next invite does not hold it again"
+        );
+        assert!(beacon_taken_back(None, Some(invite)));
+        assert!(!beacon_taken_back(Some(invite), Some(dm)), "only once");
+        assert!(!beacon_taken_back(None, None));
+    }
+
     #[test]
     fn a_line_and_its_receipt_make_an_exchange() {
         let line = Envelope::new_msg(
@@ -1950,8 +2027,11 @@ mod tests {
         let due = t + 600;
         let most = beacon_exchange_wait_s(p);
         assert_eq!(most, wait + settle);
-        assert!(beacon_waits_for_exchange(due + most - 1, due, p));
-        assert!(!beacon_waits_for_exchange(due + most, due, p));
+        assert!(beacon_waits_for_exchange(due + most - 1, due, p, false));
+        assert!(!beacon_waits_for_exchange(due + most, due, p, false));
+        // A warm-up beacon waits one receipt's round trip at most.
+        assert!(beacon_waits_for_exchange(due + wait - 1, due, p, true));
+        assert!(!beacon_waits_for_exchange(due + wait, due, p, true));
         // A mail holds it until the 10-minute ceiling and one exchange.
         let ceiling = due + 300;
         assert!(beacon_waits_for_mail(ceiling + wait - 1, ceiling, p));
