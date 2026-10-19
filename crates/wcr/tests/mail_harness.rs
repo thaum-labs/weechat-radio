@@ -779,12 +779,16 @@ async fn wait_beacon_pending(pair: &Pair, i: usize) {
 /// first p-persistence roll it wins: within a second one time in five, and
 /// a beacon at the modem cannot be taken back. With the channel counted as
 /// busy for ten minutes after anything heard, a frame taken off the queue
-/// waits out the whole defer cap, six seconds, which is long enough for
-/// the mail to take it back and short enough not to hold up a receipt.
+/// waits out the whole defer cap, 20 s, so the beacon is still on the air
+/// queue when the mail starts and can be taken back. Six seconds was not
+/// enough: the gateway first decodes the mail about 8 s in, its probe's
+/// airtime, and on main CI for v0.1.98 (Windows and msrv) the beacon had
+/// reached the modem 2 s before that, where nothing can take it back. Mail
+/// frames key with carrier sense off and do not wait out this cap.
 fn beacon_held_a_while(cfg: &mut Config) {
     cfg.rf.beacon_jitter_s = 0;
     cfg.rf.quiet_ms = 600_000;
-    cfg.rf.max_defer_ms = 6_000;
+    cfg.rf.max_defer_ms = 20_000;
 }
 
 /// When `station` keyed a beacon at or after `t0`.
