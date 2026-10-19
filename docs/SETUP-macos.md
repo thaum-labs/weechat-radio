@@ -41,6 +41,8 @@ The install command is the same as Linux. Then run setup, then the window.
    wcr service install
    ```
 
+   `wcr update` replaces the binary and restarts this service. A station you started by hand (`wcr gui`, `wcr tui`, or `wcr node`) keeps the old code until you stop it and start it again.
+
 6. WeeChat is optional. To add it later, see https://weechatradio.com/guides/weechat.html (offline: `wcr help` then the WeeChat page on the site).
 
 ## How you know it worked
