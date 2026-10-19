@@ -2252,10 +2252,12 @@ fn keyed_around(log: &TimedLog, st: u64, at: f64) -> bool {
 /// for each of A's four invites went ahead of A's lines as priority traffic,
 /// each repeated until relayed, and the lines' retry timers ran while their
 /// first copies still waited in A's air queue. Here, with QA's timing, B
-/// must show the direct message from A's first copy and get the invite, A
-/// must hear B's receipts, and neither may show failed. The invite's first
-/// copy is not held to that: by then A's other invites are being relayed
-/// down the chain, and C's relay of one can land on B together with it.
+/// must show the direct message from the first copy it could hear and get
+/// the invite, A must hear B's receipts, and neither may show failed. A copy
+/// that met a frame of B's own or of C's at B is no miss of B's: by then
+/// A's rosters and invites are being relayed down the chain, and C's relay
+/// of one can land on B together with A's frame (it did on CI). The
+/// invite's first copy is not held to that at all.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_early_direct_message_reaches_the_neighbour_first_time() {
     let (chain, dm, invite) = qa96_early_start().await;
@@ -2288,10 +2290,14 @@ async fn an_early_direct_message_reaches_the_neighbour_first_time() {
         match shown {
             None => problems.push(format!("B never showed the {what}")),
             Some(at) if id == &dm => {
-                // A copy B keyed over itself (half duplex) is no miss of B's.
+                // A copy B keyed over itself (half duplex), or that met a
+                // frame from C at B, is no miss of B's.
                 let heard = keyed
                     .iter()
-                    .filter(|k| **k < at && !keyed_around(&chain.log, 2, **k))
+                    .filter(|k| **k < at)
+                    .filter(|k| {
+                        !keyed_around(&chain.log, 2, **k) && !keyed_around(&chain.log, 3, **k)
+                    })
                     .count();
                 let before = keyed.iter().filter(|k| **k < at).count();
                 if heard != 1 {
