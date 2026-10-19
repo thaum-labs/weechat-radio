@@ -2144,6 +2144,9 @@ async fn the_send_queue_empties_after_traffic_stops() {
     let mut chain = Chain::start(Some("net")).await;
     chain.join("#net").await;
     let dm = send_tracked(&mut chain, 0, "PRIVMSG 2E0CCC :dm-two-hops").await;
+    // Not in the same breath: sent together, the two lines met at B copy
+    // after copy on CI (the first retry and the modem's stuck hold are fixed).
+    tokio::time::sleep(Duration::from_secs(20)).await;
     let line = send_tracked(&mut chain, 2, "PRIVMSG #net :group-from-c").await;
     let settled = |c: &Chain, i: usize, id: &str| {
         marks_for(&c.clients[i], id)
