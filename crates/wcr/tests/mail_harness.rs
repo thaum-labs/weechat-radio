@@ -721,26 +721,62 @@ async fn the_first_beacon_waits_for_the_reply_to_our_mail() {
     );
 }
 
+/// A status page's `beacon_note`: `pending` while a beacon is on its way
+/// from the air queue to the modem.
+async fn beacon_note(port: u16) -> String {
+    let Ok(resp) = reqwest::get(format!("http://127.0.0.1:{port}/status")).await else {
+        return String::new();
+    };
+    resp.json::<serde_json::Value>()
+        .await
+        .ok()
+        .and_then(|v| v.get("beacon_note")?.as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
+/// Wait until station `i`'s beacon is on its way to the modem.
+async fn wait_beacon_pending(pair: &Pair, i: usize) {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while beacon_note(pair.status[i]).await != "pending" {
+        assert!(
+            Instant::now() < deadline,
+            "station {}'s first beacon never went",
+            i + 1
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// When `station` keyed a beacon at or after `t0`.
+fn beacons_from(log: &[wcr::sim::TimedKey], station: u64, t0: Instant) -> Vec<Instant> {
+    log.iter()
+        .filter(|k| {
+            k.station == station
+                && k.at >= t0
+                && wcr::proto::Envelope::decode(&k.payload)
+                    .is_ok_and(|e| e.kind == wcr::proto::MsgType::Beacon)
+        })
+        .map(|k| k.at)
+        .collect()
+}
+
+/// When the gateway's acceptance of the mail ended.
+fn acceptance_end(log: &[wcr::sim::TimedKey]) -> Option<Instant> {
+    log.iter()
+        .find(|k| k.station == 2 && chunk_of(&k.payload).is_some_and(|(op, _, _)| op == 7))
+        .map(|k| k.at + k.len)
+}
+
 /// A chat frame taken off the air queue waits out carrier sense, which the
 /// station's own mail burst keeps busy once it keys, for up to 15 s. It then
 /// set chat's modem config, carrier sense on, just before it went, and the
 /// rest of the burst keyed under it: two chunks every 38 s on a stuck modem.
 /// Here the sender's first beacon (no jitter, a minute after start) has just
-/// been handed to the air queue when the mail starts. It keys first, and the
-/// burst keeps carrier sense off.
+/// been handed to the air queue when the mail starts. The beacon is taken
+/// back while it waits, the burst keeps carrier sense off, and the beacon
+/// goes only after the gateway's acceptance.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_beacon_on_its_way_when_a_mail_starts_keys_before_the_burst() {
-    async fn beacon_note(port: u16) -> String {
-        let Ok(resp) = reqwest::get(format!("http://127.0.0.1:{port}/status")).await else {
-            return String::new();
-        };
-        resp.json::<serde_json::Value>()
-            .await
-            .ok()
-            .and_then(|v| v.get("beacon_note")?.as_str().map(str::to_string))
-            .unwrap_or_default()
-    }
-
+async fn a_beacon_on_its_way_when_a_mail_starts_waits_for_the_acceptance() {
     let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
     let pair = Pair::start_tweaked(
         TimedOpts {
@@ -763,40 +799,25 @@ async fn a_beacon_on_its_way_when_a_mail_starts_keys_before_the_burst() {
     .await;
     // The countdown reads pending from when the beacon is handed to the air
     // queue until it reaches the modem.
-    let deadline = Instant::now() + Duration::from_secs(120);
-    while beacon_note(pair.status[0]).await != "pending" {
-        assert!(
-            Instant::now() < deadline,
-            "the sender's first beacon never went"
-        );
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    wait_beacon_pending(&pair, 0).await;
     let t0 = Instant::now();
     let mut body = long_body();
     body.truncate(800);
     let body = body.trim().to_string();
-    pair.compose(&body).await;
-    // The burst ends with its last chunk. Whether the gateway heard it all is
-    // not the point here: its own beacon, held by its stuck modem since
-    // before the mail, can key into the burst.
-    let last_chunk = |log: &[wcr::sim::TimedKey]| {
-        log.iter().position(|k| {
-            k.station == 1 && chunk_of(&k.payload).is_some_and(|(_, idx, n)| idx + 1 == n)
-        })
-    };
-    let deadline = Instant::now() + Duration::from_secs(300);
-    while last_chunk(&pair.log.lock().unwrap()).is_none() && Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+    let id = pair.compose(&body).await;
+    let row = pair.wait_state(&id, "sent", 300).await;
     let trace = pair.trace(t0);
     eprintln!("{trace}");
     let log = pair.log.lock().unwrap().clone();
     pair.stop();
 
-    let end = last_chunk(&log).unwrap_or_else(|| panic!("the burst never ended\n{trace}"));
-    for k in log[..=end]
+    let row = row.expect("outbox row");
+    let state = row.get("state").and_then(|x| x.as_str()).unwrap_or("");
+    assert_eq!(state, "sent", "row {row}\n{trace}");
+    let accepted = acceptance_end(&log).unwrap_or_else(|| panic!("no acceptance\n{trace}"));
+    for k in log
         .iter()
-        .filter(|k| k.station == 1 && is_mail(&k.payload))
+        .filter(|k| k.station == 1 && k.at < accepted && is_mail(&k.payload))
     {
         assert!(!k.csma, "a mail frame keyed with carrier sense on\n{trace}");
     }
@@ -805,18 +826,84 @@ async fn a_beacon_on_its_way_when_a_mail_starts_keys_before_the_burst() {
         .find(|k| k.station == 1 && is_mail(&k.payload))
         .map(|k| k.at)
         .expect("the sender keyed its mail");
-    let beacon = log
-        .iter()
-        .find(|k| {
-            k.station == 1
-                && k.at >= t0
-                && wcr::proto::Envelope::decode(&k.payload)
-                    .is_ok_and(|e| e.kind == wcr::proto::MsgType::Beacon)
-        })
-        .map(|k| k.at);
+    let beacons = beacons_from(&log, 1, t0);
     assert!(
-        beacon.is_some_and(|b| b < first_chunk),
-        "the beacon did not key before the burst\n{trace}"
+        !beacons.iter().any(|b| *b < accepted),
+        "the sender's beacon keyed {:?} after the first chunk, before the acceptance\n{trace}",
+        beacons
+            .iter()
+            .filter(|b| **b < accepted)
+            .map(|b| b.saturating_duration_since(first_chunk))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// QA v0.1.97: the gateway keyed its first beacon between chunks 2 and 3 of
+/// a short mail, 64 s after start. The beacon had been taken off the air
+/// queue just before the first chunk decoded and was waiting out carrier
+/// sense, where the beacon loop could not take it back. Here the gateway's
+/// first beacon (no jitter, a minute after start) is on its way to the
+/// modem when the sender's burst starts. The gateway keys no beacon from
+/// the first chunk until its acceptance, and the mail is accepted first
+/// time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_gateway_takes_its_beacon_back_when_mail_chunks_arrive() {
+    let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
+    let pair = Pair::start_tweaked(
+        TimedOpts {
+            frame_ms: 4_000,
+            count_tx: false,
+            collide: true,
+            csma_stuck_ms: 30_000,
+            rung_airtime: true,
+            noise_pct: 99,
+            rx_after_decode: false,
+        },
+        drop_rx,
+        Duration::from_secs(2),
+        |i, cfg| {
+            if i == 1 {
+                cfg.rf.beacon_jitter_s = 0;
+            }
+        },
+    )
+    .await;
+    wait_beacon_pending(&pair, 1).await;
+    let t0 = Instant::now();
+    let mut body = long_body();
+    body.truncate(800);
+    let body = body.trim().to_string();
+    let id = pair.compose(&body).await;
+    let row = pair.wait_state(&id, "sent", 300).await;
+    let trace = pair.trace(t0);
+    eprintln!("{trace}");
+    let log = pair.log.lock().unwrap().clone();
+    let posts = pair.posts.lock().unwrap().clone();
+    pair.stop();
+
+    let row = row.expect("outbox row");
+    let state = row.get("state").and_then(|x| x.as_str()).unwrap_or("");
+    assert_eq!(state, "sent", "row {row}\n{trace}");
+    assert_eq!(posts.len(), 1, "gateway posts: {posts:?}\n{trace}");
+    let first_chunk = log
+        .iter()
+        .find(|k| k.station == 1 && is_mail(&k.payload))
+        .map(|k| k.at)
+        .expect("the sender keyed its mail");
+    let accepted = acceptance_end(&log).unwrap_or_else(|| panic!("no acceptance\n{trace}"));
+    let between: Vec<f64> = beacons_from(&log, 2, first_chunk)
+        .into_iter()
+        .filter(|b| *b < accepted)
+        .map(|b| (b - t0).as_secs_f64())
+        .collect();
+    assert!(
+        between.is_empty(),
+        "the gateway keyed a beacon at {between:?} s, between the first chunk and its acceptance\n{trace}"
+    );
+    let retries = row.get("retries").and_then(|x| x.as_u64()).unwrap_or(0);
+    assert_eq!(
+        retries, 0,
+        "the mail was not accepted first time: row {row}\n{trace}"
     );
 }
 
