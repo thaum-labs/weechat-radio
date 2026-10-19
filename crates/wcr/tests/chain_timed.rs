@@ -2678,17 +2678,37 @@ async fn receipts_for_a_group_line_are_capped() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_far_receipt_walks_past_two_lost_copies_to_the_sender() {
     let lost = Arc::new(AtomicU64::new(0));
+    // B's copies are counted as keyed, not as they reach C: one that met a
+    // frame of D's at C never reaches this check (msrv CI for #64: B's first
+    // two copies collided with D's, and the next two were dropped here).
+    let air_log: Arc<std::sync::OnceLock<TimedLog>> = Arc::new(std::sync::OnceLock::new());
     let drop_bs_first_two: LinkDrop = {
         let lost = lost.clone();
+        let air_log = air_log.clone();
         Arc::new(move |from, to, frame| {
-            let as_receipt = from == 2
-                && to == 3
-                && Envelope::decode(frame)
-                    .is_ok_and(|e| e.kind == MsgType::Ack && e.origin.as_str() == CALLS[0]);
-            as_receipt && lost.fetch_add(1, Ordering::SeqCst) < 2
+            let as_receipt = |payload: &[u8]| {
+                Envelope::decode(payload)
+                    .is_ok_and(|e| e.kind == MsgType::Ack && e.origin.as_str() == CALLS[0])
+            };
+            if from != 2 || to != 3 || !as_receipt(frame) {
+                return false;
+            }
+            let keyed = air_log.get().map_or(0, |log| {
+                log.lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|k| k.station == 2 && !k.dropped && as_receipt(&k.payload))
+                    .count()
+            });
+            let drop = keyed <= 2;
+            if drop {
+                lost.fetch_add(1, Ordering::SeqCst);
+            }
+            drop
         })
     };
     let mut chain = Chain::start_with(Some("net"), Some(drop_bs_first_two)).await;
+    let _ = air_log.set(chain.log.clone());
     chain.join("#net").await;
     let id = send_tracked(&mut chain, 4, "PRIVMSG #net :g2-far-receipt-walks-home").await;
     let all = |c: &Chain| marks_for(&c.clients[4], &id).iter().any(|m| m == "all");
@@ -2712,7 +2732,7 @@ async fn a_far_receipt_walks_past_two_lost_copies_to_the_sender() {
             .count()
     };
     let carried: Vec<usize> = (1..=5).map(a_receipt).collect();
-    let lost_at_c = lost.load(Ordering::SeqCst).min(2);
+    let lost_at_c = lost.load(Ordering::SeqCst);
     let trace = chain.trace();
     let log = chain.log.clone();
     chain.stop();
@@ -2720,10 +2740,10 @@ async fn a_far_receipt_walks_past_two_lost_copies_to_the_sender() {
         "\n  marks {marks:?}; A's receipt keyed by A..E {carried:?}; copies lost at C {lost_at_c}"
     );
     eprintln!("{trace}{report}");
-    // A copy of B's can also meet a frame of C's or D's at C, so one drop
-    // here is enough for the case to have happened.
+    // B's first two copies never reach C, dropped here or lost to a
+    // collision, so B keying A's receipt at all is the case.
     assert!(
-        lost_at_c >= 1,
+        carried[1] >= 1,
         "B never carried A's receipt, so the case did not happen{report}{trace}"
     );
     assert!(
