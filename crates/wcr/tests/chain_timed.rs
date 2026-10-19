@@ -2318,7 +2318,9 @@ async fn an_early_direct_message_reaches_the_neighbour_first_time() {
 /// beacons went 270 s and 164 s apart and B's 149 s and 195 s, while C, D
 /// and E went about a minute apart. A's second waited out its direct
 /// message's whole exchange, and its third was taken back from the air queue
-/// for one invite, then another. Here, with QA's timing, every station's
+/// for one invite, then another; on a slow runner it then queued behind
+/// three invites and their rosters, as priority traffic. Here, with QA's
+/// timing, every station's
 /// three warm-up beacons go a pace apart plus one receipt's round trip at
 /// most, while A's five lines are in progress: under
 /// `WARMUP_QUEUE_GAP_MAX_SECS`, as for the eight queued lines above.
