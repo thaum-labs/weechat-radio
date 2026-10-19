@@ -645,12 +645,12 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         }
                     }
                 }
-                if let Ok((o, h)) = rt_h.store.queue_depth(&our) {
+                let max = rt_h.cfg.lock().rf.max_retries;
+                if let Ok((o, h)) = rt_h.store.queue_depth(&our, max) {
                     let mut s = rt_h.snap.lock();
                     s.queue_out = o;
                     s.queue_hold = h;
                 }
-                let max = rt_h.cfg.lock().rf.max_retries;
                 if let Ok(next) = rt_h.store.next_hold(&our, max) {
                     let mut s = rt_h.snap.lock();
                     match next {
@@ -3925,7 +3925,8 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
         }
         "queue" => {
             let our = rt.engine.our_call.clone();
-            let (o, h) = store.queue_depth(&our).unwrap_or((0, 0));
+            let max = cfg.lock().rf.max_retries;
+            let (o, h) = store.queue_depth(&our, max).unwrap_or((0, 0));
             format!("outbound {o} hold {h}")
         }
         "flush" => {
