@@ -482,6 +482,15 @@ impl AirQueue {
         self.inner.lock().items.iter().any(|x| x.msg_id == id)
     }
 
+    /// Copy `copy` of `id` is still waiting here, not yet handed to the modem.
+    pub fn holds_copy(&self, id: MsgId, copy: u8) -> bool {
+        self.inner
+            .lock()
+            .items
+            .iter()
+            .any(|x| x.msg_id == id && x.copy == copy)
+    }
+
     pub fn pop_ready(&self) -> Option<AirItem> {
         let now = Instant::now();
         let mut g = self.inner.lock();
