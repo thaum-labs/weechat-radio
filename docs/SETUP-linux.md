@@ -42,6 +42,8 @@ The install command is the same as macOS. Then run setup, then the window.
    wcr service install
    ```
 
+   `wcr update` replaces the binary and restarts this service. A station you started by hand (`wcr gui`, `wcr tui`, or `wcr node`) keeps the old code until you stop it and start it again.
+
 6. WeeChat is installed and configured by the official installer. After `wcr node`, run `wcr weechat`. To rewrite the server and script: `wcr weechat --configure`.
 
 ## How you know it worked
