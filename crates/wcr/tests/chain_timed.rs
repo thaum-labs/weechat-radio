@@ -2237,6 +2237,16 @@ fn copies_keyed(log: &TimedLog, st: u64, id: &str) -> Vec<f64> {
         .collect()
 }
 
+/// Whether station `st` keyed anything within a frame of unix time `at`.
+fn keyed_around(log: &TimedLog, st: u64, at: f64) -> bool {
+    let frame = FRAME_MS as f64 / 1000.0;
+    log.lock()
+        .unwrap()
+        .iter()
+        .filter(|k| k.station == st && !k.dropped)
+        .any(|k| (unix_of(k.at) - at).abs() < frame)
+}
+
 /// QA v0.1.96: B got A's early direct message only after A's retry-1, and
 /// A's invite only after retry-2. After A's start-up hold released, a roster
 /// for each of A's four invites went ahead of A's lines as priority traffic,
@@ -2278,8 +2288,13 @@ async fn an_early_direct_message_reaches_the_neighbour_first_time() {
         match shown {
             None => problems.push(format!("B never showed the {what}")),
             Some(at) if id == &dm => {
+                // A copy B keyed over itself (half duplex) is no miss of B's.
+                let heard = keyed
+                    .iter()
+                    .filter(|k| **k < at && !keyed_around(&chain.log, 2, **k))
+                    .count();
                 let before = keyed.iter().filter(|k| **k < at).count();
-                if before != 1 {
+                if heard != 1 {
                     problems.push(format!(
                         "B showed the {what} after A's copy {before}, not its first"
                     ));
