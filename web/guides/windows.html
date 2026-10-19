@@ -76,6 +76,7 @@
         <li>
           <p>To keep the node running after you close the window, open PowerShell as Administrator and run:</p>
           <pre>wcr service install</pre>
+          <p><code>wcr update</code> replaces the binary. Stop the station and start it again, including this service. A station you started by hand keeps the old code until you do.</p>
         </li>
         <li>
           <p>The installer also sets up WeeChat. After <code>wcr node</code>, run <code>wcr weechat</code>. To rewrite the server and script: <code>wcr weechat --configure</code>. Other IRC programs can connect to <code>127.0.0.1:6667</code>.</p>
@@ -84,7 +85,7 @@
 
       <div class="ok">
         <h2>How you know it worked</h2>
-        <p><code>wcr gui</code> shows your callsign in the status bar. A message in <code>#bulletin</code> gets a <code>[tx]</code>. The TUI may show <code>✓</code> instead. The <strong>email</strong> tab is next to live chat. <a href="/docs/email.html">How email leaves the station</a>.</p>
+        <p><code>wcr gui</code> shows your callsign in the status bar. A message in <code>#bulletin</code> gets a <code>[tx]</code>. The <strong>email</strong> tab is next to live chat. <a href="/docs/email.html">How email leaves the station</a>.</p>
       </div>
 
       <p class="next">Back to the <a href="/guides/start.html">5-minute start</a>, or add a <a href="/guides/radio.html">radio</a>.</p>

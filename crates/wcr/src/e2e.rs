@@ -1183,7 +1183,7 @@ mod tests {
         let client = reqwest::Client::new();
         let mut index = String::new();
         for _ in 0..40 {
-            if let Ok(res) = client.get(format!("{base}/")).send().await {
+            if let Ok(res) = client.get(format!("{base}/map.html")).send().await {
                 if res.status().is_success() {
                     index = res.text().await.unwrap_or_default();
                     if !index.is_empty() {
