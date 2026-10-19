@@ -57,9 +57,13 @@ const IDLE_GAP_MIN_SECS: u64 = 298;
 /// Most copies of one line a middle relay keys: its relay, one repeat, and
 /// one answer to the originator's retry.
 const MIDDLE_RELAY_CAP: usize = 3;
-/// Most copies of someone else's receipt a station carries: its relay and
-/// one repeat (QA v0.1.97).
+/// Most copies of someone else's receipt a station next to the originator
+/// carries: its relay and one repeat (QA v0.1.97).
 const CARRIED_RECEIPT_CAP: usize = 2;
+/// Further out a carried receipt walks home like the station's own: its
+/// relay and `rf.max_retries` (3) more until a closer station is heard
+/// carrying it (QA v0.1.98).
+const CARRIED_RECEIPT_WALK_CAP: usize = 4;
 /// Most copies of its own receipt a station away from the originator keys:
 /// the receipt and `rf.max_retries` (3) walks until a closer station is
 /// heard carrying it.
@@ -671,10 +675,11 @@ async fn group_line_reaches_everyone(from: usize, body: &str) {
 /// group line. A receipt a station carries goes again only a retry interval
 /// after its last copy, never because another copy of it came in. QA
 /// v0.1.97: B carried C's receipt three times and keyed its own three times.
-/// A carried receipt goes `CARRIED_RECEIPT_CAP` times at most (its relay and
-/// one repeat). Next to the originator a station's own receipt goes once,
-/// plus once for each of the originator's copies keyed after it; further
-/// away it walks home like the line, `OWN_RECEIPT_WALK_CAP` copies at most.
+/// Next to the originator a carried receipt goes `CARRIED_RECEIPT_CAP` times
+/// at most (its relay and one repeat), and a station's own receipt once,
+/// plus once for each of the originator's copies keyed after it. Further
+/// away both walk home like the line, `CARRIED_RECEIPT_WALK_CAP` and
+/// `OWN_RECEIPT_WALK_CAP` copies at most.
 fn assert_receipts_not_doubled(log: &TimedLog, from: usize, line: &str, trace: &str) {
     let log = log.lock().unwrap();
     let origin = from as u64 + 1;
@@ -708,6 +713,11 @@ fn assert_receipts_not_doubled(log: &TimedLog, from: usize, line: &str, trace: &
                 .1
                 .push(k.at);
         }
+        let carried_cap = if i.abs_diff(from) == 1 {
+            CARRIED_RECEIPT_CAP
+        } else {
+            CARRIED_RECEIPT_WALK_CAP
+        };
         for (by, times) in carried.values() {
             for w in times.windows(2) {
                 let gap = w[1].duration_since(w[0]).as_secs_f64();
@@ -717,8 +727,8 @@ fn assert_receipts_not_doubled(log: &TimedLog, from: usize, line: &str, trace: &
                 );
             }
             assert!(
-                times.len() <= CARRIED_RECEIPT_CAP,
-                "{call} carried {by}'s receipt {} times (cap {CARRIED_RECEIPT_CAP}){trace}",
+                times.len() <= carried_cap,
+                "{call} carried {by}'s receipt {} times (cap {carried_cap}){trace}",
                 times.len()
             );
         }
@@ -2655,4 +2665,71 @@ async fn receipts_for_a_group_line_are_capped() {
         "A never saw a receipt: {marks:?}{trace}"
     );
     assert_receipts_not_doubled(&log, 0, &id, &trace);
+}
+
+/// QA v0.1.98: E's group line reached A, but A's receipt stopped at B. B
+/// carried it twice, the cap then, and C never heard either copy, so E
+/// never reached `[all]`. A had heard B's copy and ended its own walk, and
+/// E's retries asked B again, at its cap. Here E keys a group line on a
+/// warm chain and B's first two copies of A's receipt are lost at C (on
+/// v0.1.98 it ends as QA saw it: B keys it twice, C, D and E never, and E
+/// stays `[ok]`). B must keep walking it until C carries it on, and E must
+/// reach `[all]`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_far_receipt_walks_past_two_lost_copies_to_the_sender() {
+    let lost = Arc::new(AtomicU64::new(0));
+    let drop_bs_first_two: LinkDrop = {
+        let lost = lost.clone();
+        Arc::new(move |from, to, frame| {
+            let as_receipt = from == 2
+                && to == 3
+                && Envelope::decode(frame)
+                    .is_ok_and(|e| e.kind == MsgType::Ack && e.origin.as_str() == CALLS[0]);
+            as_receipt && lost.fetch_add(1, Ordering::SeqCst) < 2
+        })
+    };
+    let mut chain = Chain::start_with(Some("net"), Some(drop_bs_first_two)).await;
+    chain.join("#net").await;
+    let id = send_tracked(&mut chain, 4, "PRIVMSG #net :g2-far-receipt-walks-home").await;
+    let all = |c: &Chain| marks_for(&c.clients[4], &id).iter().any(|m| m == "all");
+    chain.wait(CASE_SECS, all).await;
+    chain.wait_quiet(90, 600).await;
+    let marks = marks_for(&chain.clients[4], &id);
+    let a_receipt = |st: u64| {
+        chain
+            .log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|k| k.station == st && !k.dropped)
+            .filter(|k| {
+                Envelope::decode(&k.payload).is_ok_and(|e| {
+                    e.kind == MsgType::Ack
+                        && e.origin.as_str() == CALLS[0]
+                        && e.acked_id().map(|i| i.hex()).as_deref() == Some(id.as_str())
+                })
+            })
+            .count()
+    };
+    let carried: Vec<usize> = (1..=5).map(a_receipt).collect();
+    let lost_at_c = lost.load(Ordering::SeqCst).min(2);
+    let trace = chain.trace();
+    let log = chain.log.clone();
+    chain.stop();
+    let report = format!(
+        "\n  marks {marks:?}; A's receipt keyed by A..E {carried:?}; copies lost at C {lost_at_c}"
+    );
+    eprintln!("{trace}{report}");
+    // A copy of B's can also meet a frame of C's or D's at C, so one drop
+    // here is enough for the case to have happened.
+    assert!(
+        lost_at_c >= 1,
+        "B never carried A's receipt, so the case did not happen{report}{trace}"
+    );
+    assert!(
+        marks.iter().any(|m| m == "all"),
+        "E never reached [all]: A's receipt did not walk home{report}{trace}"
+    );
+    assert!(marks_move_forward(&marks), "marks moved back: {marks:?}");
+    assert_receipts_not_doubled(&log, 4, &id, &trace);
 }

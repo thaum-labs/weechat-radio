@@ -329,18 +329,24 @@ pub fn queued_repeat_unneeded(handed: u32) -> bool {
 /// answer to the originator's retry.
 pub const RELAY_MAX_COPIES: u32 = 3;
 
-/// Most copies of someone else's receipt a station carries: its relay and
-/// one repeat. Receipts used to be uncapped, and a station next to the
-/// originator answered each retry with one more copy of every receipt it
-/// held (QA v0.1.97: B carried C's receipt for one line three times).
+/// Most copies of someone else's receipt a station next to the line's
+/// originator carries: its relay and one repeat. Receipts used to be
+/// uncapped, and a station next to the originator answered each retry with
+/// one more copy of every receipt it held (QA v0.1.97: B carried C's receipt
+/// for one line three times).
 pub const RELAY_ACK_MAX_COPIES: u32 = 2;
 
 /// How many copies of someone else's frame this station keys at most.
-pub fn relay_max_copies(env: &Envelope) -> u32 {
-    if env.kind == MsgType::Ack {
-        RELAY_ACK_MAX_COPIES
-    } else {
-        RELAY_MAX_COPIES
+/// Further from the originator a receipt we carry walks home like our own:
+/// its relay and up to `max_retries` more, until the next station toward the
+/// originator is heard carrying it. Capped at two there, both copies could
+/// be lost at the next station and the receipt went no further (QA v0.1.98:
+/// A's receipt for E's line stopped at B, and E never reached `[all]`).
+pub fn relay_max_copies(env: &Envelope, next_to_origin: bool, max_retries: u32) -> u32 {
+    match env.kind {
+        MsgType::Ack if next_to_origin => RELAY_ACK_MAX_COPIES,
+        MsgType::Ack => 1 + max_retries,
+        _ => RELAY_MAX_COPIES,
     }
 }
 
@@ -1798,9 +1804,20 @@ mod tests {
     #[test]
     fn receipts_are_capped() {
         let line = group_line();
-        assert_eq!(relay_max_copies(&line), 3);
+        assert_eq!(relay_max_copies(&line, false, 3), 3);
         let receipt = Envelope::ack_for(&line, Callsign::parse("M0DDD").unwrap(), 1, None);
-        assert_eq!(relay_max_copies(&receipt), 2, "a relay and one repeat");
+        assert_eq!(
+            relay_max_copies(&receipt, true, 3),
+            2,
+            "next to the originator: a relay and one repeat"
+        );
+        // QA v0.1.98: further out it walks home until the next station
+        // carries it, or two lost copies end it there.
+        assert_eq!(
+            relay_max_copies(&receipt, false, 3),
+            4,
+            "a relay and its walk"
+        );
         // Our own receipt: once, and once more per retry heard.
         assert!(own_receipt_allowed(0, 0));
         assert!(!own_receipt_allowed(1, 0), "a hub echo asks for nothing");
