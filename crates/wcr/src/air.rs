@@ -494,9 +494,13 @@ impl AirQueue {
 
     /// `id` is still waiting here or on its way to the modem.
     pub fn on_its_way(&self, id: MsgId) -> bool {
+        self.holds(id) || self.in_flight(id)
+    }
+
+    /// `id` was taken off the queue and has not reached the modem yet.
+    pub fn in_flight(&self, id: MsgId) -> bool {
         let g = self.inner.lock();
-        g.items.iter().any(|x| x.msg_id == id)
-            || (g.in_flight_id == Some(id) && !g.in_flight_cancelled)
+        g.in_flight_id == Some(id) && !g.in_flight_cancelled
     }
 
     /// A beacon handed over lately is waiting here or on its way to the

@@ -736,12 +736,12 @@ fn assert_receipts_not_doubled(log: &TimedLog, from: usize, line: &str, trace: &
             );
         } else {
             // Further away the receipt walks home hop by hop like the line:
-            // it keys again, a retry interval apart, until a closer station
-            // is heard carrying it.
+            // it keys again, a retry interval apart (35 s less the 25 %
+            // jitter), until a closer station is heard carrying it.
             for w in own.windows(2) {
                 let gap = w[1].duration_since(w[0]).as_secs_f64();
                 assert!(
-                    gap >= 30.0,
+                    gap >= 25.0,
                     "{call} keyed its own receipt twice {gap:.1}s apart{trace}"
                 );
             }

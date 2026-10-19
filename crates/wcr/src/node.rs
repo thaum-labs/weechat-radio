@@ -717,8 +717,13 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         // QA v0.1.96: A's direct message showed retry-1
                         // before its first copy keyed; QA v0.1.97: the retry
                         // was handed over while the copy waited out carrier
-                        // sense, and the modem keyed both back to back.
-                        if is_line(&m.env) && rt_r.air().is_some_and(|a| a.on_its_way(m.env.msg_id))
+                        // sense, and the modem keyed both back to back. An
+                        // emergency line's extra copy, queued for later, is
+                        // not waited for.
+                        if (is_line(&m.env) || relay::walks_until_relayed(&m.env))
+                            && rt_r.air().is_some_and(|a| {
+                                a.holds_copy(m.env.msg_id, 0) || a.in_flight(m.env.msg_id)
+                            })
                         {
                             continue;
                         }
@@ -733,7 +738,9 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         // it yet: the neighbour's receipt is still due, and a
                         // retry keyed now lands on it (QA v0.1.97: A's
                         // retry-1 keyed 3 s after B decoded the first copy).
+                        // Emergency keeps its own 8 s pace.
                         if is_line(&m.env)
+                            && m.env.priority() != Priority::Emergency
                             && rt_r.exchanges.lock().awaits_answer(
                                 relay::ExchangeKey::Line(m.env.msg_id),
                                 now,
@@ -2011,6 +2018,21 @@ fn own_receipt_spent(rt: &Runtime, line: &MsgId) -> bool {
     !relay::own_receipt_allowed(keyed, asked)
 }
 
+/// Our receipt for `line` is still walking home hop by hop, and its next
+/// copy is still to come.
+fn own_receipt_walking(rt: &Runtime, line: &MsgId) -> bool {
+    let Ok(Some(ack)) = rt.store.own_ack_for(line, &rt.engine.our_call) else {
+        return false;
+    };
+    if rt.store.hold_until(&ack.env.msg_id).unwrap_or(0) == 0 {
+        return false;
+    }
+    let retries = rt.store.retries_of(&ack.env.msg_id).unwrap_or(0);
+    let max = rt.cfg.lock().rf.max_retries;
+    let heard = rt.downstream_heard.lock().contains(&ack.env.msg_id);
+    relay::ack_walk_continues(heard, retries, max)
+}
+
 /// Our receipt for `line` went to the air.
 fn note_own_receipt(rt: &Runtime, line: &MsgId) {
     let mut g = rt.own_receipts.lock();
@@ -2874,8 +2896,12 @@ async fn maybe_answer_retry(rt: &Runtime, env: &Envelope, medium: &str, snr: Opt
         .is_some_and(|s| relay::copy_wants_new_ack(env.hops_left, s.env.hops_left));
     // A retry heard on the air asks for one more receipt; a copy that came
     // some other way (the hub's echo of a line we answered on the air) does
-    // not. Our receipt goes once, plus once per retry heard.
-    if for_us && from_sender_side && medium == "rf" {
+    // not. Our receipt goes once, plus once per retry heard. One still
+    // walking home hop by hop answers with its next copy, due within a
+    // retry interval anyway (QA v0.1.97: the far end keyed its receipt's
+    // walk and its answer 15 s apart).
+    let walking = own_receipt_walking(rt, &env.msg_id);
+    if for_us && from_sender_side && medium == "rf" && !walking {
         let mut g = rt.retries_heard.lock();
         if g.len() > 4096 {
             g.clear();
@@ -2884,6 +2910,7 @@ async fn maybe_answer_retry(rt: &Runtime, env: &Envelope, medium: &str, snr: Opt
     }
     if for_us
         && from_sender_side
+        && !walking
         && !own_receipt_spent(rt, &env.msg_id)
         && rt.ack_due(&env.msg_id, now)
     {

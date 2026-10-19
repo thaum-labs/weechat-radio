@@ -856,12 +856,17 @@ pub fn beacon_interval_secs(jitter_s: u32) -> u64 {
 
 pub fn next_retry_hold_jittered(retries: u32, now: u32, priority: Priority, jitter: bool) -> u32 {
     let target = next_retry_hold_base(retries, 0, priority);
-    let delay = if jitter {
+    let mut delay = if jitter {
         let factor = rand::thread_rng().gen_range(0.75f64..=1.25);
         ((target as f64) * factor).round() as u32
     } else {
         target
     };
+    // The jitter never undercuts the floor: a routine first retry at 34 s
+    // was handed over while the modem still held the copy before it.
+    if priority != Priority::Emergency {
+        delay = delay.max(RETRY_HOLD_FLOOR_S);
+    }
     now.saturating_add(delay)
 }
 
@@ -1680,7 +1685,7 @@ mod tests {
         let now = 1_000u32;
         for retries in 0..5u32 {
             let base = next_retry_hold_base(retries, 0, Priority::Routine);
-            let lo = ((base as f64) * 0.75).floor() as u32;
+            let lo = (((base as f64) * 0.75).floor() as u32).max(RETRY_HOLD_FLOOR_S);
             let hi = ((base as f64) * 1.25).ceil() as u32;
             for _ in 0..40 {
                 let t = next_retry_hold(retries, now, Priority::Routine);
