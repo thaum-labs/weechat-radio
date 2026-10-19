@@ -680,7 +680,11 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         // waits until that copy reaches the modem, which
                         // starts the timer again. QA v0.1.96: A's direct
                         // message showed retry-1 before its first copy keyed.
-                        if is_line(&m.env) && rt_r.air().is_some_and(|a| a.holds(m.env.msg_id)) {
+                        // Retries are copy 0; an emergency line's second copy
+                        // waits its own delay and does not hold them.
+                        if is_line(&m.env)
+                            && rt_r.air().is_some_and(|a| a.holds_copy(m.env.msg_id, 0))
+                        {
                             continue;
                         }
                         let walking = relay::walks_until_relayed(&m.env);
