@@ -515,13 +515,23 @@ pub fn retries_exhausted(sent: u32, max: u32) -> bool {
     max > 0 && sent >= max
 }
 
+/// A priority line's first retry (20 s) came sooner than modem73's stuck
+/// carrier-sense hold (30 s): the retry was handed over while the first copy
+/// still waited, and the modem keyed both back to back (QA v0.1.96: rosters
+/// and invites went out twice 4 s apart). Priority and routine retries wait
+/// at least the hold and a frame; emergency keeps its own pace.
+pub const RETRY_HOLD_FLOOR_S: u32 = MODEM_STUCK_HOLD_S + 5;
+
 pub fn next_retry_hold_base(retries: u32, now: u32, priority: Priority) -> u32 {
     let base: u32 = match priority {
         Priority::Emergency => 8,
         Priority::Priority => 20,
         Priority::Routine => 45,
     };
-    let delay = base.saturating_mul(1u32 << retries.min(4));
+    let mut delay = base.saturating_mul(1u32 << retries.min(4));
+    if priority != Priority::Emergency {
+        delay = delay.max(RETRY_HOLD_FLOOR_S);
+    }
     now.saturating_add(delay)
 }
 
@@ -1730,6 +1740,10 @@ mod tests {
         assert!(!answer_again(100, Some(108), gap));
         // Urgent lines keep their own faster pace.
         assert_eq!(relay_copy_gap_s(Priority::Emergency), 8);
+        // A priority line's 20 s would hand the next copy over while the
+        // first still waits out the 30 s hold.
+        assert_eq!(relay_copy_gap_s(Priority::Priority), RETRY_HOLD_FLOOR_S);
+        assert_eq!(next_retry_hold_base(1, 0, Priority::Priority), 40);
     }
 
     #[test]
