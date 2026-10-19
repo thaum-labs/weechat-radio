@@ -108,6 +108,12 @@ struct Runtime {
     relay_copies: Arc<Mutex<HashMap<MsgId, RelayCopies>>>,
     /// The roster this station last sent for each closed channel.
     rosters: Arc<Mutex<HashMap<String, MsgId>>>,
+    /// Retries of someone else's line heard here on the air from its
+    /// originator's side, by line, and copies of our own receipt keyed for
+    /// it. Our receipt goes once, plus once per retry heard (QA v0.1.97: B
+    /// keyed its receipt for one group line three times).
+    retries_heard: Arc<Mutex<HashMap<MsgId, u32>>>,
+    own_receipts: Arc<Mutex<HashMap<MsgId, u32>>>,
 }
 
 /// A beacon handed to the air queue that has not reached the modem yet.
@@ -490,6 +496,8 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         started: crate::proto::now_ts(),
         relay_copies: Arc::new(Mutex::new(HashMap::new())),
         rosters: Arc::new(Mutex::new(HashMap::new())),
+        retries_heard: Arc::new(Mutex::new(HashMap::new())),
+        own_receipts: Arc::new(Mutex::new(HashMap::new())),
     };
     refresh_group_prios(&rt);
 
@@ -682,6 +690,12 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         rt_r.cfg.lock().rf.startup_hold_s,
                         rt_r.heard_on_air.load(std::sync::atomic::Ordering::Relaxed),
                     );
+                    let receipt_wait = {
+                        let cfg = rt_r.cfg.lock();
+                        relay::exchange_wait_s(
+                            Preset::parse(&cfg.modem.preset).unwrap_or(Preset::VhfFm),
+                        )
+                    };
                     for (m, retries) in due {
                         // A line's first copy waits out the start-up hold, so
                         // its retry counts from the hold's end; due now, it
@@ -697,14 +711,34 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                             let _ = rt_r.store.set_hold(&m.env.msg_id, next, m.env.hops_left);
                             continue;
                         }
-                        // Its last copy is still in the air queue: the retry
-                        // waits until that copy reaches the modem, which
-                        // starts the timer again. QA v0.1.96: A's direct
-                        // message showed retry-1 before its first copy keyed.
-                        // Retries are copy 0; an emergency line's second copy
-                        // waits its own delay and does not hold them.
+                        // Its last copy is still in the air queue or on its
+                        // way to the modem: the retry waits until that copy
+                        // reaches the modem, which starts the timer again.
+                        // QA v0.1.96: A's direct message showed retry-1
+                        // before its first copy keyed; QA v0.1.97: the retry
+                        // was handed over while the copy waited out carrier
+                        // sense, and the modem keyed both back to back.
+                        if is_line(&m.env) && rt_r.air().is_some_and(|a| a.on_its_way(m.env.msg_id))
+                        {
+                            continue;
+                        }
+                        // A due beacon is on its way: it goes first. Handed
+                        // over in the same second, the retry took the modem
+                        // and held the beacon until it had keyed.
+                        if is_line(&m.env) && rt_r.air().is_some_and(|a| a.beacon_on_its_way()) {
+                            continue;
+                        }
+                        // Its last copy reached the modem less than a
+                        // receipt's round trip ago and nothing has answered
+                        // it yet: the neighbour's receipt is still due, and a
+                        // retry keyed now lands on it (QA v0.1.97: A's
+                        // retry-1 keyed 3 s after B decoded the first copy).
                         if is_line(&m.env)
-                            && rt_r.air().is_some_and(|a| a.holds_copy(m.env.msg_id, 0))
+                            && rt_r.exchanges.lock().awaits_answer(
+                                relay::ExchangeKey::Line(m.env.msg_id),
+                                now,
+                                receipt_wait,
+                            )
                         {
                             continue;
                         }
@@ -911,7 +945,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             // taken back for one invite, then another).
             let mut waits_on: Option<relay::ExchangeKey> = None;
             loop {
-                let (jitter_s, congested, uses_rf, vox, preset) = {
+                let (jitter_s, congested, uses_rf, vox, preset, defer_s) = {
                     let cfg = rt_b.cfg.lock();
                     (
                         cfg.rf.beacon_jitter_s,
@@ -919,6 +953,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         cfg.mode.uses_radio(),
                         cfg.modem.is_vox(),
                         Preset::parse(&cfg.modem.preset).unwrap_or(Preset::VhfFm),
+                        cfg.rf.max_defer_ms.div_ceil(1000),
                     )
                 };
                 {
@@ -972,8 +1007,14 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         .lock()
                         .is_open(relay::ExchangeKey::Mail, now, wait_s, settle_s);
                 // A warm-up beacon waits for the receipt, not for the rest
-                // of a group's receipts after it.
+                // of a group's receipts after it, and never past two minutes
+                // after the last beacon.
                 let warm_up = sent < relay::BEACON_WARMUP_COUNT;
+                let latest = if warm_up {
+                    relay::warm_up_latest(last_beacon.unwrap_or(rt_b.started), defer_s)
+                } else {
+                    u32::MAX
+                };
                 let chosen_running = waits_on.is_some_and(|k| {
                     let x = rt_b.exchanges.lock();
                     if warm_up && k != relay::ExchangeKey::Mail {
@@ -982,8 +1023,9 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         x.is_open(k, now, wait_s, settle_s)
                     }
                 });
-                let line = relay::beacon_exchange(waits_on, chosen_running, open)
-                    .filter(|_| relay::beacon_waits_for_exchange(now, scheduled, preset, warm_up));
+                let line = relay::beacon_exchange(waits_on, chosen_running, open).filter(|_| {
+                    relay::beacon_waits_for_exchange(now, scheduled, preset, warm_up, latest)
+                });
                 let exchange = if mail && relay::beacon_waits_for_mail(now, ceiling, preset) {
                     Some(relay::ExchangeKey::Mail)
                 } else {
@@ -996,7 +1038,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 if let Some(p) = pending.as_mut() {
                     let keyed = rt_b.beacon_keyed.load(std::sync::atomic::Ordering::Relaxed);
                     let air = rt_b.air();
-                    let queued = air.as_ref().is_some_and(|a| a.holds(p.id));
+                    let queued = air.as_ref().is_some_and(|a| a.on_its_way(p.id));
                     if keyed >= p.decided {
                         last_beacon = Some(keyed);
                         sent += 1;
@@ -1007,7 +1049,10 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         continue;
                     }
                     // Taken back once at most, and only by a beacon that has
-                    // not waited out an exchange already.
+                    // not waited out an exchange already. One already off the
+                    // queue but still waiting out carrier sense is taken back
+                    // too (QA v0.1.97: the gateway's beacon keyed between the
+                    // chunks of a mail that started arriving as it waited).
                     if let (Some(x), Some(a)) = (exchange, air.as_ref()) {
                         if relay::beacon_taken_back(waits_on, exchange) && a.cancel(p.id) > 0 {
                             tracing::info!("beacon taken back from the air queue to wait for {x}");
@@ -1883,8 +1928,13 @@ fn watch_keyed(rt: &Runtime, kiss: &KissClient, cancel: CancellationToken) {
                 }
                 // A line's next retry counts from when this copy reached the
                 // modem, not from when it was handed over: one that waited
-                // in the air queue would retry just behind itself.
-                if is_line(&env) && relay::is_own_origin(&rt.engine.our_call, &env) {
+                // in the air queue would retry just behind itself. So does
+                // our own receipt walking home from a far member (QA
+                // v0.1.97: its first copy waited out the group dither, and
+                // its walk keyed 17 s behind it).
+                if (is_line(&env) || env.kind == MsgType::Ack)
+                    && relay::is_own_origin(&rt.engine.our_call, &env)
+                {
                     restart_retry_timer(&rt, &env);
                 }
                 note_exchange(&rt, Some(&env), None);
@@ -1945,15 +1995,29 @@ fn line_reached_neighbours(rt: &Runtime, line: &Envelope) -> bool {
     relay::neighbours_hold(&current_neighbours(rt), &holders, came_relayed)
 }
 
-/// We have keyed our cap of copies of someone else's line. Receipts are not
-/// capped.
+/// We have keyed our cap of copies of someone else's line or receipt.
 fn relay_copies_spent(rt: &Runtime, env: &Envelope) -> bool {
-    env.kind != MsgType::Ack
-        && rt
-            .relay_copies
-            .lock()
-            .get(&env.msg_id)
-            .is_some_and(|c| c.count >= relay::RELAY_MAX_COPIES)
+    rt.relay_copies
+        .lock()
+        .get(&env.msg_id)
+        .is_some_and(|c| c.count >= relay::relay_max_copies(env))
+}
+
+/// Our receipt for `line` has gone as often as its originator asked: once,
+/// plus once per retry heard from its side on the air.
+fn own_receipt_spent(rt: &Runtime, line: &MsgId) -> bool {
+    let keyed = rt.own_receipts.lock().get(line).copied().unwrap_or(0);
+    let asked = rt.retries_heard.lock().get(line).copied().unwrap_or(0);
+    !relay::own_receipt_allowed(keyed, asked)
+}
+
+/// Our receipt for `line` went to the air.
+fn note_own_receipt(rt: &Runtime, line: &MsgId) {
+    let mut g = rt.own_receipts.lock();
+    if g.len() > 4096 {
+        g.clear();
+    }
+    *g.entry(*line).or_default() += 1;
 }
 
 /// Our last copy of someone else's line or receipt may still be waiting at
@@ -2420,7 +2484,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
         // A retry of a frame we already displayed or already relayed. The
         // first copy can reach the far end while its ACK never comes back;
         // ignoring every later copy leaves the sender at [rl] after 3/3.
-        maybe_answer_retry(rt, &env, snr).await;
+        maybe_answer_retry(rt, &env, medium, snr).await;
         refresh_heard(rt);
         return Ok(());
     }
@@ -2726,6 +2790,7 @@ async fn acknowledge(rt: &Runtime, env: &Envelope, snr: Option<f32>) -> Result<(
         let _ = rt.keys.sign_envelope(&mut ack);
     }
     if cfg_now.mode.uses_radio() {
+        note_own_receipt(rt, &env.msg_id);
         // Retry this ACK the way the message is retried, until a station
         // closer to the originator relays it. Next to the originator nobody
         // relays it; the originator's own retry asks for it again.
@@ -2771,7 +2836,7 @@ async fn acknowledge(rt: &Runtime, env: &Envelope, snr: Option<f32>) -> Result<(
 /// Duplicate of a frame we already handled. Answer it again when the sender
 /// is clearly still waiting, and relay it again when we are the middle hop
 /// and the receipt has not landed.
-async fn maybe_answer_retry(rt: &Runtime, env: &Envelope, snr: Option<f32>) {
+async fn maybe_answer_retry(rt: &Runtime, env: &Envelope, medium: &str, snr: Option<f32>) {
     if env.kind == MsgType::Ack || relay::is_channel_meta(env) {
         relay_heard_retry(rt, env).await;
         return;
@@ -2807,7 +2872,21 @@ async fn maybe_answer_retry(rt: &Runtime, env: &Envelope, snr: Option<f32>) {
         .ok()
         .flatten()
         .is_some_and(|s| relay::copy_wants_new_ack(env.hops_left, s.env.hops_left));
-    if for_us && from_sender_side && rt.ack_due(&env.msg_id, now) {
+    // A retry heard on the air asks for one more receipt; a copy that came
+    // some other way (the hub's echo of a line we answered on the air) does
+    // not. Our receipt goes once, plus once per retry heard.
+    if for_us && from_sender_side && medium == "rf" {
+        let mut g = rt.retries_heard.lock();
+        if g.len() > 4096 {
+            g.clear();
+        }
+        *g.entry(env.msg_id).or_default() += 1;
+    }
+    if for_us
+        && from_sender_side
+        && !own_receipt_spent(rt, &env.msg_id)
+        && rt.ack_due(&env.msg_id, now)
+    {
         answer_again(rt, env, snr).await;
     }
     if closed && !member {
@@ -2824,6 +2903,7 @@ async fn answer_again(rt: &Runtime, env: &Envelope, snr: Option<f32>) {
     if mode.uses_radio() && !mode.uses_internet() {
         if let Ok(Some(ack)) = rt.store.own_ack_for(&env.msg_id, &rt.engine.our_call) {
             rt.downstream_heard.lock().remove(&ack.env.msg_id);
+            note_own_receipt(rt, &env.msg_id);
             // Every member that heard the retry answers it at once.
             if env.flags.group() {
                 let _ = dispatch_spread(rt, &ack.env).await;
