@@ -52,7 +52,7 @@
 
       <div class="ok">
         <h2>in the app</h2>
-        <p>Run <code>wcr update</code>, then open <code>wcr gui</code>. You get an <strong>email</strong> tab next to live chat and an address at <code>callsign@mail.weechatradio.com</code>. See the <a href="/changelog.html">changelog</a> for the ship notes.</p>
+        <p>Open <code>wcr gui</code>. The <strong>email</strong> tab sits next to live chat, and the address is <code>callsign@mail.weechatradio.com</code>.</p>
       </div>
 
       <h2>What it is for</h2>
@@ -113,9 +113,8 @@
 
       <h2>When it says Sent</h2>
       <ul>
-        <li><strong>Hub</strong> (internet, internet-radio): Sent after the hub says Resend accepted the message.</li>
-        <li><strong>VOX radio-plus:</strong> Sent after the gateway confirms that. Finishing the local transmit is still Outbox.</li>
-        <li><strong>Other PTT</strong> (Digirig, CAT, a KISS TNC): Sent when this station's own burst has finished.</li>
+        <li><strong>Hub</strong> (internet, internet-radio): Sent after the hub says Resend accepted the message. A rejection is Failed.</li>
+        <li><strong>Radio-plus, every PTT:</strong> keying the burst is Outbox <code>[tx]</code>. A chunk the gateway has is <code>[gw]</code>. Sent is only the gateway's acceptance, after Resend accepted it. Until then the line stays in the outbox. A retry that has heard nothing back, with more than four chunks still missing, keys only the first chunk so the gateway can answer.</li>
       </ul>
       <p>A toast timer does not mark Sent.</p>
 

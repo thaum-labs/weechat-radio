@@ -52,7 +52,7 @@
 
       <div class="warn-box">
         <h2>Upgrade every station first</h2>
-        <p>This hub build (17 Sep 2026, <code>ce4a108</code>) speaks protocol version 2. Older nodes speak a different packet layout. Version 1 frames are still decoded, but every station that wants to talk on radio with this hub should run this build.</p>
+        <p>This build of <code>wcr</code> (v0.1.99) speaks protocol version 2, and so does the hub. Older nodes speak a different packet layout. Version 1 frames are still decoded, but every station that wants to talk on radio with this hub should run this build.</p>
       </div>
 
       <figure class="diagram">
@@ -125,12 +125,12 @@
         <li>When an ACK comes back, it includes how strong they heard you. A good report steps the waveform back up.</li>
         <li>Lines that start with <code>!!</code> (emergency) go out twice, a moment apart, so a fade is less likely to take both.</li>
         <li>Group chat on HF is split into pieces. Any two of three pieces rebuild the message. If several internet gateways each hear a different piece, the hub stitches them.</li>
-        <li>If the frequency is already busy, the program waits for a gap (status bar <strong>PTT</strong> reads <code>wait</code>). A station’s first three beacons go about a minute apart, then one every 5 minutes. A due beacon waits until an exchange in progress is over (a line and its receipt, a mail and its acceptance), for one exchange at most, and high occupancy holds it only while frames are being decoded. Lines sent in the first two minutes after start wait until another station has been heard. Group ACKs and retries are staggered so they do not all key at once.</li>
+        <li>If the frequency is already busy, the program waits for a gap (status bar <strong>PTT</strong> reads <code>wait</code>). A station’s first three beacons go about a minute apart, then one every 5 minutes. A due beacon waits until an exchange in progress is over (a line and its receipt, a mail and its acceptance), for one exchange at most, and goes ahead of this station’s own queued lines. High occupancy holds it only while frames are being decoded. The countdown shows that time: <code>after exchange</code>, <code>pending</code> until the beacon reaches the modem, and <code>busy</code> while a decoded frame is still fresh. Lines sent in the first <code>rf.startup_hold_s</code> seconds after start (120) wait until another station has been heard. Group ACKs and retries are staggered so they do not all key at once. <code>#bulletin</code> stops at <code>[ok]</code>. When the retries are used up the line waits two more intervals, then shows <code>[no]</code>.</li>
       </ol>
 
       <h2>Busy channel</h2>
       <p>modem73 carrier-sense is on for every preset. On top of that, <code>wcr</code> keeps a single air queue: one frame (or fragment burst) at a time, emergency first, then ACKs, then your chat, then relays, then beacons.</p>
-      <p><strong>OCC</strong> in the station panel is channel occupancy 0–100. <code>wait</code> means a frame is queued until the channel is idle. After <code>max_defer_ms</code> (3 s for emergency) it sends anyway — the modem still will not key over a carrier it can hear.</p>
+      <p><strong>OCC</strong> in the station panel is channel occupancy 0–100. <code>wait</code> means a frame is queued until the channel is idle. After the defer cap it is handed to the modem anyway: 3 seconds for an emergency or an ACK, 15 seconds for chat and relays. An ACK is then keyed with the modem's carrier sense off. Chat and relays can still be held by a carrier the modem hears.</p>
 
       <h2>Steps (HF fading)</h2>
       <ol class="steps">
@@ -154,7 +154,7 @@
 
       <h2>Knobs in <code>wcr.toml</code></h2>
       <pre class="plain">[rf]
-max_retries = 3       # extra sends. [x4] is the last copy, then one more wait before [no]
+max_retries = 3       # extra sends. [x4] is the last copy, then two waits before [no]
 frag_k = 2            # pieces of data
 frag_m = 1            # spare pieces; any 2 of 3 rebuild the message
 emergency_dup_ms = 400
@@ -167,14 +167,15 @@ turnaround_ms = 250
 congested_pct = 60
 ack_dither_ms = 800
 beacon_jitter_s = 15
-retry_jitter = true   # routine waits 45s, 90s, 180s, then 360s before [no], each × 0.75–1.25
+retry_jitter = true   # routine waits 45s, 90s, 180s, then 360s twice before [no], each × 0.75–1.25
+startup_hold_s = 120  # own lines wait until another station is heard. 0 sends at once
 outbound_max_age_secs = 3600  # older unacked outbound is [no], including after restart</pre>
 
       <div class="ok">
         <h2>How you know it worked</h2>
         <ul>
           <li>A faint station's callsign appears in <strong>HEARD</strong> with a low or negative SNR.</li>
-          <li>Your line gets <code>[tx]</code> then <code>[ok]</code> (delivered), even if <strong>RETRY</strong> was 1 or 2 first. The TUI may show <code>✓</code> then <code>✓✓</code> instead.</li>
+          <li>Your line gets <code>[tx]</code> then <code>[ok]</code> (delivered), even if <strong>RETRY</strong> was 1 or 2 first. <code>#bulletin</code> stops at <code>[ok]</code>.</li>
           <li><strong>TX</strong> may show a slower mode than your preset. That is expected on a rough path.</li>
           <li>On a busy frequency, <strong>OCC</strong> climbs and <strong>PTT</strong> may show <code>wait</code> instead of <code>idle</code>. That is the air queue holding your frame.</li>
         </ul>

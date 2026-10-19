@@ -23,6 +23,7 @@ release/
 *.exe
 !install/*.ps1
 Cargo.lock.bak
+*.bak
 .terraform/
 *.log
 coverage/
