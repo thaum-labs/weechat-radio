@@ -408,6 +408,14 @@ struct QueueInner {
     /// First frame of the item `pop_ready` handed out last, until that frame
     /// reaches the modem or the queue asks for the next item.
     in_flight: Option<Vec<u8>>,
+    /// The item `pop_ready` handed out last, until it reaches the modem or
+    /// the queue asks for the next item, and whether it was cancelled
+    /// meanwhile. It waits out carrier sense for up to 15 s first, and a
+    /// beacon taken off the queue just before a mail started arriving keyed
+    /// into the burst (QA v0.1.97).
+    in_flight_id: Option<MsgId>,
+    in_flight_cancelled: bool,
+    in_flight_beacon: bool,
     /// The channel read congested at the last look.
     congested: bool,
 }
@@ -441,6 +449,9 @@ impl AirQueue {
                 last_mail: 0,
                 handed: Vec::new(),
                 in_flight: None,
+                in_flight_id: None,
+                in_flight_cancelled: false,
+                in_flight_beacon: false,
                 congested: false,
             })),
             notify: Arc::new(Notify::new()),
@@ -467,11 +478,55 @@ impl AirQueue {
         true
     }
 
+    /// Drop every queued copy of `id`, and the one on its way to the modem
+    /// while it still waits out carrier sense. Returns how many were dropped.
     pub fn cancel(&self, id: MsgId) -> usize {
         let mut g = self.inner.lock();
         let before = g.items.len();
         g.items.retain(|x| x.msg_id != id);
-        before - g.items.len()
+        let mut dropped = before - g.items.len();
+        if g.in_flight_id == Some(id) && !g.in_flight_cancelled {
+            g.in_flight_cancelled = true;
+            dropped += 1;
+        }
+        dropped
+    }
+
+    /// `id` is still waiting here or on its way to the modem.
+    pub fn on_its_way(&self, id: MsgId) -> bool {
+        self.holds(id) || self.in_flight(id)
+    }
+
+    /// `id` was taken off the queue and has not reached the modem yet.
+    pub fn in_flight(&self, id: MsgId) -> bool {
+        let g = self.inner.lock();
+        g.in_flight_id == Some(id) && !g.in_flight_cancelled
+    }
+
+    /// A beacon handed over lately is waiting here or on its way to the
+    /// modem. A due beacon goes ahead of our own lines: a retry handed over
+    /// in the same second used to take the modem first and hold the beacon
+    /// up to a minute. One stuck here longer than `BEACON_AHEAD_S` holds
+    /// nothing, so a lost beacon cannot stop every retry.
+    pub fn beacon_on_its_way(&self) -> bool {
+        let g = self.inner.lock();
+        g.items
+            .iter()
+            .any(|x| x.beacon && x.enqueued_at.elapsed() < Duration::from_secs(BEACON_AHEAD_S))
+            || (g.in_flight_beacon && g.in_flight_id.is_some() && !g.in_flight_cancelled)
+    }
+
+    /// The item on its way to the modem was cancelled while it waited.
+    fn in_flight_cancelled(&self) -> bool {
+        self.inner.lock().in_flight_cancelled
+    }
+
+    /// The item on its way to the modem never went.
+    fn drop_in_flight(&self) {
+        let mut g = self.inner.lock();
+        g.in_flight = None;
+        g.in_flight_id = None;
+        g.in_flight_cancelled = false;
     }
 
     pub fn depth(&self) -> usize {
@@ -497,6 +552,8 @@ impl AirQueue {
         let mut g = self.inner.lock();
         // The air queue asks for the next item only once the last one is done.
         g.in_flight = None;
+        g.in_flight_id = None;
+        g.in_flight_cancelled = false;
         if g.paused || g.mail_lease {
             return None;
         }
@@ -517,6 +574,8 @@ impl AirQueue {
         g.handed.retain(|(_, until)| *until > now);
         g.handed.push((item.widest(), now + NARROW_MODE_WAIT));
         g.in_flight = item.frames.first().cloned();
+        g.in_flight_id = Some(item.msg_id);
+        g.in_flight_beacon = item.beacon;
         Some(item)
     }
 
@@ -526,6 +585,7 @@ impl AirQueue {
         let mut g = self.inner.lock();
         if g.in_flight.as_deref() == Some(frame) {
             g.in_flight = None;
+            g.in_flight_id = None;
         }
     }
 
@@ -721,13 +781,21 @@ async fn pace_and_send(
                 snap.lock().deferred = true;
                 tokio::time::sleep(Duration::from_millis(rf.slot_ms.max(1) as u64)).await;
             }
-            if started.elapsed() >= Duration::from_millis(cap as u64) {
+            if started.elapsed() >= Duration::from_millis(cap as u64) || queue.in_flight_cancelled()
+            {
                 break;
             }
         }
     }
 
     snap.lock().deferred = false;
+
+    // Taken back while it waited: a beacon once a mail started arriving, a
+    // line's copy once its receipt came.
+    if queue.in_flight_cancelled() {
+        queue.drop_in_flight();
+        return;
+    }
 
     if let Some(rung) = item.rung {
         if let Some(c) = control {
@@ -769,6 +837,10 @@ async fn pace_and_send(
 
 /// Extra patience on top of the airtime estimate while modem73 clears its queue.
 const DRAIN_GRACE_S: f64 = 15.0;
+
+/// How long a queued beacon keeps our own retries behind it: the queue's
+/// carrier-sense cap and a frame ahead of it, with room to spare.
+const BEACON_AHEAD_S: u64 = 60;
 
 /// Preset modem config with carrier sense off, for one ACK that has already
 /// waited out `emergency_max_defer_ms`. The rung stays the preset's own
@@ -1330,6 +1402,44 @@ mod tests {
         // Past the 15 s defer cap: the beacon has keyed by now.
         tokio::time::sleep(Duration::from_secs(20)).await;
         assert_eq!(drain(&mut rx).await, vec![vec![7]]);
+        h.abort();
+    }
+
+    /// QA v0.1.97: the gateway's first beacon was taken off the air queue
+    /// just before a mail started arriving, waited out carrier sense, and
+    /// keyed between chunks 2 and 3. Cancelling it while it waits drops it,
+    /// and the next item goes instead.
+    #[tokio::test(start_paused = true)]
+    async fn an_item_waiting_out_carrier_sense_can_be_taken_back() {
+        let q = AirQueue::new();
+        let sense = FakeSense::new();
+        sense.set_state(ChannelState::Rx);
+        let (tx, mut rx) = mpsc::channel(8);
+        let h = tokio::spawn(run_air_queue(
+            q.clone(),
+            tx,
+            sense.clone(),
+            None,
+            test_cfg(),
+            status::new_shared(),
+            CancellationToken::new(),
+        ));
+        let mut beacon = item(AirClass::Background, 1);
+        beacon.beacon = true;
+        q.enqueue(beacon);
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert!(q.chat_in_flight(), "the item is waiting out carrier sense");
+        assert!(q.on_its_way(mid(1)));
+        assert!(q.beacon_on_its_way());
+        assert!(!q.holds(mid(1)), "off the queue, not yet at the modem");
+        assert_eq!(q.cancel(mid(1)), 1, "taken back from its wait");
+        assert!(!q.on_its_way(mid(1)));
+        assert!(!q.beacon_on_its_way());
+        q.enqueue(item(AirClass::Own, 2));
+        // Past the 15 s defer cap: only the second item reached the modem.
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        assert_eq!(drain(&mut rx).await, vec![vec![2]]);
+        assert!(!q.chat_in_flight());
         h.abort();
     }
 

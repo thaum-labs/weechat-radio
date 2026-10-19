@@ -841,11 +841,15 @@ impl Store {
     /// `(outbound, hold)` for the status bar: what this station `origin`
     /// will still key. Outbound is our own lines and receipts waiting on a
     /// retry or their receipt; a direct message stops counting at `[ok]`, a
-    /// group line at `[all]`. Hold adds relays waiting for their slot. Every
-    /// frame heard is stored `queued` too, and received lines and beacons
-    /// are never keyed, so a count by delivery state alone only ever grew
-    /// (QA v0.1.96: 17 to 20 per station 15 minutes after traffic ended).
-    pub fn queue_depth(&self, origin: &str) -> Result<(u64, u64)> {
+    /// group line at `[all]`, and either once its `max_retries` copies have
+    /// gone: the line then only waits for a late receipt before `[no]`, two
+    /// retry intervals with nothing left to key (a group line that never
+    /// reached `[all]` sat at `1` for up to 15 minutes after its last copy).
+    /// Hold adds relays waiting for their slot. Every frame heard is stored
+    /// `queued` too, and received lines and beacons are never keyed, so a
+    /// count by delivery state alone only ever grew (QA v0.1.96: 17 to 20
+    /// per station 15 minutes after traffic ended).
+    pub fn queue_depth(&self, origin: &str, max_retries: u32) -> Result<(u64, u64)> {
         let conn = self.conn.lock().unwrap();
         let (outbound, hold): (i64, i64) = conn.query_row(
             "SELECT
@@ -856,10 +860,11 @@ impl Store {
                AND (
                     (upper(origin) != upper(?1) AND hops_left > 0)
                  OR (upper(origin) = upper(?1)
+                     AND retries < ?2
                      AND (delivery IN ('queued','sent','relayed','gateway')
                           OR (delivery = 'delivered' AND is_group = 1)))
                )",
-            params![origin],
+            params![origin, max_retries as i64],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         Ok((outbound as u64, hold as u64))
@@ -1731,11 +1736,17 @@ mod tests {
         // grew with each beacon. Our DM waiting on its receipt and our group
         // line at [ok] still key; the DM at [ok] and the failed line do not.
         // A held relay counts toward hold only.
-        assert_eq!(s.queue_depth("G4ABC").unwrap(), (2, 3));
+        assert_eq!(s.queue_depth("G4ABC", 3).unwrap(), (2, 3));
+        // The group line's last copy has gone (three retries of three): it
+        // now only waits for a late receipt, with nothing left to key.
+        for _ in 0..3 {
+            s.bump_retry(&group_ok.msg_id, 50).unwrap();
+        }
+        assert_eq!(s.queue_depth("G4ABC", 3).unwrap(), (1, 2));
         s.set_hold(&waiting.msg_id, 0, 3).unwrap();
         s.set_hold(&group_ok.msg_id, 0, 3).unwrap();
         s.set_hold(&relay.msg_id, 0, 3).unwrap();
-        assert_eq!(s.queue_depth("G4ABC").unwrap(), (0, 0));
+        assert_eq!(s.queue_depth("G4ABC", 3).unwrap(), (0, 0));
     }
 
     #[test]
