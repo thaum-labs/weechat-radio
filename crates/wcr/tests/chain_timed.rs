@@ -2135,9 +2135,9 @@ fn beacon_counts(log: &TimedLog) -> Vec<usize> {
 /// after the last line (B 8 at 22:00, 20 at 22:30, with only beacons on the
 /// air from 22:16). Every frame heard is stored `queued`, beacons included,
 /// and the count took them all. Here A sends a direct message to C and C a
-/// group line on a warm chain, both are settled (answered, or given up after
-/// the retries: on CI two of B's relays of C's receipt met A's own frames at
-/// A), and then only beacons go. Every station's queue and hold counts must
+/// group line on a warm chain, both are settled (answered, carried on, or
+/// given up after the retries: on CI two of B's relays of C's receipt met
+/// A's own frames at A), and then only beacons go. Every station's queue and hold counts must
 /// fall to 0 and stay there while each station keys and hears another beacon.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_send_queue_empties_after_traffic_stops() {
@@ -2148,10 +2148,12 @@ async fn the_send_queue_empties_after_traffic_stops() {
     // after copy on CI (the first retry and the modem's stuck hold are fixed).
     tokio::time::sleep(Duration::from_secs(20)).await;
     let line = send_tracked(&mut chain, 2, "PRIVMSG #net :group-from-c").await;
+    // Settled: answered, given up, or carried on with the retries spent
+    // (a line stays [rl] until its receipt comes, with nothing left to key).
     let settled = |c: &Chain, i: usize, id: &str| {
         marks_for(&c.clients[i], id)
             .iter()
-            .any(|m| m == "delivered" || m == "all" || m == "failed")
+            .any(|m| m == "delivered" || m == "all" || m == "failed" || m == "relayed")
     };
     let both = chain
         .wait(CASE_SECS, |c| settled(c, 0, &dm) && settled(c, 2, &line))
