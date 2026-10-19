@@ -601,15 +601,36 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                             let _ = rt_h
                                 .store
                                 .advance_delivery(&m.env.msg_id, Delivery::Relayed);
-                            let jitter = rt_h.cfg.lock().rf.retry_jitter;
+                            let (jitter, preset) = {
+                                let cfg = rt_h.cfg.lock();
+                                (
+                                    cfg.rf.retry_jitter,
+                                    Preset::parse(&cfg.modem.preset).unwrap_or(Preset::VhfFm),
+                                )
+                            };
                             // The walk timer starts when this copy keys.
                             let keyed = now.saturating_add(slot.as_secs() as u32);
-                            let next = relay::next_retry_hold_jittered(
-                                retries,
-                                keyed,
-                                m.env.priority(),
-                                jitter,
-                            );
+                            let more = retries + 1;
+                            let last = !(relay::keep_relaying(&m.env, more, max, heard)
+                                || relay::group_walk_continues(&m.env, more, max, heard)
+                                || relay::ack_relay_walks(
+                                    &m.env,
+                                    next_to_origin,
+                                    more,
+                                    max,
+                                    heard,
+                                ));
+                            // After the last copy only a relay of it is awaited.
+                            let next = if last {
+                                keyed.saturating_add(relay::walk_last_wait_s(preset))
+                            } else {
+                                relay::next_retry_hold_jittered(
+                                    retries,
+                                    keyed,
+                                    m.env.priority(),
+                                    jitter,
+                                )
+                            };
                             let _ = rt_h.store.bump_retry(&m.env.msg_id, next);
                         } else {
                             let _ = rt_h.store.set_hold(&m.env.msg_id, 0, m.env.hops_left);
@@ -735,9 +756,19 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         }
                         // The last copy (n == max) still waits one full interval
                         // for an ACK. [no] is the ack-wait below, not this key.
-                        let jitter = rt_r.cfg.lock().rf.retry_jitter;
-                        let next =
-                            relay::next_retry_hold_jittered(n, now, m.env.priority(), jitter);
+                        // A walk's last copy awaits only a relay of it.
+                        let (jitter, preset) = {
+                            let cfg = rt_r.cfg.lock();
+                            (
+                                cfg.rf.retry_jitter,
+                                Preset::parse(&cfg.modem.preset).unwrap_or(Preset::VhfFm),
+                            )
+                        };
+                        let next = if walking && n >= max {
+                            now.saturating_add(relay::walk_last_wait_s(preset))
+                        } else {
+                            relay::next_retry_hold_jittered(n, now, m.env.priority(), jitter)
+                        };
                         let _ = rt_r.store.bump_retry(&m.env.msg_id, next);
                     }
                 }
