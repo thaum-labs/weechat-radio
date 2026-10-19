@@ -157,9 +157,11 @@ impl KissClient {
     }
 }
 
-/// Log each beacon and receipt as it goes to the modem, so their pace can be
-/// checked against the station log's timestamps. A receipt names the line it
-/// is for (the line's msgid), the line's sender and whose receipt it is. Called
+/// Log each beacon, receipt and line as it goes to the modem, so their pace
+/// can be checked against the station log's timestamps. A receipt names the
+/// line it is for (the line's msgid), the line's sender and whose receipt it
+/// is. A line names its sender and hops left, so a retry keyed after `[ok]`,
+/// which paints no mark, still shows in its sender's log. Called
 /// where frames are written: the air queue hands frames to the writer
 /// directly, not through [`KissClient::send`].
 pub fn note_keyed(payload: &[u8]) {
@@ -174,6 +176,13 @@ pub fn note_keyed(payload: &[u8]) {
             env.acked_id().map(|id| id.hex()).unwrap_or_default(),
             env.dest,
             env.origin,
+            env.hops_left
+        ),
+        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status => tracing::info!(
+            "line to modem: {} from {} to {}, {} hops left",
+            env.msg_id.hex(),
+            env.origin,
+            env.dest,
             env.hops_left
         ),
         _ => {}
@@ -258,7 +267,7 @@ mod tests {
     /// no queued beacon was logged. Frames handed to the writer directly, as
     /// the air queue does, and through `send` must both be logged.
     #[tokio::test]
-    async fn beacons_and_receipts_are_logged_as_they_go_to_the_modem() {
+    async fn beacons_receipts_and_lines_are_logged_as_they_go_to_the_modem() {
         use crate::proto::{Callsign, Envelope, Flags, MsgType};
         let logs = LogBuf::default();
         let sink = logs.clone();
@@ -298,11 +307,12 @@ mod tests {
         let receipt = Envelope::ack_for(&line, Callsign::parse("M0DDD").unwrap(), 2, None);
         k.tx.send(beacon.encode().unwrap()).await.unwrap();
         k.send(&receipt.encode().unwrap()).await.unwrap();
+        k.send(&line.encode().unwrap()).await.unwrap();
 
         let mut dec = KissDecoder::new();
         let mut got = Vec::new();
         let mut buf = [0u8; 1024];
-        while got.len() < 2 {
+        while got.len() < 3 {
             let n = modem.read(&mut buf).await.unwrap();
             assert!(n > 0, "the modem got {} frames", got.len());
             got.extend(dec.push(&buf[..n]));
@@ -311,6 +321,11 @@ mod tests {
         assert!(text.contains("beacon to modem: M0BBB"), "{text}");
         let want = format!(
             "receipt to modem: line {} from G4AAA, receipt by M0DDD, ",
+            line.msg_id.hex()
+        );
+        assert!(text.contains(&want), "{text}");
+        let want = format!(
+            "line to modem: {} from G4AAA to M0DDD, 3 hops left",
             line.msg_id.hex()
         );
         assert!(text.contains(&want), "{text}");
