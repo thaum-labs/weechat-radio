@@ -2135,23 +2135,28 @@ fn beacon_counts(log: &TimedLog) -> Vec<usize> {
 /// after the last line (B 8 at 22:00, 20 at 22:30, with only beacons on the
 /// air from 22:16). Every frame heard is stored `queued`, beacons included,
 /// and the count took them all. Here A sends a direct message to C and C a
-/// group line on a warm chain, both are answered, and then only beacons go.
-/// Every station's queue and hold counts must fall to 0 and stay there
-/// while each station keys and hears another beacon.
+/// group line on a warm chain, both are settled (answered, or given up after
+/// the retries: on CI two of B's relays of C's receipt met A's own frames at
+/// A), and then only beacons go. Every station's queue and hold counts must
+/// fall to 0 and stay there while each station keys and hears another beacon.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_send_queue_empties_after_traffic_stops() {
     let mut chain = Chain::start(Some("net")).await;
     chain.join("#net").await;
     let dm = send_tracked(&mut chain, 0, "PRIVMSG 2E0CCC :dm-two-hops").await;
     let line = send_tracked(&mut chain, 2, "PRIVMSG #net :group-from-c").await;
-    let answered = |c: &Chain, i: usize, id: &str| {
+    let settled = |c: &Chain, i: usize, id: &str| {
         marks_for(&c.clients[i], id)
             .iter()
-            .any(|m| m == "delivered" || m == "all")
+            .any(|m| m == "delivered" || m == "all" || m == "failed")
     };
     let both = chain
-        .wait(CASE_SECS, |c| answered(c, 0, &dm) && answered(c, 2, &line))
+        .wait(CASE_SECS, |c| settled(c, 0, &dm) && settled(c, 2, &line))
         .await;
+    let marks = (
+        marks_for(&chain.clients[0], &dm),
+        marks_for(&chain.clients[2], &line),
+    );
     chain.wait_quiet(90, 600).await;
     let deadline = Instant::now() + Duration::from_secs(QUEUE_DRAIN_SECS);
     let mut counts = queue_counts(&chain.status).await;
@@ -2174,8 +2179,8 @@ async fn the_send_queue_empties_after_traffic_stops() {
     let after = queue_counts(&chain.status).await;
     let trace = chain.trace();
     chain.stop();
-    eprintln!("{trace}\n  drained {drained:?} after beacons {after:?}");
-    assert!(both, "the lines were never answered{trace}");
+    eprintln!("{trace}\n  marks {marks:?}\n  drained {drained:?} after beacons {after:?}");
+    assert!(both, "the lines were never settled{trace}");
     assert!(
         drained.iter().all(|c| *c == (0, 0)),
         "(queue, hold) per station {drained:?} {QUEUE_DRAIN_SECS}s after the last line{trace}"
