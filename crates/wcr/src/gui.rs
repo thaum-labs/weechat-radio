@@ -1472,7 +1472,7 @@ impl eframe::App for GuiApp {
                         }
                     }
                     if nav_link(ui, "map").clicked() {
-                        let _ = open::that("https://weechatradio.com/");
+                        let _ = open::that("https://weechatradio.com/map.html");
                     }
                     if self.configured() && nav_link(ui, "setup").clicked() {
                         self.show_setup = !self.show_setup;
