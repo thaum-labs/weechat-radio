@@ -617,6 +617,15 @@ pub fn exchange_settle_s(preset: Preset) -> u32 {
     spread_window_secs(preset).ceil() as u32
 }
 
+/// How long the last copy of a walk (a receipt or roster keyed again until
+/// a station further on is heard carrying it) stays on the queue: long
+/// enough for that station's relay, a slot, its carrier-sense hold and a
+/// frame. A line's retry interval here left a finished walk on the send
+/// queue for six minutes after the last copy (QA v0.1.96).
+pub fn walk_last_wait_s(preset: Preset) -> u32 {
+    exchange_wait_s(preset)
+}
+
 /// Longest a due beacon waits for exchanges in progress: one exchange, a
 /// receipt's round trip and the rest of its receipts. About 100 s at hf-poor.
 pub fn beacon_exchange_wait_s(preset: Preset) -> u32 {
