@@ -2004,10 +2004,15 @@ fn line_reached_neighbours(rt: &Runtime, line: &Envelope) -> bool {
 
 /// We have keyed our cap of copies of someone else's line or receipt.
 fn relay_copies_spent(rt: &Runtime, env: &Envelope) -> bool {
+    let cap = relay::relay_max_copies(
+        env,
+        relayed_next_to_origin(&rt.store, env),
+        rt.cfg.lock().rf.max_retries,
+    );
     rt.relay_copies
         .lock()
         .get(&env.msg_id)
-        .is_some_and(|c| c.count >= relay::relay_max_copies(env))
+        .is_some_and(|c| c.count >= cap)
 }
 
 /// Our receipt for `line` has gone as often as its originator asked: once,
