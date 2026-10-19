@@ -50,6 +50,13 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v0.1.97</p>
+          <p>Sun, 19 Oct 2026</p>
+        </h3>
+        <pre>The queue count in the status bar counts only what the station still has to key, so it returns to 0 once traffic stops; before, every beacon heard added one. A neighbour hears a station's first direct message and invite first time after a fresh start: a new roster replaces the one before it instead of stacking, a line's retry timer counts from when its copy reaches the modem, and priority retries wait out the modem's 30 s hold rather than keying twice a few seconds apart. Warm-up beacons keep their pace with the station's own lines queued: a due beacon goes ahead of queued invites and lines, waits out one exchange at most, and is taken back from the air queue once at most.</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>v0.1.96</p>
           <p>Sun, 18 Oct 2026</p>
         </h3>
