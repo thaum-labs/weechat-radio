@@ -106,6 +106,8 @@ struct Runtime {
     started: u32,
     /// Copies of someone else's line this station has keyed.
     relay_copies: Arc<Mutex<HashMap<MsgId, RelayCopies>>>,
+    /// The roster this station last sent for each closed channel.
+    rosters: Arc<Mutex<HashMap<String, MsgId>>>,
 }
 
 /// A beacon handed to the air queue that has not reached the modem yet.
@@ -487,6 +489,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         neighbours: Arc::new(Mutex::new(HashMap::new())),
         started: crate::proto::now_ts(),
         relay_copies: Arc::new(Mutex::new(HashMap::new())),
+        rosters: Arc::new(Mutex::new(HashMap::new())),
     };
     refresh_group_prios(&rt);
 
@@ -613,7 +616,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         }
                     }
                 }
-                if let Ok((o, h)) = rt_h.store.queue_depth() {
+                if let Ok((o, h)) = rt_h.store.queue_depth(&our) {
                     let mut s = rt_h.snap.lock();
                     s.queue_out = o;
                     s.queue_hold = h;
@@ -671,6 +674,13 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                                 jitter,
                             );
                             let _ = rt_r.store.set_hold(&m.env.msg_id, next, m.env.hops_left);
+                            continue;
+                        }
+                        // Its last copy is still in the air queue: the retry
+                        // waits until that copy reaches the modem, which
+                        // starts the timer again. QA v0.1.96: A's direct
+                        // message showed retry-1 before its first copy keyed.
+                        if is_line(&m.env) && rt_r.air().is_some_and(|a| a.holds(m.env.msg_id)) {
                             continue;
                         }
                         let walking = relay::walks_until_relayed(&m.env);
@@ -860,7 +870,11 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             let mut pending: Option<PendingBeacon> = None;
             let mut pace = None;
             let mut busy_until = 0;
-            let mut waits_for = None;
+            // The one exchange this round's beacon waits out. Once chosen, a
+            // later exchange does not hold the beacon again or take it back
+            // from the air queue (QA v0.1.96: A's third warm-up beacon was
+            // taken back for one invite, then another).
+            let mut waits_on: Option<relay::ExchangeKey> = None;
             loop {
                 let (jitter_s, congested, uses_rf, vox, preset) = {
                     let cfg = rt_b.cfg.lock();
@@ -913,26 +927,32 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 // An exchange this station is part of. A due beacon waits for
                 // one exchange at most, and for a mail until its acceptance.
                 // Our own queued frames do not hold it: it goes ahead of them.
-                let open = rt_b
-                    .exchanges
-                    .lock()
-                    .in_progress(
-                        now,
-                        relay::exchange_wait_s(preset),
-                        relay::exchange_settle_s(preset),
-                    )
-                    .map(|x| x.to_string());
-                let mail = rt_b.exchanges.lock().is_open(
-                    relay::ExchangeKey::Mail,
-                    now,
+                let (wait_s, settle_s) = (
                     relay::exchange_wait_s(preset),
                     relay::exchange_settle_s(preset),
                 );
+                let open = rt_b.exchanges.lock().in_progress(now, wait_s, settle_s);
+                let mail =
+                    rt_b.exchanges
+                        .lock()
+                        .is_open(relay::ExchangeKey::Mail, now, wait_s, settle_s);
+                // A warm-up beacon waits for the receipt, not for the rest
+                // of a group's receipts after it.
+                let warm_up = sent < relay::BEACON_WARMUP_COUNT;
+                let chosen_running = waits_on.is_some_and(|k| {
+                    let x = rt_b.exchanges.lock();
+                    if warm_up && k != relay::ExchangeKey::Mail {
+                        x.awaits_answer(k, now, wait_s)
+                    } else {
+                        x.is_open(k, now, wait_s, settle_s)
+                    }
+                });
+                let line = relay::beacon_exchange(waits_on, chosen_running, open)
+                    .filter(|_| relay::beacon_waits_for_exchange(now, scheduled, preset, warm_up));
                 let exchange = if mail && relay::beacon_waits_for_mail(now, ceiling, preset) {
-                    Some(relay::ExchangeKey::Mail.to_string())
+                    Some(relay::ExchangeKey::Mail)
                 } else {
-                    open.clone()
-                        .filter(|_| relay::beacon_waits_for_exchange(now, scheduled, preset))
+                    line
                 };
                 // Handed to the air queue: the countdown stays at "pending"
                 // until the beacon reaches the modem, and the next one counts
@@ -948,11 +968,15 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         pending = None;
                         pace = None;
                         busy_until = 0;
+                        waits_on = None;
                         continue;
                     }
-                    if let (Some(x), Some(a)) = (exchange.as_ref(), air.as_ref()) {
-                        if a.cancel(p.id) > 0 {
+                    // Taken back once at most, and only by a beacon that has
+                    // not waited out an exchange already.
+                    if let (Some(x), Some(a)) = (exchange, air.as_ref()) {
+                        if relay::beacon_taken_back(waits_on, exchange) && a.cancel(p.id) > 0 {
                             tracing::info!("beacon taken back from the air queue to wait for {x}");
+                            waits_on = Some(x);
                             pending = None;
                             continue;
                         }
@@ -964,6 +988,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         last_beacon = Some(p.decided);
                         pending = None;
                         pace = None;
+                        waits_on = None;
                         continue;
                     }
                     {
@@ -999,14 +1024,13 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     continue;
                 }
                 if let Some(x) = exchange {
-                    if waits_for.as_ref() != Some(&x) {
+                    if waits_on.is_none() {
                         tracing::info!("beacon waits for {x}");
-                        waits_for = Some(x);
+                        waits_on = Some(x);
                     }
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     continue;
                 }
-                waits_for = None;
                 if let Some(s) = rt_b.sense() {
                     let occ = s.occupancy_pct();
                     let since_decode = s.since_last_decode().as_secs();
@@ -1641,6 +1665,10 @@ async fn enqueue_rf(
             while own_line_held(&rt, &env) {
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
+            // A roster a newer one replaced while it waited stays off the air.
+            if relay::is_channel_meta(&env) && rt.store.hold_until(&env.msg_id).unwrap_or(0) == 0 {
+                return;
+            }
             if enqueue_air(&rt, &env, frames, preset, opts)
                 .await
                 .unwrap_or(false)
@@ -1752,8 +1780,9 @@ fn own_line_held(rt: &Runtime, env: &Envelope) -> bool {
         ) > 0
 }
 
-/// A line held at start has just gone to the air queue: its next retry
-/// counts from now, not from when it was sent, or it keys straight behind.
+/// A copy of our line has just gone to the air queue or reached the modem:
+/// its next retry counts from now, not from when it was sent, or it keys
+/// straight behind.
 fn restart_retry_timer(rt: &Runtime, env: &Envelope) {
     let id = env.msg_id;
     let Ok(Some(row)) = rt.store.get(&id) else {
@@ -1816,6 +1845,12 @@ fn watch_keyed(rt: &Runtime, kiss: &KissClient, cancel: CancellationToken) {
                 if env.kind == MsgType::Beacon {
                     rt.beacon_keyed
                         .store(crate::proto::now_ts(), std::sync::atomic::Ordering::Relaxed);
+                }
+                // A line's next retry counts from when this copy reached the
+                // modem, not from when it was handed over: one that waited
+                // in the air queue would retry just behind itself.
+                if is_line(&env) && relay::is_own_origin(&rt.engine.our_call, &env) {
+                    restart_retry_timer(&rt, &env);
                 }
                 note_exchange(&rt, Some(&env), None);
             }
@@ -3162,12 +3197,17 @@ fn parse_chan_meta_members(body: &str) -> Option<Vec<String>> {
     None
 }
 
+/// Send the channel's member list. It names every member, so it replaces
+/// the one sent before: that one leaves the air queue and is not repeated.
+/// QA v0.1.96: four invites in a row sent four rosters, priority traffic
+/// repeated until relayed, and A's direct message and invites waited minutes
+/// behind them.
 async fn publish_member_roster(rt: &Runtime, name: &str) {
     let members = rt.store.group_members(name).unwrap_or_default();
     if members.len() < 2 {
         return;
     }
-    let _ = send_group_status(
+    let sent = send_group_status(
         rt,
         name,
         chan_meta_members_body(&members),
@@ -3175,6 +3215,16 @@ async fn publish_member_roster(rt: &Runtime, name: &str) {
         BULLETIN_TTL,
     )
     .await;
+    let Ok(id) = sent else {
+        return;
+    };
+    let Some(old) = rt.rosters.lock().insert(name.to_string(), id) else {
+        return;
+    };
+    if let Some(air) = rt.air() {
+        air.cancel(old);
+    }
+    let _ = rt.store.set_hold(&old, 0, 0);
 }
 
 fn chan_meta_leave_body(callsign: &str) -> String {
@@ -3200,7 +3250,7 @@ async fn send_group_status(
     body: String,
     force_inet: bool,
     hops: u8,
-) -> Result<()> {
+) -> Result<MsgId> {
     let cfg_g = rt.cfg.lock().clone();
     let origin = Callsign::parse(&cfg_g.callsign)?;
     let dest = Callsign::from_raw(crate::slash::channel_dest(name));
@@ -3226,7 +3276,7 @@ async fn send_group_status(
         );
         let _ = rt.store.set_hold(&env.msg_id, hold, env.hops_left);
     }
-    Ok(())
+    Ok(env.msg_id)
 }
 
 async fn leave_channel(rt: &Runtime, channel: &str) -> String {
@@ -3732,7 +3782,8 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             }
         }
         "queue" => {
-            let (o, h) = store.queue_depth().unwrap_or((0, 0));
+            let our = rt.engine.our_call.clone();
+            let (o, h) = store.queue_depth(&our).unwrap_or((0, 0));
             format!("outbound {o} hold {h}")
         }
         "flush" => {
