@@ -838,19 +838,31 @@ impl Store {
         Ok(n as u64)
     }
 
-    pub fn queue_depth(&self) -> Result<(u64, u64)> {
+    /// `(outbound, hold)` for the status bar: what this station `origin`
+    /// will still key. Outbound is our own lines and receipts waiting on a
+    /// retry or their receipt; a direct message stops counting at `[ok]`, a
+    /// group line at `[all]`. Hold adds relays waiting for their slot. Every
+    /// frame heard is stored `queued` too, and received lines and beacons
+    /// are never keyed, so a count by delivery state alone only ever grew
+    /// (QA v0.1.96: 17 to 20 per station 15 minutes after traffic ended).
+    pub fn queue_depth(&self, origin: &str) -> Result<(u64, u64)> {
         let conn = self.conn.lock().unwrap();
-        let outbound: u64 = conn.query_row(
-            "SELECT COUNT(*) FROM messages WHERE delivery IN ('queued','sent')",
-            [],
-            |r| r.get(0),
+        let (outbound, hold): (i64, i64) = conn.query_row(
+            "SELECT
+                COALESCE(SUM(upper(origin) = upper(?1)), 0),
+                COUNT(*)
+             FROM messages
+             WHERE hold_until > 0 AND suppressed = 0
+               AND (
+                    (upper(origin) != upper(?1) AND hops_left > 0)
+                 OR (upper(origin) = upper(?1)
+                     AND (delivery IN ('queued','sent','relayed','gateway')
+                          OR (delivery = 'delivered' AND is_group = 1)))
+               )",
+            params![origin],
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
-        let hold: u64 = conn.query_row(
-            "SELECT COUNT(*) FROM messages WHERE hold_until > 0 AND suppressed = 0",
-            [],
-            |r| r.get(0),
-        )?;
-        Ok((outbound, hold))
+        Ok((outbound as u64, hold as u64))
     }
 
     pub fn heard_touch(
@@ -1673,33 +1685,57 @@ mod tests {
     }
 
     #[test]
-    fn queue_depth_counts_unacked_rows() {
+    fn queue_depth_counts_what_will_still_key() {
         let s = Store::open_memory().unwrap();
-        let mk = |seq, body: &[u8]| {
+        let mk = |from: &str, to: &str, seq, flags: Flags| {
             Envelope::new_msg(
-                Callsign::parse("G4ABC").unwrap(),
-                Callsign::parse("M0XYZ").unwrap(),
+                Callsign::parse(from).unwrap(),
+                Callsign::from_raw(to),
                 seq,
-                body.to_vec(),
+                b"line".to_vec(),
                 3,
-                Flags::new(),
+                flags,
             )
             .unwrap()
         };
-        let sent = mk(1, b"one");
-        let queued = mk(2, b"two");
-        let done = mk(3, b"three");
-        let failed = mk(4, b"four");
-        s.insert(&sent, Delivery::Sent).unwrap();
-        s.insert(&queued, Delivery::Queued).unwrap();
-        s.insert(&done, Delivery::Delivered).unwrap();
+        let group = Flags::new().with(crate::proto::FLAG_GROUP);
+        let waiting = mk("G4ABC", "M0XYZ", 1, Flags::new());
+        let acked = mk("G4ABC", "M0XYZ", 2, Flags::new());
+        let group_ok = mk("G4ABC", "NET", 3, group);
+        let failed = mk("G4ABC", "M0XYZ", 4, Flags::new());
+        let heard = mk("M0XYZ", "G4ABC", 1, Flags::new());
+        let mut beacon = mk("M0XYZ", "BEACON", 2, Flags::new());
+        beacon.kind = MsgType::Beacon;
+        beacon.hops_left = 0;
+        let relay = mk("M0XYZ", "2E0CCC", 3, Flags::new());
+        let cancelled = mk("M0XYZ", "2E0CCC", 4, Flags::new());
+        s.insert(&waiting, Delivery::Sent).unwrap();
+        s.insert(&acked, Delivery::Delivered).unwrap();
+        s.insert(&group_ok, Delivery::Delivered).unwrap();
         s.insert(&failed, Delivery::Failed).unwrap();
-        s.set_hold(&sent.msg_id, 50, 3).unwrap();
-        // Sidebar QUEUE is this outbound count. AIR is the TNC queue and
-        // stays 0 when these rows never get a frame enqueued.
-        let (outbound, hold) = s.queue_depth().unwrap();
-        assert_eq!(outbound, 2);
-        assert_eq!(hold, 1);
+        s.insert(&heard, Delivery::Queued).unwrap();
+        s.insert(&beacon, Delivery::Queued).unwrap();
+        s.insert(&relay, Delivery::Queued).unwrap();
+        s.insert(&cancelled, Delivery::Queued).unwrap();
+        for id in [
+            &waiting.msg_id,
+            &acked.msg_id,
+            &group_ok.msg_id,
+            &relay.msg_id,
+            &cancelled.msg_id,
+        ] {
+            s.set_hold(id, 50, 3).unwrap();
+        }
+        s.suppress(&cancelled.msg_id).unwrap();
+        // QA v0.1.96: every frame heard is stored `queued`, and the count
+        // grew with each beacon. Our DM waiting on its receipt and our group
+        // line at [ok] still key; the DM at [ok] and the failed line do not.
+        // A held relay counts toward hold only.
+        assert_eq!(s.queue_depth("G4ABC").unwrap(), (2, 3));
+        s.set_hold(&waiting.msg_id, 0, 3).unwrap();
+        s.set_hold(&group_ok.msg_id, 0, 3).unwrap();
+        s.set_hold(&relay.msg_id, 0, 3).unwrap();
+        assert_eq!(s.queue_depth("G4ABC").unwrap(), (0, 0));
     }
 
     #[test]
