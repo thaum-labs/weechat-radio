@@ -734,13 +734,26 @@ async fn beacon_note(port: u16) -> String {
         .unwrap_or_default()
 }
 
-/// Wait until station `i`'s beacon is on its way to the modem.
+/// Wait until station `i`'s next beacon has just been handed to the air
+/// queue. The countdown reads `pending` from the handover until the beacon
+/// reaches the modem, 15 s later on a stuck channel, so a beacon found
+/// already pending may be at the modem before the test goes on (msrv CI: the
+/// gateway's first beacon was written just before the burst started and
+/// keyed between the chunks, which the beacon loop cannot take back). The
+/// countdown is seen first, then the handover; a warm-up beacon goes a
+/// minute after the one before, so the wait is at most two of them.
 async fn wait_beacon_pending(pair: &Pair, i: usize) {
-    let deadline = Instant::now() + Duration::from_secs(120);
-    while beacon_note(pair.status[i]).await != "pending" {
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let mut counting_down = false;
+    loop {
+        let note = beacon_note(pair.status[i]).await;
+        if note == "pending" && counting_down {
+            return;
+        }
+        counting_down |= note != "pending";
         assert!(
             Instant::now() < deadline,
-            "station {}'s first beacon never went",
+            "station {}'s beacon never went",
             i + 1
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -771,7 +784,7 @@ fn acceptance_end(log: &[wcr::sim::TimedKey]) -> Option<Instant> {
 /// station's own mail burst keeps busy once it keys, for up to 15 s. It then
 /// set chat's modem config, carrier sense on, just before it went, and the
 /// rest of the burst keyed under it: two chunks every 38 s on a stuck modem.
-/// Here the sender's first beacon (no jitter, a minute after start) has just
+/// Here a warm-up beacon of the sender's (no jitter, a minute apart) has just
 /// been handed to the air queue when the mail starts. The beacon is taken
 /// back while it waits, the burst keeps carrier sense off, and the beacon
 /// goes only after the gateway's acceptance.
@@ -841,9 +854,9 @@ async fn a_beacon_on_its_way_when_a_mail_starts_waits_for_the_acceptance() {
 /// QA v0.1.97: the gateway keyed its first beacon between chunks 2 and 3 of
 /// a short mail, 64 s after start. The beacon had been taken off the air
 /// queue just before the first chunk decoded and was waiting out carrier
-/// sense, where the beacon loop could not take it back. Here the gateway's
-/// first beacon (no jitter, a minute after start) is on its way to the
-/// modem when the sender's burst starts. The gateway keys no beacon from
+/// sense, where the beacon loop could not take it back. Here a warm-up
+/// beacon of the gateway's (no jitter, a minute apart) has just been handed
+/// to the air queue when the sender's burst starts. The gateway keys no beacon from
 /// the first chunk until its acceptance, and the mail is accepted first
 /// time.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
