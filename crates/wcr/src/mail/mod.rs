@@ -387,7 +387,7 @@ impl MailHandle {
 
 /// An empty `[hub] url` means "no hub" everywhere else, so copy-to says so
 /// rather than guessing a hub or blaming the internet.
-pub const COPY_NO_HUB_URL: &str = "Copy-to needs the hub, and no hub address is set. Set [hub] url in config.toml (the public hub is wss://hub.weechatradio.com/ws) and try again.";
+pub const COPY_NO_HUB_URL: &str = "Copy-to needs the hub, and no hub address is set. Set [hub] url in wcr.toml (the public hub is wss://hub.weechatradio.com/ws) and try again.";
 
 /// What to say when the hub cannot be reached for copy-to.
 pub fn copy_hub_unreachable(mode: Mode) -> &'static str {
@@ -759,6 +759,7 @@ mod tests {
         h.cfg.lock().hub.url = String::new();
         let err = h.set_copy("other@example.com").await.unwrap_err().plain();
         assert_eq!(err, COPY_NO_HUB_URL);
+        assert!(err.contains("wcr.toml"), "{err}");
         assert_eq!(copy_state(&h), store::COPY_ON);
         assert_eq!(inbox.lock().len(), 1);
     }
