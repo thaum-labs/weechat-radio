@@ -24,20 +24,29 @@
 
   tabs.forEach((t) => t.addEventListener("click", () => show(t.dataset.os)));
 
-  copyBtn.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(commands[os]);
-      copyBtn.textContent = "copied";
-    } catch (e) {
+  copyBtn.addEventListener("click", () => {
+    const copy = window.WCR && window.WCR.copyText;
+    const finish = (label) => {
+      copyBtn.textContent = label;
+      clearTimeout(copyTimer);
+      copyTimer = setTimeout(() => { copyBtn.textContent = "copy"; }, 1600);
+    };
+    if (!copy) {
+      finish("fail");
+      return;
+    }
+    copy(commands[os]).then((state) => {
+      if (state === "copied") {
+        finish("copied");
+        return;
+      }
       const range = document.createRange();
       range.selectNodeContents(cmd);
       const sel = getSelection();
       sel.removeAllRanges();
       sel.addRange(range);
-      copyBtn.textContent = "selected";
-    }
-    clearTimeout(copyTimer);
-    copyTimer = setTimeout(() => { copyBtn.textContent = "copy"; }, 1600);
+      finish("selected");
+    });
   });
 
   show(os);
