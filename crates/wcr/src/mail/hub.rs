@@ -30,6 +30,21 @@ pub async fn signed_post(
     callsign: &str,
     body: &Value,
 ) -> Result<Value> {
+    let (status, text) = signed_post_raw(base, path, keys, callsign, body).await?;
+    if !(200..300).contains(&status) {
+        return Err(Error::Net(format!("hub mail {status}: {text}")));
+    }
+    serde_json::from_str(&text).map_err(|e| Error::Net(e.to_string()))
+}
+
+/// `Err` only when the hub could not be reached. Any answer is `(status, body)`.
+pub async fn signed_post_raw(
+    base: &str,
+    path: &str,
+    keys: &IdentityKeys,
+    callsign: &str,
+    body: &Value,
+) -> Result<(u16, String)> {
     let raw = serde_json::to_vec(body)?;
     let sig = hex::encode(keys.sign_bytes(&raw));
     let url = format!("{}{path}", base.trim_end_matches('/'));
@@ -47,12 +62,9 @@ pub async fn signed_post(
         .send()
         .await
         .map_err(|e| Error::Net(e.to_string()))?;
-    let status = resp.status();
+    let status = resp.status().as_u16();
     let text = resp.text().await.map_err(|e| Error::Net(e.to_string()))?;
-    if !status.is_success() {
-        return Err(Error::Net(format!("hub mail {status}: {text}")));
-    }
-    serde_json::from_str(&text).map_err(|e| Error::Net(e.to_string()))
+    Ok((status, text))
 }
 
 pub fn send_body(from: &str, to: &str, subject: &str, body: &str, bcc: Option<&str>) -> Value {

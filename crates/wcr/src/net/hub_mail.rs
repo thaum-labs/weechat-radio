@@ -3,8 +3,8 @@
 
 use crate::error::{Error, Result};
 use crate::mail::{
-    callsign_from_wcr, pull_token, trim_body, validate_internet_addr, wcr_address, MAIL_DOMAIN,
-    WCR_COPY_HEADER,
+    callsign_from_wcr, copy_code_digits, pull_token, trim_body, validate_copy_addr,
+    validate_internet_addr, wcr_address, MAIL_DOMAIN, WCR_COPY_HEADER,
 };
 use crate::net::hub_server::HubState;
 use axum::body::Bytes;
@@ -167,25 +167,40 @@ impl MailHubDb {
         Ok(())
     }
 
+    /// The code is kept after it is used, so a station that missed the reply
+    /// can confirm again with the same code.
     pub fn confirm(&self, callsign: &str, code: &str) -> Result<bool> {
         let conn = self.conn.lock();
-        let row: Option<(String, String)> = conn
+        let row: Option<(String, String, bool)> = conn
             .query_row(
-                "SELECT pending_to, pending_code FROM hub_mail_copy WHERE callsign = ?1",
+                "SELECT pending_to, pending_code, confirmed FROM hub_mail_copy WHERE callsign = ?1",
                 params![callsign.to_ascii_uppercase()],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? != 0)),
             )
             .ok();
-        if let Some((to, expect)) = row {
-            if !to.is_empty() && expect == code {
-                conn.execute(
-                    "UPDATE hub_mail_copy SET copy_to = ?2, confirmed = 1, pending_to = '', pending_code = '' WHERE callsign = ?1",
-                    params![callsign.to_ascii_uppercase(), to],
-                )?;
-                return Ok(true);
-            }
+        let Some((to, expect, confirmed)) = row else {
+            return Ok(false);
+        };
+        if expect.is_empty() || expect != code {
+            return Ok(false);
         }
-        Ok(false)
+        if to.is_empty() {
+            return Ok(confirmed);
+        }
+        conn.execute(
+            "UPDATE hub_mail_copy SET copy_to = ?2, confirmed = 1, pending_to = '' WHERE callsign = ?1",
+            params![callsign.to_ascii_uppercase(), to],
+        )?;
+        Ok(true)
+    }
+
+    /// Copy-to off for this callsign: no address, no pending code.
+    pub fn clear_copy(&self, callsign: &str) -> Result<()> {
+        self.conn.lock().execute(
+            "DELETE FROM hub_mail_copy WHERE callsign = ?1",
+            params![callsign.to_ascii_uppercase()],
+        )?;
+        Ok(())
     }
 
     pub fn copy_to(&self, callsign: &str) -> Option<String> {
@@ -445,6 +460,7 @@ pub async fn post_fetch(
 #[derive(Deserialize)]
 struct CopyReq {
     address: String,
+    #[serde(default)]
     code: String,
 }
 
@@ -461,21 +477,31 @@ pub async fn post_copy(
         Ok(v) => v,
         Err(_) => return bad(StatusCode::BAD_REQUEST, "bad json").into_response(),
     };
-    if validate_internet_addr(&req.address).is_err() {
-        return bad(StatusCode::BAD_REQUEST, "bad address").into_response();
+    if req.address.trim().is_empty() {
+        if st.mail.clear_copy(&call).is_err() {
+            return bad(StatusCode::INTERNAL_SERVER_ERROR, "store").into_response();
+        }
+        return Json(json!({ "ok": true, "off": true })).into_response();
     }
-    if st.mail.set_pending(&call, &req.address, &req.code).is_err() {
+    if let Err(e) = validate_copy_addr(&req.address) {
+        return bad(StatusCode::BAD_REQUEST, &e.plain()).into_response();
+    }
+    let code = copy_code_digits(&req.code);
+    if code.is_empty() {
+        return bad(StatusCode::BAD_REQUEST, "missing code").into_response();
+    }
+    if st
+        .mail
+        .set_pending(&call, req.address.trim(), &code)
+        .is_err()
+    {
         return bad(StatusCode::INTERNAL_SERVER_ERROR, "store").into_response();
     }
-    let text = format!(
-        "Confirm copy-to for {call} with this code: {}.\nIf you did not ask for this, ignore it.",
-        req.code
-    );
     match resend_send(
         &wcr_address(&call),
-        &req.address,
+        req.address.trim(),
         "Confirm your WeeChat Radio copy-to address",
-        &text,
+        &copy_code_text(&call, &code),
         None,
         false,
     )
@@ -484,6 +510,13 @@ pub async fn post_copy(
         Ok(_) => Json(json!({ "ok": true })).into_response(),
         Err(e) => bad(StatusCode::BAD_GATEWAY, &e.to_string()).into_response(),
     }
+}
+
+/// The code sits on its own line, with nothing after it to copy by mistake.
+pub fn copy_code_text(call: &str, code: &str) -> String {
+    format!(
+        "Your copy-to code for {call}:\n\n{code}\n\nType it in the code box next to Copy-to on the Email tab of WeeChat Radio, then press confirm.\n\nIf you did not ask for this, ignore this email."
+    )
 }
 
 #[derive(Deserialize)]
@@ -504,7 +537,10 @@ pub async fn post_copy_confirm(
         Ok(v) => v,
         Err(_) => return bad(StatusCode::BAD_REQUEST, "bad json").into_response(),
     };
-    let ok = st.mail.confirm(&call, req.code.trim()).unwrap_or(false);
+    let ok = st
+        .mail
+        .confirm(&call, &copy_code_digits(&req.code))
+        .unwrap_or(false);
     Json(json!({ "ok": ok })).into_response()
 }
 
@@ -840,6 +876,30 @@ mod tests {
             author_bcc("G0ABC", "2E0XYZ@mail.weechatradio.com", None, confirmed),
             None
         );
+    }
+
+    #[test]
+    fn the_hub_takes_a_copy_code_twice_and_forgets_it_when_off() {
+        let db = MailHubDb::open_memory().unwrap();
+        db.set_pending("M7TJF", "tj@example.com", "123456").unwrap();
+        assert!(!db.confirm("M7TJF", "654321").unwrap());
+        assert_eq!(db.copy_to("M7TJF"), None);
+        assert!(db.confirm("M7TJF", "123456").unwrap());
+        // A station that missed the reply asks again with the same code.
+        assert!(db.confirm("M7TJF", "123456").unwrap());
+        assert_eq!(db.copy_to("M7TJF").as_deref(), Some("tj@example.com"));
+        db.clear_copy("M7TJF").unwrap();
+        assert_eq!(db.copy_to("M7TJF"), None);
+        assert!(!db.confirm("M7TJF", "123456").unwrap());
+    }
+
+    #[test]
+    fn the_code_email_has_nothing_stuck_to_the_code() {
+        let text = copy_code_text("M7TJF", "123456");
+        assert!(text.contains("\n123456\n"), "{text}");
+        assert!(!text.contains("123456."), "{text}");
+        assert!(text.contains("code box next to Copy-to on the Email tab"));
+        assert_eq!(copy_code_digits(" 123 456. "), "123456");
     }
 
     #[test]
