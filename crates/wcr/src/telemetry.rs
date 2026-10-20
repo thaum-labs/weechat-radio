@@ -442,20 +442,61 @@ impl TelemetryDb {
             .collect()
     }
 
-    pub fn check_replay(&self, call: &str, ts: u64) -> bool {
+    /// Accept `ts` once per lane. A map report and a session hello share a
+    /// callsign but not a stamp: a report in this second must not make the
+    /// station's hello look like a replay.
+    pub fn check_replay(&self, lane: ReplayLane, call: &str, ts: u64) -> Option<ReplayReject> {
         let now = now();
-        if ts + 300 < now || ts > now + 60 {
-            return false;
+        if ts.saturating_add(REPLAY_PAST_SECS) < now || ts > now.saturating_add(REPLAY_FUTURE_SECS)
+        {
+            return Some(ReplayReject::ClockSkew);
         }
+        let key = replay_key(lane, call);
         let mut g = self.last_ts.lock();
-        if let Some(prev) = g.get(call) {
+        if let Some(prev) = g.get(&key) {
             if ts <= *prev {
-                return false;
+                return Some(ReplayReject::Replay);
             }
         }
-        g.insert(call.to_string(), ts);
-        true
+        g.insert(key, ts);
+        None
     }
+}
+
+/// How old a signed stamp may be, and how far ahead of the hub it may be.
+const REPLAY_PAST_SECS: u64 = 300;
+const REPLAY_FUTURE_SECS: u64 = 60;
+
+/// Session hellos and map reports are different signed messages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplayLane {
+    Hello,
+    Report,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplayReject {
+    /// `ts` is outside the hub's accept window.
+    ClockSkew,
+    /// This lane already accepted this stamp, or a newer one, for the callsign.
+    Replay,
+}
+
+impl ReplayReject {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ClockSkew => "clock skew",
+            Self::Replay => "replay",
+        }
+    }
+}
+
+fn replay_key(lane: ReplayLane, call: &str) -> String {
+    let prefix = match lane {
+        ReplayLane::Hello => "hello",
+        ReplayLane::Report => "report",
+    };
+    format!("{prefix}:{}", call.trim().to_ascii_uppercase())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -602,8 +643,11 @@ pub async fn ingest_report(
     if report.callsign.to_ascii_uppercase() != call {
         return Err((StatusCode::BAD_REQUEST, "callsign mismatch".into()));
     }
-    if !st.telemetry.check_replay(&call, report.ts) {
-        return Err((StatusCode::BAD_REQUEST, "replay or clock skew".into()));
+    if let Some(reason) = st
+        .telemetry
+        .check_replay(ReplayLane::Report, &call, report.ts)
+    {
+        return Err((StatusCode::BAD_REQUEST, reason.as_str().into()));
     }
     let _ = st.telemetry.upsert_node(&report);
     for ev in &report.events {
@@ -670,6 +714,10 @@ fn client_ip(headers: &HeaderMap, peer: SocketAddr) -> String {
         .unwrap_or_else(|| peer.ip().to_string())
 }
 
+pub(crate) fn unix_now() -> u64 {
+    now()
+}
+
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -687,7 +735,10 @@ pub async fn reporter_loop(
 ) {
     let client = reqwest::Client::new();
     let secs = interval_secs.max(1);
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(secs));
+    // The hub still running today keeps one stamp per callsign. An immediate
+    // report uses this second, and the hello is refused until the next one.
+    let first = tokio::time::Instant::now() + std::time::Duration::from_secs(secs.min(2));
+    let mut interval = tokio::time::interval_at(first, std::time::Duration::from_secs(secs));
     let mut pending = Vec::new();
     loop {
         tokio::select! {
@@ -787,9 +838,31 @@ mod tests {
         db.bind_callsign("G4ABC", &keys.public_bytes()).unwrap();
         assert_eq!(db.get_pubkey("G4ABC").unwrap(), keys.public_bytes());
         let ts = now();
-        assert!(db.check_replay("G4ABC", ts));
-        assert!(!db.check_replay("G4ABC", ts));
-        assert!(!db.check_replay("G4ABC", ts.saturating_sub(1000)));
+        assert!(db.check_replay(ReplayLane::Report, "g4abc", ts).is_none());
+        assert_eq!(
+            db.check_replay(ReplayLane::Report, "G4ABC", ts),
+            Some(ReplayReject::Replay)
+        );
+        assert_eq!(
+            db.check_replay(ReplayLane::Report, "G4ABC", ts.saturating_sub(10)),
+            Some(ReplayReject::Replay)
+        );
+        assert_eq!(
+            db.check_replay(ReplayLane::Report, "G4ABC", ts.saturating_sub(1000)),
+            Some(ReplayReject::ClockSkew)
+        );
+        assert_eq!(
+            db.check_replay(ReplayLane::Hello, "G4ABC", ts + 120),
+            Some(ReplayReject::ClockSkew)
+        );
+        // A refused future stamp is not remembered, and a hello is not a report.
+        assert!(db.check_replay(ReplayLane::Hello, "G4ABC", ts).is_none());
+        assert!(db.check_replay(ReplayLane::Hello, "~tobo", ts).is_none());
+        assert_eq!(
+            db.check_replay(ReplayLane::Hello, "~TOBO", ts),
+            Some(ReplayReject::Replay)
+        );
+        assert!(db.check_replay(ReplayLane::Report, "~TOBO", ts).is_none());
     }
 
     #[test]

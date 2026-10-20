@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.89-DEA584?logo=rust&logoColor=white" alt="Rust 1.89" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="Apache-2.0" /></a>
-  <img src="https://img.shields.io/badge/version-0.1.100-7d9bff" alt="Version 0.1.100" />
+  <img src="https://img.shields.io/badge/version-0.1.102-7d9bff" alt="Version 0.1.102" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6" alt="Windows, macOS and Linux" />
   <br/>
   <a href="https://weechat.org/"><img src="https://img.shields.io/badge/WeeChat-IRC-00A7E0" alt="WeeChat" /></a>
@@ -57,11 +57,13 @@ Prefer a terminal? `wcr tui` is the same station.
 
 ### Windows (PowerShell)
 
+Open PowerShell with **Run as administrator** (Start, type `PowerShell`, right-click, Run as administrator). Paste:
+
 ```powershell
 irm https://weechatradio.com/install.ps1 | iex
 ```
 
-Open **WeeChat Radio** from the Start menu. First launch is setup; then you chat in the window.
+Leave the window open. WeeChat installs through Cygwin after the program and can take several minutes. Then open **WeeChat Radio** from the Start menu. First launch is setup; then you chat in the window. If it stops, see the [troubleshooting page](https://weechatradio.com/guides/troubleshooting.html).
 
 ```powershell
 # optional, same window from a terminal:
