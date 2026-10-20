@@ -1192,6 +1192,7 @@ details.maplibregl-ctrl-attrib:not([open]) {
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
+  .page-panel h2[id] { scroll-margin-top: 72px; }
   .topbar {
     position: sticky;
     top: 0;
