@@ -52,12 +52,25 @@ impl HubClient {
         let stop = cancel.clone();
         tokio::spawn(async move {
             let mut backoff = 1u64;
-            let mut last_hello_ts = 0u64;
+            // Only a hello the hub accepted. A refused stamp must not be
+            // remembered: failed handshakes in one second used to walk it
+            // past the hub's future window, and every later hello was then
+            // refused as clock skew.
+            let mut last_accepted = 0u64;
+            let mut prompt_left = 2u8;
             loop {
                 if stop.is_cancelled() {
                     connected.set(false);
                     return;
                 }
+                let now = unix_now();
+                let Some(ts) = next_hello_ts(now, last_accepted) else {
+                    if !pause(&stop, 1).await {
+                        connected.set(false);
+                        return;
+                    }
+                    continue;
+                };
                 let ws = tokio::select! {
                     _ = stop.cancelled() => {
                         connected.set(false);
@@ -68,12 +81,9 @@ impl HubClient {
                         Err(e) => {
                             tracing::warn!("hub connect failed: {e}");
                             connected.fail(format!("hub connect failed: {e}"));
-                            tokio::select! {
-                                _ = stop.cancelled() => {
-                                    connected.set(false);
-                                    return;
-                                }
-                                _ = tokio::time::sleep(std::time::Duration::from_secs(backoff)) => {}
+                            if !pause(&stop, backoff).await {
+                                connected.set(false);
+                                return;
                             }
                             backoff = (backoff * 2).min(30);
                             continue;
@@ -86,18 +96,18 @@ impl HubClient {
                 }
                 backoff = 1;
                 let (mut sink, mut stream) = ws.split();
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                let ts = now.max(last_hello_ts + 1);
-                last_hello_ts = ts;
                 let hello = build_hello(&callsign, &keys, &heard, freq_khz, ts);
                 if sink.send(Message::Text(hello.into())).await.is_err() {
                     connected.fail("hub hello send failed");
+                    if !pause(&stop, backoff).await {
+                        connected.set(false);
+                        return;
+                    }
+                    backoff = (backoff * 2).min(30);
                     continue;
                 }
                 let mut hub_ready = false;
+                let mut prompt_retry = false;
                 loop {
                     tokio::select! {
                         _ = stop.cancelled() => {
@@ -133,9 +143,14 @@ impl HubClient {
                                     tracing::debug!("hub text {t}");
                                     if t.contains("\"ok\":true") {
                                         hub_ready = true;
+                                        last_accepted = ts;
                                         connected.set(true);
                                     } else if t.contains("\"ok\":false") {
-                                        let why = hub_error_text(&t);
+                                        let why = hub_refusal_message(&t, unix_now());
+                                        prompt_retry = refusal_retries_promptly(&why) && prompt_left > 0;
+                                        if prompt_retry {
+                                            prompt_left = prompt_left.saturating_sub(1);
+                                        }
                                         connected.fail(why);
                                         break;
                                     }
@@ -152,16 +167,21 @@ impl HubClient {
                     return;
                 }
                 if hub_ready {
+                    prompt_left = 2;
                     connected.fail("hub disconnected");
-                } else {
+                } else if prompt_retry {
                     connected.set(false);
-                }
-                tokio::select! {
-                    _ = stop.cancelled() => {
+                    if !pause_ms(&stop, millis_until_next_second()).await {
                         connected.set(false);
                         return;
                     }
-                    _ = tokio::time::sleep(std::time::Duration::from_secs(backoff)) => {}
+                    continue;
+                } else {
+                    connected.set(false);
+                }
+                if !pause(&stop, backoff).await {
+                    connected.set(false);
+                    return;
                 }
                 backoff = (backoff * 2).min(30);
             }
@@ -217,13 +237,74 @@ impl ArcFlag {
     }
 }
 
-fn hub_error_text(t: &str) -> String {
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(t) {
-        if let Some(e) = v.get("error").and_then(|e| e.as_str()) {
-            return format!("hub refused: {e}");
-        }
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// `false` when `stop` is cancelled.
+async fn pause(stop: &CancellationToken, secs: u64) -> bool {
+    pause_ms(stop, secs.max(1).saturating_mul(1000)).await
+}
+
+async fn pause_ms(stop: &CancellationToken, ms: u64) -> bool {
+    tokio::select! {
+        _ = stop.cancelled() => false,
+        _ = tokio::time::sleep(std::time::Duration::from_millis(ms.max(1))) => true,
     }
-    format!("hub refused: {t}")
+}
+
+/// A same-second hello is refused as a replay. Retry on the next second.
+/// A pure clock-skew refusal stays on the normal backoff.
+pub(crate) fn refusal_retries_promptly(msg: &str) -> bool {
+    msg.contains("replay")
+}
+
+fn millis_until_next_second() -> u64 {
+    let sub = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_millis())
+        .unwrap_or(0);
+    (1000 - u64::from(sub)).clamp(50, 1000)
+}
+
+/// Next hello stamp. `None` means wait for the next second.
+///
+/// A stamp more than 60s ahead of `now` is ignored. Keeping it and adding
+/// one each retry walks further ahead of the hub, which then refuses every
+/// hello as clock skew.
+pub(crate) fn next_hello_ts(now: u64, last_accepted: u64) -> Option<u64> {
+    if last_accepted == 0 || now > last_accepted {
+        return Some(now);
+    }
+    if last_accepted > now.saturating_add(60) {
+        return Some(now);
+    }
+    None
+}
+
+pub(crate) fn hub_refusal_message(body: &str, now: u64) -> String {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return format!("hub refused: {body}");
+    };
+    let Some(err) = v.get("error").and_then(|e| e.as_str()) else {
+        return format!("hub refused: {body}");
+    };
+    if err == "clock skew" {
+        if let Some(server) = v.get("server_ts").and_then(|t| t.as_u64()) {
+            let delta = now.abs_diff(server);
+            if delta > 0 {
+                let rel = if now > server { "ahead of" } else { "behind" };
+                return format!(
+                    "hub refused: clock skew — this computer's clock is {delta}s {rel} the hub"
+                );
+            }
+        }
+        return "hub refused: clock skew — set this computer's clock".into();
+    }
+    format!("hub refused: {err}")
 }
 
 pub(crate) fn build_hello(
@@ -249,7 +330,9 @@ pub(crate) fn build_hello(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_hello, websocket_url};
+    use super::{
+        build_hello, hub_refusal_message, next_hello_ts, refusal_retries_promptly, websocket_url,
+    };
     use crate::proto::IdentityKeys;
 
     #[test]
@@ -294,5 +377,43 @@ mod tests {
                 .unwrap()
                 .get("sig")
         );
+    }
+
+    #[test]
+    fn hello_stamp_stays_on_the_wall_clock() {
+        assert_eq!(next_hello_ts(1_000, 0), Some(1_000));
+        assert_eq!(next_hello_ts(1_000, 999), Some(1_000));
+        assert_eq!(next_hello_ts(1_000, 1_000), None);
+        assert_eq!(next_hello_ts(1_000, 1_030), None);
+        // A remembered stamp past the hub's future window is not walked forward.
+        assert_eq!(next_hello_ts(1_000, 1_061), Some(1_000));
+    }
+
+    #[test]
+    fn clock_skew_refusal_names_the_offset() {
+        let body = r#"{"ok":false,"error":"clock skew","server_ts":1000}"#;
+        assert_eq!(
+            hub_refusal_message(body, 1_090),
+            "hub refused: clock skew — this computer's clock is 90s ahead of the hub"
+        );
+        assert_eq!(
+            hub_refusal_message(body, 900),
+            "hub refused: clock skew — this computer's clock is 100s behind the hub"
+        );
+        assert_eq!(
+            hub_refusal_message(r#"{"ok":false,"error":"replay"}"#, 1_000),
+            "hub refused: replay"
+        );
+        assert_eq!(
+            hub_refusal_message(r#"{"ok":false,"error":"replay or clock skew"}"#, 1_000),
+            "hub refused: replay or clock skew"
+        );
+        assert!(refusal_retries_promptly("hub refused: replay"));
+        assert!(refusal_retries_promptly(
+            "hub refused: replay or clock skew"
+        ));
+        assert!(!refusal_retries_promptly(
+            "hub refused: clock skew — this computer's clock is 90s ahead of the hub"
+        ));
     }
 }

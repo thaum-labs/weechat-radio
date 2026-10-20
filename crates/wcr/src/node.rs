@@ -501,6 +501,18 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     };
     refresh_group_prios(&rt);
 
+    // Dial the hub before the radio. modem73's first open retries for up to
+    // 20s, and the hello used to wait behind that.
+    if want_hub {
+        if let Err(e) = start_hub(&rt).await {
+            tracing::warn!("hub: {e}");
+        }
+    }
+    if want_peers {
+        if let Err(e) = start_peers(&rt).await {
+            tracing::warn!("peers: {e}");
+        }
+    }
     if want_radio {
         if let Err(e) = start_radio(&rt).await {
             tracing::warn!("{e}");
@@ -538,16 +550,6 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                 }
             }
         });
-    }
-    if want_hub {
-        if let Err(e) = start_hub(&rt).await {
-            tracing::warn!("hub: {e}");
-        }
-    }
-    if want_peers {
-        if let Err(e) = start_peers(&rt).await {
-            tracing::warn!("peers: {e}");
-        }
     }
     drain_io_swap(&rt, &mut kiss_rx, &mut peer_in);
 

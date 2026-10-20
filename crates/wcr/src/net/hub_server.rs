@@ -186,7 +186,7 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
             .await;
         return;
     }
-    if !rate_limit::allow(&st.hello_by_call, &hello.callsign) {
+    if !rate_limit::allow(&st.hello_by_call, &hello.callsign.to_ascii_uppercase()) {
         let _ = socket
             .send(Message::Text(
                 "{\"ok\":false,\"error\":\"rate limit\"}".into(),
@@ -222,12 +222,17 @@ async fn handle_node(mut socket: WebSocket, st: HubState) {
             .await;
         return;
     }
-    if !st.telemetry.check_replay(&hello.callsign, hello.ts) {
-        let _ = socket
-            .send(Message::Text(
-                "{\"ok\":false,\"error\":\"replay or clock skew\"}".into(),
-            ))
-            .await;
+    if let Some(reason) =
+        st.telemetry
+            .check_replay(telemetry::ReplayLane::Hello, &hello.callsign, hello.ts)
+    {
+        let body = serde_json::json!({
+            "ok": false,
+            "error": reason.as_str(),
+            "server_ts": telemetry::unix_now(),
+        })
+        .to_string();
+        let _ = socket.send(Message::Text(body.into())).await;
         return;
     }
     let call_key = hello.callsign.to_ascii_uppercase();
