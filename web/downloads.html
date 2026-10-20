@@ -47,12 +47,14 @@
   <div class="page-wrap">
     <main class="page-panel">
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> downloads</h1>
-      <p class="lead">Copy one command. No account. Then run the <a href="/guides/start.html">5-minute start</a>.</p>
+      <p class="lead">Copy one command. No account. Leave the window open until it finishes — on Windows that is several minutes. Then run the <a href="/guides/start.html">5-minute start</a>.</p>
       <h2>linux / macos</h2>
       <pre>curl -fsSL https://weechatradio.com/install.sh | sh</pre>
+      <p>On Linux the installer may ask for your password and then sit while apt or dnf installs WeeChat. Leave that window open.</p>
       <h2>windows (powershell)</h2>
-      <p>Click Start, type <code>PowerShell</code>, press Enter. Paste:</p>
+      <p>Click Start, type <code>PowerShell</code>, right-click <strong>Windows PowerShell</strong>, and choose <strong>Run as administrator</strong>. Confirm the prompt. Paste:</p>
       <pre>irm https://weechatradio.com/install.ps1 | iex</pre>
+      <p>Leave that window open. After the program downloads, WeeChat installs through Cygwin. The window prints <code>waiting for WeeChat...</code> and can sit for several minutes, sometimes toward 20. It is finished when it prints the next step. Open a new PowerShell window before <code>wcr setup</code>.</p>
       <p>Release zips: <a href="https://github.com/thaum-labs/weechat-radio/releases">GitHub Releases</a>.</p>
       <p>On Windows, the installer puts a <strong>WeeChat Radio</strong> shortcut on the Start menu and desktop. Open that — it starts the station and chat.</p>
       <p>On Mac and Linux the program is <code>wcr</code> in <code>~/.local/bin</code>. Open a new terminal, then run setup first, then the window:</p>
@@ -60,7 +62,7 @@
 wcr gui</pre>
       <p>If the shell says <code>wcr: command not found</code>, run <code>export PATH="$HOME/.local/bin:$PATH"</code> and add that line to your shell profile.</p>
       <p>WeeChat (the separate IRC client) is optional. See the <a href="/guides/weechat.html">WeeChat guide</a> if you want that client later.</p>
-      <p class="next">Next: <a href="/guides/start.html">5-minute start</a> · <a href="/guides/windows.html">Windows</a> · <a href="/guides/macos.html">macOS</a> · <a href="/guides/linux.html">Linux</a></p>
+      <p class="next">Next: <a href="/guides/start.html">5-minute start</a> · <a href="/guides/windows.html">Windows</a> · <a href="/guides/macos.html">macOS</a> · <a href="/guides/linux.html">Linux</a> · <a href="/guides/troubleshooting.html">Troubleshooting</a></p>
     </main>
   </div>
   <script src="/copy.js?v=1"></script>
