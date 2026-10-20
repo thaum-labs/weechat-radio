@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 pub const PUBLIC_HUB: &str = "wss://hub.weechatradio.com/ws";
 pub const PUBLIC_TELEMETRY: &str = "https://hub.weechatradio.com/api/v1/report";
+/// Live map (site homepage is separate at weechatradio.com).
+pub const PUBLIC_MAP: &str = "https://weechatradio.com/map.html";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -608,6 +610,13 @@ mod tests {
         std::fs::write(&path, "callsign = \"!!BAD!!\"\n").unwrap();
         let err = Config::load(&path).unwrap_err();
         assert!(err.to_string().contains("callsign") || err.to_string().contains("protocol"));
+    }
+
+    #[test]
+    fn public_map_is_not_the_site_homepage() {
+        assert!(PUBLIC_MAP.ends_with("/map.html"));
+        assert_ne!(PUBLIC_MAP, "https://weechatradio.com");
+        assert_ne!(PUBLIC_MAP, "https://weechatradio.com/");
     }
 
     #[test]
