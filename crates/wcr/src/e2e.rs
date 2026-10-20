@@ -193,14 +193,14 @@ async fn shutdown_e2e(
 }
 
 const MAP_PORT: u16 = 5173;
-const MAP_INDEX: &str = include_str!(concat!(env!("OUT_DIR"), "/index.html"));
+const MAP_PAGE: &str = include_str!(concat!(env!("OUT_DIR"), "/map.html"));
 const MAP_APP: &str = include_str!(concat!(env!("OUT_DIR"), "/app.js"));
 const MAP_SHELL: &str = include_str!(concat!(env!("OUT_DIR"), "/shell.js"));
 const MAP_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/styles.css"));
 
 async fn start_map_page(api: &str) {
     let url = match serve_map().await {
-        Ok(port) => format!("http://127.0.0.1:{port}/?api={api}"),
+        Ok(port) => format!("http://127.0.0.1:{port}/map.html?api={api}"),
         Err(e) => {
             println!(
                 "  {}",
@@ -208,7 +208,7 @@ async fn start_map_page(api: &str) {
                     "map server skipped ({e}). From repo/web: python -m http.server {MAP_PORT}"
                 ))
             );
-            format!("http://127.0.0.1:{MAP_PORT}/?api={api}")
+            format!("http://127.0.0.1:{MAP_PORT}/map.html?api={api}")
         }
     };
     println!("  map  {url}");
@@ -246,8 +246,8 @@ fn map_router() -> axum::Router {
     use axum::response::Html;
     use axum::routing::get;
     axum::Router::new()
-        .route("/", get(|| async { Html(MAP_INDEX) }))
-        .route("/index.html", get(|| async { Html(MAP_INDEX) }))
+        .route("/", get(|| async { Html(MAP_PAGE) }))
+        .route("/map.html", get(|| async { Html(MAP_PAGE) }))
         .route(
             "/app.js",
             get(|| async {
@@ -301,7 +301,7 @@ fn find_web_dir() -> Option<std::path::PathBuf> {
         }
     }
     cands.push(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../web"));
-    cands.into_iter().find(|p| p.join("index.html").is_file())
+    cands.into_iter().find(|p| p.join("map.html").is_file())
 }
 
 fn open_browser(url: &str) {
@@ -1167,12 +1167,12 @@ mod tests {
     #[test]
     fn finds_repo_web_dir() {
         let web = find_web_dir().expect("web/");
-        assert!(web.join("index.html").is_file());
+        assert!(web.join("map.html").is_file());
         assert!(web.join("app.js").is_file());
     }
 
     #[tokio::test]
-    async fn map_router_serves_index_and_app() {
+    async fn map_router_serves_map_and_app() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let app = map_router();
