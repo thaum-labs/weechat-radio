@@ -148,14 +148,12 @@
       btn.type = "button";
       btn.className = "copy-btn";
       btn.textContent = "copy";
-      btn.addEventListener("click", async () => {
-        try {
-          await navigator.clipboard.writeText(pre.textContent);
-          btn.textContent = "copied";
+      btn.addEventListener("click", () => {
+        const copy = global.WCR.copyText || ((t) => Promise.resolve("fail"));
+        copy(pre.textContent).then((state) => {
+          btn.textContent = state;
           setTimeout(() => { btn.textContent = "copy"; }, 1200);
-        } catch (_) {
-          btn.textContent = "fail";
-        }
+        });
       });
       wrap.appendChild(btn);
     });
