@@ -92,6 +92,8 @@ struct Inner {
     /// msgid → (client that sent it, IRC target of that send).
     outbound: HashMap<String, (u64, String)>,
     outbound_order: VecDeque<String>,
+    /// msgid → furthest delivery state shown for it. Marks never move back.
+    shown: HashMap<String, String>,
 }
 
 const OFFERED_CAPS: &[&str] = &[
@@ -114,6 +116,7 @@ impl IrcServer {
                 origin_target: String::new(),
                 outbound: HashMap::new(),
                 outbound_order: VecDeque::new(),
+                shown: HashMap::new(),
             })),
             events,
         }
@@ -274,16 +277,23 @@ impl IrcServer {
                             continue;
                         }
                         let ch = ch.to_string();
-                        {
+                        let fresh = {
                             let mut g = self.inner.lock();
-                            if let Some(c) = g.clients.get_mut(&id) {
+                            g.clients.get_mut(&id).is_some_and(|c| {
+                                let fresh = !c.channels.iter().any(|j| j.eq_ignore_ascii_case(&ch));
                                 c.channels.insert(ch.clone());
-                            }
-                        }
+                                fresh
+                            })
+                        };
                         let nick = self.nick(id);
-                        self.send_raw(id, &format!(":{nick} JOIN {ch}")).await;
-                        self.send_numeric(id, 332, &format!("{ch} :WeeChat Radio"))
-                            .await;
+                        // #bulletin is joined at welcome. A client's own JOIN
+                        // of it, or any repeat JOIN, gets no second echo. It
+                        // still asks the node for history.
+                        if fresh {
+                            self.send_raw(id, &format!(":{nick} JOIN {ch}")).await;
+                            self.send_numeric(id, 332, &format!("{ch} :WeeChat Radio"))
+                                .await;
+                        }
                         let _ = self
                             .events
                             .send(IrcEvent {
@@ -657,6 +667,9 @@ impl IrcServer {
         let Some((id, target)) = self.bind_delivery(msgid) else {
             return;
         };
+        if !self.take_mark(msgid, state) {
+            return;
+        }
         let mut tags = format!("msgid={msgid};+radio/delivery={state};+radio/msgid={msgid}");
         if let Some(n) = tries.filter(|n| *n > 0) {
             tags.push_str(&format!(";+radio/tries={n}"));
@@ -679,6 +692,22 @@ impl IrcServer {
             };
             self.send_raw(id, &notice).await;
         }
+    }
+
+    /// True when `state` is the same mark or further along than the one
+    /// already shown. A late `[tx]` after `[gw]` is dropped.
+    fn take_mark(&self, msgid: &str, state: &str) -> bool {
+        let mut g = self.inner.lock();
+        if let Some(prev) = g.shown.get(msgid) {
+            if mark_rank(state) < mark_rank(prev) {
+                return false;
+            }
+        }
+        // A retry is a try count, not a mark of its own.
+        if !state.starts_with("retry") {
+            g.shown.insert(msgid.to_string(), state.to_string());
+        }
+        true
     }
 
     /// Scope a delivery mark to the client that sent `msgid`.
@@ -705,6 +734,7 @@ impl IrcServer {
             while g.outbound_order.len() > DELIVERED_MSGID_CAP {
                 if let Some(old) = g.outbound_order.pop_front() {
                     g.outbound.remove(&old);
+                    g.shown.remove(&old);
                 }
             }
             return Some((id, target));
@@ -733,6 +763,12 @@ impl IrcServer {
                 .await;
         }
         for (time, from, target, text, msgid, delivery, via, tries) in lines {
+            // [gw] is display only, so the store still says sent. Replay the
+            // furthest mark this station showed, not the stored one.
+            let delivery = match self.inner.lock().shown.get(&msgid) {
+                Some(shown) if mark_rank(shown) > mark_rank(&delivery) => shown.clone(),
+                _ => delivery,
+            };
             let mut tags =
                 format!("server-time={time};batch=hist;msgid={msgid};+radio/delivery={delivery}");
             if let Some(v) = crate::store::normalize_via(Some(via.as_str())) {
@@ -925,6 +961,19 @@ fn normalize_irc_channel(target: &str) -> String {
         return target.to_ascii_lowercase();
     }
     target.to_string()
+}
+
+/// Order of delivery marks: [..] < [tx] < [rl] < [gw] < [no] < [ok] < [all].
+/// A retry only updates the try count of a [tx] or [rl] line, so it ranks
+/// with [rl]. "waiting on acks" sits with [ok].
+fn mark_rank(state: &str) -> u8 {
+    if state.starts_with("retry") {
+        return crate::store::Delivery::Relayed.rank();
+    }
+    if state == "waiting" {
+        return crate::store::Delivery::Delivered.rank();
+    }
+    crate::store::Delivery::parse(state).rank()
 }
 
 fn client_receives_target(c: &Client, target: &str, from: &str) -> bool {

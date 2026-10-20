@@ -201,4 +201,32 @@ mod tests {
         assert!(body.contains("internet-radio"));
         assert!(body.contains("Bucharest reads the line from the hub"));
     }
+
+    /// Numbered steps in every guide run 1, 2, 3 with no repeats or gaps.
+    /// A heading or a step 1 starts a new list.
+    #[test]
+    fn guide_steps_are_numbered_in_order() {
+        for (name, _, body) in topics() {
+            let mut next = 1u32;
+            for line in body.lines() {
+                if line.starts_with('#') {
+                    next = 1;
+                    continue;
+                }
+                let Some((num, _)) = line.split_once(". ") else {
+                    continue;
+                };
+                let Ok(n) = num.parse::<u32>() else {
+                    continue;
+                };
+                if n != 1 {
+                    assert_eq!(
+                        n, next,
+                        "wcr help {name}: step {n} where {next} was due: {line}"
+                    );
+                }
+                next = n + 1;
+            }
+        }
+    }
 }
