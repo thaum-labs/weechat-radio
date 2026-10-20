@@ -49,6 +49,14 @@ impl From<dialoguer::Error> for Error {
 }
 
 impl Error {
+    /// The message alone, without the `config:` or `network:` tag, for text a user reads.
+    pub fn plain(&self) -> String {
+        match self {
+            Self::Msg(m) | Self::Config(m) | Self::Net(m) => m.clone(),
+            other => other.to_string(),
+        }
+    }
+
     pub fn protocol(msg: impl Into<String>) -> Self {
         Self::Protocol(msg.into())
     }
