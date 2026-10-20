@@ -1449,3 +1449,76 @@ async fn internet_marks_never_move_back_and_join_echoes_once() {
     );
     node.abort();
 }
+
+/// Internet mode, QA v0.1.102: a #bulletin line the hub took and nobody
+/// ACKed came back as [no] after a station restart. [gw] is stored now, so
+/// the outbound age limit leaves it alone and the restarted station replays
+/// it as [gw].
+#[tokio::test]
+async fn internet_gateway_mark_survives_a_restart() {
+    let _suite = suite_lock().lock().await;
+    let hub_port = start_hub().await;
+    let hub_ws = format!("ws://127.0.0.1:{hub_port}/ws");
+    let home = scratch("gw-restart");
+    let call = "~QAGWR1";
+    let ports = reserve_ports(4).await;
+    let cfg = internet_cfg(call, &home, &hub_ws, ports[0], ports[1]);
+    let first = tokio::spawn(async move { wcr::node::run_node(cfg, false).await });
+    wait_tcp(ports[0], 20).await;
+    wait_hub_ok(&[ports[1]]).await;
+
+    let mut c = TcpStream::connect(format!("127.0.0.1:{}", ports[0]))
+        .await
+        .unwrap();
+    irc_register(&mut c, call).await;
+    c.write_all(b"JOIN #bulletin\r\nPRIVMSG #bulletin :gw-restart-check\r\n")
+        .await
+        .unwrap();
+    let mut reader = tokio::io::BufReader::new(&mut c);
+    let marks = read_lines_until(&mut reader, 20, |lines| {
+        lines.iter().any(|l| l.contains("+radio/delivery=gateway"))
+    })
+    .await;
+    let msgid = marks
+        .iter()
+        .find(|l| l.contains("+radio/delivery=gateway"))
+        .and_then(|l| l.split("+radio/msgid=").nth(1))
+        .map(|s| s.split([';', ' ']).next().unwrap_or("").to_string())
+        .unwrap_or_else(|| panic!("no [gw] mark: {marks:?}"));
+    first.abort();
+    drop(c);
+
+    // Same store, fresh ports. An age limit of 1 s would have turned a
+    // stored [tx] into [no] by now.
+    let mut cfg = internet_cfg(call, &home, &hub_ws, ports[2], ports[3]);
+    cfg.rf.outbound_max_age_secs = 1;
+    let second = tokio::spawn(async move { wcr::node::run_node(cfg, false).await });
+    wait_tcp(ports[2], 20).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let mut c = TcpStream::connect(format!("127.0.0.1:{}", ports[2]))
+        .await
+        .unwrap();
+    irc_register(&mut c, call).await;
+    c.write_all(b"JOIN #bulletin\r\n").await.unwrap();
+    let mut reader = tokio::io::BufReader::new(&mut c);
+    let replay = read_lines_until(&mut reader, 10, |lines| {
+        lines
+            .iter()
+            .any(|l| l.contains(&format!("msgid={msgid}")) && l.contains(" PRIVMSG "))
+    })
+    .await;
+    let line = replay
+        .iter()
+        .find(|l| l.contains(&format!("msgid={msgid}")) && l.contains(" PRIVMSG "))
+        .unwrap_or_else(|| panic!("no replay of {msgid}: {replay:?}"));
+    assert!(
+        line.contains("+radio/delivery=gateway"),
+        "restart turned [gw] into: {line}"
+    );
+    assert!(
+        !replay.iter().any(|l| l.contains("+radio/delivery=failed")),
+        "a [no] was painted after restart: {replay:?}"
+    );
+    second.abort();
+}

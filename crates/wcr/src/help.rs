@@ -174,6 +174,17 @@ mod tests {
     }
 
     #[test]
+    fn windows_install_needs_no_administrator() {
+        let body = render(Some("windows"));
+        let step1 = body.split("\n2. ").next().unwrap_or("");
+        assert!(step1.contains("install.ps1"), "{step1}");
+        assert!(!step1.to_lowercase().contains("administrator"), "{step1}");
+        // Admin is only for the service.
+        let rest = &body[step1.len()..];
+        assert!(rest.contains("Administrator") && rest.contains("wcr service install"));
+    }
+
+    #[test]
     fn e2e_aliases_load_the_guide() {
         let body = render(Some("e2e"));
         assert!(body.contains("wcr e2e lan"));

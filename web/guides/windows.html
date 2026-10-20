@@ -54,14 +54,14 @@
         <h2>What you need</h2>
         <ul>
           <li>Windows 10 or 11</li>
-          <li>PowerShell, opened with <strong>Run as administrator</strong> (Start → type <code>PowerShell</code> → right-click → Run as administrator)</li>
+          <li>PowerShell, a normal window (Start → type <code>PowerShell</code> → open it). The install is for your user only, so it does not need administrator.</li>
         </ul>
       </div>
 
       <h2>Steps</h2>
       <ol class="steps">
         <li>
-          <p>In that Administrator PowerShell, paste this and press Enter:</p>
+          <p>In that PowerShell window, paste this and press Enter:</p>
           <pre>irm https://weechatradio.com/install.ps1 | iex</pre>
           <p>Leave the window open. The installer downloads the program, then WeeChat through Cygwin. It prints <code>waiting for WeeChat...</code> and can sit for several minutes, sometimes toward 20. It is finished when it prints the next step. That adds WeeChat Radio to your user PATH. This window does not see it yet, so open a new PowerShell window before <code>wcr setup</code>. Or download a zip from <a href="https://github.com/thaum-labs/weechat-radio/releases">GitHub Releases</a> and put <code>wcr.exe</code> somewhere on your PATH.</p>
         </li>

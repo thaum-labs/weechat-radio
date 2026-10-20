@@ -16,8 +16,9 @@ pub enum Delivery {
     Queued,
     Sent,
     Relayed,
-    /// A gateway accepted the frame onto the hub. Display rank only; the
-    /// retry rows stay `sent` or `relayed` until an ACK.
+    /// A gateway accepted the frame onto the hub. Stored, so a restart still
+    /// shows [gw]. Retries go on until an ACK; running out of them, or the
+    /// outbound age limit, leaves it at [gw] rather than [no].
     Gateway,
     /// Retries are used up. Terminal, except a real ACK may move it to
     /// [`Delivery::Delivered`].
@@ -434,10 +435,13 @@ impl Store {
         Ok(n)
     }
 
+    /// `Sent` never replaces `gateway`: in internet mode the hub takes the
+    /// line before the send returns, and the late `sent` would walk [gw] back.
     pub fn set_delivery(&self, id: &MsgId, d: Delivery) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE messages SET delivery = ?1 WHERE msg_id = ?2",
+            "UPDATE messages SET delivery = ?1
+             WHERE msg_id = ?2 AND NOT (?1 = 'sent' AND delivery = 'gateway')",
             params![d.as_str(), id.hex()],
         )?;
         Ok(())
@@ -600,7 +604,7 @@ impl Store {
              WHERE hold_until > 0 AND suppressed = 0
                AND (
                     (upper(origin) != upper(?1) AND hops_left > 0)
-                 OR (upper(origin) = upper(?1) AND delivery IN ('sent','relayed','delivered') AND retries <= ?2)
+                 OR (upper(origin) = upper(?1) AND delivery IN ('sent','relayed','gateway','delivered') AND retries <= ?2)
                )
              ORDER BY hold_until ASC
              LIMIT 1",
@@ -730,7 +734,7 @@ impl Store {
             "SELECT msg_id, kind, origin, dest, flags, hops_left, ts, seq, body, signature, rx_time, delivery, retries
              FROM messages
              WHERE origin = ?1
-               AND delivery IN ('sent', 'relayed', 'delivered')
+               AND delivery IN ('sent', 'relayed', 'gateway', 'delivered')
                AND hold_until > 0 AND hold_until <= ?2
                AND retries < ?3",
         )?;
@@ -768,7 +772,7 @@ impl Store {
             "SELECT msg_id, kind, origin, dest, flags, hops_left, ts, seq, body, signature, rx_time, delivery
              FROM messages
              WHERE upper(origin) = upper(?1)
-               AND delivery IN ('sent', 'relayed', 'delivered')
+               AND delivery IN ('sent', 'relayed', 'gateway', 'delivered')
                AND hold_until > 0 AND hold_until <= ?2
                AND retries >= ?3",
         )?;
@@ -804,7 +808,7 @@ impl Store {
     fn fail_outbound(
         &self,
         extra_and: &str,
-        query_params: impl rusqlite::Params,
+        query_params: impl rusqlite::Params + Copy,
     ) -> Result<Vec<MsgId>> {
         let conn = self.conn.lock().unwrap();
         let sql = format!(
@@ -824,6 +828,12 @@ impl Store {
                 params![id],
             )?;
         }
+        // The hub took these: they stop retrying but stay [gw], not [no].
+        let sql = format!(
+            "UPDATE messages SET hold_until = 0
+             WHERE upper(origin) = upper(?1) AND delivery = 'gateway' {extra_and}"
+        );
+        conn.execute(&sql, query_params)?;
         Ok(ids.iter().filter_map(|hex| MsgId::parse_hex(hex)).collect())
     }
 
@@ -1818,6 +1828,41 @@ mod tests {
         let own = s.own_ack_for(&msg.msg_id, "2e0ccc").unwrap().unwrap();
         assert_eq!(own.env.msg_id, ours.msg_id);
         assert!(s.own_ack_for(&other.msg_id, "2E0CCC").unwrap().is_none());
+    }
+
+    #[test]
+    fn a_gateway_line_stays_gw_when_it_expires_or_is_flushed() {
+        let s = Store::open_memory().unwrap();
+        let env = Envelope::new_msg(
+            Callsign::parse("G4ABC").unwrap(),
+            Callsign::from_raw("BULLETIN"),
+            1,
+            b"hub took it".to_vec(),
+            3,
+            Flags::new(),
+        )
+        .unwrap();
+        s.insert(&env, Delivery::Queued).unwrap();
+        assert!(s.advance_delivery(&env.msg_id, Delivery::Gateway).unwrap());
+        // The late send-side update must not walk it back to [tx].
+        s.set_delivery(&env.msg_id, Delivery::Sent).unwrap();
+        assert_eq!(s.delivery_of(&env.msg_id).unwrap(), Some(Delivery::Gateway));
+        s.set_hold(&env.msg_id, 1, 3).unwrap();
+        let now = crate::proto::now_ts();
+        assert_eq!(s.retry_due(now, "G4ABC", 3).unwrap().len(), 1);
+        assert!(s
+            .expire_outbound("G4ABC", now + 7200, 3600)
+            .unwrap()
+            .is_empty());
+        assert_eq!(s.delivery_of(&env.msg_id).unwrap(), Some(Delivery::Gateway));
+        assert!(
+            s.retry_due(now, "G4ABC", 3).unwrap().is_empty(),
+            "retries stop"
+        );
+        s.set_hold(&env.msg_id, 1, 3).unwrap();
+        assert!(s.flush_outbound("G4ABC").unwrap().is_empty());
+        assert_eq!(s.delivery_of(&env.msg_id).unwrap(), Some(Delivery::Gateway));
+        assert!(s.retry_due(now, "G4ABC", 3).unwrap().is_empty());
     }
 
     #[test]
