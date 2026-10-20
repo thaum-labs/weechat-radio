@@ -1356,3 +1356,96 @@ async fn radio_plus_closed_group_reaches_rf_member_and_all() {
         n.abort();
     }
 }
+
+/// Internet mode: the hub takes the line before the send returns, so [gw]
+/// comes first. The late [tx] must not follow it, on a plain client or a
+/// tagged one, and a fresh client's history replay must show [gw] too.
+/// The welcome joins #bulletin, so a client's own JOIN gets no second echo.
+#[tokio::test]
+async fn internet_marks_never_move_back_and_join_echoes_once() {
+    let _suite = suite_lock().lock().await;
+    let hub_port = start_hub().await;
+    let hub_ws = format!("ws://127.0.0.1:{hub_port}/ws");
+    let home = scratch("gw-order");
+    let ports = reserve_ports(2).await;
+    let (irc, status) = (ports[0], ports[1]);
+    let call = "~QAGWO1";
+    let cfg = internet_cfg(call, &home, &hub_ws, irc, status);
+    let node = tokio::spawn(async move { wcr::node::run_node(cfg, false).await });
+    wait_tcp(irc, 20).await;
+    wait_hub_ok(&[status]).await;
+
+    // Plain client, as in the QA log: marks come as NOTICEs.
+    let mut plain = TcpStream::connect(format!("127.0.0.1:{irc}"))
+        .await
+        .unwrap();
+    plain
+        .write_all(
+            format!("NICK {call}\r\nUSER {call} 0 * :plain\r\nJOIN #bulletin\r\n").as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut reader = tokio::io::BufReader::new(&mut plain);
+    let joined = read_lines_until(&mut reader, 3, |_| false).await;
+    let echoes = joined
+        .iter()
+        .filter(|l| **l == format!(":{call} JOIN #bulletin"))
+        .count();
+    assert_eq!(
+        echoes, 1,
+        "JOIN #bulletin echoed {echoes} times: {joined:?}"
+    );
+
+    reader
+        .get_mut()
+        .write_all(b"PRIVMSG #bulletin :gw-order-check\r\n")
+        .await
+        .unwrap();
+    let mut marks = read_lines_until(&mut reader, 20, |lines| {
+        lines.iter().any(|l| l.contains(":[gateway] "))
+    })
+    .await;
+    // The late [sent] came right after [gateway] in the QA log.
+    marks.extend(read_lines_until(&mut reader, 3, |_| false).await);
+    let order: Vec<&str> = marks
+        .iter()
+        .filter(|l| l.contains(" NOTICE ") && l.contains(" :["))
+        .map(|l| l.rsplit_once(" :[").map(|(_, m)| m).unwrap_or(""))
+        .collect();
+    let gw = order
+        .iter()
+        .position(|m| m.starts_with("gateway]"))
+        .unwrap_or_else(|| panic!("no [gateway] mark: {marks:?}"));
+    assert!(
+        !order[gw..]
+            .iter()
+            .any(|m| m.starts_with("sent") || m.starts_with("retry")),
+        "a mark moved back after [gateway]: {order:?}"
+    );
+    let msgid = order[gw]
+        .split_once("] ")
+        .map(|(_, id)| id.trim().to_string())
+        .unwrap();
+
+    // A second client replays #bulletin from the store, which still says
+    // sent. The replayed line must carry [gw], not [tx].
+    let mut tagged = TcpStream::connect(format!("127.0.0.1:{irc}"))
+        .await
+        .unwrap();
+    irc_register(&mut tagged, call).await;
+    tagged.write_all(b"JOIN #bulletin\r\n").await.unwrap();
+    let mut treader = tokio::io::BufReader::new(&mut tagged);
+    let replay = read_lines_until(&mut treader, 10, |lines| {
+        lines.iter().any(|l| l.contains(&format!("msgid={msgid}")))
+    })
+    .await;
+    let line = replay
+        .iter()
+        .find(|l| l.contains(&format!("msgid={msgid}")) && l.contains(" PRIVMSG "))
+        .unwrap_or_else(|| panic!("no replay of {msgid}: {replay:?}"));
+    assert!(
+        line.contains("+radio/delivery=gateway"),
+        "replay walked [gw] back: {line}"
+    );
+    node.abort();
+}

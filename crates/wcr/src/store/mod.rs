@@ -91,7 +91,7 @@ impl Delivery {
         matches!(self, Self::Delivered | Self::All)
     }
 
-    fn rank(self) -> u8 {
+    pub fn rank(self) -> u8 {
         match self {
             Self::Queued => 0,
             Self::Sent => 1,
