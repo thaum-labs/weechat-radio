@@ -13,7 +13,7 @@ On the web (with pictures): https://weechatradio.com/guides/start.html
 
 1. Open a command window.
 
-   - Windows: Start, type `PowerShell`, press Enter
+   - Windows: Start, type `PowerShell`, right-click **Windows PowerShell**, choose **Run as administrator**
    - Mac: Command + Space, type `Terminal`, press Enter
    - Linux: open Terminal from the applications menu
 
@@ -24,10 +24,12 @@ On the web (with pictures): https://weechatradio.com/guides/start.html
    curl -fsSL https://weechatradio.com/install.sh | sh
    ```
 
-   **Windows (PowerShell)**
+   **Windows (Administrator PowerShell)**
    ```
    irm https://weechatradio.com/install.ps1 | iex
    ```
+
+   Leave the window open until it prints the next step. On Windows, WeeChat downloads after the program and the window can sit for several minutes. Fixes: https://weechatradio.com/guides/troubleshooting.html
 
 3. Run setup first:
 

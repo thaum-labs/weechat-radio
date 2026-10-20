@@ -54,16 +54,16 @@
         <h2>What you need</h2>
         <ul>
           <li>Windows 10 or 11</li>
-          <li>PowerShell (comes with Windows: Start → type <code>PowerShell</code> → Enter)</li>
+          <li>PowerShell, opened with <strong>Run as administrator</strong> (Start → type <code>PowerShell</code> → right-click → Run as administrator)</li>
         </ul>
       </div>
 
       <h2>Steps</h2>
       <ol class="steps">
         <li>
-          <p>In PowerShell, paste this and press Enter:</p>
+          <p>In that Administrator PowerShell, paste this and press Enter:</p>
           <pre>irm https://weechatradio.com/install.ps1 | iex</pre>
-          <p>That adds WeeChat Radio to your user PATH. This window does not see it yet, so open a new PowerShell window before <code>wcr setup</code>. Before WeeChat is downloaded, the installer says what it is installing. Or download a zip from <a href="https://github.com/thaum-labs/weechat-radio/releases">GitHub Releases</a> and put <code>wcr.exe</code> somewhere on your PATH.</p>
+          <p>Leave the window open. The installer downloads the program, then WeeChat through Cygwin. It prints <code>waiting for WeeChat...</code> and can sit for several minutes, sometimes toward 20. It is finished when it prints the next step. That adds WeeChat Radio to your user PATH. This window does not see it yet, so open a new PowerShell window before <code>wcr setup</code>. Or download a zip from <a href="https://github.com/thaum-labs/weechat-radio/releases">GitHub Releases</a> and put <code>wcr.exe</code> somewhere on your PATH.</p>
         </li>
         <li>
           <p>Run setup first. It asks for your callsign, grid, and whether you have a radio:</p>
@@ -88,7 +88,7 @@
         <p><code>wcr gui</code> shows your callsign in the status bar. A message in <code>#bulletin</code> gets a <code>[tx]</code>. The <strong>email</strong> tab is next to live chat. <a href="/docs/email.html">How email leaves the station</a>.</p>
       </div>
 
-      <p class="next">Back to the <a href="/guides/start.html">5-minute start</a>, or add a <a href="/guides/radio.html">radio</a>.</p>
+      <p class="next">Back to the <a href="/guides/start.html">5-minute start</a>, add a <a href="/guides/radio.html">radio</a>, or see <a href="/guides/troubleshooting.html">troubleshooting</a> if the install stops, the clock is off, or the window never appears.</p>
     </main>
   </div>
   <script src="/copy.js?v=1"></script>
