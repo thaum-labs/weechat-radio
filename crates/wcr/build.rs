@@ -22,7 +22,7 @@ fn embed_map_assets() {
     let manifest = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let web = manifest.join("../../web");
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
-    for name in ["index.html", "app.js", "shell.js", "styles.css"] {
+    for name in ["map.html", "app.js", "shell.js", "styles.css"] {
         let src = web.join(name);
         println!("cargo:rerun-if-changed={}", src.display());
         let dst = out.join(name);

@@ -56,6 +56,6 @@ Copy the archive off the droplet (DO Spaces, `scp`, etc.). To restore, stop the 
 
 ## How you know it worked
 
-- `https://weechatradio.com` shows the map
+- `https://weechatradio.com` shows the homepage, and `/map.html` the map
 - `https://hub.weechatradio.com/healthz` prints `ok`
 - `wcr node` on a laptop connects to `wss://hub.weechatradio.com/ws`
