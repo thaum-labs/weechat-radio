@@ -158,8 +158,8 @@ async fn copy_set(
         .map_err(|s| (s, "mail starting".into()))?;
     h.set_copy(&b.address)
         .await
-        .map(|()| Json(json!({ "ok": true, "pending": true })))
-        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
+        .map(Json)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.plain()))
 }
 
 #[derive(Deserialize)]
@@ -173,7 +173,9 @@ async fn copy_confirm(
 ) -> Result<Json<Value>, StatusCode> {
     let h = handle(&slot).await?;
     let (ok, hub) = h.confirm_copy(&b.code).await.map_err(store_err)?;
-    Ok(Json(json!({ "ok": ok, "hub": hub })))
+    let call = h.cfg.lock().callsign.clone();
+    let state = h.store.copy(&call).map(|c| c.state).unwrap_or_default();
+    Ok(Json(json!({ "ok": ok, "hub": hub, "state": state })))
 }
 
 fn store_err(_: crate::error::Error) -> StatusCode {

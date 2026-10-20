@@ -113,25 +113,49 @@ pub fn callsign_from_wcr(addr: &str) -> Option<String> {
 }
 
 pub fn validate_internet_addr(addr: &str) -> Result<()> {
+    validate_addr_in(addr, "To")
+}
+
+/// The copy-to box names itself in errors, not To.
+pub fn validate_copy_addr(addr: &str) -> Result<()> {
+    validate_addr_in(addr, "Copy-to address")
+}
+
+fn validate_addr_in(addr: &str, field: &str) -> Result<()> {
     let s = addr.trim();
     if s.is_empty() {
-        return Err(Error::config("Enter an internet address in To."));
+        return Err(Error::config(format!(
+            "Enter an internet address in {field}."
+        )));
     }
     if s.contains(char::is_whitespace) {
-        return Err(Error::config("To must be a single email address."));
+        return Err(Error::config(format!(
+            "{field} must be a single email address."
+        )));
     }
     let Some((local, domain)) = s.split_once('@') else {
-        return Err(Error::config("To must look like an email address."));
+        return Err(Error::config(format!(
+            "{field} must look like an email address."
+        )));
     };
     if local.is_empty() || domain.is_empty() || !domain.contains('.') {
-        return Err(Error::config("To must look like an email address."));
+        return Err(Error::config(format!(
+            "{field} must look like an email address."
+        )));
     }
     if domain.eq_ignore_ascii_case(MAIL_DOMAIN) {
-        return Err(Error::config(
-            "Ham-to-ham stays in Live Chat. Email To is an internet address.",
-        ));
+        return Err(Error::config(if field == "To" {
+            "Ham-to-ham stays in Live Chat. Email To is an internet address.".to_string()
+        } else {
+            format!("{field} must be a personal inbox, not a {MAIL_DOMAIN} address.")
+        }));
     }
     Ok(())
+}
+
+/// The digits of a copy-to code, so `123456.` or ` 123 456 ` still match.
+pub fn copy_code_digits(code: &str) -> String {
+    code.chars().filter(|c| c.is_ascii_digit()).collect()
 }
 
 pub fn trim_body(body: &str) -> Result<String> {
