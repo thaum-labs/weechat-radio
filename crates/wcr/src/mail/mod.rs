@@ -364,6 +364,9 @@ impl MailHandle {
     }
 
     async fn copy_hub(&self, cfg: &Config, path: &str, body: Value) -> Result<Value> {
+        if !cfg.hub.enabled() {
+            return Err(Error::Msg(COPY_NO_HUB_URL.into()));
+        }
         let base = hub::http_base_from_hub(&cfg.hub.url);
         let Ok((status, text)) =
             hub::signed_post_raw(&base, path, &self.keys, &cfg.callsign, &body).await
@@ -381,6 +384,10 @@ impl MailHandle {
         Err(Error::Msg(format!("The hub refused copy-to: {why}")))
     }
 }
+
+/// An empty `[hub] url` means "no hub" everywhere else, so copy-to says so
+/// rather than guessing a hub or blaming the internet.
+pub const COPY_NO_HUB_URL: &str = "Copy-to needs the hub, and no hub address is set. Set [hub] url in config.toml (the public hub is wss://hub.weechatradio.com/ws) and try again.";
 
 /// What to say when the hub cannot be reached for copy-to.
 pub fn copy_hub_unreachable(mode: Mode) -> &'static str {
@@ -745,6 +752,13 @@ mod tests {
         let err = h.set_copy("other@example.com").await.unwrap_err().plain();
         assert!(err.starts_with("Copy-to needs the hub."), "{err}");
         assert!(err.contains("internet"), "{err}");
+        assert_eq!(copy_state(&h), store::COPY_ON);
+        assert_eq!(inbox.lock().len(), 1);
+
+        // No hub address at all: say that, not "connect to the internet".
+        h.cfg.lock().hub.url = String::new();
+        let err = h.set_copy("other@example.com").await.unwrap_err().plain();
+        assert_eq!(err, COPY_NO_HUB_URL);
         assert_eq!(copy_state(&h), store::COPY_ON);
         assert_eq!(inbox.lock().len(), 1);
     }

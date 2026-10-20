@@ -349,7 +349,20 @@ fn remove_stray_minttyrc(exe: &Path) -> bool {
 
 fn running_exe() -> Result<PathBuf> {
     let exe = std::env::current_exe()?;
-    Ok(fs::canonicalize(&exe).unwrap_or(exe))
+    Ok(fs::canonicalize(&exe).map(without_verbatim).unwrap_or(exe))
+}
+
+/// On Windows `canonicalize` returns `\\?\C:\...`. Drop that prefix so
+/// `wcr update` prints the path people know (`\\?\UNC\` becomes `\\`).
+fn without_verbatim(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy().into_owned();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) => PathBuf::from(rest),
+        None => p,
+    }
 }
 
 fn verify_sha256(manifest: &str, asset_name: &str, bytes: &[u8]) -> Result<()> {
@@ -584,6 +597,23 @@ fn unsupported_platform_msg(version: &str) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn update_prints_the_path_without_the_verbatim_prefix() {
+        let plain = |s: &str| without_verbatim(PathBuf::from(s));
+        assert_eq!(
+            plain(r"\\?\C:\Users\tobo\AppData\Local\wcr\wcr.exe"),
+            PathBuf::from(r"C:\Users\tobo\AppData\Local\wcr\wcr.exe")
+        );
+        assert_eq!(
+            plain(r"\\?\UNC\server\share\wcr.exe"),
+            PathBuf::from(r"\\server\share\wcr.exe")
+        );
+        assert_eq!(
+            plain("/home/tobo/.local/bin/wcr"),
+            PathBuf::from("/home/tobo/.local/bin/wcr")
+        );
+    }
 
     #[test]
     fn a_station_left_on_the_old_version_is_named() {
