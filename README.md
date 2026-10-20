@@ -28,7 +28,7 @@ With WeeChat Radio you can:
 1. Chat from the desktop app (`wcr gui`), a terminal UI (`wcr tui`), or WeeChat
 2. Run internet-only, radio-only, or both at once
 3. Store and forward messages so stations catch up later
-4. Appear on the public map: [weechatradio.com](https://weechatradio.com)
+4. Appear on the public map: [weechatradio.com/map.html](https://weechatradio.com/map.html)
 
 The site, desktop app, TUI, and CLI share one dark terminal shell: indigo `#7d9bff` prompts, orange accents, and the chevron-and-waves mark. The mark recolours with the live station mode (cyan / green / amber / magenta). The default UI theme is `tron`; change it with `/radio theme hacker` or `/radio theme terminal`.
 
@@ -188,7 +188,7 @@ Step-by-step: [WeeChat guide](https://weechatradio.com/guides/weechat.html)
 
 ## Helpful links
 
-- Live map + hub: [weechatradio.com](https://weechatradio.com)
+- Live map + hub: [weechatradio.com/map.html](https://weechatradio.com/map.html)
 - Changelog: [changelog](https://weechatradio.com/changelog.html)
 - 5-minute start: [guides/start](https://weechatradio.com/guides/start.html)
 - Radio setup: [guides/radio](https://weechatradio.com/guides/radio.html)
