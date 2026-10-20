@@ -1055,6 +1055,7 @@ svg.dgm .hop-run {
   position: absolute;
   top: 6px;
   right: 6px;
+  z-index: 1;
   border: 1px solid var(--line);
   background: #07070a;
   color: var(--dim);
