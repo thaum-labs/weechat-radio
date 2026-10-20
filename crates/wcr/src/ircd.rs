@@ -763,8 +763,8 @@ impl IrcServer {
                 .await;
         }
         for (time, from, target, text, msgid, delivery, via, tries) in lines {
-            // [gw] is display only, so the store still says sent. Replay the
-            // furthest mark this station showed, not the stored one.
+            // Replay the furthest of the stored mark and the one this
+            // station showed, so a late update never walks it back.
             let delivery = match self.inner.lock().shown.get(&msgid) {
                 Some(shown) if mark_rank(shown) > mark_rank(&delivery) => shown.clone(),
                 _ => delivery,

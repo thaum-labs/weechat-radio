@@ -8,11 +8,11 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="mobile-web-app-capable" content="yes" />
   <title>Troubleshooting — WeeChat Radio</title>
-  <meta name="description" content="Fixes for a first install: run PowerShell as administrator, wait out a slow download, and set the PC clock." />
+  <meta name="description" content="Fixes for a first install: retry a blocked PowerShell install, wait out a slow download, and set the PC clock." />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="WeeChat Radio" />
   <meta property="og:title" content="Troubleshooting — WeeChat Radio" />
-  <meta property="og:description" content="Fixes for a first install: run PowerShell as administrator, wait out a slow download, and set the PC clock." />
+  <meta property="og:description" content="Fixes for a first install: retry a blocked PowerShell install, wait out a slow download, and set the PC clock." />
   <meta property="og:url" content="https://weechatradio.com/guides/troubleshooting.html" />
   <meta property="og:image" content="https://weechatradio.com/og.png" />
   <meta property="og:image:width" content="1200" />
@@ -50,8 +50,8 @@
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> troubleshooting</h1>
       <p class="lead">The problems that show up on a first install, and what to do about each one.</p>
 
-      <h2 id="powershell">Run PowerShell as administrator</h2>
-      <p>On Windows, start the installer from an Administrator PowerShell. A normal window often stops with <code>running scripts is disabled on this system</code>, an access error, or a window that closes before anything is installed.</p>
+      <h2 id="powershell">If PowerShell stops the installer</h2>
+      <p>On Windows the installer runs in a normal PowerShell window and installs for your user only. If it stops with <code>running scripts is disabled on this system</code>, an access error, or a window that closes before anything is installed, try it once from an Administrator PowerShell.</p>
       <ol class="steps">
         <li>
           <p>Click Start and type <code>PowerShell</code>.</p>
@@ -90,12 +90,12 @@
       </ul>
 
       <h2 id="blocked">Windows or the Mac blocked the file</h2>
-      <p>SmartScreen or antivirus software can quarantine <code>wcr.exe</code>, <code>wcr-gui.exe</code>, or the Cygwin setup program. In Windows Security, open Protection history, choose the blocked file, and allow it. Then run the installer again from an Administrator PowerShell.</p>
+      <p>SmartScreen or antivirus software can quarantine <code>wcr.exe</code>, <code>wcr-gui.exe</code>, or the Cygwin setup program. In Windows Security, open Protection history, choose the blocked file, and allow it. Then run the installer again.</p>
       <p>On a Mac, a zip you unpacked yourself can be stopped by Gatekeeper. The install script clears that flag. If you used the zip, run:</p>
       <pre>xattr -dr com.apple.quarantine ~/.local/bin/wcr ~/.local/bin/wcr-gui ~/.local/bin/modem73</pre>
 
       <h2 id="weechat">WeeChat did not install</h2>
-      <p>Chat works without WeeChat. Open <strong>WeeChat Radio</strong> from the Start menu, or run <code>wcr gui</code>. To install the station and skip WeeChat, set this in the same Administrator PowerShell, then run the installer again:</p>
+      <p>Chat works without WeeChat. Open <strong>WeeChat Radio</strong> from the Start menu, or run <code>wcr gui</code>. To install the station and skip WeeChat, set this in the same PowerShell window, then run the installer again:</p>
       <pre>$env:WCR_SKIP_WEECHAT=1
 irm https://weechatradio.com/install.ps1 | iex</pre>
       <p>On Linux, if apt or dnf did not finish, install WeeChat from your distribution and run <code>wcr weechat --configure</code>. The <a href="/guides/weechat.html">WeeChat guide</a> is the later setup.</p>
