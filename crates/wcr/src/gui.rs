@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
@@ -590,6 +590,13 @@ struct GuiApp {
     chat: Vec<ChatLine>,
     status: Option<StatusSnapshot>,
     node: Option<Child>,
+    /// Last lines from the node process. The GUI used to discard these, so a
+    /// start that exited stayed on "station starting…".
+    node_log: Arc<Mutex<String>>,
+    node_log_done: Arc<AtomicBool>,
+    node_started: Option<Instant>,
+    station_pending: bool,
+    station_warned: bool,
     last_poll: Instant,
     irc_tx: Option<Sender<String>>,
     irc_rx: Option<Receiver<IrcEvent>>,
@@ -687,6 +694,11 @@ impl GuiApp {
             chat: Vec::new(),
             status: None,
             node: None,
+            node_log: Arc::new(Mutex::new(String::new())),
+            node_log_done: Arc::new(AtomicBool::new(true)),
+            node_started: None,
+            station_pending: false,
+            station_warned: false,
             last_poll: Instant::now() - Duration::from_secs(2),
             irc_tx: None,
             irc_rx: None,
@@ -868,9 +880,16 @@ impl GuiApp {
             return;
         }
         crate::service::stop_job();
-        match spawn_node() {
+        if let Ok(mut log) = self.node_log.lock() {
+            log.clear();
+        }
+        self.node_log_done.store(false, Ordering::SeqCst);
+        match spawn_node(self.node_log.clone(), self.node_log_done.clone()) {
             Ok(child) => {
                 self.node = Some(child);
+                self.node_started = Some(Instant::now());
+                self.station_pending = true;
+                self.station_warned = false;
                 self.chat.push(ChatLine::sys("station starting…", ""));
             }
             Err(e) => self.error = e.to_string(),
@@ -889,6 +908,9 @@ impl GuiApp {
         self.irc_rx = None;
         self.irc_joined.clear();
         self.status = None;
+        self.node_started = None;
+        self.station_pending = false;
+        self.station_warned = false;
         self.chat.push(ChatLine::sys("station stopped", ""));
         if let Some(tray) = &self.tray {
             let _ = tray.set_tooltip(Some("WeeChat Radio — station stopped"));
@@ -976,6 +998,49 @@ impl GuiApp {
                 self.hide_to_tray(ctx);
             }
         }
+    }
+
+    fn poll_node(&mut self) {
+        if self.user_stopped {
+            return;
+        }
+        let exited = self
+            .node
+            .as_mut()
+            .and_then(|child| child.try_wait().ok().flatten());
+        if exited.is_some() && !self.node_log_done.load(Ordering::SeqCst) {
+            return;
+        }
+        if let Some(status) = exited {
+            let log = self.node_log.lock().map(|g| g.clone()).unwrap_or_default();
+            let msg = station_exit_message(status.code(), &log);
+            self.node = None;
+            self.node_started = None;
+            self.station_pending = false;
+            self.error = msg.clone();
+            self.replace_station_line(&msg);
+            return;
+        }
+        if self.status.is_some() {
+            if self.station_pending {
+                self.station_pending = false;
+                self.station_warned = false;
+                self.replace_station_line("station up");
+            }
+            return;
+        }
+        let stalled = self
+            .node_started
+            .is_some_and(|t| t.elapsed() > Duration::from_secs(12));
+        if self.node.is_some() && self.station_pending && stalled && !self.station_warned {
+            self.station_warned = true;
+            self.replace_station_line("station is still starting — local status port is not open");
+        }
+    }
+
+    fn replace_station_line(&mut self, msg: &str) {
+        self.chat.retain(|l| !is_station_progress(&l.text));
+        self.chat.push(ChatLine::sys(msg, ""));
     }
 
     fn connect_chat(&mut self) {
@@ -1366,6 +1431,7 @@ impl eframe::App for GuiApp {
                         self.freq_pending = None;
                     }
                 }
+                self.poll_node();
                 if self.status.is_some() {
                     self.connect_chat();
                 }
@@ -4292,19 +4358,72 @@ impl GuiApp {
     }
 }
 
-fn spawn_node() -> Result<Child> {
+fn spawn_node(log: Arc<Mutex<String>>, done: Arc<AtomicBool>) -> Result<Child> {
     let mut cmd = node_command();
     cmd.arg("node")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    cmd.spawn().map_err(|e| Error::Msg(e.to_string()))
+    let mut child = cmd.spawn().map_err(|e| Error::Msg(e.to_string()))?;
+    if let Some(pipe) = child.stderr.take() {
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(pipe);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        let mut g = log.lock().unwrap_or_else(|e| e.into_inner());
+                        g.push_str(line.trim_end());
+                        g.push('\n');
+                        if g.len() > 4000 {
+                            let drop_n = g.len() - 4000;
+                            let cut = g
+                                .char_indices()
+                                .find(|(i, _)| *i >= drop_n)
+                                .map(|(i, _)| i)
+                                .unwrap_or(g.len());
+                            g.drain(..cut);
+                        }
+                    }
+                }
+            }
+            done.store(true, Ordering::SeqCst);
+        });
+    } else {
+        done.store(true, Ordering::SeqCst);
+    }
+    Ok(child)
+}
+
+fn is_station_progress(text: &str) -> bool {
+    text == "station starting…"
+        || text == "station up"
+        || text.starts_with("station is still starting")
+        || text.starts_with("station stopped:")
+}
+
+fn station_exit_message(code: Option<i32>, stderr: &str) -> String {
+    if let Some(line) = stderr
+        .lines()
+        .map(str::trim)
+        .rev()
+        .find(|l| l.starts_with("ERR") || l.contains("panicked at"))
+    {
+        let line = line.trim_start_matches("ERR").trim();
+        return format!("station stopped: {line}");
+    }
+    match code {
+        Some(c) => format!("station stopped (exit {c})"),
+        None => "station stopped".into(),
+    }
 }
 
 fn node_command() -> Command {
@@ -5017,5 +5136,26 @@ mod tests {
         assert!(v.extreme_bg_color.r() < 40);
         assert!(v.widgets.inactive.bg_fill.r() < 40);
         assert!(v.widgets.open.bg_fill.r() < 40);
+    }
+
+    #[test]
+    fn station_exit_reports_the_node_error() {
+        assert_eq!(
+            station_exit_message(Some(1), ""),
+            "station stopped (exit 1)"
+        );
+        assert_eq!(station_exit_message(None, ""), "station stopped");
+        let log = "INFO status HTTP on 127.0.0.1:8074\nERR IRC port 127.0.0.1:6667 is already in use. Stop the other wcr, or set irc.bind in wcr.toml.\n";
+        assert_eq!(
+            station_exit_message(Some(1), log),
+            "station stopped: IRC port 127.0.0.1:6667 is already in use. Stop the other wcr, or set irc.bind in wcr.toml."
+        );
+        assert_eq!(
+            station_exit_message(
+                Some(101),
+                "thread 'main' panicked at src/node.rs:1:1:\nboom\n"
+            ),
+            "station stopped: thread 'main' panicked at src/node.rs:1:1:"
+        );
     }
 }
