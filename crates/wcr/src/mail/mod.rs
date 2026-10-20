@@ -32,8 +32,9 @@ use tokio::sync::{broadcast, mpsc};
 
 pub use api::{router, MailSlot};
 pub use proto::{
-    callsign_from_wcr, looks_like_mail, pull_token, trim_body, try_decode, validate_internet_addr,
-    wcr_address, Incoming, MAIL_DOMAIN, WCR_COPY_HEADER,
+    callsign_from_wcr, copy_code_digits, looks_like_mail, pull_token, trim_body, try_decode,
+    validate_copy_addr, validate_internet_addr, wcr_address, Incoming, MAIL_DOMAIN,
+    WCR_COPY_HEADER,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -311,48 +312,82 @@ impl MailHandle {
         Ok(())
     }
 
-    pub async fn set_copy(&self, address: &str) -> Result<()> {
-        proto::validate_internet_addr(address)?;
+    /// Saves copy-to on the hub first, then here, so the two never disagree.
+    /// An empty address turns copy-to off. This is one signed HTTPS call and
+    /// never RF, so Radio+ makes it over this computer's internet.
+    pub async fn set_copy(&self, address: &str) -> Result<Value> {
         let cfg = self.cfg.lock().clone();
-        if !self.snap.lock().hub_ok {
-            return Err(Error::Net("Copy-to needs the hub.".into()));
+        let address = address.trim();
+        if address.is_empty() {
+            self.copy_hub(
+                &cfg,
+                "/api/v1/mail/copy",
+                json!({ "address": "", "code": "" }),
+            )
+            .await?;
+            self.store.clear_copy(&cfg.callsign)?;
+            return Ok(json!({ "ok": true, "state": store::COPY_OFF }));
         }
+        proto::validate_copy_addr(address).map_err(|e| Error::Msg(e.plain()))?;
         let code = format!("{:06}", rand::random::<u32>() % 1_000_000);
-        self.store
-            .set_copy_pending(&cfg.callsign, address.trim(), &code)?;
-        let base = hub::http_base_from_hub(&cfg.hub.url);
-        hub::signed_post(
-            &base,
+        self.copy_hub(
+            &cfg,
             "/api/v1/mail/copy",
-            &self.keys,
-            &cfg.callsign,
-            &json!({ "address": address.trim(), "code": code }),
+            json!({ "address": address, "code": code }),
         )
         .await?;
-        Ok(())
+        self.store.set_copy_pending(&cfg.callsign, address, &code)?;
+        Ok(json!({ "ok": true, "pending": true, "state": store::COPY_CODE_SENT }))
     }
 
-    /// `(code_matched, hub_agreed)`. The hub copies mail that arrives, so a
-    /// local-only confirm leaves copy-to half on.
+    /// `(code_matched, hub_agreed)`. The hub copies mail that arrives, so the
+    /// code is used up here only once the hub has taken it. Until then it is
+    /// kept and the state is `hub not confirmed`, so confirm can be pressed again.
     pub async fn confirm_copy(&self, code: &str) -> Result<(bool, bool)> {
         let cfg = self.cfg.lock().clone();
-        let code = code.trim();
-        if !self.store.confirm_copy(&cfg.callsign, code)? {
+        let code = proto::copy_code_digits(code);
+        if code.is_empty() || !self.store.copy_code_matches(&cfg.callsign, &code)? {
             return Ok((false, false));
         }
-        let base = hub::http_base_from_hub(&cfg.hub.url);
-        let hub_ok = hub::signed_post(
-            &base,
-            "/api/v1/mail/copy/confirm",
-            &self.keys,
-            &cfg.callsign,
-            &json!({ "code": code }),
-        )
-        .await
-        .ok()
-        .and_then(|v| v.get("ok").and_then(|x| x.as_bool()))
-        .unwrap_or(false);
+        let hub_ok = self
+            .copy_hub(&cfg, "/api/v1/mail/copy/confirm", json!({ "code": code }))
+            .await
+            .ok()
+            .and_then(|v| v.get("ok").and_then(|x| x.as_bool()))
+            .unwrap_or(false);
+        if hub_ok {
+            self.store.confirm_copy(&cfg.callsign, &code)?;
+        } else {
+            self.store.mark_copy_hub_wait(&cfg.callsign)?;
+        }
         Ok((true, hub_ok))
+    }
+
+    async fn copy_hub(&self, cfg: &Config, path: &str, body: Value) -> Result<Value> {
+        let base = hub::http_base_from_hub(&cfg.hub.url);
+        let Ok((status, text)) =
+            hub::signed_post_raw(&base, path, &self.keys, &cfg.callsign, &body).await
+        else {
+            return Err(Error::Msg(copy_hub_unreachable(cfg.mode).into()));
+        };
+        let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+        if (200..300).contains(&status) {
+            return Ok(v);
+        }
+        let why = v
+            .get("error")
+            .and_then(|e| e.as_str())
+            .unwrap_or("no reason given");
+        Err(Error::Msg(format!("The hub refused copy-to: {why}")))
+    }
+}
+
+/// What to say when the hub cannot be reached for copy-to.
+pub fn copy_hub_unreachable(mode: Mode) -> &'static str {
+    if mode.uses_internet() {
+        "Copy-to needs the hub. The hub did not answer; try again when it is up."
+    } else {
+        "Copy-to needs the hub. Radio+ reaches it over this computer's internet for this one step, and it did not answer. Connect to the internet and try again."
     }
 }
 
@@ -592,6 +627,156 @@ mod tests {
         let live = store.copy("M7TJF").expect("copy");
         assert!(live.confirmed && live.enabled);
         assert_eq!(live.address, "tj@example.com");
+    }
+
+    /// The real hub's copy-to routes and store. Only the code email is stood
+    /// in for: its code lands in `inbox` instead of going through Resend.
+    async fn copy_hub() -> (
+        String,
+        crate::net::hub_server::HubState,
+        Arc<Mutex<Vec<String>>>,
+    ) {
+        use crate::net::hub_mail::{post_copy, post_copy_confirm};
+        use axum::body::Bytes;
+        use axum::extract::State;
+        use axum::http::HeaderMap;
+        use axum::response::IntoResponse;
+        let st = crate::net::hub_server::test_hub_state();
+        let inbox = Arc::new(Mutex::new(Vec::<String>::new()));
+        let mailbox = inbox.clone();
+        let send_code = move |State(st): State<crate::net::hub_server::HubState>,
+                              headers: HeaderMap,
+                              body: Bytes| {
+            let mailbox = mailbox.clone();
+            async move {
+                let v: Value = serde_json::from_slice(&body).unwrap();
+                let address = v["address"].as_str().unwrap_or("").to_string();
+                if address.is_empty() {
+                    return post_copy(State(st), headers, body).await.into_response();
+                }
+                let call = headers["x-wcr-callsign"].to_str().unwrap().to_string();
+                let code = v["code"].as_str().unwrap().to_string();
+                st.mail.set_pending(&call, &address, &code).unwrap();
+                mailbox.lock().push(code);
+                axum::Json(json!({ "ok": true })).into_response()
+            }
+        };
+        let app = axum::Router::new()
+            .route("/api/v1/mail/copy", axum::routing::post(send_code))
+            .route(
+                "/api/v1/mail/copy/confirm",
+                axum::routing::post(post_copy_confirm),
+            )
+            .with_state(st.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (url, st, inbox)
+    }
+
+    /// Nothing listens here, so the hub is unreachable.
+    const HUB_DOWN: &str = "http://127.0.0.1:1";
+
+    fn copy_station(mode: Mode, hub_url: &str) -> MailHandle {
+        let mut cfg = Config {
+            callsign: "M7TJF".into(),
+            mode,
+            ..Config::default()
+        };
+        cfg.hub.url = hub_url.into();
+        let (cmd, _rx) = mpsc::channel(4);
+        MailHandle {
+            store: Arc::new(store::MailStore::open_memory().unwrap()),
+            cmd,
+            keying: Arc::new(AtomicBool::new(false)),
+            cfg: Arc::new(Mutex::new(cfg)),
+            snap: crate::status::new_shared(),
+            keys: IdentityKeys::generate(),
+        }
+    }
+
+    fn copy_state(h: &MailHandle) -> String {
+        h.store.copy("M7TJF").unwrap().state
+    }
+
+    #[tokio::test]
+    async fn a_confirm_the_hub_missed_keeps_the_code_for_a_retry() {
+        let (hub_up, hub, inbox) = copy_hub().await;
+        let h = copy_station(Mode::InternetRadio, &hub_up);
+        h.set_copy("tj@example.com").await.expect("save");
+        assert_eq!(copy_state(&h), store::COPY_CODE_SENT);
+        let code = inbox.lock()[0].clone();
+
+        // Hub down: the code matches here, but nothing is used up.
+        h.cfg.lock().hub.url = HUB_DOWN.into();
+        assert_eq!(h.confirm_copy(&code).await.unwrap(), (true, false));
+        let local = h.store.copy("M7TJF").unwrap();
+        assert_eq!(local.state, store::COPY_HUB_WAIT);
+        assert!(!local.confirmed && !local.enabled);
+        assert_eq!(hub.mail.copy_to("M7TJF"), None);
+        assert_eq!(h.confirm_copy("000000").await.unwrap(), (false, false));
+
+        // Hub back: the same code works, even copied with the full stop.
+        h.cfg.lock().hub.url = hub_up;
+        assert_eq!(
+            h.confirm_copy(&format!("{code}.")).await.unwrap(),
+            (true, true)
+        );
+        let local = h.store.copy("M7TJF").unwrap();
+        assert_eq!(local.state, store::COPY_ON);
+        assert_eq!(local.address, "tj@example.com");
+        assert_eq!(hub.mail.copy_to("M7TJF").as_deref(), Some("tj@example.com"));
+    }
+
+    #[tokio::test]
+    async fn radio_plus_sets_copy_to_with_the_hub_directly() {
+        let (hub_up, hub, inbox) = copy_hub().await;
+        let h = copy_station(Mode::RadioPlus, &hub_up);
+        assert!(!h.snap.lock().hub_ok, "Radio+ has no hub link");
+        h.set_copy("tj@example.com").await.expect("save on Radio+");
+        let code = inbox.lock()[0].clone();
+        assert_eq!(h.confirm_copy(&code).await.unwrap(), (true, true));
+        assert_eq!(copy_state(&h), store::COPY_ON);
+        // The hub copies by the author's callsign, so mail a gateway posts for us is copied.
+        assert_eq!(hub.mail.copy_to("M7TJF").as_deref(), Some("tj@example.com"));
+
+        // No internet on this computer: say so plainly and change nothing.
+        h.cfg.lock().hub.url = HUB_DOWN.into();
+        let err = h.set_copy("other@example.com").await.unwrap_err().plain();
+        assert!(err.starts_with("Copy-to needs the hub."), "{err}");
+        assert!(err.contains("internet"), "{err}");
+        assert_eq!(copy_state(&h), store::COPY_ON);
+        assert_eq!(inbox.lock().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_empty_copy_to_address_turns_it_off() {
+        let (hub_up, hub, inbox) = copy_hub().await;
+        let h = copy_station(Mode::Internet, &hub_up);
+        h.set_copy("tj@example.com").await.unwrap();
+        let code = inbox.lock()[0].clone();
+        assert_eq!(h.confirm_copy(&code).await.unwrap(), (true, true));
+
+        // Off needs the hub too, or mail that arrives would still be copied.
+        h.cfg.lock().hub.url = HUB_DOWN.into();
+        assert!(h.set_copy("").await.is_err());
+        assert_eq!(copy_state(&h), store::COPY_ON);
+
+        h.cfg.lock().hub.url = hub_up;
+        let off = h.set_copy("  ").await.expect("off");
+        assert_eq!(off["state"], store::COPY_OFF);
+        assert_eq!(copy_state(&h), store::COPY_OFF);
+        assert_eq!(hub.mail.copy_to("M7TJF"), None);
+
+        for bad in [
+            "not-an-address",
+            "a b@example.com",
+            "M7TJF@mail.weechatradio.com",
+        ] {
+            let err = h.set_copy(bad).await.unwrap_err().plain();
+            assert!(err.starts_with("Copy-to address"), "{bad}: {err}");
+        }
+        assert_eq!(inbox.lock().len(), 1, "a bad address never reaches the hub");
     }
 
     fn preview<'a>(body: &'a str) -> AirtimeMail<'a> {

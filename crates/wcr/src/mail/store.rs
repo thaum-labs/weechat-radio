@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS mail_copy (
     enabled INTEGER NOT NULL DEFAULT 0,
     confirmed INTEGER NOT NULL DEFAULT 0,
     pending TEXT NOT NULL DEFAULT '',
-    code TEXT NOT NULL DEFAULT ''
+    code TEXT NOT NULL DEFAULT '',
+    hub_wait INTEGER NOT NULL DEFAULT 0
 );
 "#;
 
@@ -76,7 +77,16 @@ pub struct CopySettings {
     pub enabled: bool,
     pub confirmed: bool,
     pub pending: String,
+    /// `off`, `code sent`, `hub not confirmed`, or `on`.
+    #[serde(default)]
+    pub state: String,
 }
+
+pub const COPY_OFF: &str = "off";
+pub const COPY_CODE_SENT: &str = "code sent";
+/// The code matched here but the hub has not taken it yet. The code is kept.
+pub const COPY_HUB_WAIT: &str = "hub not confirmed";
+pub const COPY_ON: &str = "on";
 
 const MAIL_COLS: &str =
     "id, folder, from_addr, to_addr, subject, body, ts, state, unread, ack, retries, detail, chunks, got";
@@ -285,35 +295,52 @@ impl MailStore {
     pub fn copy(&self, callsign: &str) -> Result<CopySettings> {
         let conn = self.conn.lock();
         let row = conn.query_row(
-            "SELECT address, enabled, confirmed, pending FROM mail_copy WHERE callsign = ?1",
+            "SELECT address, enabled, confirmed, pending, hub_wait FROM mail_copy WHERE callsign = ?1",
             params![callsign.to_ascii_uppercase()],
             |r| {
-                Ok(CopySettings {
+                let mut s = CopySettings {
                     address: r.get(0)?,
                     enabled: r.get::<_, i64>(1)? != 0,
                     confirmed: r.get::<_, i64>(2)? != 0,
                     pending: r.get(3)?,
-                })
+                    state: String::new(),
+                };
+                let hub_wait = r.get::<_, i64>(4)? != 0;
+                s.state = if !s.pending.is_empty() && hub_wait {
+                    COPY_HUB_WAIT
+                } else if !s.pending.is_empty() {
+                    COPY_CODE_SENT
+                } else if s.enabled && s.confirmed {
+                    COPY_ON
+                } else {
+                    COPY_OFF
+                }
+                .to_string();
+                Ok(s)
             },
         );
         match row {
             Ok(s) => Ok(s),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(CopySettings::default()),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(CopySettings {
+                state: COPY_OFF.into(),
+                ..CopySettings::default()
+            }),
             Err(e) => Err(e.into()),
         }
     }
 
     pub fn set_copy_pending(&self, callsign: &str, address: &str, code: &str) -> Result<()> {
         self.conn.lock().execute(
-            "INSERT INTO mail_copy(callsign, address, enabled, confirmed, pending, code)
-             VALUES(?1, COALESCE((SELECT address FROM mail_copy WHERE callsign=?1), ''), 0, 0, ?2, ?3)
-             ON CONFLICT(callsign) DO UPDATE SET pending = excluded.pending, code = excluded.code, confirmed = 0",
+            "INSERT INTO mail_copy(callsign, address, enabled, confirmed, pending, code, hub_wait)
+             VALUES(?1, COALESCE((SELECT address FROM mail_copy WHERE callsign=?1), ''), 0, 0, ?2, ?3, 0)
+             ON CONFLICT(callsign) DO UPDATE SET pending = excluded.pending, code = excluded.code, confirmed = 0, hub_wait = 0",
             params![callsign.to_ascii_uppercase(), address, code],
         )?;
         Ok(())
     }
 
-    pub fn confirm_copy(&self, callsign: &str, code: &str) -> Result<bool> {
+    /// Does `code` match the one emailed? Nothing is consumed.
+    pub fn copy_code_matches(&self, callsign: &str, code: &str) -> Result<bool> {
         let conn = self.conn.lock();
         let row: Option<(String, String)> = match conn.query_row(
             "SELECT pending, code FROM mail_copy WHERE callsign = ?1",
@@ -324,16 +351,39 @@ impl MailStore {
             Err(rusqlite::Error::QueryReturnedNoRows) => None,
             Err(e) => return Err(e.into()),
         };
-        if let Some((pending, expect)) = row {
-            if !expect.is_empty() && expect == code && !pending.is_empty() {
-                conn.execute(
-                    "UPDATE mail_copy SET address = ?2, enabled = 1, confirmed = 1, pending = '', code = '' WHERE callsign = ?1",
-                    params![callsign.to_ascii_uppercase(), pending],
-                )?;
-                return Ok(true);
-            }
+        Ok(row.is_some_and(|(pending, expect)| {
+            !expect.is_empty() && !pending.is_empty() && expect == code
+        }))
+    }
+
+    /// The code matched but the hub did not take it. Keep the code for a retry.
+    pub fn mark_copy_hub_wait(&self, callsign: &str) -> Result<()> {
+        self.conn.lock().execute(
+            "UPDATE mail_copy SET hub_wait = 1 WHERE callsign = ?1",
+            params![callsign.to_ascii_uppercase()],
+        )?;
+        Ok(())
+    }
+
+    /// Consumes the code. Call only once the hub has confirmed it too.
+    pub fn confirm_copy(&self, callsign: &str, code: &str) -> Result<bool> {
+        if !self.copy_code_matches(callsign, code)? {
+            return Ok(false);
         }
-        Ok(false)
+        self.conn.lock().execute(
+            "UPDATE mail_copy SET address = pending, enabled = 1, confirmed = 1, pending = '', code = '', hub_wait = 0 WHERE callsign = ?1",
+            params![callsign.to_ascii_uppercase()],
+        )?;
+        Ok(true)
+    }
+
+    /// Copy-to off: no address, no pending code.
+    pub fn clear_copy(&self, callsign: &str) -> Result<()> {
+        self.conn.lock().execute(
+            "DELETE FROM mail_copy WHERE callsign = ?1",
+            params![callsign.to_ascii_uppercase()],
+        )?;
+        Ok(())
     }
 }
 
@@ -377,6 +427,17 @@ fn migrate(conn: &Connection) -> Result<()> {
     if !names.iter().any(|n| n == "got") {
         conn.execute(
             "ALTER TABLE mail ADD COLUMN got TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    let mut stmt = conn.prepare("PRAGMA table_info(mail_copy)")?;
+    let copy_cols: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(|r| r.ok())
+        .collect();
+    if !copy_cols.iter().any(|n| n == "hub_wait") {
+        conn.execute(
+            "ALTER TABLE mail_copy ADD COLUMN hub_wait INTEGER NOT NULL DEFAULT 0",
             [],
         )?;
     }

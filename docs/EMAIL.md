@@ -49,7 +49,13 @@ Internet and internet-radio pull waiting mail from the hub as themselves. Radio-
 
 ## Copy-to
 
-Off by default. A personal address is confirmed with a code sent to that inbox. The code goes to the station store and to the hub, so a confirm needs the hub up; the hub is the side that copies mail that arrives. Outbound mail can BCC it. Inbound copies use `X-WCR-Copy`. Copy-to is never put on RF.
+Off by default. Type a personal address in the Copy-to box and press save. The hub emails a six-digit code to that inbox; type it in the code box and press confirm. The hub is the side that copies mail, so save, confirm, and off all need the hub to answer, and the station changes nothing until it has. Outbound mail can BCC it. Inbound copies use `X-WCR-Copy`. Copy-to is never put on RF.
+
+- **Confirm with the hub down:** the code matches here but is kept, and the state is `hub not confirmed`. Press confirm again with the same code when the hub is up.
+- **Radio+:** save and confirm are one signed HTTPS call to the hub over this computer's internet, nothing on the air. Without internet the station says so. The hub then copies the station's mail by its callsign, including mail a gateway posts for it.
+- **Off:** save an empty address. The hub and the station both drop it.
+- The code may be typed with spaces or a trailing full stop.
+- The Email tab shows the state when it opens: `off`, `code sent`, `hub not confirmed`, or `on`. `GET /mail/copy` returns the same as `state`.
 
 The hub resolves copy-to from the callsign in `From`, so a relaying gateway cannot attach its own address to third-party mail or ask for one. A station's own `bcc` is honoured only when it signs for the author.
 

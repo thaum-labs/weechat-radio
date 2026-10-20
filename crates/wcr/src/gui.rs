@@ -642,7 +642,18 @@ struct GuiApp {
     copy_addr: String,
     copy_code: String,
     copy_note: String,
+    /// The copy-to state from `GET /mail/copy`, read when the Email tab opens.
+    copy_state: String,
+    copy_loaded: bool,
+    /// A copy-to save or confirm still waiting on the hub.
+    copy_rx: Option<Receiver<CopyReply>>,
     last_mail_poll: Instant,
+}
+
+/// A copy-to save or confirm, answered off the UI thread.
+enum CopyReply {
+    Saved(std::result::Result<serde_json::Value, String>),
+    Confirmed(std::result::Result<serde_json::Value, String>),
 }
 
 impl GuiApp {
@@ -740,6 +751,9 @@ impl GuiApp {
             copy_addr: String::new(),
             copy_code: String::new(),
             copy_note: String::new(),
+            copy_state: String::new(),
+            copy_loaded: false,
+            copy_rx: None,
             last_mail_poll: Instant::now() - Duration::from_secs(5),
         };
         app.install_tray();
@@ -3601,6 +3615,59 @@ impl GuiApp {
         }
     }
 
+    /// Reads `GET /mail/copy` into the address box and the state line.
+    fn load_copy_state(&mut self) -> bool {
+        let Some(v) = mail_http("GET", "/mail/copy", None) else {
+            return false;
+        };
+        let text = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let (address, pending, state) = (text("address"), text("pending"), text("state"));
+        let shown = if pending.is_empty() { address } else { pending };
+        if self.copy_rx.is_none() {
+            self.copy_addr = shown.clone();
+        }
+        self.copy_state = copy_state_line(&state, &shown);
+        true
+    }
+
+    fn take_copy_reply(&mut self) {
+        let reply = match self.copy_rx.as_ref().map(|rx| rx.try_recv()) {
+            Some(Ok(r)) => r,
+            Some(Err(mpsc::TryRecvError::Empty)) | None => return,
+            Some(Err(mpsc::TryRecvError::Disconnected)) => {
+                self.copy_rx = None;
+                return;
+            }
+        };
+        self.copy_rx = None;
+        self.copy_note = match reply {
+            CopyReply::Saved(Ok(v)) => {
+                if v.get("state").and_then(|s| s.as_str()) == Some("off") {
+                    "Copy-to is off.".into()
+                } else {
+                    "Check that inbox for a code, then type it in the code box and press confirm."
+                        .into()
+                }
+            }
+            CopyReply::Confirmed(Ok(v)) => {
+                let flag = |k: &str| v.get(k).and_then(|x| x.as_bool()).unwrap_or(false);
+                if !flag("ok") {
+                    "That code did not match.".into()
+                } else if flag("hub") {
+                    self.copy_code.clear();
+                    "Copy-to is on.".into()
+                } else {
+                    "The code is right, but the hub has not confirmed it, so copy-to is still off. The code is kept: press confirm again when the hub is up.".into()
+                }
+            }
+            CopyReply::Saved(Err(e)) | CopyReply::Confirmed(Err(e)) if !e.is_empty() => e,
+            CopyReply::Saved(Err(_)) | CopyReply::Confirmed(Err(_)) => {
+                "No answer from the station in time. Nothing was changed by this screen; the line above shows the current state.".into()
+            }
+        };
+        self.load_copy_state();
+    }
+
     fn poll_mail(&mut self) {
         if self.last_mail_poll.elapsed() < Duration::from_secs(2) {
             return;
@@ -3627,7 +3694,11 @@ impl GuiApp {
         }
         self.mail_unread = unread;
         if self.center != CenterView::Email {
+            self.copy_loaded = false;
             return;
+        }
+        if !self.copy_loaded {
+            self.copy_loaded = self.load_copy_state();
         }
         if let Some(list) = mail_http(
             "GET",
@@ -3885,23 +3956,20 @@ impl GuiApp {
             }
         });
         ui.add_space(8.0);
+        self.take_copy_reply();
+        let busy = self.copy_rx.is_some();
         ui.label(RichText::new("Copy-to").color(DIM).monospace());
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.copy_addr)
                     .desired_width(220.0)
-                    .hint_text("")
+                    .hint_text("empty = off")
                     .font(FontId::monospace(13.0)),
             );
-            if ui.add(hair_btn("save", PURPLE)).clicked() {
-                match mail_http(
-                    "POST",
-                    "/mail/copy",
-                    Some(&serde_json::json!({ "address": self.copy_addr }).to_string()),
-                ) {
-                    Some(_) => self.copy_note = "Check that inbox for a code.".into(),
-                    None => self.copy_note = "Copy-to needs the hub.".into(),
-                }
+            if ui.add(hair_btn("save", PURPLE)).clicked() && !busy {
+                let body = serde_json::json!({ "address": self.copy_addr.trim() }).to_string();
+                self.copy_note = "Asking the hub…".into();
+                self.copy_rx = Some(spawn_copy_call(false, body));
             }
             ui.add(
                 egui::TextEdit::singleline(&mut self.copy_code)
@@ -3909,28 +3977,20 @@ impl GuiApp {
                     .hint_text("code")
                     .font(FontId::monospace(13.0)),
             );
-            if ui.add(hair_btn("confirm", ORANGE)).clicked() {
-                let reply = mail_http(
-                    "POST",
-                    "/mail/copy/confirm",
-                    Some(&serde_json::json!({ "code": self.copy_code }).to_string()),
-                );
-                let flag = |k: &str| {
-                    reply
-                        .as_ref()
-                        .and_then(|v| v.get(k))
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false)
-                };
-                self.copy_note = if !flag("ok") {
-                    "That code did not match.".into()
-                } else if flag("hub") {
-                    "Copy-to is on.".into()
-                } else {
-                    "Saved here. The hub did not confirm, so mail that arrives is not copied yet. Confirm again with the hub up.".into()
-                };
+            if ui.add(hair_btn("confirm", ORANGE)).clicked() && !busy {
+                let body = serde_json::json!({ "code": self.copy_code.trim() }).to_string();
+                self.copy_note = "Asking the hub…".into();
+                self.copy_rx = Some(spawn_copy_call(true, body));
             }
         });
+        if !self.copy_state.is_empty() {
+            ui.label(
+                RichText::new(format!("copy-to: {}", self.copy_state))
+                    .color(DIM)
+                    .small()
+                    .monospace(),
+            );
+        }
         if !self.copy_note.is_empty() {
             ui.label(
                 RichText::new(&self.copy_note)
@@ -4437,10 +4497,51 @@ fn node_command() -> Command {
 }
 
 fn mail_http(method: &str, path: &str, body: Option<&str>) -> Option<serde_json::Value> {
-    let mut stream =
-        TcpStream::connect_timeout(&"127.0.0.1:8074".parse().ok()?, Duration::from_millis(400))
-            .ok()?;
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(800)));
+    mail_http_wait(method, path, body, Duration::from_millis(800)).ok()
+}
+
+/// Copy-to waits on the hub, which may take up to its own 30 s timeout.
+const COPY_WAIT: Duration = Duration::from_secs(40);
+
+fn spawn_copy_call(confirm: bool, body: String) -> Receiver<CopyReply> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let path = if confirm {
+            "/mail/copy/confirm"
+        } else {
+            "/mail/copy"
+        };
+        let reply = mail_http_wait("POST", path, Some(&body), COPY_WAIT);
+        let _ = tx.send(if confirm {
+            CopyReply::Confirmed(reply)
+        } else {
+            CopyReply::Saved(reply)
+        });
+    });
+    rx
+}
+
+fn copy_state_line(state: &str, address: &str) -> String {
+    match state {
+        "on" => format!("on, {address}"),
+        "code sent" => format!("code sent to {address}, waiting for it"),
+        "hub not confirmed" => format!("hub not confirmed for {address}; press confirm again"),
+        "" => String::new(),
+        other => other.to_string(),
+    }
+}
+
+/// `Err("")` means no answer in time. `Err(text)` is the station's refusal.
+fn mail_http_wait(
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+    wait: Duration,
+) -> std::result::Result<serde_json::Value, String> {
+    let none = |_| String::new();
+    let addr = "127.0.0.1:8074".parse().map_err(|_| String::new())?;
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(400)).map_err(none)?;
+    let _ = stream.set_read_timeout(Some(wait));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(400)));
     let payload = body.unwrap_or("");
     let req = if method == "GET" {
@@ -4451,13 +4552,13 @@ fn mail_http(method: &str, path: &str, body: Option<&str>) -> Option<serde_json:
             payload.len()
         )
     };
-    stream.write_all(req.as_bytes()).ok()?;
+    stream.write_all(req.as_bytes()).map_err(none)?;
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     let mut status_ok = false;
     loop {
         line.clear();
-        if reader.read_line(&mut line).ok()? == 0 {
+        if reader.read_line(&mut line).map_err(none)? == 0 {
             break;
         }
         if line.starts_with("HTTP/") {
@@ -4467,12 +4568,12 @@ fn mail_http(method: &str, path: &str, body: Option<&str>) -> Option<serde_json:
             break;
         }
     }
-    if !status_ok {
-        return None;
-    }
     let mut raw = String::new();
-    reader.read_to_string(&mut raw).ok()?;
-    serde_json::from_str(raw.trim()).ok()
+    reader.read_to_string(&mut raw).map_err(none)?;
+    if !status_ok {
+        return Err(raw.trim().to_string());
+    }
+    serde_json::from_str(raw.trim()).map_err(|_| String::new())
 }
 
 fn fetch_status() -> Option<StatusSnapshot> {
