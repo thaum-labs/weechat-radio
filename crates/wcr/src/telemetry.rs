@@ -735,7 +735,10 @@ pub async fn reporter_loop(
 ) {
     let client = reqwest::Client::new();
     let secs = interval_secs.max(1);
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(secs));
+    // The hub still running today keeps one stamp per callsign. An immediate
+    // report uses this second, and the hello is refused until the next one.
+    let first = tokio::time::Instant::now() + std::time::Duration::from_secs(secs.min(2));
+    let mut interval = tokio::time::interval_at(first, std::time::Duration::from_secs(secs));
     let mut pending = Vec::new();
     loop {
         tokio::select! {
