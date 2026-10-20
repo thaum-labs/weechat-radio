@@ -13,7 +13,7 @@ On the web (with pictures): https://weechatradio.com/guides/start.html
 
 1. Open a command window.
 
-   - Windows: Start, type `PowerShell`, right-click **Windows PowerShell**, choose **Run as administrator**
+   - Windows: Start, type `PowerShell`, open **Windows PowerShell** (no administrator needed)
    - Mac: Command + Space, type `Terminal`, press Enter
    - Linux: open Terminal from the applications menu
 
@@ -24,7 +24,7 @@ On the web (with pictures): https://weechatradio.com/guides/start.html
    curl -fsSL https://weechatradio.com/install.sh | sh
    ```
 
-   **Windows (Administrator PowerShell)**
+   **Windows (PowerShell)**
    ```
    irm https://weechatradio.com/install.ps1 | iex
    ```

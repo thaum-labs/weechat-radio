@@ -5,11 +5,11 @@ On the web: https://weechatradio.com/guides/windows.html
 ## What you need
 
 - Windows 10 or 11
-- PowerShell, opened with Run as administrator
+- PowerShell (a normal window; the install is for your user only)
 
 ## Steps
 
-1. Click Start, type `PowerShell`, right-click **Windows PowerShell**, and choose **Run as administrator**. Paste:
+1. Click Start, type `PowerShell`, and open **Windows PowerShell**. A normal window is enough: it installs into your own AppData. Paste:
 
    ```
    irm https://weechatradio.com/install.ps1 | iex
