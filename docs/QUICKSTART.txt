@@ -12,7 +12,17 @@ With pictures: https://weechatradio.com/guides/start.html
 3. wcr tui
    Type in #bulletin. Enter sends.
 
-Marks (window and TUI):  [..] queued  [tx] sent  [rl] own frame heard again  [ok] delivered  [all] all in group
+Marks: [..] waiting  [tx] sent  [rl] heard again  [gw] gateway took it
+       [ok] delivered (#bulletin stops here)  [all] closed group
+       [xN] times keyed ([x4] is the last copy)  [no] after two more waits
+
+Update: wcr update. Linux and macOS restart a service. A station you
+started by hand keeps the old code until you start it again. Windows
+too, including a service.
+
+Beacons count down on the status bar (after exchange, pending, busy).
+First three about a minute apart, then every 5 minutes.
+rf.startup_hold_s (120) holds your first lines until another station is heard.
 
 If the internet dies, keep using the radio. Status bar: "Internet down, radio only".
 

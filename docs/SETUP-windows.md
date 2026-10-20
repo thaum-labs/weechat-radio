@@ -31,13 +31,15 @@ On the web: https://weechatradio.com/guides/windows.html
 
    Or open **WeeChat Radio** from the Start menu.
 
-3. To keep relaying when the window is closed, open PowerShell as Administrator and run:
+4. To keep relaying when the window is closed, open PowerShell as Administrator and run:
 
    ```
    wcr service install
    ```
 
-4. WeeChat is still installed. Use **Open WeeChat** in the GUI, or `wcr weechat`. Native IRC clients can use `127.0.0.1:6667`.
+   `wcr update` replaces the binary. Stop the station and start it again, including this service, so the new code is the one running. A station you started by hand keeps the old code until you do.
+
+5. WeeChat is still installed. Use **Open WeeChat** in the GUI, or `wcr weechat`. Native IRC clients can use `127.0.0.1:6667`.
 
 ## How you know it worked
 

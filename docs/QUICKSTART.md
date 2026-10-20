@@ -43,6 +43,8 @@ On the web (with pictures): https://weechatradio.com/guides/start.html
    wcr gui
    ```
 
+`wcr update` replaces the binary with a newer release. On Linux and macOS it restarts a station installed with `wcr service install`. A station you started by hand keeps the old code until you stop it and start it again. On Windows, restart that station yourself, including a service.
+
 ## How you know it worked
 
 The status bar at the bottom shows your callsign and mode. After you send, a mark appears on your line:
@@ -57,6 +59,8 @@ The status bar at the bottom shows your callsign and mode. After you send, a mar
 - `[xN]` how many times the line was keyed, counted until `[rl]`, `[gw]` or `[ok]`. `[x1]` is the first send. The default is 3 retries, so the last copy is `[x4]`. `[no]` waits two more full intervals after that copy.
 
 Routine retries wait 45s, then 90s, then 180s, then 360s twice with no further key, each ±25% (`retry_jitter`). Emergency is 8s / 16s / 32s / 64s twice. Priority is 20s / 40s / 80s / 160s twice. A busy channel can make the gap between copies longer than that band. `/radio flush` marks unacked outbound `[no]`. Rows older than one hour are not keyed again after a restart.
+
+On the radio the status bar counts down to the next beacon: about a minute apart for the first three, then every 5 minutes. It shows `after exchange` while a receipt or a mail acceptance is still due, `pending` until the beacon reaches the modem, and `busy` while a decoded frame is still fresh. A line sent in the first `rf.startup_hold_s` seconds after start (120) waits until another station has been heard.
 
 ## Closed groups
 

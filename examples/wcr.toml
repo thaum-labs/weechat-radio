@@ -81,10 +81,12 @@ quiet_ms = 300
 max_defer_ms = 15000
 emergency_max_defer_ms = 3000
 turnaround_ms = 250
-congested_pct = 60    # drop beacons / defer relays at or above this occupancy
+congested_pct = 60    # hold beacons while frames decode; defer relays at or above this
 ack_dither_ms = 800
 beacon_jitter_s = 15
 retry_jitter = true
+startup_hold_s = 120  # own lines wait until another station is heard. 0 sends at once
+outbound_max_age_secs = 3600  # older unacked outbound is [no], including after restart
 frequency_khz = 0     # dial in kHz; 0 unknown. Set by wizard / /radio freq; CAT overrides.
 
 [rig]

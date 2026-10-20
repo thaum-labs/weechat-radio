@@ -255,9 +255,9 @@
       <p>When several stations talk at once, frames would otherwise pile onto the modem and key over each other. Two layers stop that:</p>
       <ol>
         <li><strong>modem73 CSMA</strong> is on for every preset. The modem waits for a quiet carrier before PTT.</li>
-        <li>The <strong>air queue</strong> in <code>wcr</code> serialises our own traffic. It waits while the channel is busy, spreads retries and group ACKs, holds a due beacon while an exchange is in progress (a line and its receipt, a mail and its acceptance) or while occupancy is high and frames are being decoded (one exchange at most, and never more than 10 minutes apart), and leaves a gap after each TX so an ACK can be heard. A frame that would switch the modem to a mode too narrow for one it still holds waits until that one has keyed.</li>
+        <li>The <strong>air queue</strong> in <code>wcr</code> serialises our own traffic. It waits while the channel is busy, spreads retries and group ACKs, and holds a due beacon while an exchange is in progress (a line and its receipt, or a mail and its acceptance) or while occupancy is high and frames are being decoded. A due beacon goes ahead of this station's own queued lines. It waits out one exchange at most, a warm-up beacon never more than two minutes after the last, and never more than 10 minutes after the last. The queue leaves a gap after each TX so an ACK can be heard. A frame that would switch the modem to a mode too narrow for one it still holds waits until that one has keyed.</li>
       </ol>
-      <p>The status bar <strong>PTT</strong> field shows <code>wait</code> while a frame is held. <strong>OCC</strong> is occupancy 0–100. <strong>QUEUE</strong> includes how many frames sit in the air queue.</p>
+      <p>The status bar <strong>PTT</strong> field shows <code>wait</code> while a frame is held. <strong>OCC</strong> is occupancy 0–100. <strong>QUEUE</strong> includes how many frames sit in the air queue. The beacon countdown shows <code>after exchange</code> while a receipt or a mail acceptance is still due, <code>pending</code> until the beacon reaches the modem, and <code>busy</code> while a decoded frame is still fresh. The first three beacons go about a minute apart, then one every 5 minutes. A line sent in the first <code>startup_hold_s</code> seconds after start (120) waits until another station has been heard.</p>
       <pre class="plain">[rf]
 csma = true
 slot_ms = 100
@@ -268,7 +268,8 @@ turnaround_ms = 250
 congested_pct = 60
 ack_dither_ms = 800
 beacon_jitter_s = 15
-retry_jitter = true</pre>
+retry_jitter = true
+startup_hold_s = 120</pre>
 
       <h2>Gateway knobs</h2>
       <p>In <code>wcr.toml</code>:</p>
