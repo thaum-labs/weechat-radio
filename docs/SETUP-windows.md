@@ -5,17 +5,17 @@ On the web: https://weechatradio.com/guides/windows.html
 ## What you need
 
 - Windows 10 or 11
-- PowerShell
+- PowerShell, opened with Run as administrator
 
 ## Steps
 
-1. Install:
+1. Click Start, type `PowerShell`, right-click **Windows PowerShell**, and choose **Run as administrator**. Paste:
 
    ```
    irm https://weechatradio.com/install.ps1 | iex
    ```
 
-   That adds WeeChat Radio to your user PATH. Open a new PowerShell window before `wcr setup`. Before WeeChat is downloaded, the installer says what it is installing. Or download the zip from GitHub Releases and put `wcr.exe` on your PATH.
+   Leave the window open. The installer downloads the program, then WeeChat through Cygwin. It prints `waiting for WeeChat...` and can sit for several minutes, sometimes toward 20. It is finished when it prints the next step. That adds WeeChat Radio to your user PATH. Open a new PowerShell window before `wcr setup`. Or download the zip from GitHub Releases and put `wcr.exe` on your PATH. More fixes: https://weechatradio.com/guides/troubleshooting.html
 
 2. Run setup first:
 
