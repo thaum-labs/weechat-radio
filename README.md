@@ -57,11 +57,13 @@ Prefer a terminal? `wcr tui` is the same station.
 
 ### Windows (PowerShell)
 
+Open PowerShell with **Run as administrator** (Start, type `PowerShell`, right-click, Run as administrator). Paste:
+
 ```powershell
 irm https://weechatradio.com/install.ps1 | iex
 ```
 
-Open **WeeChat Radio** from the Start menu. First launch is setup; then you chat in the window.
+Leave the window open. WeeChat installs through Cygwin after the program and can take several minutes. Then open **WeeChat Radio** from the Start menu. First launch is setup; then you chat in the window. If it stops, see the [troubleshooting page](https://weechatradio.com/guides/troubleshooting.html).
 
 ```powershell
 # optional, same window from a terminal:
