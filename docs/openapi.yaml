@@ -154,8 +154,8 @@ paths:
           description: JSON `{ "ok": true, "messages": [ … ] }`
   /api/v1/mail/copy:
     post:
-      summary: Start copy-to confirmation
-      description: Sends a code to the personal address. Default is off.
+      summary: Start copy-to confirmation, or turn it off
+      description: Sends a code to the personal address. Default is off. An empty `address` turns copy-to off.
       responses:
         "200":
           description: JSON `{ "ok": true }`
@@ -164,7 +164,7 @@ paths:
       summary: Confirm copy-to with the code
       responses:
         "200":
-          description: JSON `{ "ok": true }` when the code matches
+          description: JSON `{ "ok": true }` when the code matches. The same code is accepted again after it is used.
   /api/v1/mail/webhook/resend:
     post:
       summary: Inbound mail from Resend
