@@ -3,6 +3,11 @@ on:
   push:
     branches: [main, master]
   pull_request:
+# A new push to a PR cancels that PR's older run, so stale runs do not hold
+# the macOS runners a release build needs. Runs on main are never cancelled.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
     strategy:
