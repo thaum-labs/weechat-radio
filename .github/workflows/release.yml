@@ -203,8 +203,12 @@ jobs:
               gh release upload "${RELEASE_TAG}" "${{ matrix.modem_asset }}" --clobber
             fi
   publish:
+    # Publish only when every platform built and uploaded. If one build fails
+    # or never gets a runner, the release stays a draft and "latest" keeps
+    # pointing at the previous complete release. Re-run the failed jobs to
+    # finish it.
     needs: [notes, build]
-    if: ${{ !cancelled() && (needs.notes.result == 'success' || needs.notes.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.notes.result == 'success' || needs.notes.result == 'skipped') }}
     runs-on: ubuntu-latest
     steps:
       - name: publish release after assets upload
@@ -213,11 +217,6 @@ jobs:
           RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
           set -euo pipefail
-          count="$(gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --json assets -q '.assets | length')"
-          if [ "${count}" -eq 0 ]; then
-            echo "No assets on ${RELEASE_TAG}; leaving draft release unpublished."
-            exit 0
-          fi
           gh release edit "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false
   sync_install_manifests:
     needs: [build, publish]
