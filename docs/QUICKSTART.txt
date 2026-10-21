@@ -22,7 +22,7 @@ too, including a service.
 
 Beacons count down on the status bar (after exchange, pending, busy).
 First three about a minute apart, then every 5 minutes.
-rf.startup_hold_s (120) holds your first lines until another station is heard.
+rf.startup_hold_s (120) holds your first lines until another station is heard (not on VOX).
 
 If the internet dies, keep using the radio. Status bar: "Internet down, radio only".
 

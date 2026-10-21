@@ -8,7 +8,7 @@ You do not need to understand the radio maths. Upgrade every station to this bui
 
 ## What you need
 
-- This build of `wcr` (v0.1.104). The hub speaks protocol version 2
+- This build of `wcr` (v0.1.105). The hub speaks protocol version 2
 - A radio path already working on a clear signal (see radio setup)
 - For HF: start with `hf-poor`. Drop to `hf-weak` or `hf-deep` only if frames keep failing
 
@@ -37,7 +37,7 @@ The receiver hears all of these at once. You can send `hf-weak` while they are s
 4. When an ACK comes back, it includes how strong they heard you. A good report steps the waveform back up.
 5. Lines that start with `!!` (emergency) go out twice, a moment apart, so a fade is less likely to take both.
 6. Group chat on HF is split into pieces. Any two of three pieces rebuild the message. If several internet gateways each hear a different piece, the hub stitches them.
-7. If the frequency is already busy, the program waits for a gap (status bar **PTT** reads `wait`). A station's first three beacons go about a minute apart, then one every 5 minutes. A beacon that falls due waits until an exchange in progress is over (a line and its receipt, a mail and its acceptance), for one exchange at most, and high occupancy holds it only while frames are being decoded. Lines you send in the first `rf.startup_hold_s` seconds after start (120) wait until another station has been heard. The beacon countdown shows the time until the next beacon, `after exchange` while it waits, `pending` until it reaches the modem, and `busy` while a decoded frame is still fresh. A beacon goes ahead of this station's own queued lines. Group ACKs and retries are staggered so they do not all key at once. An ACK still goes out after about 3 seconds if the channel never goes quiet. Chat and relays wait up to 15 seconds. `[rl]` does not stop the retries; only an ACK does. When the retries are used up the line waits two more intervals, then shows `[no]`. A line a relay was heard carrying stays `[rl]` until its receipt or it is an hour old. A later ACK can still move `[no]` to `[ok]`. `#bulletin` stops at `[ok]`.
+7. If the frequency is already busy, the program waits for a gap (status bar **PTT** reads `wait`). A station's first three beacons go about a minute apart, then one every 5 minutes. A beacon that falls due waits until an exchange in progress is over (a line and its receipt, a mail and its acceptance), for one exchange at most, and high occupancy holds it only while frames are being decoded. Lines you send in the first `rf.startup_hold_s` seconds after start (120) wait until another station has been heard (not on VOX, which sends no beacons). The beacon countdown shows the time until the next beacon, `after exchange` while it waits, `pending` until it reaches the modem, and `busy` while a decoded frame is still fresh. A beacon goes ahead of this station's own queued lines. Group ACKs and retries are staggered so they do not all key at once. An ACK still goes out after about 3 seconds if the channel never goes quiet. Chat and relays wait up to 15 seconds. `[rl]` does not stop the retries; only an ACK does. When the retries are used up the line waits two more intervals, then shows `[no]`. A line a relay was heard carrying stays `[rl]` until its receipt or it is an hour old. A later ACK can still move `[no]` to `[ok]`. `#bulletin` stops at `[ok]`.
 
 ## Busy channel
 
@@ -76,7 +76,7 @@ congested_pct = 60
 ack_dither_ms = 800
 beacon_jitter_s = 15
 retry_jitter = true   # routine waits 45s, 90s, 180s, then 360s twice before [no], each × 0.75–1.25
-startup_hold_s = 120  # own lines wait until another station is heard. 0 sends at once
+startup_hold_s = 120  # own lines wait until another station is heard. 0 sends at once. None on VOX
 outbound_max_age_secs = 3600  # older unacked outbound is [no], including after restart
 ```
 

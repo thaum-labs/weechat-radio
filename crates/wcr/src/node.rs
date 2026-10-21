@@ -692,7 +692,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     let held = relay::startup_hold_s(
                         now,
                         rt_r.started,
-                        rt_r.cfg.lock().rf.startup_hold_s,
+                        rt_r.cfg.lock().startup_hold_s(),
                         rt_r.heard_on_air.load(std::sync::atomic::Ordering::Relaxed),
                     );
                     let receipt_wait = {
@@ -1754,7 +1754,7 @@ async fn enqueue_rf(
         tracing::info!(
             "line {} waits until another station is heard, at most {}s after start",
             rf_env.msg_id.hex(),
-            rt.cfg.lock().rf.startup_hold_s
+            rt.cfg.lock().startup_hold_s()
         );
         let rt = rt.clone();
         let env = rf_env.clone();
@@ -1872,7 +1872,7 @@ fn own_line_held(rt: &Runtime, env: &Envelope) -> bool {
         && relay::startup_hold_s(
             crate::proto::now_ts(),
             rt.started,
-            rt.cfg.lock().rf.startup_hold_s,
+            rt.cfg.lock().startup_hold_s(),
             rt.heard_on_air.load(std::sync::atomic::Ordering::Relaxed),
         ) > 0
 }

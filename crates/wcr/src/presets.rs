@@ -175,6 +175,12 @@ impl Preset {
         }
     }
 
+    /// CSMA gate on VOX, whatever the preset. A VOX station hears the room or
+    /// the radio's hiss; under -50 dB modem73 never finds the channel clear
+    /// and holds the frame for good (QA v0.1.104: -37 dB room noise on a Mac
+    /// built-in mic). This is modem73's own default.
+    pub const VOX_CSMA_THRESHOLD_DB: i16 = -30;
+
     /// Slow MFSK/RDM is quieter than the default -30 dB CSMA gate, so the
     /// modem keys over an inbound frame after the lead tone. MFSK sync is
     /// not used as DCD.
