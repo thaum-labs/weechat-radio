@@ -8,7 +8,7 @@ You do not need to understand the radio maths. Upgrade every station to this bui
 
 ## What you need
 
-- This build of `wcr` (v0.1.106). The hub speaks protocol version 2
+- This build of `wcr` (v0.1.107). The hub speaks protocol version 2
 - A radio path already working on a clear signal (see radio setup)
 - For HF: start with `hf-poor`. Drop to `hf-weak` or `hf-deep` only if frames keep failing
 
@@ -25,7 +25,7 @@ Switch with `/radio preset <name>` or `/preset <name>` in the window.
 | `hf-poor` | RDM-600S | RDM-300S, then MFSK-32R | Fading HF / NVIS (the usual HF calling preset) |
 | `hf-weak` | RDM-300S | MFSK-32R | The other station is faint |
 | `hf-deep` | MFSK-32R | Stays on MFSK-32R | Last resort. Very slow. Short messages only |
-| `vox-safe` | MFSK-32R | Stays on MFSK-32R | Any radio keyed by VOX. Long lead so the radio is keyed before data |
+| `vox-safe` | RDM-600S | Stays on RDM-600S | Any radio keyed by VOX. Long lead so the radio is keyed before data |
 
 The receiver hears all of these at once. You can send `hf-weak` while they are still set to `hf-poor`.
 
