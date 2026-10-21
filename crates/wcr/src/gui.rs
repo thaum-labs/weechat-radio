@@ -412,6 +412,8 @@ struct ChatLine {
     via: String,
     tries: u32,
     when: String,
+    /// SNR in dB a radio line was decoded at; `None` off the air.
+    snr: Option<f32>,
 }
 
 impl ChatLine {
@@ -426,6 +428,7 @@ impl ChatLine {
             via: String::new(),
             tries: 0,
             when: String::new(),
+            snr: None,
         }
     }
 
@@ -440,6 +443,7 @@ impl ChatLine {
             via: String::new(),
             tries: 0,
             when: crate::store::chat_stamp(None),
+            snr: None,
         }
     }
 }
@@ -613,6 +617,8 @@ struct GuiApp {
     active_channel: String,
     joined: Vec<String>,
     chan_new: String,
+    /// The key that explains the marks after each line.
+    show_key: bool,
     invite_draft: String,
     members: HashMap<String, Vec<String>>,
     /// Optimistic dial frequency until /status catches up after /qsy.
@@ -726,6 +732,7 @@ impl GuiApp {
             active_channel: session.active_channel,
             joined: session.joined,
             chan_new: String::new(),
+            show_key: false,
             invite_draft: String::new(),
             members: session.members,
             freq_pending: None,
@@ -2147,6 +2154,20 @@ impl eframe::App for GuiApp {
                     if clear.clicked() {
                         self.clear_active_chat();
                     }
+                    let key = ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new(if self.show_key { "hide key" } else { "key" })
+                                    .color(ACCENT)
+                                    .monospace(),
+                            )
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(hairline(ACCENT)),
+                        )
+                        .on_hover_text("What the short marks after each line mean.");
+                    if key.clicked() {
+                        self.show_key = !self.show_key;
+                    }
                     if !crate::slash::is_bulletin(&self.active_channel) {
                         let leave = ui
                             .add(
@@ -2214,6 +2235,10 @@ impl eframe::App for GuiApp {
                     .color(DIM)
                     .font(FontId::monospace(11.0)),
                 );
+                if self.show_key {
+                    ui.add_space(4.0);
+                    mark_key(ui);
+                }
                 if !crate::slash::is_bulletin(&self.active_channel) {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
@@ -2354,6 +2379,8 @@ impl eframe::App for GuiApp {
                             .stick_to_bottom(true)
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
+                                let show_snr =
+                                    self.status.as_ref().map(|s| s.show_snr).unwrap_or(true);
                                 for line in &self.chat {
                                     if !line.channel.is_empty()
                                         && !line.channel.eq_ignore_ascii_case(&active)
@@ -2397,12 +2424,21 @@ impl eframe::App for GuiApp {
                                                 )
                                                 .on_hover_text(crate::store::via_hint(&line.via));
                                             }
+                                            if let Some(db) = line.snr.filter(|_| show_snr) {
+                                                ui.label(
+                                                    RichText::new(format!("{db:.0} dB"))
+                                                        .color(DIM)
+                                                        .monospace(),
+                                                )
+                                                .on_hover_text(SNR_HINT);
+                                            }
                                             if mine && !line.ticks.is_empty() {
                                                 ui.label(
                                                     RichText::new(&line.ticks)
                                                         .color(tick_color(&line.ticks))
                                                         .monospace(),
-                                                );
+                                                )
+                                                .on_hover_text(tick_hint(&line.ticks));
                                             }
                                             if mine && line.tries > 0 {
                                                 ui.label(
@@ -4730,6 +4766,62 @@ fn irc_tags(line: &str) -> HashMap<String, String> {
     map
 }
 
+const SNR_HINT: &str =
+    "Signal-to-noise ratio this station decoded the line at, from the last radio hop. /snr off hides it.";
+
+/// The marks after a chat line, in the order a line moves through them.
+const MARK_KEY: &[(&str, &str)] = &[
+    ("[..]", "waiting to go out"),
+    ("[tx]", "sent, no receipt yet"),
+    ("[x2]", "how many times it was keyed"),
+    (
+        "[rl]",
+        "heard again on the radio (a relay or an echo), not a receipt",
+    ),
+    ("[gw]", "a gateway put it on the hub"),
+    ("[ok]", "delivered, they sent a receipt"),
+    ("[all]", "every member of the closed room got it"),
+    ("[no]", "refused, or no receipt after the last try"),
+    ("[rf]", "reached you by radio"),
+    ("[net]", "reached you over the internet"),
+    ("[lan]", "reached you on the local network"),
+    (
+        "-4 dB",
+        "signal-to-noise of a radio line (/snr off hides it)",
+    ),
+];
+
+fn mark_key(ui: &mut egui::Ui) {
+    egui::Grid::new("mark_key")
+        .num_columns(2)
+        .spacing([12.0, 1.0])
+        .show(ui, |ui| {
+            for (mark, meaning) in MARK_KEY {
+                ui.label(
+                    RichText::new(*mark)
+                        .color(PURPLE)
+                        .font(FontId::monospace(11.0)),
+                );
+                ui.label(
+                    RichText::new(*meaning)
+                        .color(DIM)
+                        .font(FontId::monospace(11.0)),
+                );
+                ui.end_row();
+            }
+        });
+}
+
+/// Hover text for a line's delivery marks, e.g. `[rl] [ok]`.
+fn tick_hint(ticks: &str) -> String {
+    MARK_KEY
+        .iter()
+        .filter(|(mark, _)| ticks.contains(mark))
+        .map(|(mark, meaning)| format!("{mark} {meaning}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn tick_color(ticks: &str) -> Color32 {
     if ticks == "[ok]" || ticks == "[all]" {
         GREEN
@@ -4978,6 +5070,7 @@ fn parse_privmsg(line: &str) -> Option<ChatLine> {
             .to_string(),
         tries: parse_tries(tags.get("radio/tries").map(String::as_str)),
         when: crate::store::chat_stamp(tags.get("server-time").map(String::as_str)),
+        snr: tags.get("radio/snr").and_then(|s| s.parse().ok()),
     })
 }
 
@@ -5061,6 +5154,7 @@ mod tests {
             via: String::new(),
             tries: 0,
             when: String::new(),
+            snr: None,
         };
         apply_line_delivery(
             &mut line,
@@ -5135,6 +5229,9 @@ mod tests {
         assert_eq!(crate::store::via_bracket(&chat.via), "[rf]");
         let net = "@msgid=aa;+radio/via=inet :M0XYZ PRIVMSG #bulletin :hub";
         assert_eq!(parse_privmsg(net).unwrap().via, "inet");
+        assert_eq!(parse_privmsg(net).unwrap().snr, None);
+        let heard = "@msgid=bb;+radio/via=rf;+radio/snr=-4.4 :M0XYZ PRIVMSG #bulletin :hi";
+        assert_eq!(parse_privmsg(heard).unwrap().snr, Some(-4.4));
         let lan = "@+radio/via=lan :M0XYZ PRIVMSG #bulletin :mesh";
         assert_eq!(parse_privmsg(lan).unwrap().via, "lan");
     }
@@ -5258,5 +5355,15 @@ mod tests {
             ),
             "station stopped: thread 'main' panicked at src/node.rs:1:1:"
         );
+    }
+
+    #[test]
+    fn tick_hint_explains_each_mark() {
+        assert_eq!(tick_hint("[ok]"), "[ok] delivered, they sent a receipt");
+        assert_eq!(
+            tick_hint("[rl] [ok]"),
+            "[rl] heard again on the radio (a relay or an echo), not a receipt\n[ok] delivered, they sent a receipt"
+        );
+        assert_eq!(tick_hint(""), "");
     }
 }
