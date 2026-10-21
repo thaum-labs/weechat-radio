@@ -612,6 +612,7 @@ fn seed_radio_map(
             events: vec![],
             freq_khz: 144_950,
             band: band.clone(),
+            heard_grids: Vec::new(),
         })?;
     }
     tel.add_event(&crate::telemetry::TelemetryEvent {

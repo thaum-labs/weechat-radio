@@ -10,7 +10,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusSnapshot {
     pub callsign: String,
+    /// Where this station is now: the GPS grid while it has a fix, otherwise
+    /// the grid from setup.
     pub grid: String,
+    /// GPS receiver state for the status panel. Empty when no GPS is set.
+    #[serde(default)]
+    pub gps: String,
     pub mode: Mode,
     pub channel: String,
     pub ptt: String,
@@ -146,6 +151,9 @@ pub struct HeardBrief {
     pub channels: Vec<String>,
     #[serde(default)]
     pub welfare: String,
+    /// The grid this station last sent over the air, if any.
+    #[serde(default)]
+    pub grid: String,
 }
 
 impl HeardBrief {
@@ -330,6 +338,7 @@ impl Default for StatusSnapshot {
         Self {
             callsign: String::new(),
             grid: String::new(),
+            gps: String::new(),
             mode: Mode::InternetRadio,
             channel: "idle".into(),
             ptt: "none".into(),

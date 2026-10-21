@@ -114,6 +114,11 @@ struct Runtime {
     /// keyed its receipt for one group line three times).
     retries_heard: Arc<Mutex<HashMap<MsgId, u32>>>,
     own_receipts: Arc<Mutex<HashMap<MsgId, u32>>>,
+    /// Grid squares other stations sent over the air (beacon or receipt),
+    /// and when. The hub places radio-only stations from these.
+    heard_grids: Arc<Mutex<HashMap<String, (String, u32)>>>,
+    /// The grid our last receipt carried, and when.
+    ack_grid_sent: Arc<Mutex<(String, u32)>>,
 }
 
 /// A beacon handed to the air queue that has not reached the modem yet.
@@ -502,8 +507,13 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         rosters: Arc::new(Mutex::new(HashMap::new())),
         retries_heard: Arc::new(Mutex::new(HashMap::new())),
         own_receipts: Arc::new(Mutex::new(HashMap::new())),
+        heard_grids: Arc::new(Mutex::new(HashMap::new())),
+        ack_grid_sent: Arc::new(Mutex::new((String::new(), 0))),
     };
     refresh_group_prios(&rt);
+    if !rt.cfg.lock().gps.port.trim().is_empty() {
+        tokio::spawn(crate::gps::run(rt.cfg.clone(), rt.snap.clone()));
+    }
 
     // Dial the hub before the radio. modem73's first open retries for up to
     // 20s, and the hello used to wait behind that.
@@ -1168,7 +1178,19 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     origin,
                     dest,
                     seq,
-                    format!("B|{}|{}", cfg.mode.as_str(), rt_b.snap.lock().freq_khz).into_bytes(),
+                    {
+                        let snap = rt_b.snap.lock();
+                        crate::band::beacon_body(
+                            cfg.mode.as_str(),
+                            snap.freq_khz,
+                            if cfg.reports_telemetry() {
+                                &snap.grid
+                            } else {
+                                ""
+                            },
+                        )
+                    }
+                    .into_bytes(),
                     1,
                     flags,
                 ) {
@@ -2513,6 +2535,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
         return Ok(());
     }
     let freq = heard_freq(rt, &env, medium);
+    note_heard_grid(rt, &env, medium);
     // `Engine::on_rx` marks the original Delivered as soon as it stores the
     // ACK. Read the previous state first: the first ACK must still paint [ok],
     // and a later ACK from another station must not paint it again.
@@ -2844,6 +2867,42 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
     forward_gateway(rt, &env, medium).await
 }
 
+/// The grid our next receipt carries: only when it changed since the last
+/// receipt that carried one, or that was ten minutes ago, so a station that
+/// stays put adds 8 bytes to a receipt a few times an hour at most. VOX
+/// stations send no beacons, so this is how their position gets out.
+fn receipt_grid(rt: &Runtime) -> Option<String> {
+    if !rt.cfg.lock().reports_telemetry() {
+        return None;
+    }
+    let grid = crate::grid::position(&rt.snap.lock().grid)?;
+    let now = crate::proto::now_ts();
+    let mut sent = rt.ack_grid_sent.lock();
+    if !relay::receipt_carries_grid(&sent.0, sent.1, &grid, now) {
+        return None;
+    }
+    *sent = (grid.clone(), now);
+    Some(grid)
+}
+
+/// Note the grid a station sent with its beacon or receipt.
+fn note_heard_grid(rt: &Runtime, env: &Envelope, medium: &str) {
+    if medium != "rf" {
+        return;
+    }
+    let grid = match env.kind {
+        MsgType::Beacon => crate::band::beacon_grid(&env.body),
+        MsgType::Ack => env.acked_grid(),
+        _ => None,
+    };
+    if let Some(g) = grid {
+        rt.heard_grids.lock().insert(
+            env.origin.as_str().to_ascii_uppercase(),
+            (g, crate::proto::now_ts()),
+        );
+    }
+}
+
 fn should_apply_local_effects(action: Action) -> bool {
     action.applies_local_effects()
 }
@@ -2859,6 +2918,9 @@ async fn acknowledge(rt: &Runtime, env: &Envelope, snr: Option<f32>) -> Result<(
         seq,
         snr,
     );
+    if let Some(g) = receipt_grid(rt) {
+        ack.add_ack_grid(&g);
+    }
     // Same hop budget as the message. A routine 3 dies before it walks back
     // along a five-station line; a group receipt, or an invite's, uses 6.
     ack.flags.set_priority(env.priority());
@@ -3303,7 +3365,15 @@ fn refresh_heard(rt: &Runtime) {
             .flatten()
             .and_then(|c| Welfare::parse(&c).map(|w| w.badge().to_string()))
             .unwrap_or_default();
+        let grid = rt
+            .heard_grids
+            .lock()
+            .get(&h.callsign.to_ascii_uppercase())
+            .filter(|(_, at)| *at >= cutoff)
+            .map(|(g, _)| g.clone())
+            .unwrap_or_default();
         briefs.push(crate::status::HeardBrief {
+            grid,
             callsign: h.callsign,
             band,
             freq_khz: h.freq_khz,
@@ -4231,7 +4301,8 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             }
         }
         "wx" => {
-            let grid = cfg.lock().grid.clone();
+            // Where we are now: the GPS square while it has a fix.
+            let grid = snap.lock().grid.clone();
             if grid.trim().is_empty() {
                 return "set your grid square in setup first".into();
             }
