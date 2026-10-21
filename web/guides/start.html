@@ -148,7 +148,14 @@
           <li><code>[no]</code> refused, or the last copy waited out two more intervals with no acknowledgement. A line a relay was heard carrying stays <code>[rl]</code> until its receipt or it is an hour old.</li>
           <li><code>[xN]</code> how many times the line was keyed, until <code>[rl]</code>, <code>[gw]</code>, or <code>[ok]</code>. <code>[x1]</code> is the first send. With 3 retries the last copy is <code>[x4]</code>, then two more waits before <code>[no]</code>.</li>
         </ul>
+        <p>In the desktop app, the <strong>key</strong> button above the chat lists these marks, and hovering a mark explains it. A line that reached you by radio also shows the SNR it was decoded at, for example <code>-4 dB</code>. <code>/snr off</code> hides it.</p>
         <p>The diagram is on the <a href="/docs/protocol.html#delivery-marks">wire protocol</a> page, under delivery marks.</p>
+
+        <h2>Signal reports and weather</h2>
+        <ul>
+          <li><code>/report CALL</code> asks that station for a signal report. A station on v0.1.108 or later answers on its own with the SNR it heard you at, at most once every 5 minutes per callsign. <code>/report auto off</code> stops yours answering.</li>
+          <li><code>/wx</code> shows the weather for your grid square. <code>/wx CALL</code> sends it to CALL. It comes from Open-Meteo, so your station needs internet. The station receiving it does not.</li>
+        </ul>
       </div>
 
       <h2>Words you will see</h2>
