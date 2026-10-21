@@ -7,6 +7,7 @@ use crate::modem::ensure;
 use crate::presets::Preset;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Mutex;
 use std::time::Duration;
 use tokio::process::{Child, Command};
 
@@ -18,11 +19,80 @@ pub struct ModemProcess {
     log_path: PathBuf,
 }
 
+/// Process id of the modem73 this station started, so a stop signal can end
+/// it too (QA v0.1.104: stopping `wcr node` left modem73 running).
+static MANAGED_PID: Mutex<Option<u32>> = Mutex::new(None);
+
+/// modem73 takes A-Z, 0-9 and `/`, 1 to 9 characters, and exits on anything
+/// else. An unlicensed `~QA1A` goes to it as `QA1A`. `None`: pass no callsign.
+pub fn modem_callsign(call: &str) -> Option<String> {
+    let clean: String = call
+        .trim()
+        .to_ascii_uppercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '/')
+        .take(9)
+        .collect();
+    (!clean.is_empty()).then_some(clean)
+}
+
+/// Sets `--csma-threshold` to `db`, replacing the preset's value.
+fn set_csma_threshold(args: &mut Vec<String>, db: i16) {
+    if let Some(i) = args.iter().position(|a| a == "--csma-threshold") {
+        args.drain(i..(i + 2).min(args.len()));
+    }
+    args.extend(["--csma-threshold".into(), db.to_string()]);
+}
+
+/// Ends the modem73 this station started. For a stop signal, where the
+/// station exits without dropping its [`ModemProcess`].
+pub fn stop_managed() {
+    let Some(pid) = MANAGED_PID.lock().ok().and_then(|mut p| p.take()) else {
+        return;
+    };
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(pid as libc::pid_t, libc::SIGTERM);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/PID", pid.to_string().as_str()])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+impl Drop for ModemProcess {
+    fn drop(&mut self) {
+        // kill_on_drop ends the child; forget its pid.
+        if let Ok(mut p) = MANAGED_PID.lock() {
+            if *p == self.child.id() {
+                *p = None;
+            }
+        }
+    }
+}
+
 impl ModemProcess {
     pub async fn spawn(cfg: &Config) -> Result<Self> {
         let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::VhfFm);
-        let mut args = vec!["--headless".to_string()];
+        let mut args = vec![
+            "--headless".to_string(),
+            "-p".into(),
+            cfg.modem.kiss_port.to_string(),
+            "--control-port".into(),
+            cfg.modem.control_port.to_string(),
+        ];
         args.extend(preset.modem73_args());
+        if cfg.modem.is_vox() {
+            set_csma_threshold(&mut args, Preset::VOX_CSMA_THRESHOLD_DB);
+        }
         match cfg.modem.ptt.as_str() {
             "vox" => {
                 args.extend([
@@ -62,8 +132,8 @@ impl ModemProcess {
         if let Some(parent) = binary.parent() {
             ensure::strip_quarantine(&parent.join("libs"));
         }
-        if !cfg.callsign.trim().is_empty() {
-            args.extend(["--callsign".into(), cfg.callsign.clone()]);
+        if let Some(call) = modem_callsign(&cfg.callsign) {
+            args.extend(["--callsign".into(), call]);
         }
         if !cfg.modem.audio_input.trim().is_empty() {
             args.extend(["--input-device".into(), cfg.modem.audio_input.clone()]);
@@ -94,6 +164,9 @@ impl ModemProcess {
             ))
         })?;
         confirm_still_running(&mut child, &log_path).await?;
+        if let Ok(mut p) = MANAGED_PID.lock() {
+            *p = child.id();
+        }
         tracing::info!("started {} (log {})", binary.display(), log_path.display());
         Ok(Self { child, log_path })
     }
@@ -139,6 +212,30 @@ async fn confirm_still_running(child: &mut Child, log_path: &Path) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unlicensed_callsign_is_modem_safe() {
+        assert_eq!(modem_callsign("~QA1A").as_deref(), Some("QA1A"));
+        assert_eq!(modem_callsign(" n0call ").as_deref(), Some("N0CALL"));
+        assert_eq!(modem_callsign("VK2ABC/P").as_deref(), Some("VK2ABC/P"));
+        assert_eq!(modem_callsign("~ABCDEFGHIJK").as_deref(), Some("ABCDEFGHI"));
+        assert_eq!(modem_callsign("~"), None);
+        assert_eq!(modem_callsign(""), None);
+    }
+
+    #[test]
+    fn vox_threshold_replaces_the_preset_one() {
+        let mut args = Preset::VoxSafe.modem73_args();
+        set_csma_threshold(&mut args, Preset::VOX_CSMA_THRESHOLD_DB);
+        let at: Vec<_> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| *a == "--csma-threshold")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(at.len(), 1);
+        assert_eq!(args[at[0] + 1], "-30");
+    }
 
     #[tokio::test]
     async fn early_exit_reports_the_log_instead_of_started() {

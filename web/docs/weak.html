@@ -52,7 +52,7 @@
 
       <div class="warn-box">
         <h2>Upgrade every station first</h2>
-        <p>This build of <code>wcr</code> (v0.1.104) speaks protocol version 2, and so does the hub. Older nodes speak a different packet layout. Version 1 frames are still decoded, but every station that wants to talk on radio with this hub should run this build.</p>
+        <p>This build of <code>wcr</code> (v0.1.105) speaks protocol version 2, and so does the hub. Older nodes speak a different packet layout. Version 1 frames are still decoded, but every station that wants to talk on radio with this hub should run this build.</p>
       </div>
 
       <figure class="diagram">
@@ -125,7 +125,7 @@
         <li>When an ACK comes back, it includes how strong they heard you. A good report steps the waveform back up.</li>
         <li>Lines that start with <code>!!</code> (emergency) go out twice, a moment apart, so a fade is less likely to take both.</li>
         <li>Group chat on HF is split into pieces. Any two of three pieces rebuild the message. If several internet gateways each hear a different piece, the hub stitches them.</li>
-        <li>If the frequency is already busy, the program waits for a gap (status bar <strong>PTT</strong> reads <code>wait</code>). A station’s first three beacons go about a minute apart, then one every 5 minutes. A due beacon waits until an exchange in progress is over (a line and its receipt, a mail and its acceptance), for one exchange at most, and goes ahead of this station’s own queued lines. High occupancy holds it only while frames are being decoded. The countdown shows that time: <code>after exchange</code>, <code>pending</code> until the beacon reaches the modem, and <code>busy</code> while a decoded frame is still fresh. Lines sent in the first <code>rf.startup_hold_s</code> seconds after start (120) wait until another station has been heard. Group ACKs and retries are staggered so they do not all key at once. <code>#bulletin</code> stops at <code>[ok]</code>. When the retries are used up the line waits two more intervals, then shows <code>[no]</code>.</li>
+        <li>If the frequency is already busy, the program waits for a gap (status bar <strong>PTT</strong> reads <code>wait</code>). A station’s first three beacons go about a minute apart, then one every 5 minutes. A due beacon waits until an exchange in progress is over (a line and its receipt, a mail and its acceptance), for one exchange at most, and goes ahead of this station’s own queued lines. High occupancy holds it only while frames are being decoded. The countdown shows that time: <code>after exchange</code>, <code>pending</code> until the beacon reaches the modem, and <code>busy</code> while a decoded frame is still fresh. Lines sent in the first <code>rf.startup_hold_s</code> seconds after start (120) wait until another station has been heard (not on VOX, which sends no beacons). Group ACKs and retries are staggered so they do not all key at once. <code>#bulletin</code> stops at <code>[ok]</code>. When the retries are used up the line waits two more intervals, then shows <code>[no]</code>.</li>
       </ol>
 
       <h2>Busy channel</h2>
@@ -168,7 +168,7 @@ congested_pct = 60
 ack_dither_ms = 800
 beacon_jitter_s = 15
 retry_jitter = true   # routine waits 45s, 90s, 180s, then 360s twice before [no], each × 0.75–1.25
-startup_hold_s = 120  # own lines wait until another station is heard. 0 sends at once
+startup_hold_s = 120  # own lines wait until another station is heard. 0 sends at once. None on VOX
 outbound_max_age_secs = 3600  # older unacked outbound is [no], including after restart</pre>
 
       <div class="ok">
