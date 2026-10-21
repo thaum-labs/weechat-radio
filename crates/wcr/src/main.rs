@@ -29,7 +29,13 @@ async fn real_main() -> Result<()> {
         }
         Command::Node => {
             let cfg = load_cfg(&cfg_path)?;
-            wcr::node::run_node(cfg, false).await?;
+            tokio::select! {
+                r = wcr::node::run_node(cfg, false) => r?,
+                _ = stop_signal() => {
+                    // Exiting here skips the drop that ends modem73.
+                    wcr::modem::supervise::stop_managed();
+                }
+            }
         }
         Command::Tui => {
             let cfg = load_cfg(&cfg_path)?;
@@ -150,4 +156,20 @@ fn load_cfg(path: &std::path::Path) -> Result<Config> {
 
 fn data_telemetry() -> std::path::PathBuf {
     wcr::config::default_data_dir().join("telemetry.db")
+}
+
+/// Ctrl-C, or SIGTERM from `kill` or a service manager.
+async fn stop_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        if let Ok(mut term) = signal(SignalKind::terminate()) {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
 }
