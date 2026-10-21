@@ -550,6 +550,17 @@ impl Config {
         self.mode.uses_internet() && self.hub.enabled()
     }
 
+    /// Seconds our own lines wait after start for another station to be
+    /// heard. The hold waits for a neighbour's first beacon, and VOX sends no
+    /// beacons, so on VOX it would only keep the speaker silent: no hold.
+    pub fn startup_hold_s(&self) -> u32 {
+        if self.modem.is_vox() {
+            0
+        } else {
+            self.rf.startup_hold_s
+        }
+    }
+
     /// True when this station will POST map telemetry.
     ///
     /// Independent of chat mode: radio-only conversations stay off the hub,
@@ -617,6 +628,16 @@ mod tests {
         assert!(PUBLIC_MAP.ends_with("/map.html"));
         assert_ne!(PUBLIC_MAP, "https://weechatradio.com");
         assert_ne!(PUBLIC_MAP, "https://weechatradio.com/");
+    }
+
+    #[test]
+    fn vox_has_no_startup_hold() {
+        // VOX sends no beacons, so nothing would lift the hold early and the
+        // speaker stayed silent for two minutes after every start.
+        let mut cfg = Config::default();
+        assert_eq!(cfg.startup_hold_s(), crate::relay::STARTUP_HOLD_S);
+        cfg.modem.ptt = "vox".into();
+        assert_eq!(cfg.startup_hold_s(), 0);
     }
 
     #[test]

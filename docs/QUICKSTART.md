@@ -62,7 +62,7 @@ The status bar at the bottom shows your callsign and mode. After you send, a mar
 
 Routine retries wait 45s, then 90s, then 180s, then 360s twice with no further key, each ±25% (`retry_jitter`). Emergency is 8s / 16s / 32s / 64s twice. Priority is 20s / 40s / 80s / 160s twice. A busy channel can make the gap between copies longer than that band. `/radio flush` marks unacked outbound `[no]`. Rows older than one hour are not keyed again after a restart.
 
-On the radio the status bar counts down to the next beacon: about a minute apart for the first three, then every 5 minutes. It shows `after exchange` while a receipt or a mail acceptance is still due, `pending` until the beacon reaches the modem, and `busy` while a decoded frame is still fresh. A line sent in the first `rf.startup_hold_s` seconds after start (120) waits until another station has been heard.
+On the radio the status bar counts down to the next beacon: about a minute apart for the first three, then every 5 minutes. It shows `after exchange` while a receipt or a mail acceptance is still due, `pending` until the beacon reaches the modem, and `busy` while a decoded frame is still fresh. A line sent in the first `rf.startup_hold_s` seconds after start (120) waits until another station has been heard (not on VOX, which sends no beacons).
 
 ## Closed groups
 
