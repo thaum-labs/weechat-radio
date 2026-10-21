@@ -287,6 +287,18 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   pointer-events: none;
   text-shadow: 0 0 4px #07070a, 0 1px 2px #07070a;
 }
+.map-mark-wrap .kind-tag {
+  position: absolute;
+  left: calc(100% + 2px);
+  top: 7px;
+  color: var(--dim);
+  font-family: "Fira Mono", ui-monospace, monospace;
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: 0 0 4px #07070a, 0 1px 2px #07070a;
+}
 .map-mark-wrap.mail-overlay .tower-freq {
   top: 18px;
 }

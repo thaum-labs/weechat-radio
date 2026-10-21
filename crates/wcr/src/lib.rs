@@ -10,6 +10,7 @@ pub mod discover;
 pub mod e2e;
 pub mod emcomm;
 pub mod error;
+pub mod gps;
 pub mod grid;
 #[cfg(feature = "desktop")]
 pub mod gui;
