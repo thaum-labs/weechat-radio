@@ -455,6 +455,7 @@ test("map key explains line styles, pin colours, and the 48h fade", async ({ pag
     };
     const map = document.getElementById("map")!.getBoundingClientRect();
     const box = document.getElementById("map-key")!.getBoundingClientRect();
+    const keyBody = document.querySelector(".map-key-body") as HTMLElement | null;
     const attrib = document.querySelector(".maplibregl-ctrl-attrib")?.getBoundingClientRect();
     const controls = [...document.querySelectorAll(".maplibregl-ctrl")].map((el) => ({
       cls: el.className,
@@ -478,6 +479,10 @@ test("map key explains line styles, pin colours, and the 48h fade", async ({ pag
       paint: window.WCR.LINK_PAINT,
       modes: window.WCR.MODE_COLOR,
       mail: window.WCR.MAIL_COLOR,
+      keyBodyFits:
+        keyBody != null &&
+        keyBody.scrollWidth <= keyBody.clientWidth + 1 &&
+        keyBody.scrollHeight <= keyBody.clientHeight + 1,
       inside:
         box.left >= map.left &&
         box.right <= map.right &&
@@ -521,6 +526,7 @@ test("map key explains line styles, pin colours, and the 48h fade", async ({ pag
     radio: "#ffbf00",
     "radio-plus": "#ff4dff",
   });
+  expect(painted.keyBodyFits).toBe(true);
   expect(painted.inside).toBe(true);
   expect(painted.leftOfCenter).toBe(true);
   expect(painted.nearBottom).toBe(true);
