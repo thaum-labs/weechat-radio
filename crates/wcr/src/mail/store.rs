@@ -22,7 +22,9 @@ CREATE TABLE IF NOT EXISTS mail (
     retries INTEGER NOT NULL DEFAULT 0,
     detail TEXT NOT NULL DEFAULT '',
     chunks INTEGER NOT NULL DEFAULT 0,
-    got TEXT NOT NULL DEFAULT ''
+    got TEXT NOT NULL DEFAULT '',
+    delivery TEXT NOT NULL DEFAULT '',
+    delivery_ts INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS mail_wait (
     id TEXT PRIMARY KEY,
@@ -42,7 +44,7 @@ CREATE TABLE IF NOT EXISTS mail_copy (
 );
 "#;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct MailRow {
     pub id: String,
     pub folder: String,
@@ -61,6 +63,10 @@ pub struct MailRow {
     pub chunks: u32,
     #[serde(default)]
     pub got: String,
+    /// Resend's last word on a sent mail, from the hub: `delivered`,
+    /// `bounced`, `delivery_delayed`, … Empty until the first check.
+    #[serde(default)]
+    pub delivery: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -89,7 +95,7 @@ pub const COPY_HUB_WAIT: &str = "hub not confirmed";
 pub const COPY_ON: &str = "on";
 
 const MAIL_COLS: &str =
-    "id, folder, from_addr, to_addr, subject, body, ts, state, unread, ack, retries, detail, chunks, got";
+    "id, folder, from_addr, to_addr, subject, body, ts, state, unread, ack, retries, detail, chunks, got, delivery";
 
 pub struct MailStore {
     conn: Mutex<Connection>,
@@ -132,8 +138,8 @@ impl MailStore {
     pub fn insert(&self, row: &MailRow) -> Result<()> {
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT OR REPLACE INTO mail(id, folder, from_addr, to_addr, subject, body, ts, state, unread, ack, retries, detail, chunks, got)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+            "INSERT OR REPLACE INTO mail(id, folder, from_addr, to_addr, subject, body, ts, state, unread, ack, retries, detail, chunks, got, delivery)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
             params![
                 row.id,
                 row.folder,
@@ -149,6 +155,7 @@ impl MailStore {
                 row.detail,
                 row.chunks,
                 row.got,
+                row.delivery,
             ],
         )?;
         Ok(())
@@ -233,6 +240,40 @@ impl MailStore {
         Ok(Some((have.len() as u32, row.chunks)))
     }
 
+    /// Save the hub's delivery answer and when it was asked.
+    pub fn set_delivery(&self, id: &str, delivery: &str, now: i64) -> Result<()> {
+        self.conn.lock().execute(
+            "UPDATE mail SET delivery = ?2, delivery_ts = ?3 WHERE id = ?1",
+            params![id, delivery, now],
+        )?;
+        Ok(())
+    }
+
+    /// Sent mail whose delivery check is due at `now`. See
+    /// [`super::progress::delivery_check_due`].
+    pub fn delivery_due(&self, now: i64) -> Result<Vec<String>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, ts, delivery, delivery_ts FROM mail WHERE folder = 'sent' AND state = 'sent'",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
+        })?;
+        let due = rows
+            .filter_map(|r| r.ok())
+            .filter(|(_, ts, delivery, checked)| {
+                super::progress::delivery_check_due(now - ts, now - checked, delivery)
+            })
+            .map(|(id, ..)| id)
+            .collect();
+        Ok(due)
+    }
+
     pub fn bump_retry(&self, id: &str) -> Result<u32> {
         let conn = self.conn.lock();
         conn.execute(
@@ -261,6 +302,26 @@ impl MailStore {
             |r| r.get(0),
         )?;
         Ok(n as u64)
+    }
+
+    /// Hide one waiting header here. The hub keeps the mail until it is
+    /// fetched, so the next check lists it again.
+    pub fn delete_waiting(&self, id: &str) -> Result<bool> {
+        let n = self
+            .conn
+            .lock()
+            .execute("DELETE FROM mail_wait WHERE id = ?1", params![id])?;
+        Ok(n > 0)
+    }
+
+    /// The waiting header for a mail that has just arrived. The wire does not
+    /// carry the hub's id, so it is matched by sender and subject.
+    pub fn clear_waiting_for(&self, from_addr: &str, subject: &str) -> Result<()> {
+        self.conn.lock().execute(
+            "DELETE FROM mail_wait WHERE id IN (SELECT id FROM mail_wait WHERE from_addr = ?1 AND subject = ?2 ORDER BY ts ASC LIMIT 1)",
+            params![from_addr, subject],
+        )?;
+        Ok(())
     }
 
     pub fn replace_waiting(&self, rows: &[WaitHeader]) -> Result<()> {
@@ -387,6 +448,33 @@ impl MailStore {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_fetched_mail_clears_its_waiting_header_and_a_header_can_be_deleted() {
+        let store = MailStore::open_memory().unwrap();
+        let w = |id: &str, subject: &str| WaitHeader {
+            id: id.into(),
+            from_addr: "a@example.com".into(),
+            subject: subject.into(),
+            bytes: 10,
+        };
+        store
+            .replace_waiting(&[w("h1", "Re: Test"), w("h2", "Other")])
+            .unwrap();
+        store
+            .clear_waiting_for("a@example.com", "Re: Test")
+            .unwrap();
+        let left = store.waiting().unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].id, "h2");
+        assert!(store.delete_waiting("h2").unwrap());
+        assert!(store.waiting().unwrap().is_empty());
+    }
+}
+
 fn map_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<MailRow> {
     Ok(MailRow {
         id: r.get(0)?,
@@ -403,6 +491,7 @@ fn map_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<MailRow> {
         detail: r.get(11)?,
         chunks: r.get::<_, i64>(12)? as u32,
         got: r.get(13)?,
+        delivery: r.get(14)?,
     })
 }
 
@@ -427,6 +516,18 @@ fn migrate(conn: &Connection) -> Result<()> {
     if !names.iter().any(|n| n == "got") {
         conn.execute(
             "ALTER TABLE mail ADD COLUMN got TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    if !names.iter().any(|n| n == "delivery") {
+        conn.execute(
+            "ALTER TABLE mail ADD COLUMN delivery TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    if !names.iter().any(|n| n == "delivery_ts") {
+        conn.execute(
+            "ALTER TABLE mail ADD COLUMN delivery_ts INTEGER NOT NULL DEFAULT 0",
             [],
         )?;
     }

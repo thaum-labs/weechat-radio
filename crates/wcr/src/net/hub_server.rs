@@ -122,6 +122,10 @@ pub async fn run_hub(
         .route("/api/v1/bands", get(get_bands))
         .route("/api/v1/stats", get(get_stats))
         .route("/api/v1/mail/send", post(crate::net::hub_mail::post_send))
+        .route(
+            "/api/v1/mail/status",
+            post(crate::net::hub_mail::post_status),
+        )
         .route("/api/v1/mail/inbox", post(crate::net::hub_mail::post_inbox))
         .route("/api/v1/mail/fetch", post(crate::net::hub_mail::post_fetch))
         .route("/api/v1/mail/copy", post(crate::net::hub_mail::post_copy))
