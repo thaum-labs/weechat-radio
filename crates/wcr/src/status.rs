@@ -74,6 +74,9 @@ pub struct StatusSnapshot {
     /// TUI activity panel (mirrors `[ui] activity_panel`).
     #[serde(default = "default_activity_panel")]
     pub activity_panel: bool,
+    /// SNR next to radio lines in chat (mirrors `[ui] show_snr`).
+    #[serde(default = "default_activity_panel")]
+    pub show_snr: bool,
     /// Running `wcr` build version (from Cargo package version).
     #[serde(default = "default_version")]
     pub version: String,
@@ -359,6 +362,7 @@ impl Default for StatusSnapshot {
             heard: Vec::new(),
             group_prios: Vec::new(),
             activity_panel: true,
+            show_snr: true,
             version: default_version(),
             beacon_due: 0,
             beacon_span: 0,
