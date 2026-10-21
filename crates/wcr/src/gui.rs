@@ -412,6 +412,8 @@ struct ChatLine {
     via: String,
     tries: u32,
     when: String,
+    /// SNR in dB a radio line was decoded at; `None` off the air.
+    snr: Option<f32>,
 }
 
 impl ChatLine {
@@ -426,6 +428,7 @@ impl ChatLine {
             via: String::new(),
             tries: 0,
             when: String::new(),
+            snr: None,
         }
     }
 
@@ -440,6 +443,7 @@ impl ChatLine {
             via: String::new(),
             tries: 0,
             when: crate::store::chat_stamp(None),
+            snr: None,
         }
     }
 }
@@ -553,6 +557,27 @@ enum CenterView {
     Email,
 }
 
+/// One email being sent. The send window stays up, and the rest of the app
+/// stays out of reach, until this is done.
+struct MailSend {
+    id: String,
+    to: String,
+    subject: String,
+    /// Radio+ keys chunks to a gateway; otherwise the station posts to the hub.
+    rf: bool,
+    /// Planned airtime of the first burst, from the confirm box.
+    airtime: f64,
+    started: Instant,
+    sent_at: Option<Instant>,
+    /// Last time the station answered about this mail.
+    heard: Instant,
+    row: Option<crate::mail::MailRow>,
+    step: crate::mail::SendStep,
+}
+
+/// The station stopped answering about a send for this long.
+const MAIL_SEND_SILENT: Duration = Duration::from_secs(30);
+
 #[derive(Clone)]
 struct MailConfirm {
     kind: &'static str,
@@ -613,6 +638,8 @@ struct GuiApp {
     active_channel: String,
     joined: Vec<String>,
     chan_new: String,
+    /// The key that explains the marks after each line.
+    show_key: bool,
     invite_draft: String,
     members: HashMap<String, Vec<String>>,
     /// Optimistic dial frequency until /status catches up after /qsy.
@@ -629,7 +656,7 @@ struct GuiApp {
     mail_subject: String,
     mail_body: String,
     mail_hold: bool,
-    mail_pending: String,
+    mail_send: Option<MailSend>,
     mail_toast: String,
     mail_toast_warn: bool,
     mail_notice: String,
@@ -726,6 +753,7 @@ impl GuiApp {
             active_channel: session.active_channel,
             joined: session.joined,
             chan_new: String::new(),
+            show_key: false,
             invite_draft: String::new(),
             members: session.members,
             freq_pending: None,
@@ -738,7 +766,7 @@ impl GuiApp {
             mail_subject: String::new(),
             mail_body: String::new(),
             mail_hold: false,
-            mail_pending: String::new(),
+            mail_send: None,
             mail_toast: String::new(),
             mail_toast_warn: false,
             mail_notice: String::new(),
@@ -2045,6 +2073,7 @@ impl eframe::App for GuiApp {
                 });
             });
 
+        self.paint_mail_send(ctx);
         if self.confirm_radio {
             egui::Window::new("Switch to radio?")
                 .collapsible(false)
@@ -2161,6 +2190,20 @@ impl eframe::App for GuiApp {
                     if clear.clicked() {
                         self.clear_active_chat();
                     }
+                    let key = ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new(if self.show_key { "hide key" } else { "key" })
+                                    .color(ACCENT)
+                                    .monospace(),
+                            )
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(hairline(ACCENT)),
+                        )
+                        .on_hover_text("What the short marks after each line mean.");
+                    if key.clicked() {
+                        self.show_key = !self.show_key;
+                    }
                     if !crate::slash::is_bulletin(&self.active_channel) {
                         let leave = ui
                             .add(
@@ -2228,6 +2271,10 @@ impl eframe::App for GuiApp {
                     .color(DIM)
                     .font(FontId::monospace(11.0)),
                 );
+                if self.show_key {
+                    ui.add_space(4.0);
+                    mark_key(ui);
+                }
                 if !crate::slash::is_bulletin(&self.active_channel) {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
@@ -2368,6 +2415,8 @@ impl eframe::App for GuiApp {
                             .stick_to_bottom(true)
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
+                                let show_snr =
+                                    self.status.as_ref().map(|s| s.show_snr).unwrap_or(true);
                                 for line in &self.chat {
                                     if !line.channel.is_empty()
                                         && !line.channel.eq_ignore_ascii_case(&active)
@@ -2411,12 +2460,21 @@ impl eframe::App for GuiApp {
                                                 )
                                                 .on_hover_text(crate::store::via_hint(&line.via));
                                             }
+                                            if let Some(db) = line.snr.filter(|_| show_snr) {
+                                                ui.label(
+                                                    RichText::new(format!("{db:.0} dB"))
+                                                        .color(DIM)
+                                                        .monospace(),
+                                                )
+                                                .on_hover_text(SNR_HINT);
+                                            }
                                             if mine && !line.ticks.is_empty() {
                                                 ui.label(
                                                     RichText::new(&line.ticks)
                                                         .color(tick_color(&line.ticks))
                                                         .monospace(),
-                                                );
+                                                )
+                                                .on_hover_text(tick_hint(&line.ticks));
                                             }
                                             if mine && line.tries > 0 {
                                                 ui.label(
@@ -3732,36 +3790,142 @@ impl GuiApp {
             self.mail_toast.clear();
             self.mail_toast_warn = false;
         }
-        if !self.mail_pending.is_empty() {
-            if let Some(row) =
-                mail_http("GET", &format!("/mail/open?id={}", self.mail_pending), None)
-            {
-                let folder = row.get("folder").and_then(|v| v.as_str()).unwrap_or("");
-                let state = row.get("state").and_then(|v| v.as_str()).unwrap_or("");
-                if folder == "sent" || state == "sent" {
-                    self.mail_to.clear();
-                    self.mail_subject.clear();
-                    self.mail_body.clear();
-                    self.mail_hold = false;
-                    self.mail_pending.clear();
-                    self.mail_toast = "Sent".into();
-                    self.mail_toast_warn = false;
-                    self.mail_folder = "sent".into();
-                } else if state == "failed" {
-                    let detail = row.get("detail").and_then(|v| v.as_str()).unwrap_or("");
-                    self.mail_toast = if detail.is_empty() {
-                        "Failed".into()
-                    } else {
-                        detail.to_string()
-                    };
-                    self.mail_toast_warn = true;
-                    self.mail_hold = false;
-                    self.mail_pending.clear();
-                } else if state == "gateway" {
-                    self.mail_toast = "At the gateway, waiting for it to be accepted.".into();
-                    self.mail_toast_warn = true;
+        if let Some(send) = self.mail_send.as_mut() {
+            if !send.step.done {
+                if let Some(v) = mail_http("GET", &format!("/mail/open?id={}", send.id), None) {
+                    if let Ok(row) = serde_json::from_value::<crate::mail::MailRow>(v) {
+                        send.heard = Instant::now();
+                        if row.state == "sent" && send.sent_at.is_none() {
+                            send.sent_at = Some(Instant::now());
+                        }
+                        send.row = Some(row);
+                    }
                 }
             }
+        }
+    }
+
+    /// Moves the send window on from the latest row. Progress never goes back.
+    fn step_mail_send(&mut self) {
+        let Some(send) = self.mail_send.as_mut() else {
+            return;
+        };
+        if send.step.done {
+            return;
+        }
+        let next = if send.heard.elapsed() > MAIL_SEND_SILENT {
+            crate::mail::SendStep {
+                fraction: send.step.fraction,
+                label: "No answer from the station about this mail. Check the Outbox.".into(),
+                done: true,
+                ok: false,
+            }
+        } else {
+            let row = send.row.clone().unwrap_or_default();
+            crate::mail::send_step(&crate::mail::SendView {
+                state: if row.state.is_empty() {
+                    "queued"
+                } else {
+                    &row.state
+                },
+                chunks: row.chunks,
+                got: &row.got,
+                delivery: &row.delivery,
+                detail: &row.detail,
+                rf: send.rf,
+                elapsed_secs: send.started.elapsed().as_secs_f64(),
+                airtime_secs: send.airtime,
+                since_sent_secs: send
+                    .sent_at
+                    .map(|t| t.elapsed().as_secs_f64())
+                    .unwrap_or(0.0),
+            })
+        };
+        let fraction = next.fraction.max(send.step.fraction);
+        send.step = crate::mail::SendStep { fraction, ..next };
+        if send.step.done {
+            self.mail_hold = false;
+            if send.step.ok {
+                self.mail_to.clear();
+                self.mail_subject.clear();
+                self.mail_body.clear();
+                self.mail_folder = "sent".into();
+            }
+        }
+    }
+
+    /// The send window. A blocking layer under it keeps the rest of the app
+    /// out of reach until the send is done and OK is pressed.
+    fn paint_mail_send(&mut self, ctx: &egui::Context) {
+        if self.mail_send.is_none() {
+            return;
+        }
+        self.step_mail_send();
+        let Some(send) = self.mail_send.as_ref() else {
+            return;
+        };
+        let step = send.step.clone();
+        let screen = ctx.screen_rect();
+        egui::Area::new(egui::Id::new("mail_send_block"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(screen.min)
+            .show(ctx, |ui| {
+                ui.allocate_rect(screen, egui::Sense::click_and_drag());
+                ui.painter()
+                    .rect_filled(screen, 0.0, Color32::from_black_alpha(150));
+            });
+        ctx.memory_mut(|m| m.stop_text_input());
+        let mut close = false;
+        egui::Window::new(if step.done {
+            if step.ok {
+                "Success"
+            } else {
+                "Not sent"
+            }
+        } else {
+            "Sending email"
+        })
+        .id(egui::Id::new("mail_send_window"))
+        .order(egui::Order::Tooltip)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .frame(chrome(TOPBAR))
+        .show(ctx, |ui| {
+            ui.set_min_width(420.0);
+            ui.label(
+                RichText::new(format!("{}  {}", send.to, send.subject))
+                    .color(ACCENT)
+                    .monospace(),
+            );
+            ui.add_space(6.0);
+            let color = if step.done && !step.ok { ORANGE } else { GREEN };
+            ui.add(
+                egui::ProgressBar::new(step.fraction)
+                    .desired_width(420.0)
+                    .fill(color)
+                    .show_percentage(),
+            );
+            ui.add_space(4.0);
+            ui.label(RichText::new(&step.label).color(FG).monospace());
+            if step.done {
+                ui.add_space(8.0);
+                if ui.add(hair_btn("OK", ORANGE)).clicked() {
+                    close = true;
+                }
+            } else {
+                ui.label(
+                    RichText::new("Stay on this screen until the send finishes.")
+                        .color(DIM)
+                        .small()
+                        .monospace(),
+                );
+            }
+        });
+        if close {
+            self.mail_send = None;
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(250));
         }
     }
 
@@ -3798,6 +3962,7 @@ impl GuiApp {
                 {
                     self.mail_folder = id.into();
                     self.mail_open = None;
+                    self.mail_toast.clear();
                 }
             }
             if mode == Mode::RadioPlus {
@@ -3827,13 +3992,9 @@ impl GuiApp {
                     && !self.mail_waiting.is_empty()
                 {
                     for w in &self.mail_waiting {
-                        let line = format!(
-                            "{}  {}  {}  {} B",
-                            utc_stamp(chrono::Utc::now().timestamp()),
-                            w.from_addr,
-                            w.subject,
-                            w.bytes
-                        );
+                        // Only the header is here; the hub holds the body until Get.
+                        let line =
+                            format!("waiting  {}  {}  {} B", w.from_addr, w.subject, w.bytes);
                         ui.horizontal(|ui| {
                             if ui
                                 .selectable_label(false, RichText::new(line).monospace().color(FG))
@@ -3847,6 +4008,9 @@ impl GuiApp {
                                     ids: vec![w.id.clone()],
                                 });
                             }
+                            if ui.add(hair_btn("delete", DIM)).clicked() {
+                                delete_id = Some(w.id.clone());
+                            }
                         });
                     }
                 }
@@ -3856,6 +4020,8 @@ impl GuiApp {
                         format!("  {}", row.detail)
                     } else if row.state == "gateway" {
                         "  at gateway".into()
+                    } else if row.folder == "sent" && !row.delivery.is_empty() {
+                        format!("  {}", crate::mail::delivery_word(&row.delivery))
                     } else {
                         String::new()
                     };
@@ -3893,6 +4059,7 @@ impl GuiApp {
                 Some(&serde_json::json!({ "id": id }).to_string()),
             );
             self.mail_rows.retain(|r| r.id != id);
+            self.mail_waiting.retain(|w| w.id != id);
             if self.mail_open.as_ref().map(|m| &m.id) == Some(&id) {
                 self.mail_open = None;
             }
@@ -3917,6 +4084,14 @@ impl GuiApp {
                 .color(ACCENT)
                 .monospace(),
             );
+            let word = crate::mail::delivery_word(&open.delivery);
+            if open.folder == "sent" && !word.is_empty() {
+                ui.label(
+                    RichText::new(format!("delivery: {word}"))
+                        .color(DIM)
+                        .monospace(),
+                );
+            }
             ui.label(RichText::new(&open.body).color(FG).monospace());
         }
         ui.add_space(8.0);
@@ -4121,15 +4296,30 @@ impl GuiApp {
                                 .to_string(),
                             ),
                         ) {
-                            self.mail_pending = v
+                            let id = v
                                 .get("id")
                                 .and_then(|i| i.as_str())
                                 .unwrap_or("")
                                 .to_string();
                             let path = v.get("path").and_then(|p| p.as_str()).unwrap_or("");
-                            if path == "hub" {
-                                self.mail_toast.clear();
-                            }
+                            self.mail_toast.clear();
+                            self.mail_send = Some(MailSend {
+                                id,
+                                to: confirm.to.clone(),
+                                subject: confirm.subject.clone(),
+                                rf: path == "rf",
+                                airtime: secs,
+                                started: Instant::now(),
+                                sent_at: None,
+                                heard: Instant::now(),
+                                row: None,
+                                step: crate::mail::SendStep {
+                                    fraction: 0.0,
+                                    label: "Starting…".into(),
+                                    done: false,
+                                    ok: false,
+                                },
+                            });
                         } else {
                             self.mail_hold = false;
                             self.mail_toast = "Could not send.".into();
@@ -4740,6 +4930,62 @@ fn irc_tags(line: &str) -> HashMap<String, String> {
     map
 }
 
+const SNR_HINT: &str =
+    "Signal-to-noise ratio this station decoded the line at, from the last radio hop. /snr off hides it.";
+
+/// The marks after a chat line, in the order a line moves through them.
+const MARK_KEY: &[(&str, &str)] = &[
+    ("[..]", "waiting to go out"),
+    ("[tx]", "sent, no receipt yet"),
+    ("[x2]", "how many times it was keyed"),
+    (
+        "[rl]",
+        "heard again on the radio (a relay or an echo), not a receipt",
+    ),
+    ("[gw]", "a gateway put it on the hub"),
+    ("[ok]", "delivered, they sent a receipt"),
+    ("[all]", "every member of the closed room got it"),
+    ("[no]", "refused, or no receipt after the last try"),
+    ("[rf]", "reached you by radio"),
+    ("[net]", "reached you over the internet"),
+    ("[lan]", "reached you on the local network"),
+    (
+        "-4 dB",
+        "signal-to-noise of a radio line (/snr off hides it)",
+    ),
+];
+
+fn mark_key(ui: &mut egui::Ui) {
+    egui::Grid::new("mark_key")
+        .num_columns(2)
+        .spacing([12.0, 1.0])
+        .show(ui, |ui| {
+            for (mark, meaning) in MARK_KEY {
+                ui.label(
+                    RichText::new(*mark)
+                        .color(PURPLE)
+                        .font(FontId::monospace(11.0)),
+                );
+                ui.label(
+                    RichText::new(*meaning)
+                        .color(DIM)
+                        .font(FontId::monospace(11.0)),
+                );
+                ui.end_row();
+            }
+        });
+}
+
+/// Hover text for a line's delivery marks, e.g. `[rl] [ok]`.
+fn tick_hint(ticks: &str) -> String {
+    MARK_KEY
+        .iter()
+        .filter(|(mark, _)| ticks.contains(mark))
+        .map(|(mark, meaning)| format!("{mark} {meaning}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn tick_color(ticks: &str) -> Color32 {
     if ticks == "[ok]" || ticks == "[all]" {
         GREEN
@@ -4988,6 +5234,7 @@ fn parse_privmsg(line: &str) -> Option<ChatLine> {
             .to_string(),
         tries: parse_tries(tags.get("radio/tries").map(String::as_str)),
         when: crate::store::chat_stamp(tags.get("server-time").map(String::as_str)),
+        snr: tags.get("radio/snr").and_then(|s| s.parse().ok()),
     })
 }
 
@@ -5071,6 +5318,7 @@ mod tests {
             via: String::new(),
             tries: 0,
             when: String::new(),
+            snr: None,
         };
         apply_line_delivery(
             &mut line,
@@ -5145,6 +5393,9 @@ mod tests {
         assert_eq!(crate::store::via_bracket(&chat.via), "[rf]");
         let net = "@msgid=aa;+radio/via=inet :M0XYZ PRIVMSG #bulletin :hub";
         assert_eq!(parse_privmsg(net).unwrap().via, "inet");
+        assert_eq!(parse_privmsg(net).unwrap().snr, None);
+        let heard = "@msgid=bb;+radio/via=rf;+radio/snr=-4.4 :M0XYZ PRIVMSG #bulletin :hi";
+        assert_eq!(parse_privmsg(heard).unwrap().snr, Some(-4.4));
         let lan = "@+radio/via=lan :M0XYZ PRIVMSG #bulletin :mesh";
         assert_eq!(parse_privmsg(lan).unwrap().via, "lan");
     }
@@ -5268,5 +5519,15 @@ mod tests {
             ),
             "station stopped: thread 'main' panicked at src/node.rs:1:1:"
         );
+    }
+
+    #[test]
+    fn tick_hint_explains_each_mark() {
+        assert_eq!(tick_hint("[ok]"), "[ok] delivered, they sent a receipt");
+        assert_eq!(
+            tick_hint("[rl] [ok]"),
+            "[rl] heard again on the radio (a relay or an echo), not a receipt\n[ok] delivered, they sent a receipt"
+        );
+        assert_eq!(tick_hint(""), "");
     }
 }

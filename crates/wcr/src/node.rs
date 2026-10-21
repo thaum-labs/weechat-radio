@@ -348,6 +348,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             },
         );
         s.activity_panel = cfg.ui.activity_panel;
+        s.show_snr = cfg.ui.show_snr;
         s.version = crate::update::current_version().into();
         s.tower = cfg.gateway.show_tower(cfg.mode);
     }
@@ -1292,6 +1293,34 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     Ok(())
 }
 
+/// Answers a `/report` request from `from` with the SNR we heard it at,
+/// once our ACK has had a moment to go out first.
+fn answer_report_request(rt: &Runtime, from: &str, medium: &str, snr: Option<f32>) {
+    if !rt.cfg.lock().rf.auto_report
+        || !crate::signal_report::may_answer(from, std::time::Instant::now())
+    {
+        return;
+    }
+    let rt = rt.clone();
+    let from = from.to_string();
+    let text = crate::signal_report::answer_text(medium, snr);
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        match send_chat(&rt, &from, &text).await {
+            Ok(()) => {
+                rt.irc
+                    .notice_all(&format!("signal report sent to {from}: {text}"))
+                    .await
+            }
+            Err(e) => {
+                rt.irc
+                    .notice_all(&format!("signal report to {from} failed: {e}"))
+                    .await
+            }
+        }
+    });
+}
+
 async fn recv_opt(rx: &mut Option<mpsc::Receiver<Vec<u8>>>) -> Option<Vec<u8>> {
     match rx.as_mut() {
         Some(r) => r.recv().await,
@@ -1429,6 +1458,7 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
                 String,
                 String,
                 String,
+                String,
             )> = hist
                 .into_iter()
                 .filter(|m| m.env.kind == MsgType::Msg)
@@ -1445,12 +1475,17 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
                     } else {
                         m.env.dest.to_string()
                     };
-                    let via = rt
+                    // The first hop is how this station got the line.
+                    let first = rt
                         .store
-                        .rx_medium(&m.env.msg_id)
+                        .trace(&m.env.msg_id)
                         .ok()
-                        .flatten()
-                        .unwrap_or_default();
+                        .and_then(|t| t.into_iter().next());
+                    let via = first.as_ref().map(|h| h.1.clone()).unwrap_or_default();
+                    let snr = match &first {
+                        Some((_, medium, _, Some(db))) if medium == "rf" => format!("{db:.1}"),
+                        _ => String::new(),
+                    };
                     let tries = rt.store.rf_tx_of(&m.env.msg_id).unwrap_or(0);
                     (
                         t,
@@ -1465,6 +1500,7 @@ async fn handle_irc(rt: &Runtime, ev: IrcEvent) -> Result<()> {
                         } else {
                             String::new()
                         },
+                        snr,
                     )
                 })
                 .collect();
@@ -2636,14 +2672,22 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                         }
                     }
                     rt.irc
-                        .broadcast_privmsg(
+                        .broadcast_privmsg_snr(
                             env.origin.as_str(),
                             &target,
                             &text,
                             Some(&env.msg_id.hex()),
                             Some(medium),
+                            snr.filter(|_| medium == "rf"),
                         )
                         .await;
+                    if env.kind == MsgType::Msg
+                        && !env.flags.group()
+                        && env.dest.as_str() == rt.engine.our_call
+                        && crate::signal_report::is_request(&text)
+                    {
+                        answer_report_request(rt, env.origin.as_str(), medium, snr);
+                    }
                 }
                 if env.kind == MsgType::Checkin {
                     let _ = rt
@@ -4152,6 +4196,60 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                 Err(e) => format!("form failed: {e}"),
             }
         }
+        "report" => {
+            let arg = sp.next().unwrap_or("");
+            if arg.eq_ignore_ascii_case("auto") {
+                return match sp.next().map(|v| v.to_ascii_lowercase()) {
+                    Some(v) if v == "on" || v == "off" => {
+                        let on = v == "on";
+                        {
+                            let mut c = cfg.lock();
+                            c.rf.auto_report = on;
+                            persist_cfg(&c);
+                        }
+                        format!(
+                            "automatic signal reports {}",
+                            if on { "on" } else { "off" }
+                        )
+                    }
+                    _ => format!(
+                        "automatic signal reports are {}. /report auto on|off",
+                        if cfg.lock().rf.auto_report { "on" } else { "off" }
+                    ),
+                };
+            }
+            let call = arg.to_ascii_uppercase();
+            if call.is_empty() || call.starts_with('#') {
+                return "usage: /report CALL asks that station for a signal report".into();
+            }
+            rt.irc.begin_origin(client_id, &call);
+            let sent = send_chat(rt, &call, crate::signal_report::REQUEST_TEXT).await;
+            rt.irc.end_origin();
+            match sent {
+                Ok(()) => format!("asked {call} for a signal report"),
+                Err(e) => format!("report request failed: {e}"),
+            }
+        }
+        "wx" => {
+            let grid = cfg.lock().grid.clone();
+            if grid.trim().is_empty() {
+                return "set your grid square in setup first".into();
+            }
+            let line = match crate::weather::report(&grid).await {
+                Ok(l) => l,
+                Err(e) => return format!("weather failed: {e}"),
+            };
+            let Some(call) = sp.next().map(|c| c.to_ascii_uppercase()) else {
+                return line;
+            };
+            rt.irc.begin_origin(client_id, &call);
+            let sent = send_chat(rt, &call, &line).await;
+            rt.irc.end_origin();
+            match sent {
+                Ok(()) => format!("sent to {call}: {line}"),
+                Err(e) => format!("weather send failed: {e}"),
+            }
+        }
         "checkin" => {
             let note = sp.collect::<Vec<_>>().join(" ");
             let call = cfg.lock().callsign.clone();
@@ -4209,6 +4307,23 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                 )
             }
         }
+        "snr" => {
+            if let Some(v) = sp.next() {
+                let on = matches!(v.to_ascii_lowercase().as_str(), "on" | "1" | "true" | "yes");
+                {
+                    let mut c = cfg.lock();
+                    c.ui.show_snr = on;
+                    persist_cfg(&c);
+                }
+                snap.lock().show_snr = on;
+                format!("SNR on radio lines {}", if on { "on" } else { "off" })
+            } else {
+                format!(
+                    "SNR on radio lines {}. /snr on|off",
+                    if cfg.lock().ui.show_snr { "on" } else { "off" }
+                )
+            }
+        }
         "update" => "run `wcr update` in a terminal".into(),
         "modem" | "tnc" => {
             let c = cfg.lock();
@@ -4232,7 +4347,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             }
         }
         "" | "help" => {
-            "RADIO commands: mode preset tower status form group queue flush trace history freq qsy prio ptt checkin net mute theme activity update. Channels: /join #name (closed, +i)  /invite CALL (over-air notice from you)  /part /prio. /radio status shows relayed (every forwarded frame), unique (distinct messages), and groups (group_prios). /radio flush marks unacked outbound [no]."
+            "RADIO commands: mode preset tower status form group queue flush trace history freq qsy prio ptt checkin net mute theme activity snr update report wx. /report CALL asks for a signal report; /wx [CALL] sends the weather for your grid. Channels: /join #name (closed, +i)  /invite CALL (over-air notice from you)  /part /prio. /radio status shows relayed (every forwarded frame), unique (distinct messages), and groups (group_prios). /radio flush marks unacked outbound [no]."
                 .into()
         }
         other => format!("unknown RADIO subcommand '{other}'. Try /radio help"),

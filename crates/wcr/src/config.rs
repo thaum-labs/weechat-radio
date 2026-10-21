@@ -345,6 +345,9 @@ pub struct UiConfig {
     /// Show a short boot sequence in the TUI (tron theme).
     #[serde(default = "default_true")]
     pub boot: bool,
+    /// Show the SNR next to each line received by radio (`/snr on|off`).
+    #[serde(default = "default_true")]
+    pub show_snr: bool,
 }
 
 impl Default for UiConfig {
@@ -355,6 +358,7 @@ impl Default for UiConfig {
             activity_panel: true,
             bell: false,
             boot: true,
+            show_snr: true,
         }
     }
 }
@@ -427,6 +431,9 @@ pub struct RfConfig {
     /// Dial frequency in kHz (0 = unknown). Manual; rigctl overrides when CAT is up.
     #[serde(default)]
     pub frequency_khz: u32,
+    /// Answer a `/report` request (`SNR?`) with the SNR we heard it at.
+    /// At most once per callsign every five minutes.
+    pub auto_report: bool,
 }
 
 impl Default for RfConfig {
@@ -449,6 +456,7 @@ impl Default for RfConfig {
             startup_hold_s: crate::relay::STARTUP_HOLD_S,
             outbound_max_age_secs: 3600,
             frequency_khz: 0,
+            auto_report: true,
         }
     }
 }
