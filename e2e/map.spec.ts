@@ -246,6 +246,55 @@ test("internet-radio tower pin shows the dial frequency", async ({ page }, testI
   });
 });
 
+test("a mobile heard by a tower shows its suffix and the tower it came via", async ({ page }) => {
+  await page.route("**/api/v1/**", async (route) => {
+    const url = route.request().url();
+    if (url.includes("/api/v1/nodes") && /[?&]since=/.test(url)) {
+      await route.fulfill({ json: { since: 1, trail: [] } });
+      return;
+    }
+    if (url.includes("/api/v1/nodes")) {
+      await route.fulfill({
+        json: {
+          nodes: [
+            {
+              callsign: "G4ABC",
+              lat: 51.5,
+              lon: -0.12,
+              mode: "internet-radio",
+              tower: true,
+              settings: { tower: true },
+              freq_khz: 144950,
+              grid: "IO91WM",
+            },
+            {
+              callsign: "G4ABC/M",
+              lat: 51.47,
+              lon: -0.3,
+              mode: "radio",
+              settings: { via: "G4ABC" },
+              freq_khz: 144950,
+              grid: "IO91VL45",
+            },
+          ],
+        },
+      });
+      return;
+    }
+    await route.fulfill({ json: {} });
+  });
+
+  await page.goto("/map.html");
+  await expect(page.locator(".map-mark-wrap")).toHaveCount(2, { timeout: 15_000 });
+  const mobile = page.locator(".map-mark-wrap", { has: page.locator(".kind-tag") });
+  await expect(mobile.locator(".kind-tag")).toHaveText("/M");
+  await expect(mobile).toHaveAttribute("title", /via G4ABC/);
+  await mobile.dispatchEvent("click");
+  await expect(page.locator("#card")).toContainText("mobile");
+  await expect(page.locator("#card")).toContainText("via");
+  await expect(page.locator("#card")).toContainText("IO91VL45");
+});
+
 test("radio and radio-plus contacts draw the RF line", async ({ page }) => {
   await page.goto("/map.html");
   const style = await page.evaluate(() => {

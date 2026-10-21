@@ -32,6 +32,7 @@ pub struct Config {
     pub rf: RfConfig,
     pub tnc: TncConfig,
     pub mail: MailConfig,
+    pub gps: GpsConfig,
 }
 
 impl Default for Config {
@@ -55,6 +56,27 @@ impl Default for Config {
             rf: RfConfig::default(),
             tnc: TncConfig::default(),
             mail: MailConfig::default(),
+            gps: GpsConfig::default(),
+        }
+    }
+}
+
+/// USB GPS receiver for a moving station. An empty port means no GPS: the
+/// grid typed in setup is used.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GpsConfig {
+    /// Serial port of the receiver, e.g. `COM5` or `/dev/tty.usbmodem1101`.
+    pub port: String,
+    /// Most USB receivers send at 9600; older ones at 4800.
+    pub baud: u32,
+}
+
+impl Default for GpsConfig {
+    fn default() -> Self {
+        Self {
+            port: String::new(),
+            baud: 9600,
         }
     }
 }

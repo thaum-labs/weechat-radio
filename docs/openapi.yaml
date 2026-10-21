@@ -204,3 +204,18 @@ components:
         events:
           type: array
           items: { type: object }
+        heard_grids:
+          type: array
+          description: >-
+            Stations this one heard on the air that sent a grid square. The hub
+            places each on the map with `settings.via` set to this station, unless
+            it reported itself in the last 15 minutes.
+          items:
+            type: object
+            required: [callsign, grid, ts]
+            properties:
+              callsign: { type: string }
+              grid: { type: string }
+              ts: { type: integer, format: int64 }
+              snr: { type: number }
+              freq_khz: { type: integer }
