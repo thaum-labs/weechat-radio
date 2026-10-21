@@ -552,7 +552,8 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   gap: 12px;
   margin: 4px 0;
 }
-#play {
+#play,
+#speed {
   flex-shrink: 0;
   min-width: 72px;
   height: 28px;
@@ -563,8 +564,10 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   font: inherit;
   cursor: pointer;
 }
+#speed { min-width: 44px; }
 #play[aria-pressed="true"] { background: var(--accent); color: #000; }
-#play:hover { border-color: var(--orange); color: var(--orange); }
+#play:hover,
+#speed:hover { border-color: var(--orange); color: var(--orange); }
 #play[aria-pressed="true"]:hover { background: var(--orange); color: #000; border-color: var(--orange); }
 .tape-title { font-size: 12px; color: var(--accent); }
 .tape-hint { font-size: 11px; color: var(--dim); margin-top: 2px; }
@@ -1244,6 +1247,10 @@ details.maplibregl-ctrl-attrib:not([open]) {
   }
   #play {
     min-width: 88px;
+    min-height: 44px;
+  }
+  #speed {
+    min-width: 52px;
     min-height: 44px;
   }
   .station { padding: 12px 0; }

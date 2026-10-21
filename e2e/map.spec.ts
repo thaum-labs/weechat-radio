@@ -156,6 +156,19 @@ test("live map shell loads", async ({ page }) => {
   await expect(page.locator("#hub-panel")).toBeAttached();
 });
 
+test("tape speed button cycles 1x, half and quarter speed", async ({ page }) => {
+  await page.goto("/map.html");
+  await dismissBoot(page);
+  const speed = page.locator("#speed");
+  await expect(speed).toHaveText("1x");
+  await speed.click();
+  await expect(speed).toHaveText("½x");
+  await speed.click();
+  await expect(speed).toHaveText("¼x");
+  await speed.click();
+  await expect(speed).toHaveText("1x");
+});
+
 test("internet-radio tower pin shows the dial frequency", async ({ page }, testInfo) => {
   await page.route("**/api/v1/**", async (route) => {
     const url = route.request().url();
