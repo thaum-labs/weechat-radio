@@ -6185,7 +6185,7 @@ dependencies = [
 
 [[package]]
 name = "wcr"
-version = "0.1.105"
+version = "0.1.106"
 dependencies = [
  "anyhow",
  "axum",
