@@ -4,6 +4,8 @@
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::io::split;
 use tokio::io::ReadHalf;
 use tokio::io::WriteHalf;
@@ -136,6 +138,19 @@ pub enum ControlCmd {
 #[derive(Clone)]
 pub struct ControlClient {
     tx: mpsc::Sender<ControlCmd>,
+    /// PTT is VOX: no preset or rung may set the CSMA gate below
+    /// [`crate::presets::Preset::VOX_CSMA_THRESHOLD_DB`].
+    vox: Arc<AtomicBool>,
+}
+
+/// On VOX, raises a `carrier_threshold_db` below the VOX gate to it.
+fn vox_csma_floor(map: &mut serde_json::Map<String, Value>) {
+    let floor = crate::presets::Preset::VOX_CSMA_THRESHOLD_DB as i64;
+    if let Some(db) = map.get("carrier_threshold_db").and_then(|x| x.as_i64()) {
+        if db < floor {
+            map.insert("carrier_threshold_db".into(), floor.into());
+        }
+    }
 }
 
 impl ControlClient {
@@ -150,7 +165,13 @@ impl ControlClient {
         let (cmd_tx, cmd_rx) = mpsc::channel(32);
         let (ev_tx, ev_rx) = mpsc::channel(64);
         tokio::spawn(control_loop(read, write, cmd_rx, ev_tx));
-        Ok((Self { tx: cmd_tx }, ev_rx))
+        Ok((
+            Self {
+                tx: cmd_tx,
+                vox: Arc::new(AtomicBool::new(false)),
+            },
+            ev_rx,
+        ))
     }
 
     pub async fn request(&self, json: Value) -> Result<Value> {
@@ -178,6 +199,9 @@ impl ControlClient {
                     map.insert(k.clone(), v.clone());
                 }
             }
+            if self.vox.load(Ordering::Relaxed) {
+                vox_csma_floor(map);
+            }
         }
         let v = self.request(obj).await?;
         if v.get("ok").and_then(|x| x.as_bool()) == Some(false) {
@@ -197,11 +221,13 @@ impl ControlClient {
     }
 
     pub async fn apply_ptt(&self, ptt: &str, cfg: &crate::config::ModemConfig) -> Result<()> {
+        self.vox.store(ptt == "vox", Ordering::Relaxed);
         match ptt {
             "vox" => {
                 self.set_config(serde_json::json!({
                     "ptt": "vox",
                     // control port may use different field names; also passed on CLI
+                    "carrier_threshold_db": crate::presets::Preset::VOX_CSMA_THRESHOLD_DB,
                 }))
                 .await
                 .ok();
@@ -396,6 +422,20 @@ mod tests {
         assert_eq!(st.audio_in_db, Some(-22.0));
         assert_eq!(st.audio_out_db, Some(-9.0));
         assert!(st.audio_connected);
+    }
+
+    #[test]
+    fn vox_never_sets_the_csma_gate_below_minus_30() {
+        let mut low = serde_json::json!({"carrier_threshold_db": -50, "modem_type": 1});
+        vox_csma_floor(low.as_object_mut().unwrap());
+        assert_eq!(low["carrier_threshold_db"], -30);
+        assert_eq!(low["modem_type"], 1);
+        let mut high = serde_json::json!({"carrier_threshold_db": -20});
+        vox_csma_floor(high.as_object_mut().unwrap());
+        assert_eq!(high["carrier_threshold_db"], -20);
+        let mut none = serde_json::json!({"modem_type": 0});
+        vox_csma_floor(none.as_object_mut().unwrap());
+        assert!(none.get("carrier_threshold_db").is_none());
     }
 
     #[test]
