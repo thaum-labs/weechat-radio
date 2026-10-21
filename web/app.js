@@ -566,6 +566,7 @@ const hubPanel = document.getElementById("hub-panel");
 const card = document.getElementById("card");
 const scrub = document.getElementById("scrub");
 const playBtn = document.getElementById("play");
+const speedBtn = document.getElementById("speed");
 const clock = document.getElementById("tape-clock");
 const connInfo = document.getElementById("conn-info");
 const wsState = document.getElementById("ws-state");
@@ -761,6 +762,13 @@ let liveMode = true;
 let liveLogSeeded = false;
 let playing = false;
 let playTimer = 0;
+// Replay speeds: delay between 5-minute tape steps. 1x plays the day in about 15 s.
+const SPEEDS = [
+  { label: "1x", stepMs: 50, perDay: "about 15 seconds" },
+  { label: "½x", stepMs: 100, perDay: "about 30 seconds" },
+  { label: "¼x", stepMs: 200, perDay: "about 1 minute" },
+];
+let speedIndex = 0;
 let replayCache = [];
 let replayLoadedAt = 0;
 let linkCache = [];
@@ -1260,7 +1268,7 @@ function playStep() {
   }
   scrub.value = String(next);
   renderReplay();
-  playTimer = setTimeout(playStep, 50);
+  playTimer = setTimeout(playStep, SPEEDS[speedIndex].stepMs);
 }
 
 async function applyScrub() {
@@ -1303,10 +1311,17 @@ playBtn.addEventListener("click", () => {
   liveMode = false;
   setPlaying(true);
   renderReplay();
-  playTimer = setTimeout(playStep, 50);
+  playTimer = setTimeout(playStep, SPEEDS[speedIndex].stepMs);
   ensureReplay().then(() => {
     if (!isLive()) renderReplay();
   });
+});
+
+speedBtn.addEventListener("click", () => {
+  speedIndex = (speedIndex + 1) % SPEEDS.length;
+  const speed = SPEEDS[speedIndex];
+  speedBtn.textContent = speed.label;
+  speedBtn.setAttribute("aria-label", `Replay speed: ${speed.label}, ${speed.perDay} per day`);
 });
 
 scrub.addEventListener("input", () => {
