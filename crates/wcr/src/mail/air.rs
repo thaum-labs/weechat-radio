@@ -23,7 +23,7 @@ use tokio::sync::{broadcast, mpsc};
 /// Start at the preset ladder and only step more robust. Never a faster rung.
 pub fn mail_rung(preset: Preset, retries: u32) -> Rung {
     let start = preset.ladder_start();
-    let idx = (start + retries as usize).min(Rung::COUNT - 1);
+    let idx = (start + retries as usize).min(preset.ladder_end());
     Rung::from_index(idx)
 }
 
