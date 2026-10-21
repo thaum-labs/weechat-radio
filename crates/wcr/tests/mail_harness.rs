@@ -51,16 +51,30 @@ async fn reserve_ports(n: usize) -> Vec<u16> {
     ports
 }
 
-async fn wait_tcp(port: u16, secs: u64) {
+/// Waits for a node's status port. Fails early with the node's own error if it
+/// stopped (an IRC port taken by another test's connection), and after `secs`
+/// if it never listened (status port taken, or a slow runner).
+async fn wait_listening(
+    port: u16,
+    node: &mut tokio::task::JoinHandle<wcr::error::Result<()>>,
+    secs: u64,
+) -> Result<(), String> {
     let addr = format!("127.0.0.1:{port}");
     let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
     while tokio::time::Instant::now() < deadline {
         if TcpStream::connect(&addr).await.is_ok() {
-            return;
+            return Ok(());
+        }
+        if node.is_finished() {
+            return Err(match node.await {
+                Ok(Ok(())) => format!("node for {addr} stopped before listening"),
+                Ok(Err(e)) => format!("node for {addr} failed to start: {e}"),
+                Err(e) => format!("node for {addr} panicked: {e}"),
+            });
         }
         tokio::time::sleep(Duration::from_millis(40)).await;
     }
-    panic!("timed out waiting for {addr}");
+    Err(format!("timed out after {secs} s waiting for {addr}"))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -182,13 +196,40 @@ impl Pair {
     }
 
     /// `tweak` adjusts station `i`'s config (0 the sender, 1 the gateway).
+    ///
+    /// Reserved ports are free again until the nodes bind them, so another
+    /// test's connection can take one in between. A start that fails is
+    /// thrown away and tried again on fresh ports.
     async fn start_tweaked(
         opts: TimedOpts,
         drop_rx: LinkDrop,
         hub_delay: Duration,
         tweak: impl Fn(usize, &mut Config),
     ) -> Self {
-        let setup = setup_lock().lock().await;
+        const ATTEMPTS: usize = 3;
+        let mut errors = Vec::new();
+        for attempt in 1..=ATTEMPTS {
+            match Self::try_start(opts, drop_rx.clone(), hub_delay, &tweak).await {
+                Ok(pair) => {
+                    pair.wait_mail().await;
+                    return pair;
+                }
+                Err(e) => {
+                    eprintln!("pair start attempt {attempt}/{ATTEMPTS} failed: {e}");
+                    errors.push(e);
+                }
+            }
+        }
+        panic!("pair never started: {}", errors.join("; "));
+    }
+
+    async fn try_start(
+        opts: TimedOpts,
+        drop_rx: LinkDrop,
+        hub_delay: Duration,
+        tweak: &impl Fn(usize, &mut Config),
+    ) -> Result<Self, String> {
+        let _setup = setup_lock().lock().await;
         let air = wcr::sim::SharedAir::new(0.0);
         let log: TimedLog = Arc::new(Mutex::new(Vec::new()));
         let posts = Arc::new(Mutex::new(Vec::new()));
@@ -228,19 +269,22 @@ impl Pair {
                 wcr::node::run_node(cfg, false).await
             }));
         }
-        for p in [ports[1], ports[3]] {
-            wait_tcp(p, 20).await;
+        // 60 s: a loaded msrv runner can take well over 20 s to start a node.
+        for (i, p) in [ports[1], ports[3]].into_iter().enumerate() {
+            if let Err(e) = wait_listening(p, &mut nodes[i], 60).await {
+                for n in &nodes {
+                    n.abort();
+                }
+                return Err(e);
+            }
         }
-        drop(setup);
-        let pair = Self {
+        Ok(Self {
             log,
             posts,
             status: [ports[1], ports[3]],
             irc: [ports[0], ports[2]],
             nodes,
-        };
-        pair.wait_mail().await;
-        pair
+        })
     }
 
     async fn wait_mail(&self) {
