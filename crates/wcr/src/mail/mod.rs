@@ -6,6 +6,7 @@ mod api;
 mod gateway;
 mod hub;
 mod lease;
+mod progress;
 mod proto;
 mod store;
 
@@ -18,6 +19,7 @@ use crate::status::SharedStatus;
 pub use air::{confirm_air_line, AirtimeMail};
 pub use gateway::{local_send_path as gateway_path, state_mark, SendPath};
 pub use lease::RadioPorts;
+pub use progress::{delivery_word, send_step, SendStep, SendView};
 
 pub fn airtime_parts(mail: &AirtimeMail<'_>, preset: Preset, turnaround_ms: u32) -> (f64, usize) {
     air::mail_airtime_secs(preset, mail, turnaround_ms)
@@ -164,7 +166,24 @@ pub fn start(
         keys: keys.clone(),
     };
     air::spawn(store, cfg, snap, keys, ports, cmd, rx, tel, keying);
+    tokio::spawn(watch_delivery(handle.clone()));
     Ok(handle)
+}
+
+/// Asks the hub how each recently sent mail is doing at Resend, on the
+/// schedule in [`progress::delivery_check_due`].
+async fn watch_delivery(h: MailHandle) {
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
+    loop {
+        tick.tick().await;
+        let now = chrono::Utc::now().timestamp();
+        let Ok(ids) = h.store.delivery_due(now) else {
+            continue;
+        };
+        for id in ids {
+            let _ = h.check_delivery(&id).await;
+        }
+    }
 }
 
 /// Record a gateway have-report the moment it is decoded. The mail loop can
@@ -292,6 +311,7 @@ impl MailHandle {
             detail: String::new(),
             chunks: 0,
             got: String::new(),
+            delivery: String::new(),
         })?;
         let _ = self.cmd.send(MailCmd::Send { id: id.clone() }).await;
         let path = match gateway::local_send_path(cfg.mode) {
@@ -361,6 +381,42 @@ impl MailHandle {
             self.store.mark_copy_hub_wait(&cfg.callsign)?;
         }
         Ok((true, hub_ok))
+    }
+
+    /// One signed `POST /api/v1/mail/status` for a sent mail. The answer is
+    /// Resend's last event, saved on the row. No internet keeps the old answer.
+    pub async fn check_delivery(&self, id: &str) -> Result<()> {
+        let cfg = self.cfg.lock().clone();
+        let now = chrono::Utc::now().timestamp();
+        let prev = self.store.get(id)?.map(|r| r.delivery).unwrap_or_default();
+        let mut delivery = prev.clone();
+        if cfg.hub.enabled() {
+            let base = hub::http_base_from_hub(&cfg.hub.url);
+            let body = json!({ "mail_id": id });
+            if let Ok((status, text)) = hub::signed_post_raw(
+                &base,
+                "/api/v1/mail/status",
+                &self.keys,
+                &cfg.callsign,
+                &body,
+            )
+            .await
+            {
+                let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+                if (200..300).contains(&status) {
+                    let state = v.get("state").and_then(|s| s.as_str()).unwrap_or("");
+                    if !state.is_empty() {
+                        delivery = state.to_string();
+                    }
+                } else if status == 404 && v.get("error").is_some() {
+                    delivery = "unknown".into();
+                }
+            }
+        }
+        if delivery != prev {
+            tracing::info!("mail delivery {id}: {delivery}");
+        }
+        self.store.set_delivery(id, &delivery, now)
     }
 
     async fn copy_hub(&self, cfg: &Config, path: &str, body: Value) -> Result<Value> {
@@ -859,6 +915,7 @@ mod tests {
                 detail: String::new(),
                 chunks: 48,
                 got: "0,1,2".into(),
+                delivery: String::new(),
             })
             .unwrap();
         let have: Vec<u16> = (0..48)
@@ -923,6 +980,7 @@ mod tests {
             detail: String::new(),
             chunks: 56,
             got: String::new(),
+            delivery: String::new(),
         };
         store.insert(&row("m56", "tx")).unwrap();
         store.insert(&row("bad", "tx")).unwrap();
@@ -996,6 +1054,7 @@ mod tests {
                 detail: String::new(),
                 chunks: 2,
                 got: String::new(),
+                delivery: String::new(),
             })
             .unwrap();
         assert_eq!(store.note_chunk("m1", 0).unwrap(), Some((1, 2)));

@@ -23,6 +23,30 @@ The address is `{callsign}@mail.weechatradio.com`. There is no domain setting. G
 - If the radio is not running, the row is Failed at once with `Radio is not running.`
 - If the row is still `[tx]` five minutes after this attempt started (or three times the planned airtime plus a minute, when that is longer), and nothing has moved it on, it is Failed. VOX lead, tail, and the modem drain are unchanged.
 
+## Send window
+
+Pressing Send in the confirm box opens a send window with a progress bar. The rest of the app is out of reach until the send is done and OK is pressed. The bar follows the real stages, never a timer, except for the keying itself:
+
+| Stage | Bar | Line |
+| --- | --- | --- |
+| Hub path, handing over | 30% | `Handing it to the hub…` |
+| Radio+, waiting for the radio | 2% | `Waiting for the radio…` |
+| Radio+, keying | 5–50%, by planned airtime | `On the air, about N s left…` |
+| Radio+, gateway acks chunks | 50–80%, by chunks held | `The gateway has H of T chunks…` |
+| Radio+, every chunk at the gateway | 80% | `The gateway has every chunk…` |
+| Sent (Resend accepted it) | 90–99% | `Sent. Resend accepted it; checking delivery…` |
+| Delivered | 100% | `Success: delivered.` |
+
+After Sent the window waits up to 30 s for Resend's delivery report. Without one it closes as `Success: sent.` and the Sent folder shows the delivery later. A bounce says `Sent, but bounced.` A failure shows the reason, the same text as the Outbox, and keeps To, subject and body. If the station stops answering for 30 s the window says so and can be closed.
+
+## Delivery
+
+Sent means Resend accepted the mail. Delivery is Resend's own report after that. The station asks the hub (`POST /api/v1/mail/status` with its mail id), and the hub asks Resend (`GET /emails/{id}`, its `last_event`), so the Resend key stays on the hub. The hub keeps the answer and asks Resend at most every 10 s per mail; once the answer is final it stops asking.
+
+The station checks each Sent mail every 10 s for its first two minutes, every minute up to 30 minutes, every 15 minutes up to a day, then stops. It also stops once the answer is final. The Sent list and an opened sent mail show the word: `with Resend`, `delayed`, `delivered`, `bounced`, `marked as spam`, `Resend failed to send it`, or `no delivery record` (the hub has nothing for that id, for example mail posted by an older gateway). Radio+ asks the hub over this computer's internet, as copy-to does. Without internet the word stays empty. The station log records `mail delivery <id>: <event>` when it changes.
+
+Every station and gateway sends its mail id with `POST /api/v1/mail/send` (`mail_id`). A gateway sends the id it computed from the RF mail, which is the Radio+ station's own id. The hub lets the station that posted the mail, or the station that wrote it, read its status.
+
 A toast timer does not mark Sent. The compose hint and the send confirm both show the estimated airtime for this message, counted from the WCRM frames the send will key (header included, same split as the body), so one short mail says `1 burst` and a long one matches the chunk count. `POST /api/v1/mail/compose` returns that same hint as `airtime`. A long message says it is not Sent until the gateway accepts it.
 
 ## Log
@@ -45,7 +69,7 @@ The pin keeps its mode colour. An e beside that logo means mail moved in the las
 
 ## Check mail
 
-Internet and internet-radio pull waiting mail from the hub as themselves. Radio-plus asks the gateway over RF (list, then get). The gateway pulls that station's inbox, and only when the station signed the request. Nothing arrives on RF unless this station asked. If the list comes back empty, the tab says `no new mail`. If the gateway does not answer, it says `No reply from the gateway.`
+Internet and internet-radio pull waiting mail from the hub as themselves. Radio-plus asks the gateway over RF (list, then get). The list gives headers only. They show in the Inbox as `waiting` lines until Get brings the mail in, which removes the line. Delete on a waiting line hides it on this station only; the hub keeps the mail until it is fetched, so the next Check mail lists it again. The gateway pulls that station's inbox, and only when the station signed the request. Nothing arrives on RF unless this station asked. If the list comes back empty, the tab says `no new mail`. If the gateway does not answer, it says `No reply from the gateway.`
 
 ## Copy-to
 
@@ -64,6 +88,7 @@ The hub resolves copy-to from the callsign in `From`, so a relaying gateway cann
 Signed routes:
 
 - `POST /api/v1/mail/send`
+- `POST /api/v1/mail/status`
 - `POST /api/v1/mail/inbox`
 - `POST /api/v1/mail/fetch`
 - `POST /api/v1/mail/copy`
