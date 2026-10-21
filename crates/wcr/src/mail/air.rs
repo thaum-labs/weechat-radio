@@ -394,6 +394,7 @@ async fn hub_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
         &row.subject,
         &row.body,
         bcc.as_deref(),
+        &row.id,
     );
     let v = hub::signed_post(&base, "/api/v1/mail/send", &ctx.keys, &cfg.callsign, &body).await?;
     if gateway::resend_accepted(v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false)) {
@@ -1302,7 +1303,7 @@ async fn deliver(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Resul
         }
         let base = hub::http_base_from_hub(&cfg.hub.url);
         // Relayed mail is not ours. The hub adds the sender's copy-to, if any.
-        let payload = hub::send_body(&meta.from, &meta.to, &meta.subject, &body, None);
+        let payload = hub::send_body(&meta.from, &meta.to, &meta.subject, &body, None, &mail_id);
         let posted = hub::signed_post(
             &base,
             "/api/v1/mail/send",
@@ -1340,6 +1341,7 @@ async fn deliver(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Resul
                 detail: String::new(),
                 chunks: 0,
                 got: String::new(),
+                delivery: String::new(),
             });
             if let Some(origin) = from_call.as_deref() {
                 note_mail(ctx, origin, &cfg.callsign);
@@ -1382,8 +1384,11 @@ async fn deliver(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Resul
         detail: String::new(),
         chunks: 0,
         got: String::new(),
+        delivery: String::new(),
     };
     ctx.store.insert(&row)?;
+    // The mail fetched by Get is in, so its waiting header goes.
+    let _ = ctx.store.clear_waiting_for(&row.from_addr, &row.subject);
     let us = cfg.callsign.to_ascii_uppercase();
     if let Some(from_cs) = proto::callsign_from_wcr(&row.from_addr) {
         note_mail(ctx, &from_cs, &us);
@@ -1581,6 +1586,7 @@ async fn sync_hub(ctx: &TxCtx) -> Result<()> {
             detail: String::new(),
             chunks: 0,
             got: String::new(),
+            delivery: String::new(),
         })?;
     }
     Ok(())
