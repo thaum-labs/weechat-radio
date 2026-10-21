@@ -61,7 +61,7 @@ impl Preset {
             Self::HfPoor => "Fading HF, NVIS (ROBUST RDM-600S)",
             Self::HfWeak => "Very weak HF (RDM-300S)",
             Self::VoxSafe => {
-                "Any radio with VOX: MFSK-32R plus a long lead so the radio is keyed before data"
+                "Any radio with VOX: RDM-600S plus a long lead so the radio is keyed before data"
             }
             Self::HfDeep => "Deep-fade HF backup (MFSK-32R, below the noise floor)",
             Self::Afsk1200 => {
@@ -82,7 +82,7 @@ impl Preset {
             Self::HfGood => 2400,
             Self::HfPoor => 378,
             Self::HfWeak => 194,
-            Self::VoxSafe => 99,
+            Self::VoxSafe => 378,
             Self::HfDeep => 99,
             Self::Afsk1200 => 1200,
         }
@@ -95,7 +95,7 @@ impl Preset {
             Self::HfGood => 512,
             Self::HfPoor => 170,
             Self::HfWeak => 170,
-            Self::VoxSafe => 55,
+            Self::VoxSafe => 170,
             Self::HfDeep => 55,
             // AX.25 info field; the built-in TNC is happiest well under 256.
             Self::Afsk1200 => 200,
@@ -144,7 +144,7 @@ impl Preset {
         )
     }
 
-    /// Minimum VOX lead before MFSK-32R data. A clipped preamble wastes the whole burst.
+    /// Minimum VOX lead before the data. A clipped preamble wastes the whole burst.
     pub const VOX_SAFE_LEAD_MS: u32 = 900;
     /// Hold the radio keyed after the last symbols so VOX does not drop the tail.
     pub const VOX_SAFE_TAIL_MS: u32 = 300;
@@ -169,9 +169,18 @@ impl Preset {
     pub fn ladder_start(self) -> usize {
         match self {
             Self::VhfFm | Self::HfGood | Self::Afsk1200 => 0,
-            Self::HfPoor => 2,
+            Self::HfPoor | Self::VoxSafe => 2,
             Self::HfWeak => 3,
-            Self::HfDeep | Self::VoxSafe => 4,
+            Self::HfDeep => 4,
+        }
+    }
+
+    /// Slowest rung retries may step down to. VOX stays on RDM-600S: over a
+    /// speaker and mic MFSK-32R syncs but never decodes (Tobias, v0.1.106).
+    pub fn ladder_end(self) -> usize {
+        match self {
+            Self::VoxSafe => 2,
+            _ => Rung::COUNT - 1,
         }
     }
 
@@ -213,7 +222,7 @@ impl Preset {
                 band.into(),
                 "--postamble".into(),
             ],
-            Self::HfPoor => vec![
+            Self::HfPoor | Self::VoxSafe => vec![
                 "--robust-mode".into(),
                 "RDM-600S".into(),
                 "--csma-band".into(),
@@ -225,7 +234,7 @@ impl Preset {
                 "--csma-band".into(),
                 band.into(),
             ],
-            Self::HfDeep | Self::VoxSafe => vec![
+            Self::HfDeep => vec![
                 "--mfsk-mode".into(),
                 "MFSK-32R".into(),
                 "--csma-band".into(),
@@ -257,7 +266,7 @@ impl Preset {
                 "csma_enabled": true,
                 "postamble": true
             }),
-            Self::HfPoor => serde_json::json!({
+            Self::HfPoor | Self::VoxSafe => serde_json::json!({
                 "cmd": "set_config",
                 "modem_type": 2,
                 "robust_mode": 6,
@@ -271,7 +280,7 @@ impl Preset {
                 "csma_band": self.csma_band(),
                 "csma_enabled": true
             }),
-            Self::HfDeep | Self::VoxSafe => serde_json::json!({
+            Self::HfDeep => serde_json::json!({
                 "cmd": "set_config",
                 "modem_type": 1,
                 "mfsk_mode": 3,
@@ -390,7 +399,9 @@ impl Rung {
 /// Pick a TX rung for this destination: start from the last ACK, then step down per retry.
 pub fn rung_for(preset: Preset, stored: usize, retries: u32, frame_len: usize) -> Rung {
     let start = stored.min(Rung::COUNT - 1).max(preset.ladder_start());
-    let idx = (start + retries as usize).min(Rung::max_for_size(frame_len));
+    let idx = (start + retries as usize)
+        .min(preset.ladder_end())
+        .min(Rung::max_for_size(frame_len));
     Rung::from_index(idx)
 }
 
@@ -505,36 +516,30 @@ mod tests {
     }
 
     #[test]
-    fn vox_safe_stays_on_mfsk() {
-        assert_eq!(Preset::VoxSafe.ladder_start(), 4);
-        assert_eq!(rung_for(Preset::VoxSafe, 0, 0, 40), Rung::Mfsk32R);
-        assert_eq!(rung_for(Preset::VoxSafe, 0, 3, 40), Rung::Mfsk32R);
+    fn vox_safe_stays_on_rdm_600s() {
+        // Over a speaker and mic MFSK-32R syncs but never decodes; RDM-600S
+        // does (Tobias, v0.1.106). Retries must not step down to MFSK.
+        assert_eq!(Preset::VoxSafe.ladder_start(), 2);
+        assert_eq!(rung_for(Preset::VoxSafe, 0, 0, 40), Rung::Rdm600S);
+        assert_eq!(rung_for(Preset::VoxSafe, 0, 3, 40), Rung::Rdm600S);
+        assert_eq!(rung_for(Preset::VoxSafe, 4, 0, 40), Rung::Rdm600S);
+        assert_eq!(rung_for(Preset::VoxSafe, 0, 3, 160), Rung::Rdm600S);
         assert!(Preset::VoxSafe.unsigned_on_rf());
         assert!(Preset::VoxSafe.is_hf());
-        assert_eq!(Preset::VoxSafe.payload_bytes(), 55);
+        assert_eq!(Preset::VoxSafe.payload_bytes(), 170);
         assert_eq!(Preset::VoxSafe.vox_lead_ms(500), Preset::VOX_SAFE_LEAD_MS);
         assert_eq!(Preset::VoxSafe.vox_lead_ms(1200), 1200);
         assert_eq!(Preset::VoxSafe.vox_tail_ms(150), Preset::VOX_SAFE_TAIL_MS);
         let v = Preset::VoxSafe.control_config();
-        assert_eq!(v.get("modem_type").and_then(|x| x.as_u64()), Some(1));
-        assert_eq!(v.get("mfsk_mode").and_then(|x| x.as_u64()), Some(3));
-        assert_eq!(
-            v.get("carrier_threshold_db").and_then(|x| x.as_i64()),
-            Some(-50)
-        );
+        assert_eq!(v.get("modem_type").and_then(|x| x.as_u64()), Some(2));
+        assert_eq!(v.get("robust_mode").and_then(|x| x.as_u64()), Some(6));
         let args = Preset::VoxSafe.modem73_args();
         assert!(args
             .windows(2)
-            .any(|w| w[0] == "--csma-threshold" && w[1] == "-50"));
-        assert!(args
-            .windows(2)
-            .any(|w| w[0] == "--mfsk-mode" && w[1] == "MFSK-32R"));
-        assert!(
-            !args
-                .windows(2)
-                .any(|w| w[0] == "-m" || w[0] == "--modulation"),
-            "MFSK-32R is not an OFDM -m value; modem73 exits on that"
-        );
+            .any(|w| w[0] == "--robust-mode" && w[1] == "RDM-600S"));
+        assert!(!args.iter().any(|a| a == "--mfsk-mode"));
+        // Other presets still walk the whole ladder.
+        assert_eq!(rung_for(Preset::HfPoor, 0, 3, 40), Rung::Mfsk32R);
         assert!(Preset::HfDeep
             .modem73_args()
             .windows(2)
