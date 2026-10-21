@@ -121,6 +121,25 @@ pub fn beacon_khz(body: &[u8]) -> Option<u32> {
     }
 }
 
+/// Grid from a beacon body `B|<mode>|<khz>|<grid>`. Beacons before v0.1.109
+/// stop at the frequency.
+pub fn beacon_grid(body: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(body).ok()?.trim();
+    let mut parts = text.split('|');
+    if !parts.next()?.eq_ignore_ascii_case("B") {
+        return None;
+    }
+    crate::grid::position(parts.nth(2)?)
+}
+
+/// The beacon body. `grid` is left off when empty.
+pub fn beacon_body(mode: &str, khz: u32, grid: &str) -> String {
+    match crate::grid::position(grid) {
+        Some(g) => format!("B|{mode}|{khz}|{g}"),
+        None => format!("B|{mode}|{khz}"),
+    }
+}
+
 /// Distinct band labels for hub `to_bands` (empty freq → `inet`).
 pub fn to_bands(freq_khzs: impl IntoIterator<Item = u32>) -> Vec<String> {
     let mut out = Vec::new();
@@ -412,6 +431,20 @@ mod tests {
         assert_eq!(beacon_khz(b"B|internet-radio|144950"), Some(144950));
         assert_eq!(beacon_khz(b"B|radio"), None);
         assert_eq!(beacon_khz(b"B|radio|0"), None);
+        // A grid on the end leaves the frequency readable for older versions.
+        assert_eq!(beacon_khz(b"B|radio|144950|IO91WM12"), Some(144950));
+        assert_eq!(
+            beacon_grid(b"B|radio|144950|IO91wm12").as_deref(),
+            Some("IO91WM12")
+        );
+        assert_eq!(beacon_grid(b"B|radio|144950"), None);
+        assert_eq!(beacon_grid(b"B|radio|144950|ZZ99"), None);
+        assert_eq!(
+            super::beacon_body("radio", 144950, "IO91WM12"),
+            "B|radio|144950|IO91WM12"
+        );
+        assert_eq!(super::beacon_body("radio", 144950, ""), "B|radio|144950");
+        assert_eq!(super::beacon_body("radio", 144950, "IO"), "B|radio|144950");
         assert_eq!(beacon_khz(b"hello"), None);
     }
 

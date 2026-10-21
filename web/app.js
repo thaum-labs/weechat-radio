@@ -801,6 +801,24 @@ function isTower(n) {
   return !!(settings && settings.tower === true);
 }
 
+/** The operating suffix: G4ABC/M is mobile, /P portable, /MM at sea, /AM in the air. */
+const SUFFIX_KIND = { M: "mobile", P: "portable", MM: "maritime mobile", AM: "aeronautical mobile" };
+
+function stationSuffix(call) {
+  const m = /\/(MM|AM|M|P)$/i.exec(call || "");
+  return m ? m[1].toUpperCase() : "";
+}
+
+function stationKind(call) {
+  return SUFFIX_KIND[stationSuffix(call)] || "";
+}
+
+/** The tower that heard a radio-only station and passed its grid on. */
+function heardVia(n) {
+  const via = n && n.settings && n.settings.via;
+  return typeof via === "string" ? via : "";
+}
+
 function towerSvg(mode, cls) {
   const c = MODE_COLOR[mode] || "#39ff14";
   const k = cls || "map-mark";
@@ -854,7 +872,8 @@ function paintMarkerFace(el, n, now, markKey) {
   }
   const age = el.querySelector(".map-mark-age");
   if (age) age.style.opacity = String(markerOpacity(n, now));
-  const heard = lastHeardLabel(stationAgeMs(n, now));
+  const via = heardVia(n);
+  const heard = lastHeardLabel(stationAgeMs(n, now)) + (via ? ` · via ${via}` : "");
   el.title = heard;
   el.setAttribute("aria-label", `${n.callsign || "station"}, ${heard}`);
   el.onclick = () => showCard(n, Date.now());
@@ -884,7 +903,10 @@ function upsertNode(n, nowMs) {
 
 function markerInner(n) {
   const html = pinHtml(n, "map-mark");
-  if (!isTower(n)) return html;
+  const suffix = stationSuffix(n.callsign);
+  if (!isTower(n)) {
+    return suffix ? `${html}<span class="kind-tag" title="${escapeHtml(stationKind(n.callsign))}">/${suffix}</span>` : html;
+  }
   const freq = nodeFreq(n);
   if (!freq) return html;
   const color = MODE_COLOR[n.mode] || "#39ff14";
@@ -897,7 +919,8 @@ function showCard(n, nowMs) {
   card.hidden = false;
   card.innerHTML = kv([
     ["call", n.callsign || "—"],
-    ["pin", isTower(n) ? "tower" : "station"],
+    ["pin", isTower(n) ? "tower" : stationKind(n.callsign) || "station"],
+    ...(heardVia(n) ? [["via", heardVia(n)]] : []),
     ["mode", n.mode || "—"],
     ["heard", lastHeardLabel(stationAgeMs(n, now))],
     ["ptt", n.ptt || "—"],

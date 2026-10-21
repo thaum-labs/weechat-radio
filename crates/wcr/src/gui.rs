@@ -602,6 +602,8 @@ struct GuiApp {
     bt_name: String,
     /// Serial path for a KISS TNC on a port (`COM7`, `/dev/rfcomm0`).
     serial_path: String,
+    /// USB GPS receiver port; empty for none.
+    gps_port: String,
     rigctl: String,
     audio_input: String,
     audio_output: String,
@@ -719,6 +721,7 @@ impl GuiApp {
                 form.bt_name
             },
             serial_path: form.serial,
+            gps_port: form.gps_port,
             rigctl: form.rigctl,
             audio_input: form.audio_input,
             audio_output: form.audio_output,
@@ -814,6 +817,7 @@ impl GuiApp {
         };
         cfg.callsign = self.callsign.trim().to_ascii_uppercase();
         cfg.grid = self.grid.trim().to_ascii_uppercase();
+        cfg.gps.port = self.gps_port.trim().to_string();
         match self.path {
             0 => {
                 cfg.mode = Mode::Internet;
@@ -1669,6 +1673,28 @@ impl eframe::App for GuiApp {
                             );
                         });
                     }
+                    ui.horizontal(|ui| {
+                        ui.add_space(20.0);
+                        ui.label(RichText::new("GPS     ").color(DIM));
+                        if let Some(ports) = self.hw.as_ref().map(|h| h.ports.as_slice()) {
+                            port_combo_ui(ui, ports, &mut self.gps_port, "gps_port");
+                        }
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.gps_port)
+                                .desired_width(160.0)
+                                .hint_text("empty = no GPS"),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.add_space(20.0);
+                        ui.label(
+                            RichText::new(
+                                "On the move? A USB GPS keeps your grid and map pin current.",
+                            )
+                            .color(DIM)
+                            .font(FontId::monospace(11.0)),
+                        );
+                    });
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
@@ -1840,6 +1866,9 @@ impl eframe::App for GuiApp {
                             let display_khz = self.freq_pending.unwrap_or(s.freq_khz);
                             kv(ui, "CALL", &s.callsign, ACCENT);
                             kv(ui, "GRID", &s.grid, PURPLE);
+                            if !s.gps.is_empty() {
+                                kv(ui, "GPS", s.gps.trim_start_matches("GPS: "), DIM);
+                            }
                             if let Some(next) = mode_pick(ui, s.mode) {
                                 if next == Mode::Radio && s.mode != Mode::Radio {
                                     want_radio_confirm = true;
@@ -4334,6 +4363,7 @@ struct Form {
     bt_name: String,
     bt_addr: String,
     serial: String,
+    gps_port: String,
     rigctl: String,
     audio_input: String,
     audio_output: String,
@@ -4364,6 +4394,7 @@ fn load_form() -> Form {
             bt_name: cfg.tnc.bt_name,
             bt_addr: cfg.tnc.bt_addr,
             serial: cfg.tnc.serial,
+            gps_port: cfg.gps.port,
             rigctl: cfg.modem.rigctl,
             audio_input: cfg.modem.audio_input,
             audio_output: cfg.modem.audio_output,
