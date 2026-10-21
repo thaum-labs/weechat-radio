@@ -44,6 +44,53 @@ CREATE TABLE IF NOT EXISTS hub_mail_copy (
 );
 "#;
 
+/// Columns added after the first hub release. `mail_id` is the station's own
+/// id for an outbound mail, so the station can ask how it went.
+fn migrate(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(hub_mail)")?;
+    let names: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(|r| r.ok())
+        .collect();
+    for (col, ddl) in [
+        (
+            "mail_id",
+            "ALTER TABLE hub_mail ADD COLUMN mail_id TEXT NOT NULL DEFAULT ''",
+        ),
+        (
+            "last_event",
+            "ALTER TABLE hub_mail ADD COLUMN last_event TEXT NOT NULL DEFAULT ''",
+        ),
+        (
+            "checked",
+            "ALTER TABLE hub_mail ADD COLUMN checked INTEGER NOT NULL DEFAULT 0",
+        ),
+    ] {
+        if !names.iter().any(|n| n == col) {
+            conn.execute(ddl, [])?;
+        }
+    }
+    Ok(())
+}
+
+/// Resend's `last_event` values that will not change again.
+pub fn delivery_final(event: &str) -> bool {
+    matches!(
+        event,
+        "delivered" | "opened" | "clicked" | "bounced" | "complained" | "failed" | "canceled"
+    )
+}
+
+/// An outbound mail as the hub knows it, for a status lookup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutStatus {
+    pub poster: String,
+    pub from_addr: String,
+    pub resend_id: String,
+    pub last_event: String,
+    pub checked: i64,
+}
+
 pub struct MailHubDb {
     conn: Mutex<Connection>,
 }
@@ -55,6 +102,7 @@ impl MailHubDb {
         }
         let conn = Connection::open(path)?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -63,6 +111,7 @@ impl MailHubDb {
     pub fn open_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -97,17 +146,50 @@ impl MailHubDb {
         subject: &str,
         body: &str,
         resend_id: &str,
+        mail_id: &str,
     ) -> Result<String> {
         let id = blake3::hash(format!("out{callsign}{to}{subject}{body}{resend_id}").as_bytes())
             .to_hex()
             .to_string();
         let now = chrono::Utc::now().timestamp();
         self.conn.lock().execute(
-            "INSERT INTO hub_mail(id, callsign, direction, from_addr, to_addr, subject, body, received, fetched, resend_id)
-             VALUES(?1,?2,'out',?3,?4,?5,?6,?7,1,?8)",
-            params![id, callsign.to_ascii_uppercase(), from, to, subject, body, now, resend_id],
+            "INSERT INTO hub_mail(id, callsign, direction, from_addr, to_addr, subject, body, received, fetched, resend_id, mail_id)
+             VALUES(?1,?2,'out',?3,?4,?5,?6,?7,1,?8,?9)",
+            params![id, callsign.to_ascii_uppercase(), from, to, subject, body, now, resend_id, mail_id],
         )?;
         Ok(id)
+    }
+
+    /// The newest outbound row for a station's mail id.
+    pub fn out_status(&self, mail_id: &str) -> Option<OutStatus> {
+        if mail_id.trim().is_empty() {
+            return None;
+        }
+        self.conn
+            .lock()
+            .query_row(
+                "SELECT callsign, from_addr, COALESCE(resend_id, ''), last_event, checked FROM hub_mail
+                 WHERE mail_id = ?1 AND direction = 'out' ORDER BY received DESC LIMIT 1",
+                params![mail_id],
+                |r| {
+                    Ok(OutStatus {
+                        poster: r.get(0)?,
+                        from_addr: r.get(1)?,
+                        resend_id: r.get(2)?,
+                        last_event: r.get(3)?,
+                        checked: r.get(4)?,
+                    })
+                },
+            )
+            .ok()
+    }
+
+    pub fn set_last_event(&self, mail_id: &str, event: &str, now: i64) -> Result<()> {
+        self.conn.lock().execute(
+            "UPDATE hub_mail SET last_event = ?2, checked = ?3 WHERE mail_id = ?1 AND direction = 'out'",
+            params![mail_id, event, now],
+        )?;
+        Ok(())
     }
 
     pub fn headers(&self, callsign: &str) -> Vec<Value> {
@@ -361,6 +443,9 @@ struct SendReq {
     body: String,
     #[serde(default)]
     bcc: Option<String>,
+    /// The station's id for this mail. Older stations leave it out.
+    #[serde(default)]
+    mail_id: String,
 }
 
 pub async fn post_send(
@@ -406,13 +491,68 @@ pub async fn post_send(
     .await
     {
         Ok(resend_id) => {
-            let _ = st
-                .mail
-                .insert_out(&call, &from, &req.to, &req.subject, &req.body, &resend_id);
+            let _ = st.mail.insert_out(
+                &call,
+                &from,
+                &req.to,
+                &req.subject,
+                &req.body,
+                &resend_id,
+                req.mail_id.trim(),
+            );
             Json(json!({ "ok": true, "id": resend_id })).into_response()
         }
         Err(e) => bad(StatusCode::BAD_GATEWAY, &e.to_string()).into_response(),
     }
+}
+
+/// The station that posted the mail, or the station that wrote it (a Radio+
+/// station whose gateway posted for it), may ask how it went.
+pub fn may_read_status(signer: &str, row: &OutStatus) -> bool {
+    row.poster.eq_ignore_ascii_case(signer)
+        || callsign_from_wcr(&row.from_addr).is_some_and(|a| a.eq_ignore_ascii_case(signer))
+}
+
+#[derive(Deserialize)]
+struct StatusReq {
+    mail_id: String,
+}
+
+/// `POST /api/v1/mail/status`: Resend's `last_event` for one sent mail. The
+/// hub asks Resend at most every 10 s per mail and stops once it is final.
+pub async fn post_status(
+    State(st): State<HubState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    let call = match verify(&headers, &body) {
+        Ok(c) => c,
+        Err((s, m)) => return bad(s, &m).into_response(),
+    };
+    let req: StatusReq = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(_) => return bad(StatusCode::BAD_REQUEST, "bad json").into_response(),
+    };
+    let Some(row) = st.mail.out_status(req.mail_id.trim()) else {
+        return bad(StatusCode::NOT_FOUND, "the hub has no record of this mail").into_response();
+    };
+    if !may_read_status(&call, &row) {
+        return bad(StatusCode::NOT_FOUND, "the hub has no record of this mail").into_response();
+    }
+    let now = chrono::Utc::now().timestamp();
+    let mut event = row.last_event.clone();
+    if !delivery_final(&event) && now - row.checked >= 10 && !row.resend_id.is_empty() {
+        match resend_last_event(&row.resend_id).await {
+            Ok(e) => {
+                event = e;
+                let _ = st.mail.set_last_event(req.mail_id.trim(), &event, now);
+            }
+            Err(e) => {
+                return bad(StatusCode::BAD_GATEWAY, &e.to_string()).into_response();
+            }
+        }
+    }
+    Json(json!({ "ok": true, "state": event, "resend_id": row.resend_id })).into_response()
 }
 
 pub async fn post_inbox(
@@ -737,6 +877,39 @@ async fn fetch_received(email_id: &str) -> Result<ReceivedMail> {
     serde_json::from_value(v).map_err(|e| Error::Net(e.to_string()))
 }
 
+/// `GET /emails/{id}` on Resend. Returns its `last_event`, for example
+/// `sent`, `delivered`, `delivery_delayed` or `bounced`.
+async fn resend_last_event(resend_id: &str) -> Result<String> {
+    if resend_id.is_empty() || resend_id.contains('/') {
+        return Err(Error::protocol("missing email id"));
+    }
+    let key = std::env::var("RESEND_API_KEY")
+        .map_err(|_| Error::config("RESEND_API_KEY is not set on the hub"))?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| Error::Net(e.to_string()))?;
+    let resp = client
+        .get(format!("https://api.resend.com/emails/{resend_id}"))
+        .bearer_auth(key)
+        .send()
+        .await
+        .map_err(|e| Error::Net(e.to_string()))?;
+    let status = resp.status();
+    let v: Value = resp.json().await.map_err(|e| Error::Net(e.to_string()))?;
+    if !status.is_success() {
+        let msg = v
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("Resend did not return the message status");
+        return Err(Error::Net(msg.to_string()));
+    }
+    Ok(v.get("last_event")
+        .and_then(|e| e.as_str())
+        .unwrap_or("")
+        .to_string())
+}
+
 async fn resend_send(
     from: &str,
     to: &str,
@@ -900,6 +1073,33 @@ mod tests {
         assert!(!text.contains("123456."), "{text}");
         assert!(text.contains("code box next to Copy-to on the Email tab"));
         assert_eq!(copy_code_digits(" 123 456. "), "123456");
+    }
+
+    #[test]
+    fn only_the_poster_or_the_author_reads_a_mails_delivery() {
+        let db = MailHubDb::open_memory().unwrap();
+        db.insert_out(
+            "GW1",
+            "m7tjf@mail.weechatradio.com",
+            "a@b.c",
+            "s",
+            "b",
+            "re_1",
+            "mid1",
+        )
+        .unwrap();
+        let row = db.out_status("mid1").unwrap();
+        assert_eq!(row.resend_id, "re_1");
+        assert!(may_read_status("GW1", &row));
+        assert!(may_read_status("m7tjf", &row));
+        assert!(!may_read_status("QA1A", &row));
+        assert!(db.out_status("").is_none());
+        assert!(db.out_status("other").is_none());
+        db.set_last_event("mid1", "delivered", 5).unwrap();
+        let row = db.out_status("mid1").unwrap();
+        assert_eq!((row.last_event.as_str(), row.checked), ("delivered", 5));
+        assert!(delivery_final(&row.last_event));
+        assert!(!delivery_final("delivery_delayed"));
     }
 
     #[test]
