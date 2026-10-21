@@ -769,6 +769,19 @@ impl GuiApp {
         Config::default_path().is_file() && Callsign::parse(&self.callsign).is_ok()
     }
 
+    /// The main page FREQ (`/qsy`) changes the dial after setup was loaded:
+    /// re-read it when setup opens so Save does not put the old one back.
+    fn refresh_setup_freq(&mut self) {
+        let saved = Config::load(&Config::default_path())
+            .map(|c| c.rf.frequency_khz)
+            .unwrap_or_else(|_| crate::band::parse_mhz(&self.freq_mhz).unwrap_or(0));
+        let live = self
+            .status
+            .as_ref()
+            .map(|s| self.freq_pending.unwrap_or(s.freq_khz));
+        self.freq_mhz = crate::band::setup_freq_text(live, saved);
+    }
+
     fn save_setup(&mut self) {
         self.error.clear();
         if let Err(e) = Callsign::parse(&self.callsign) {
@@ -1557,6 +1570,7 @@ impl eframe::App for GuiApp {
                     if self.configured() && nav_link(ui, "setup").clicked() {
                         self.show_setup = !self.show_setup;
                         if self.show_setup {
+                            self.refresh_setup_freq();
                             self.hw = None;
                             self.hw_rx = None;
                         }
@@ -4201,11 +4215,7 @@ fn load_form() -> Form {
             rigctl: cfg.modem.rigctl,
             audio_input: cfg.modem.audio_input,
             audio_output: cfg.modem.audio_output,
-            freq_mhz: if cfg.rf.frequency_khz > 0 {
-                crate::band::fmt_mhz(cfg.rf.frequency_khz)
-            } else {
-                String::new()
-            },
+            freq_mhz: crate::band::setup_freq_text(None, cfg.rf.frequency_khz),
             mail_gateway: cfg.mail.gateway,
         };
     }
