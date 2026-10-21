@@ -158,8 +158,8 @@ pub fn run_wizard() -> Result<Config> {
             cfg.modem.preset = Preset::VoxSafe.as_str().into();
             cfg.modem.vox_lead_ms = Preset::VOX_SAFE_LEAD_MS;
             cfg.modem.vox_tail_ms = Preset::VOX_SAFE_TAIL_MS;
-            println!("  VOX uses MFSK-32R (slow, most robust) and a long lead so the radio is");
-            println!("  fully keyed before data. Keep radio VOX hang on the long side.");
+            println!("  VOX uses RDM-600S (works over a speaker and mic) and a long lead");
+            println!("  so the radio is keyed before data. Keep radio VOX hang long.");
         }
         3 => {
             cfg.mode = Mode::InternetRadio;

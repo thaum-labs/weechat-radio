@@ -52,7 +52,7 @@
 
       <div class="warn-box">
         <h2>Upgrade every station first</h2>
-        <p>This build of <code>wcr</code> (v0.1.106) speaks protocol version 2, and so does the hub. Older nodes speak a different packet layout. Version 1 frames are still decoded, but every station that wants to talk on radio with this hub should run this build.</p>
+        <p>This build of <code>wcr</code> (v0.1.107) speaks protocol version 2, and so does the hub. Older nodes speak a different packet layout. Version 1 frames are still decoded, but every station that wants to talk on radio with this hub should run this build.</p>
       </div>
 
       <figure class="diagram">
@@ -111,7 +111,7 @@
             <tr><td><code>hf-poor</code></td><td>RDM-600S</td><td>RDM-300S, then MFSK-32R</td><td>Fading HF / NVIS (the usual HF calling preset)</td></tr>
             <tr><td><code>hf-weak</code></td><td>RDM-300S</td><td>MFSK-32R</td><td>The other station is faint</td></tr>
             <tr><td><code>hf-deep</code></td><td>MFSK-32R</td><td>Stays on MFSK-32R</td><td>Last resort. Very slow. Short messages only</td></tr>
-            <tr><td><code>vox-safe</code></td><td>MFSK-32R</td><td>Stays on MFSK-32R</td><td>Any radio keyed by VOX. Long lead so the radio is keyed before data</td></tr>
+            <tr><td><code>vox-safe</code></td><td>RDM-600S</td><td>Stays on RDM-600S</td><td>Any radio keyed by VOX. Long lead so the radio is keyed before data</td></tr>
           </tbody>
         </table>
       </div>
