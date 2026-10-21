@@ -72,15 +72,6 @@ pub fn fmt_mhz(khz: u32) -> String {
     format!("{:.3}", khz as f64 / 1000.0)
 }
 
-/// Text for the setup page's Freq box. The running station's dial (what the
-/// main page FREQ shows) wins over wcr.toml, so the two screens agree; 0 is blank.
-pub fn setup_freq_text(live_khz: Option<u32>, saved_khz: u32) -> String {
-    match live_khz.filter(|k| *k > 0).unwrap_or(saved_khz) {
-        0 => String::new(),
-        khz => fmt_mhz(khz),
-    }
-}
-
 /// `144.950 MHz (2m)` or `unknown`.
 pub fn describe(khz: u32) -> String {
     if khz == 0 {
@@ -360,14 +351,6 @@ pub fn calling_freqs_unique() -> Vec<CallingFreq> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn setup_freq_follows_the_running_station() {
-        assert_eq!(setup_freq_text(Some(446006), 144950), "446.006");
-        assert_eq!(setup_freq_text(None, 144950), "144.950");
-        assert_eq!(setup_freq_text(Some(0), 7045), "7.045");
-        assert_eq!(setup_freq_text(None, 0), "");
-    }
 
     #[test]
     fn amateur_edges() {

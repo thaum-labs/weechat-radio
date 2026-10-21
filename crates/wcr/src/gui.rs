@@ -607,7 +607,6 @@ struct GuiApp {
     audio_output: String,
     hw: Option<HardwareProbe>,
     hw_rx: Option<Receiver<HardwareProbe>>,
-    freq_mhz: String,
     /// Re-open the setup panel from the toolbar to change the radio path.
     show_setup: bool,
     error: String,
@@ -725,7 +724,6 @@ impl GuiApp {
             audio_output: form.audio_output,
             hw: None,
             hw_rx: None,
-            freq_mhz: form.freq_mhz.clone(),
             show_setup: false,
             error: String::new(),
             draft: String::new(),
@@ -795,19 +793,6 @@ impl GuiApp {
 
     fn configured(&self) -> bool {
         Config::default_path().is_file() && Callsign::parse(&self.callsign).is_ok()
-    }
-
-    /// The main page FREQ (`/qsy`) changes the dial after setup was loaded:
-    /// re-read it when setup opens so Save does not put the old one back.
-    fn refresh_setup_freq(&mut self) {
-        let saved = Config::load(&Config::default_path())
-            .map(|c| c.rf.frequency_khz)
-            .unwrap_or_else(|_| crate::band::parse_mhz(&self.freq_mhz).unwrap_or(0));
-        let live = self
-            .status
-            .as_ref()
-            .map(|s| self.freq_pending.unwrap_or(s.freq_khz));
-        self.freq_mhz = crate::band::setup_freq_text(live, saved);
     }
 
     fn save_setup(&mut self) {
@@ -903,14 +888,9 @@ impl GuiApp {
         }
         cfg.mail.gateway = self.mail_gateway.trim().to_ascii_uppercase();
         cfg.ui.theme = "tron".into();
-        if self.path != 0 {
-            if let Some(khz) = crate::band::parse_mhz(&self.freq_mhz) {
-                cfg.rf.frequency_khz = khz;
-            } else if self.path == 3 {
-                cfg.rf.frequency_khz = 7045;
-            } else {
-                cfg.rf.frequency_khz = 144950;
-            }
+        // The dial is set from FREQ on the main page; setup only seeds a first one.
+        if self.path != 0 && cfg.rf.frequency_khz == 0 {
+            cfg.rf.frequency_khz = if self.path == 3 { 7045 } else { 144950 };
         }
         if let Err(e) = config::ensure_dirs() {
             self.error = e.to_string();
@@ -1598,7 +1578,6 @@ impl eframe::App for GuiApp {
                     if self.configured() && nav_link(ui, "setup").clicked() {
                         self.show_setup = !self.show_setup;
                         if self.show_setup {
-                            self.refresh_setup_freq();
                             self.hw = None;
                             self.hw_rx = None;
                         }
@@ -1794,22 +1773,6 @@ impl eframe::App for GuiApp {
                             outs,
                             "audio_out",
                         );
-                    }
-                    if self.path != 0 {
-                        ui.horizontal(|ui| {
-                            ui.add_space(20.0);
-                            ui.label(RichText::new("Freq   ").color(DIM));
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.freq_mhz)
-                                    .desired_width(120.0)
-                                    .hint_text(if self.path == 3 { "7.045" } else { "144.950" }),
-                            );
-                            ui.label(
-                                RichText::new("MHz — what the radio is on")
-                                    .color(DIM)
-                                    .font(FontId::monospace(11.0)),
-                            );
-                        });
                     }
                     ui.add_space(16.0);
                     ui.horizontal(|ui| {
@@ -4374,7 +4337,6 @@ struct Form {
     rigctl: String,
     audio_input: String,
     audio_output: String,
-    freq_mhz: String,
     mail_gateway: String,
 }
 
@@ -4405,7 +4367,6 @@ fn load_form() -> Form {
             rigctl: cfg.modem.rigctl,
             audio_input: cfg.modem.audio_input,
             audio_output: cfg.modem.audio_output,
-            freq_mhz: crate::band::setup_freq_text(None, cfg.rf.frequency_khz),
             mail_gateway: cfg.mail.gateway,
         };
     }
