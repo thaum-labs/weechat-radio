@@ -370,7 +370,7 @@ impl IrcServer {
                     } else {
                         let nick = self.nick(id);
                         if self.has_cap(id, "echo-message") {
-                            let tagged = self.tag_privmsg(&nick, &target, &text, None, None);
+                            let tagged = self.tag_privmsg(&nick, &target, &text, None, None, None);
                             self.send_raw(id, &tagged).await;
                         }
                         let _ = self
@@ -560,6 +560,7 @@ impl IrcServer {
         text: &str,
         msgid: Option<&str>,
         via: Option<&str>,
+        snr: Option<f32>,
     ) -> String {
         let time = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         let mut tags = format!("server-time={time}");
@@ -568,6 +569,9 @@ impl IrcServer {
         }
         if let Some(v) = crate::store::normalize_via(via) {
             tags.push_str(&format!(";+radio/via={v}"));
+        }
+        if let Some(db) = snr {
+            tags.push_str(&format!(";+radio/snr={db:.1}"));
         }
         format!("@{tags} :{from} PRIVMSG {target} :{text}")
     }
@@ -580,8 +584,22 @@ impl IrcServer {
         msgid: Option<&str>,
         via: Option<&str>,
     ) {
+        self.broadcast_privmsg_snr(from, target, text, msgid, via, None)
+            .await;
+    }
+
+    /// As [`Self::broadcast_privmsg`], with the SNR a radio line was decoded at.
+    pub async fn broadcast_privmsg_snr(
+        &self,
+        from: &str,
+        target: &str,
+        text: &str,
+        msgid: Option<&str>,
+        via: Option<&str>,
+        snr: Option<f32>,
+    ) {
         let target = normalize_irc_channel(target);
-        let line = self.tag_privmsg(from, &target, text, msgid, via);
+        let line = self.tag_privmsg(from, &target, text, msgid, via, snr);
         let via_mark = crate::store::via_bracket(via.unwrap_or(""));
         let plain = if via_mark.is_empty() {
             format!(":{from} PRIVMSG {target} :{text}")
@@ -754,15 +772,16 @@ impl IrcServer {
             String,
             String,
             String,
+            String,
         )>,
     ) {
-        // (time, from, target, text, msgid, delivery, via, tries)
+        // (time, from, target, text, msgid, delivery, via, tries, snr)
         let has_batch = self.has_cap(id, "batch");
         if has_batch {
             self.send_raw(id, ":wcr.local BATCH +hist chathistory")
                 .await;
         }
-        for (time, from, target, text, msgid, delivery, via, tries) in lines {
+        for (time, from, target, text, msgid, delivery, via, tries, snr) in lines {
             // Replay the furthest of the stored mark and the one this
             // station showed, so a late update never walks it back.
             let delivery = match self.inner.lock().shown.get(&msgid) {
@@ -776,6 +795,9 @@ impl IrcServer {
             }
             if !tries.is_empty() && tries != "0" {
                 tags.push_str(&format!(";+radio/tries={tries}"));
+            }
+            if !snr.is_empty() {
+                tags.push_str(&format!(";+radio/snr={snr}"));
             }
             let target = normalize_irc_channel(&target);
             let tagged = format!("@{tags} :{from} PRIVMSG {target} :{text}");

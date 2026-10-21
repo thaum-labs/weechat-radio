@@ -27,6 +27,7 @@ pub mod rate_limit;
 pub mod relay;
 pub mod service;
 pub mod setup;
+pub mod signal_report;
 pub mod sim;
 pub mod slash;
 pub mod status;
@@ -36,6 +37,7 @@ pub mod tnc;
 pub mod tui;
 pub mod ui_style;
 pub mod update;
+pub mod weather;
 pub mod weechat_app;
 
 pub use error::{Error, Result};

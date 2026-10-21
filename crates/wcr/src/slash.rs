@@ -224,6 +224,36 @@ const COMMANDS: &[Cmd] = &[
         send_bare: false,
     },
     Cmd {
+        name: "report",
+        usage: "/report CALL | /report auto on|off",
+        summary: "Ask a station for a signal report",
+        args: &[],
+        send_bare: false,
+    },
+    Cmd {
+        name: "wx",
+        usage: "/wx [CALL]",
+        summary: "Weather for your grid; send it to CALL",
+        args: &[],
+        send_bare: true,
+    },
+    Cmd {
+        name: "snr",
+        usage: "/snr on|off",
+        summary: "SNR next to radio lines",
+        args: &[
+            Arg {
+                value: "on",
+                hint: "Show the SNR each radio line was decoded at",
+            },
+            Arg {
+                value: "off",
+                hint: "Hide it",
+            },
+        ],
+        send_bare: false,
+    },
+    Cmd {
         name: "checkin",
         usage: "/checkin [note]",
         summary: "Mark yourself present",

@@ -60,6 +60,13 @@ The status bar at the bottom shows your callsign and mode. After you send, a mar
 - `[no]` the send was refused (for example the hub said the callsign is already claimed), or the last copy waited out its interval with no ACK. A line a relay was heard carrying on stays `[rl]` instead, until its receipt comes or it is an hour old. If some members of a closed group have ACKed and others have not, the line stays `[ok]` instead of `[no]`, and a late ACK still makes it `[all]`. Marks never move back.
 - `[xN]` how many times the line was keyed, counted until `[rl]`, `[gw]` or `[ok]`. `[x1]` is the first send. The default is 3 retries, so the last copy is `[x4]`. `[no]` waits two more full intervals after that copy.
 
+In the desktop app, the **key** button above the chat lists these marks, and hovering a mark explains it. A line that reached you by radio also shows the SNR it was decoded at, for example `-4 dB`. `/snr off` hides it and `/snr on` shows it again.
+
+## Signal reports and weather
+
+- `/report CALL` sends that station `SNR? Please send me a signal report.` A station on v0.1.108 or later answers on its own with the SNR it heard you at, for example `SNR -4 dB: your request reached me by radio at -4 dB.` It answers each callsign at most once every 5 minutes. `/report auto off` stops your station answering, and `/report auto on` turns it back on. An older station just shows the request as a normal line.
+- `/wx` shows the current weather at the centre of your grid square, for example `WX IO81UF 20:45Z: 12C, light rain, wind SW 15 km/h`. `/wx CALL` sends that line to CALL. The weather comes from Open-Meteo, so your station needs internet for this. The station receiving it does not.
+
 Routine retries wait 45s, then 90s, then 180s, then 360s twice with no further key, each ±25% (`retry_jitter`). Emergency is 8s / 16s / 32s / 64s twice. Priority is 20s / 40s / 80s / 160s twice. A busy channel can make the gap between copies longer than that band. `/radio flush` marks unacked outbound `[no]`. Rows older than one hour are not keyed again after a restart.
 
 On the radio the status bar counts down to the next beacon: about a minute apart for the first three, then every 5 minutes. It shows `after exchange` while a receipt or a mail acceptance is still due, `pending` until the beacon reaches the modem, and `busy` while a decoded frame is still fresh. A line sent in the first `rf.startup_hold_s` seconds after start (120) waits until another station has been heard (not on VOX, which sends no beacons).
