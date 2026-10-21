@@ -66,7 +66,7 @@ const PRESET_ARGS: &[Arg] = &[
     },
     Arg {
         value: "vox-safe",
-        hint: "VOX audio cable — MFSK-32R + long lead",
+        hint: "VOX audio cable — RDM-600S + long lead",
     },
     Arg {
         value: "afsk-1200",
