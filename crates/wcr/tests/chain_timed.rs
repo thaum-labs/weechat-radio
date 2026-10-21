@@ -288,6 +288,7 @@ struct Chain {
     log: TimedLog,
     t0: Instant,
     status: Vec<u16>,
+    homes: Vec<PathBuf>,
 }
 
 impl Chain {
@@ -373,8 +374,10 @@ impl Chain {
         let mut nodes = Vec::new();
         let mut irc = Vec::new();
         let mut status = Vec::new();
+        let mut homes = Vec::new();
         for (i, (call, home, kiss, ctrl)) in prep.into_iter().enumerate() {
             let cfg = radio_cfg(call, &home, kiss, ctrl, ports[i * 2], ports[i * 2 + 1]);
+            homes.push(home);
             nodes.push(tokio::spawn(async move {
                 wcr::node::run_node(cfg, false).await
             }));
@@ -396,6 +399,7 @@ impl Chain {
             log,
             t0: Instant::now(),
             status,
+            homes,
         };
         // A live chain has been up a while: every station has beaconed and
         // knows its neighbours before the first line.
@@ -528,6 +532,15 @@ fn trace_of(log: &TimedLog, t0: Instant) -> String {
         ));
     }
     out
+}
+
+/// Callsigns a stopped station at `home` holds a receipt from for group line
+/// `id`, read from its store.
+fn receipts_in(home: &Path, group: &str, id: &str) -> Vec<String> {
+    let msg_id = wcr::proto::MsgId::parse_hex(id).expect("msgid");
+    wcr::store::Store::open(&home.join("store.db"), 72, 10_000)
+        .and_then(|s| s.receipts_for(group, &msg_id))
+        .unwrap()
 }
 
 /// Delivery states for one line, in the order the sender's client got them.
@@ -2673,8 +2686,13 @@ async fn receipts_for_a_group_line_are_capped() {
 /// E's retries asked B again, at its cap. Here E keys a group line on a
 /// warm chain and B's first two copies of A's receipt are lost at C (on
 /// v0.1.98 it ends as QA saw it: B keys it twice, C, D and E never, and E
-/// stays `[ok]`). B must keep walking it until C carries it on, and E must
-/// reach `[all]`.
+/// stays `[ok]`). B must keep walking it until C carries it on, and A's
+/// receipt must reach E.
+///
+/// The check is A's receipt in E's store, not `[all]`: every modem here keys
+/// blind after 30 s, so D's two copies of another receipt can both land
+/// while E keys (msrv CI for #78: B's receipt at 567 s and 660 s, E keying at
+/// 567 s and 662 s), and E stays `[ok]` with A's receipt home.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_far_receipt_walks_past_two_lost_copies_to_the_sender() {
     let lost = Arc::new(AtomicU64::new(0));
@@ -2715,6 +2733,7 @@ async fn a_far_receipt_walks_past_two_lost_copies_to_the_sender() {
     chain.wait(CASE_SECS, all).await;
     chain.wait_quiet(90, 600).await;
     let marks = marks_for(&chain.clients[4], &id);
+    let e_home = chain.homes[4].clone();
     let a_receipt = |st: u64| {
         chain
             .log
@@ -2736,8 +2755,9 @@ async fn a_far_receipt_walks_past_two_lost_copies_to_the_sender() {
     let trace = chain.trace();
     let log = chain.log.clone();
     chain.stop();
+    let at_e = receipts_in(&e_home, "net", &id);
     let report = format!(
-        "\n  marks {marks:?}; A's receipt keyed by A..E {carried:?}; copies lost at C {lost_at_c}"
+        "\n  marks {marks:?}; E holds receipts from {at_e:?}; A's receipt keyed by A..E {carried:?}; copies lost at C {lost_at_c}"
     );
     eprintln!("{trace}{report}");
     // B's first two copies never reach C, dropped here or lost to a
@@ -2747,8 +2767,8 @@ async fn a_far_receipt_walks_past_two_lost_copies_to_the_sender() {
         "B never carried A's receipt, so the case did not happen{report}{trace}"
     );
     assert!(
-        marks.iter().any(|m| m == "all"),
-        "E never reached [all]: A's receipt did not walk home{report}{trace}"
+        at_e.iter().any(|r| r == CALLS[0]),
+        "A's receipt never reached E: it did not walk home{report}{trace}"
     );
     assert!(marks_move_forward(&marks), "marks moved back: {marks:?}");
     assert_receipts_not_doubled(&log, 4, &id, &trace);
