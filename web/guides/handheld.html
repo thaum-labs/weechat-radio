@@ -124,6 +124,11 @@
         <p>The channel state flickers <code>rx</code> when they transmit, and SNR is a positive number. Your line gets <code>[tx]</code> after you send, then <code>[ok]</code> when it is delivered.</p>
       </div>
 
+      <h2>On the move</h2>
+      <p>Out with the handheld while your home station runs internet radio with the tower on? Add the standard suffix to your callsign in setup: <code>/M</code> mobile (moving vehicle), <code>/P</code> portable (set up away from home), <code>/MM</code> at sea, <code>/AM</code> in the air, for example <code>G4ABC/M</code>. Callsigns are 8 characters at most, suffix included.</p>
+      <p>Plug in a USB GPS (any u-blox type dongle, or a radio with a GPS output) and pick its port under <strong>GPS</strong> in setup, or set <code>[gps] port = "COM6"</code> in <code>wcr.toml</code>. While it has a fix your grid follows you, about 500 m at a time. Your beacons and receipts carry it, your home tower passes it to the hub, and the map shows your pin with the tag <code>/M</code> and “via” your tower. Without a fix, or with no GPS, the grid from setup is used. The status panel shows the GPS state.</p>
+      <p>Your position is only sent when you share your station on the public map.</p>
+
       <p class="next">Other paths: <a href="/guides/vox.html">VOX cable</a> · <a href="/guides/hf.html">HF + CAT</a>. Frequencies: <a href="/docs/calling.html">calling</a>.</p>
     </main>
   </div>

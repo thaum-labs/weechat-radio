@@ -246,6 +246,84 @@ impl TelemetryDb {
         Ok(())
     }
 
+    /// Places a station another one heard on the air, at the grid it sent.
+    /// Returns false when nothing changed: the callsign is not a station,
+    /// the grid is not a square, the sighting is old, or the station reported
+    /// itself in the last 15 minutes.
+    pub fn upsert_heard(&self, via: &str, h: &HeardGrid, now: u64) -> Result<bool> {
+        let call = h.callsign.trim().to_ascii_uppercase();
+        let via = via.trim().to_ascii_uppercase();
+        if call == via || !crate::proto::is_plausible_callsign(&call) {
+            return Ok(false);
+        }
+        let Some(g) = grid::position(&h.grid) else {
+            return Ok(false);
+        };
+        if h.ts > now + 60 || h.ts + 600 < now {
+            return Ok(false);
+        }
+        let Ok((lat, lon)) = grid::to_lat_lon(&g) else {
+            return Ok(false);
+        };
+        let conn = self.conn.lock();
+        let existing: Option<(i64, String)> = conn
+            .query_row(
+                "SELECT last_seen, COALESCE(settings, '{}') FROM nodes WHERE callsign = ?1",
+                params![call],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+        if let Some((last_seen, settings)) = existing {
+            let via_row = serde_json::from_str::<serde_json::Value>(&settings)
+                .ok()
+                .and_then(|v| v.get("via").cloned())
+                .is_some_and(|v| v.is_string());
+            if !via_row && (last_seen as u64) + OWN_REPORT_WINS_S >= now {
+                return Ok(false);
+            }
+            if (last_seen as u64) > h.ts && via_row {
+                return Ok(false);
+            }
+        }
+        let band = crate::band::band_for_khz(h.freq_khz).unwrap_or("");
+        let settings = serde_json::json!({ "via": via }).to_string();
+        conn.execute(
+            "INSERT INTO nodes(callsign, grid, lat, lon, mode, ptt, preset, snr, ber, queue, hub_ok, last_seen, settings, freq_khz, band)
+             VALUES(?1,?2,?3,?4,'radio','','',?5,0,0,0,?6,?7,?8,?9)
+             ON CONFLICT(callsign) DO UPDATE SET
+                grid=excluded.grid, lat=excluded.lat, lon=excluded.lon, mode=excluded.mode,
+                ptt=excluded.ptt, preset=excluded.preset, snr=excluded.snr, ber=excluded.ber,
+                queue=excluded.queue, hub_ok=excluded.hub_ok, last_seen=excluded.last_seen,
+                settings=excluded.settings, freq_khz=excluded.freq_khz, band=excluded.band",
+            params![
+                call,
+                g,
+                lat,
+                lon,
+                h.snr.unwrap_or(0.0),
+                h.ts as i64,
+                settings,
+                h.freq_khz as i64,
+                band,
+            ],
+        )?;
+        conn.execute(
+            "INSERT INTO node_seen(ts, callsign, mode, grid, lat, lon, band, freq_khz, ptt, preset, snr, tower)
+             VALUES(?1,?2,'radio',?3,?4,?5,?6,?7,'','',?8,0)",
+            params![
+                h.ts as i64,
+                call,
+                g,
+                lat,
+                lon,
+                band,
+                h.freq_khz as i64,
+                h.snr.unwrap_or(0.0),
+            ],
+        )?;
+        Ok(true)
+    }
+
     /// Latest report for each station at or before `at`, if they were heard in the prior 30 minutes.
     pub fn nodes_at(&self, at: i64) -> Vec<serde_json::Value> {
         let conn = self.conn.lock();
@@ -527,6 +605,43 @@ pub struct NodeReport {
     pub freq_khz: u32,
     #[serde(default)]
     pub band: String,
+    /// Stations this one heard on the air that sent their grid square. The
+    /// hub places them on the map "via" this station. Older hubs ignore it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub heard_grids: Vec<HeardGrid>,
+}
+
+/// A station heard on the air, with the grid it sent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HeardGrid {
+    pub callsign: String,
+    pub grid: String,
+    /// Unix seconds when it was last heard.
+    pub ts: u64,
+    #[serde(default)]
+    pub snr: Option<f32>,
+    #[serde(default)]
+    pub freq_khz: u32,
+}
+
+/// A station that reported itself this recently keeps its own position;
+/// another station's "heard it here" does not move it.
+const OWN_REPORT_WINS_S: u64 = 900;
+
+/// Stations heard on the air that sent a grid, for the next report.
+pub fn heard_grids(heard: &[crate::status::HeardBrief]) -> Vec<HeardGrid> {
+    heard
+        .iter()
+        .filter(|h| h.medium == "rf" && !h.grid.is_empty())
+        .take(32)
+        .map(|h| HeardGrid {
+            callsign: h.callsign.to_ascii_uppercase(),
+            grid: h.grid.clone(),
+            ts: h.last_heard as u64,
+            snr: h.snr,
+            freq_khz: h.freq_khz,
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -650,6 +765,18 @@ pub async fn ingest_report(
         return Err((StatusCode::BAD_REQUEST, reason.as_str().into()));
     }
     let _ = st.telemetry.upsert_node(&report);
+    let now_s = now();
+    for h in report.heard_grids.iter().take(32) {
+        if st.telemetry.upsert_heard(&call, h, now_s).unwrap_or(false) {
+            let _ = st.live.send(serde_json::json!({
+                "type": "node",
+                "callsign": h.callsign.to_ascii_uppercase(),
+                "mode": "radio",
+                "grid": h.grid,
+                "via": call,
+            }));
+        }
+    }
     for ev in &report.events {
         let _ = st.telemetry.add_event(ev);
         let _ = st.live.send(serde_json::to_value(ev).unwrap_or_default());
@@ -765,6 +892,7 @@ pub async fn reporter_loop(
                         events: std::mem::take(&mut pending),
                         freq_khz: s.freq_khz,
                         band: s.band.clone(),
+                        heard_grids: heard_grids(&s.heard),
                     }
                 };
                 if let Err(e) = post_report(&client, &url, &keys, &callsign, &report).await {
@@ -915,6 +1043,73 @@ mod tests {
         assert_eq!(db.links((t as i64) - 48 * 3600, 1).len(), 1);
     }
 
+    fn heard(call: &str, grid: &str, ts: u64) -> HeardGrid {
+        HeardGrid {
+            callsign: call.into(),
+            grid: grid.into(),
+            ts,
+            snr: None,
+            freq_khz: 144_950,
+        }
+    }
+
+    #[test]
+    fn a_heard_grid_never_moves_a_station_that_reports_itself() {
+        let db = TelemetryDb::open_memory().unwrap();
+        let t = now();
+        let own = NodeReport {
+            callsign: "M0XYZ".into(),
+            ts: t - 60,
+            grid: "IO91".into(),
+            mode: "internet-radio".into(),
+            ptt: String::new(),
+            preset: String::new(),
+            snr: 0.0,
+            ber: 0.0,
+            queue: 0,
+            hub_ok: true,
+            settings: serde_json::json!({}),
+            events: Vec::new(),
+            freq_khz: 0,
+            band: String::new(),
+            heard_grids: Vec::new(),
+        };
+        db.upsert_node(&own).unwrap();
+        assert!(!db
+            .upsert_heard("G4ABC", &heard("M0XYZ", "JO01AA", t), t)
+            .unwrap());
+        // A radio-only station is placed, and moves with later sightings.
+        assert!(db
+            .upsert_heard("G4ABC", &heard("G4ABC/M", "IO91VL45", t - 30), t)
+            .unwrap());
+        assert!(db
+            .upsert_heard("G4ABC", &heard("G4ABC/M", "IO91VL46", t), t)
+            .unwrap());
+        // An older sighting from another tower does not move it back.
+        assert!(!db
+            .upsert_heard("G0TWR", &heard("G4ABC/M", "IO91VL45", t - 20), t)
+            .unwrap());
+        let nodes = db.nodes();
+        let m = nodes.iter().find(|n| n["callsign"] == "G4ABC/M").unwrap();
+        assert_eq!(m["grid"], "IO91VL46");
+        assert_eq!(m["settings"]["via"], "G4ABC");
+        let own = nodes.iter().find(|n| n["callsign"] == "M0XYZ").unwrap();
+        assert_eq!(own["grid"], "IO91");
+        // Junk, stale sightings and the reporter itself are ignored.
+        assert!(!db
+            .upsert_heard("G4ABC", &heard("G4ABC", "IO91", t), t)
+            .unwrap());
+        assert!(!db
+            .upsert_heard("G4ABC", &heard("NOTACALL", "IO91", t), t)
+            .unwrap());
+        assert!(!db
+            .upsert_heard("G4ABC", &heard("M0NEW", "XX00", t), t)
+            .unwrap());
+        assert!(!db
+            .upsert_heard("G4ABC", &heard("M0NEW", "IO91", t - 3600), t)
+            .unwrap());
+    }
+
     #[test]
     fn nodes_heard_since_drops_stations_quiet_for_two_days() {
         let db = TelemetryDb::open_memory().unwrap();
@@ -934,6 +1129,7 @@ mod tests {
             events: Vec::new(),
             freq_khz: 0,
             band: String::new(),
+            heard_grids: Vec::new(),
         };
         db.upsert_node(&report).unwrap();
         report.callsign = "G4OLD".into();
@@ -965,6 +1161,7 @@ mod tests {
             events: Vec::new(),
             freq_khz: 144_950,
             band: "2m".into(),
+            heard_grids: Vec::new(),
         };
         db.upsert_node(&report).unwrap();
         report.ts = t - 10;
@@ -993,6 +1190,7 @@ mod tests {
             events: Vec::new(),
             freq_khz: 144_950,
             band: "2m".into(),
+            heard_grids: Vec::new(),
         };
         db.upsert_node(&report).unwrap();
         let live = db.nodes();

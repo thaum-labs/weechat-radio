@@ -7,7 +7,7 @@ use std::io;
 
 /// Open a serial path in raw 8N1 mode with short read timeouts.
 pub fn open(path: &str) -> io::Result<Connection> {
-    let file = open_raw(path)?;
+    let file = open_raw(path, 9600)?;
     let writer = file.try_clone()?;
     Ok(Connection {
         reader: Box::new(file),
@@ -17,8 +17,10 @@ pub fn open(path: &str) -> io::Result<Connection> {
     })
 }
 
+/// Open a serial path in raw 8N1 mode at `baud`. Reads return after at most
+/// 200 ms, with zero bytes when nothing arrived.
 #[cfg(windows)]
-fn open_raw(path: &str) -> io::Result<File> {
+pub fn open_raw(path: &str, baud: u32) -> io::Result<File> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Devices::Communication::{
         GetCommState, SetCommState, SetCommTimeouts, COMMTIMEOUTS, DCB,
@@ -49,7 +51,7 @@ fn open_raw(path: &str) -> io::Result<File> {
         let mut dcb: DCB = std::mem::zeroed();
         dcb.DCBlength = std::mem::size_of::<DCB>() as u32;
         if GetCommState(h, &mut dcb) != 0 {
-            dcb.BaudRate = 9600;
+            dcb.BaudRate = baud;
             dcb.ByteSize = 8;
             dcb.Parity = 0;
             dcb.StopBits = 0;
@@ -62,7 +64,7 @@ fn open_raw(path: &str) -> io::Result<File> {
 }
 
 #[cfg(unix)]
-fn open_raw(path: &str) -> io::Result<File> {
+pub fn open_raw(path: &str, baud: u32) -> io::Result<File> {
     use std::os::unix::fs::OpenOptionsExt;
     use std::os::unix::io::AsRawFd;
 
@@ -84,8 +86,16 @@ fn open_raw(path: &str) -> io::Result<File> {
         // VMIN=0, VTIME=2: read returns after 200 ms with whatever arrived.
         tio.c_cc[libc::VMIN] = 0;
         tio.c_cc[libc::VTIME] = 2;
-        let _ = libc::cfsetispeed(&mut tio, libc::B9600);
-        let _ = libc::cfsetospeed(&mut tio, libc::B9600);
+        let speed = match baud {
+            4800 => libc::B4800,
+            19200 => libc::B19200,
+            38400 => libc::B38400,
+            57600 => libc::B57600,
+            115200 => libc::B115200,
+            _ => libc::B9600,
+        };
+        let _ = libc::cfsetispeed(&mut tio, speed);
+        let _ = libc::cfsetospeed(&mut tio, speed);
         if libc::tcsetattr(fd, libc::TCSANOW, &tio) != 0 {
             return Err(io::Error::last_os_error());
         }
@@ -95,6 +105,6 @@ fn open_raw(path: &str) -> io::Result<File> {
 }
 
 #[cfg(not(any(windows, unix)))]
-fn open_raw(path: &str) -> io::Result<File> {
+pub fn open_raw(path: &str, _baud: u32) -> io::Result<File> {
     OpenOptions::new().read(true).write(true).open(path.trim())
 }

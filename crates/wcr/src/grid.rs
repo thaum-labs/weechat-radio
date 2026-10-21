@@ -21,6 +21,20 @@ pub fn normalize(grid: &str) -> Result<String> {
     Ok(g)
 }
 
+/// A grid square fit to send over the air or place on the map: 4, 6 or 8
+/// characters (IO91, IO91WM, IO91WM12). `None` for anything else, so a
+/// garbled frame never moves a pin.
+pub fn position(grid: &str) -> Option<String> {
+    let g = normalize(grid).ok()?;
+    let b = g.as_bytes();
+    let ok = g.len() >= 4
+        && (b'A'..=b'R').contains(&b[0])
+        && (b'A'..=b'R').contains(&b[1])
+        && (g.len() < 6 || ((b'A'..=b'X').contains(&b[4]) && (b'A'..=b'X').contains(&b[5])))
+        && (g.len() < 8 || (b[6].is_ascii_digit() && b[7].is_ascii_digit()));
+    ok.then_some(g)
+}
+
 /// Centroid of a Maidenhead square. Precision 4 is ~100 km, 6 is ~5 km.
 pub fn to_lat_lon(grid: &str) -> Result<(f64, f64)> {
     let g = normalize(grid)?;
@@ -333,6 +347,17 @@ fn pick_consensus(hits: Vec<GeoHit>) -> Option<DetectedGrid> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn position_accepts_real_squares_only() {
+        assert_eq!(position("io91wm12").as_deref(), Some("IO91WM12"));
+        assert_eq!(position("IO91").as_deref(), Some("IO91"));
+        assert_eq!(position("IO"), None);
+        assert_eq!(position("ZZ99"), None);
+        assert_eq!(position("IO91YZ"), None);
+        assert_eq!(position("IO91WMAB"), None);
+        assert_eq!(position(""), None);
+    }
 
     #[test]
     fn io91_londonish() {
