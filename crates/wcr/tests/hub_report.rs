@@ -48,6 +48,7 @@ fn sample_report() -> NodeReport {
         events: vec![],
         freq_khz: 144950,
         band: "2m".into(),
+        heard_grids: vec![],
     }
 }
 
@@ -98,4 +99,41 @@ async fn ingest_rejects_blocked_pubkey() {
         .await
         .unwrap();
     assert_eq!(res.status(), reqwest::StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn a_tower_places_the_mobile_it_heard() {
+    let keys = IdentityKeys::generate();
+    let state = hub_server::test_hub_state();
+    let addr = spawn_report_server(state.clone()).await;
+    let mut report = sample_report();
+    report.heard_grids = vec![telemetry::HeardGrid {
+        callsign: "G4ABC/M".into(),
+        grid: "IO91VL45".into(),
+        ts: now(),
+        snr: Some(-3.0),
+        freq_khz: 144950,
+    }];
+    let body = serde_json::to_vec(&report).unwrap();
+    let sig = keys.sign_bytes(&body);
+    let res = reqwest::Client::new()
+        .post(format!("http://{addr}/api/v1/report"))
+        .header("X-Radio-Callsign", "G4ABC")
+        .header("X-Radio-Pubkey", keys.public_hex())
+        .header("X-Radio-Signature", hex::encode(sig))
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert!(res.status().is_success());
+    let nodes = state.telemetry.nodes();
+    let mobile = nodes
+        .iter()
+        .find(|n| n["callsign"] == "G4ABC/M")
+        .expect("the mobile has a pin");
+    assert_eq!(mobile["grid"], "IO91VL45");
+    assert_eq!(mobile["settings"]["via"], "G4ABC");
+    assert_eq!(mobile["mode"], "radio");
+    let lat = mobile["lat"].as_f64().unwrap();
+    assert!((51.0..52.0).contains(&lat), "lat {lat}");
 }

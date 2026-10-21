@@ -229,6 +229,28 @@ impl Envelope {
         Some(self.body[MSG_ID_LEN + 1])
     }
 
+    /// Adds the sender's grid square after the hops byte. Older readers stop
+    /// at the hops byte, so the receipt still works for them.
+    pub fn add_ack_grid(&mut self, grid: &str) {
+        if self.kind != MsgType::Ack || self.body.len() != MSG_ID_LEN + 2 {
+            return;
+        }
+        let Some(g) = crate::grid::position(grid) else {
+            return;
+        };
+        self.body.extend_from_slice(g.as_bytes());
+        self.msg_id = MsgId::compute(&self.origin, &self.dest, self.seq, &self.body);
+    }
+
+    /// The grid square the ACK's sender added, if any.
+    pub fn acked_grid(&self) -> Option<String> {
+        if self.kind != MsgType::Ack || self.body.len() <= MSG_ID_LEN + 2 {
+            return None;
+        }
+        let tail = std::str::from_utf8(&self.body[MSG_ID_LEN + 2..]).ok()?;
+        crate::grid::position(tail)
+    }
+
     pub fn body_text(&self) -> String {
         String::from_utf8_lossy(&self.body).into_owned()
     }
@@ -680,6 +702,36 @@ mod tests {
         let mid = bytes.len() / 2;
         bytes[mid] ^= 0xff;
         assert!(Envelope::decode(&bytes).is_err());
+    }
+
+    #[test]
+    fn ack_grid_survives_the_wire_and_older_readers_still_see_the_receipt() {
+        let a = Callsign::parse("G4ABC").unwrap();
+        let line = Envelope::new_msg(
+            a,
+            Callsign::parse("G4ABC/M").unwrap(),
+            1,
+            b"hi".to_vec(),
+            3,
+            Flags::new().with(FLAG_REQ_ACK),
+        )
+        .unwrap();
+        let mut ack = Envelope::ack_for(&line, Callsign::parse("G4ABC/M").unwrap(), 2, Some(-4.0));
+        let plain_id = ack.msg_id;
+        ack.add_ack_grid("io91vl45");
+        assert_ne!(ack.msg_id, plain_id, "the id covers the grid");
+        let back = Envelope::decode(&ack.encode().unwrap()).unwrap();
+        assert_eq!(back.acked_id(), Some(line.msg_id));
+        assert_eq!(back.acked_snr(), Some(-4.0));
+        assert_eq!(back.acked_line_hops(), Some(3));
+        assert_eq!(back.acked_grid().as_deref(), Some("IO91VL45"));
+        // Added once only, and never a bad square.
+        let mut twice = back.clone();
+        twice.add_ack_grid("IO91");
+        assert_eq!(twice.body.len(), back.body.len());
+        let mut plain = Envelope::ack_for(&line, Callsign::parse("M0XYZ").unwrap(), 3, None);
+        plain.add_ack_grid("nonsense");
+        assert_eq!(plain.acked_grid(), None);
     }
 
     #[test]

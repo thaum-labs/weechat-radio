@@ -571,6 +571,15 @@ pub const BEACON_BASE_S: i64 = 60;
 pub const BEACON_MIN_S: i64 = 15;
 pub const BEACON_MAX_S: i64 = 120;
 
+/// A receipt carries our grid again after this long even when it has not changed.
+pub const RECEIPT_GRID_EVERY_S: u32 = 600;
+
+/// True when the next receipt should carry `grid`: it moved since the last
+/// one sent (`last`, at `last_at`), or that was `RECEIPT_GRID_EVERY_S` ago.
+pub fn receipt_carries_grid(last: &str, last_at: u32, grid: &str, now: u32) -> bool {
+    last != grid || now.saturating_sub(last_at) >= RECEIPT_GRID_EVERY_S
+}
+
 /// Longest a station goes without a beacon while traffic keeps it quiet.
 pub const BEACON_MAX_GAP_S: u32 = 600;
 
@@ -1075,6 +1084,14 @@ impl Engine {
 mod tests {
     use super::*;
     use crate::proto::{Callsign, Envelope, Flags};
+
+    #[test]
+    fn a_receipt_carries_the_grid_when_it_moved_or_every_ten_minutes() {
+        assert!(receipt_carries_grid("", 0, "IO91WM12", 1000));
+        assert!(!receipt_carries_grid("IO91WM12", 1000, "IO91WM12", 1300));
+        assert!(receipt_carries_grid("IO91WM12", 1000, "IO91WM13", 1001));
+        assert!(receipt_carries_grid("IO91WM12", 1000, "IO91WM12", 1600));
+    }
 
     #[test]
     fn own_origin_is_not_a_relay_hold() {
