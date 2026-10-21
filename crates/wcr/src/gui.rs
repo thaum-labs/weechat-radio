@@ -557,6 +557,27 @@ enum CenterView {
     Email,
 }
 
+/// One email being sent. The send window stays up, and the rest of the app
+/// stays out of reach, until this is done.
+struct MailSend {
+    id: String,
+    to: String,
+    subject: String,
+    /// Radio+ keys chunks to a gateway; otherwise the station posts to the hub.
+    rf: bool,
+    /// Planned airtime of the first burst, from the confirm box.
+    airtime: f64,
+    started: Instant,
+    sent_at: Option<Instant>,
+    /// Last time the station answered about this mail.
+    heard: Instant,
+    row: Option<crate::mail::MailRow>,
+    step: crate::mail::SendStep,
+}
+
+/// The station stopped answering about a send for this long.
+const MAIL_SEND_SILENT: Duration = Duration::from_secs(30);
+
 #[derive(Clone)]
 struct MailConfirm {
     kind: &'static str,
@@ -635,7 +656,7 @@ struct GuiApp {
     mail_subject: String,
     mail_body: String,
     mail_hold: bool,
-    mail_pending: String,
+    mail_send: Option<MailSend>,
     mail_toast: String,
     mail_toast_warn: bool,
     mail_notice: String,
@@ -745,7 +766,7 @@ impl GuiApp {
             mail_subject: String::new(),
             mail_body: String::new(),
             mail_hold: false,
-            mail_pending: String::new(),
+            mail_send: None,
             mail_toast: String::new(),
             mail_toast_warn: false,
             mail_notice: String::new(),
@@ -2038,6 +2059,7 @@ impl eframe::App for GuiApp {
                 });
             });
 
+        self.paint_mail_send(ctx);
         if self.confirm_radio {
             egui::Window::new("Switch to radio?")
                 .collapsible(false)
@@ -3754,36 +3776,142 @@ impl GuiApp {
             self.mail_toast.clear();
             self.mail_toast_warn = false;
         }
-        if !self.mail_pending.is_empty() {
-            if let Some(row) =
-                mail_http("GET", &format!("/mail/open?id={}", self.mail_pending), None)
-            {
-                let folder = row.get("folder").and_then(|v| v.as_str()).unwrap_or("");
-                let state = row.get("state").and_then(|v| v.as_str()).unwrap_or("");
-                if folder == "sent" || state == "sent" {
-                    self.mail_to.clear();
-                    self.mail_subject.clear();
-                    self.mail_body.clear();
-                    self.mail_hold = false;
-                    self.mail_pending.clear();
-                    self.mail_toast = "Sent".into();
-                    self.mail_toast_warn = false;
-                    self.mail_folder = "sent".into();
-                } else if state == "failed" {
-                    let detail = row.get("detail").and_then(|v| v.as_str()).unwrap_or("");
-                    self.mail_toast = if detail.is_empty() {
-                        "Failed".into()
-                    } else {
-                        detail.to_string()
-                    };
-                    self.mail_toast_warn = true;
-                    self.mail_hold = false;
-                    self.mail_pending.clear();
-                } else if state == "gateway" {
-                    self.mail_toast = "At the gateway, waiting for it to be accepted.".into();
-                    self.mail_toast_warn = true;
+        if let Some(send) = self.mail_send.as_mut() {
+            if !send.step.done {
+                if let Some(v) = mail_http("GET", &format!("/mail/open?id={}", send.id), None) {
+                    if let Ok(row) = serde_json::from_value::<crate::mail::MailRow>(v) {
+                        send.heard = Instant::now();
+                        if row.state == "sent" && send.sent_at.is_none() {
+                            send.sent_at = Some(Instant::now());
+                        }
+                        send.row = Some(row);
+                    }
                 }
             }
+        }
+    }
+
+    /// Moves the send window on from the latest row. Progress never goes back.
+    fn step_mail_send(&mut self) {
+        let Some(send) = self.mail_send.as_mut() else {
+            return;
+        };
+        if send.step.done {
+            return;
+        }
+        let next = if send.heard.elapsed() > MAIL_SEND_SILENT {
+            crate::mail::SendStep {
+                fraction: send.step.fraction,
+                label: "No answer from the station about this mail. Check the Outbox.".into(),
+                done: true,
+                ok: false,
+            }
+        } else {
+            let row = send.row.clone().unwrap_or_default();
+            crate::mail::send_step(&crate::mail::SendView {
+                state: if row.state.is_empty() {
+                    "queued"
+                } else {
+                    &row.state
+                },
+                chunks: row.chunks,
+                got: &row.got,
+                delivery: &row.delivery,
+                detail: &row.detail,
+                rf: send.rf,
+                elapsed_secs: send.started.elapsed().as_secs_f64(),
+                airtime_secs: send.airtime,
+                since_sent_secs: send
+                    .sent_at
+                    .map(|t| t.elapsed().as_secs_f64())
+                    .unwrap_or(0.0),
+            })
+        };
+        let fraction = next.fraction.max(send.step.fraction);
+        send.step = crate::mail::SendStep { fraction, ..next };
+        if send.step.done {
+            self.mail_hold = false;
+            if send.step.ok {
+                self.mail_to.clear();
+                self.mail_subject.clear();
+                self.mail_body.clear();
+                self.mail_folder = "sent".into();
+            }
+        }
+    }
+
+    /// The send window. A blocking layer under it keeps the rest of the app
+    /// out of reach until the send is done and OK is pressed.
+    fn paint_mail_send(&mut self, ctx: &egui::Context) {
+        if self.mail_send.is_none() {
+            return;
+        }
+        self.step_mail_send();
+        let Some(send) = self.mail_send.as_ref() else {
+            return;
+        };
+        let step = send.step.clone();
+        let screen = ctx.screen_rect();
+        egui::Area::new(egui::Id::new("mail_send_block"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(screen.min)
+            .show(ctx, |ui| {
+                ui.allocate_rect(screen, egui::Sense::click_and_drag());
+                ui.painter()
+                    .rect_filled(screen, 0.0, Color32::from_black_alpha(150));
+            });
+        ctx.memory_mut(|m| m.stop_text_input());
+        let mut close = false;
+        egui::Window::new(if step.done {
+            if step.ok {
+                "Success"
+            } else {
+                "Not sent"
+            }
+        } else {
+            "Sending email"
+        })
+        .id(egui::Id::new("mail_send_window"))
+        .order(egui::Order::Tooltip)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .frame(chrome(TOPBAR))
+        .show(ctx, |ui| {
+            ui.set_min_width(420.0);
+            ui.label(
+                RichText::new(format!("{}  {}", send.to, send.subject))
+                    .color(ACCENT)
+                    .monospace(),
+            );
+            ui.add_space(6.0);
+            let color = if step.done && !step.ok { ORANGE } else { GREEN };
+            ui.add(
+                egui::ProgressBar::new(step.fraction)
+                    .desired_width(420.0)
+                    .fill(color)
+                    .show_percentage(),
+            );
+            ui.add_space(4.0);
+            ui.label(RichText::new(&step.label).color(FG).monospace());
+            if step.done {
+                ui.add_space(8.0);
+                if ui.add(hair_btn("OK", ORANGE)).clicked() {
+                    close = true;
+                }
+            } else {
+                ui.label(
+                    RichText::new("Stay on this screen until the send finishes.")
+                        .color(DIM)
+                        .small()
+                        .monospace(),
+                );
+            }
+        });
+        if close {
+            self.mail_send = None;
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(250));
         }
     }
 
@@ -3820,6 +3948,7 @@ impl GuiApp {
                 {
                     self.mail_folder = id.into();
                     self.mail_open = None;
+                    self.mail_toast.clear();
                 }
             }
             if mode == Mode::RadioPlus {
@@ -3849,13 +3978,9 @@ impl GuiApp {
                     && !self.mail_waiting.is_empty()
                 {
                     for w in &self.mail_waiting {
-                        let line = format!(
-                            "{}  {}  {}  {} B",
-                            utc_stamp(chrono::Utc::now().timestamp()),
-                            w.from_addr,
-                            w.subject,
-                            w.bytes
-                        );
+                        // Only the header is here; the hub holds the body until Get.
+                        let line =
+                            format!("waiting  {}  {}  {} B", w.from_addr, w.subject, w.bytes);
                         ui.horizontal(|ui| {
                             if ui
                                 .selectable_label(false, RichText::new(line).monospace().color(FG))
@@ -3869,6 +3994,9 @@ impl GuiApp {
                                     ids: vec![w.id.clone()],
                                 });
                             }
+                            if ui.add(hair_btn("delete", DIM)).clicked() {
+                                delete_id = Some(w.id.clone());
+                            }
                         });
                     }
                 }
@@ -3878,6 +4006,8 @@ impl GuiApp {
                         format!("  {}", row.detail)
                     } else if row.state == "gateway" {
                         "  at gateway".into()
+                    } else if row.folder == "sent" && !row.delivery.is_empty() {
+                        format!("  {}", crate::mail::delivery_word(&row.delivery))
                     } else {
                         String::new()
                     };
@@ -3915,6 +4045,7 @@ impl GuiApp {
                 Some(&serde_json::json!({ "id": id }).to_string()),
             );
             self.mail_rows.retain(|r| r.id != id);
+            self.mail_waiting.retain(|w| w.id != id);
             if self.mail_open.as_ref().map(|m| &m.id) == Some(&id) {
                 self.mail_open = None;
             }
@@ -3939,6 +4070,14 @@ impl GuiApp {
                 .color(ACCENT)
                 .monospace(),
             );
+            let word = crate::mail::delivery_word(&open.delivery);
+            if open.folder == "sent" && !word.is_empty() {
+                ui.label(
+                    RichText::new(format!("delivery: {word}"))
+                        .color(DIM)
+                        .monospace(),
+                );
+            }
             ui.label(RichText::new(&open.body).color(FG).monospace());
         }
         ui.add_space(8.0);
@@ -4143,15 +4282,30 @@ impl GuiApp {
                                 .to_string(),
                             ),
                         ) {
-                            self.mail_pending = v
+                            let id = v
                                 .get("id")
                                 .and_then(|i| i.as_str())
                                 .unwrap_or("")
                                 .to_string();
                             let path = v.get("path").and_then(|p| p.as_str()).unwrap_or("");
-                            if path == "hub" {
-                                self.mail_toast.clear();
-                            }
+                            self.mail_toast.clear();
+                            self.mail_send = Some(MailSend {
+                                id,
+                                to: confirm.to.clone(),
+                                subject: confirm.subject.clone(),
+                                rf: path == "rf",
+                                airtime: secs,
+                                started: Instant::now(),
+                                sent_at: None,
+                                heard: Instant::now(),
+                                row: None,
+                                step: crate::mail::SendStep {
+                                    fraction: 0.0,
+                                    label: "Starting…".into(),
+                                    done: false,
+                                    ok: false,
+                                },
+                            });
                         } else {
                             self.mail_hold = false;
                             self.mail_toast = "Could not send.".into();

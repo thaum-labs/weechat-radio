@@ -118,7 +118,9 @@ async fn delete_one(
     Json(b): Json<IdBody>,
 ) -> Result<Json<Value>, StatusCode> {
     let h = handle(&slot).await?;
-    let ok = h.store.delete(&b.id).map_err(store_err)?;
+    // A waiting header (Radio+, not fetched yet) is hidden here only.
+    let ok = h.store.delete(&b.id).map_err(store_err)?
+        | h.store.delete_waiting(&b.id).map_err(store_err)?;
     Ok(Json(json!({ "ok": ok })))
 }
 

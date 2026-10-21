@@ -67,12 +67,22 @@ pub async fn signed_post_raw(
     Ok((status, text))
 }
 
-pub fn send_body(from: &str, to: &str, subject: &str, body: &str, bcc: Option<&str>) -> Value {
+/// `mail_id` is the station's own id for the mail, so it can later ask the
+/// hub whether Resend delivered it.
+pub fn send_body(
+    from: &str,
+    to: &str,
+    subject: &str,
+    body: &str,
+    bcc: Option<&str>,
+    mail_id: &str,
+) -> Value {
     json!({
         "from": from,
         "to": to,
         "subject": subject,
         "body": body,
         "bcc": bcc,
+        "mail_id": mail_id,
     })
 }
