@@ -409,7 +409,7 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   left: 20px;
   bottom: 36px;
   width: max-content;
-  max-width: min(360px, calc(100% - 40px));
+  max-width: min(420px, calc(100% - 40px));
   background: rgba(7, 7, 10, 0.92);
   border: 1px solid var(--line);
   color: var(--fg);
@@ -443,8 +443,6 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   grid-template-columns: auto auto;
   column-gap: 16px;
   align-items: start;
-  max-height: min(240px, 42dvh);
-  overflow: auto;
   padding: 0 10px 8px;
 }
 .map-key-lines,
@@ -486,7 +484,6 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   color: var(--fg);
   font-size: 12px;
   line-height: 1.4;
-  white-space: nowrap;
 }
 
 .map-tools {
