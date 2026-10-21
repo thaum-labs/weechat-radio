@@ -15,6 +15,10 @@ With pictures: https://weechatradio.com/guides/start.html
 Marks: [..] waiting  [tx] sent  [rl] heard again  [gw] gateway took it
        [ok] delivered (#bulletin stops here)  [all] closed group
        [xN] times keyed ([x4] is the last copy)  [no] after two more waits
+       Desktop app: the key button lists these. Radio lines show their SNR (/snr off).
+
+Signal report: /report CALL   (answered automatically, /report auto off)
+Weather:       /wx  or  /wx CALL   (your grid, needs internet)
 
 Update: wcr update. Linux and macOS restart a service. A station you
 started by hand keeps the old code until you start it again. Windows
