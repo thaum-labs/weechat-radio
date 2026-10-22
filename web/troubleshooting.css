@@ -1,0 +1,49 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Troubleshooting only (guides/troubleshooting.html). Loaded after styles.css and docs.css.
+   The kit's .fix-list is built for one-line fixes; here a fix can hold paragraphs,
+   a short list and a command. So each row stacks: symptom on top, fix under it at
+   full width (commands need the room), with body-size text. */
+
+.guide-trouble .fix-list > div {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  padding: 14px 16px;
+}
+.guide-trouble .fix-list dt { font-size: 14px; }
+.guide-trouble .fix-list dd > p,
+.guide-trouble .fix-list dd li {
+  font-size: 14px;
+  line-height: 1.6;
+}
+.guide-trouble .fix-list dd > * + * { margin-top: 8px; }
+.guide-trouble .fix-list dd > :last-child,
+.guide-trouble .fix-list dd .pre-wrap:last-child { margin-bottom: 0; }
+.guide-trouble .fix-list dd ul,
+.guide-trouble .fix-list dd ol {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+.guide-trouble .fix-list dd > :first-child { margin-top: 0; }
+.guide-trouble .fix-list dd li + li { margin-top: 4px; }
+.guide-trouble .fix-list dd li .pre-wrap { margin: 6px 0 4px; }
+
+/* Long commands wrap clear of the copy button (on phones the button sits above). */
+.guide-trouble .fix-list pre {
+  padding-right: 64px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A link such as #clock lands on its row, below the sticky bar on phones. */
+.guide-trouble .fix-list > div[id] { scroll-margin-top: 72px; }
+.guide-trouble .fix-list > div:target { border-color: var(--orange); }
+
+@media (max-width: 960px) {
+  .guide-trouble .fix-list pre { padding-right: 14px; }
+  .guide-trouble .fix-list dt,
+  .guide-trouble .fix-list dd > p,
+  .guide-trouble .fix-list dd li {
+    font-size: 15px;
+    line-height: 1.55;
+  }
+}
