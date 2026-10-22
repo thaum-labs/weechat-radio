@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -50,186 +51,230 @@
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> wire protocol</h1>
       <p class="lead">For people writing software. If you only want to chat, see <a href="/docs/weak.html">weak signals</a> instead.</p>
 
-      <p>The hub uses version 2 on radio (KISS) and internet (WebSocket). Version 1 frames are still decoded. <code>msg_id</code> is not sent on v2: the receiver recomputes BLAKE3 of origin, dest, seq, and the uncompressed body. The timestamp is not part of the id. Two messages in the same second differ when the destination, the text, or the per-origin sequence differs.</p>
+      <div class="pair">
+        <section class="article-section article-section--first" aria-labelledby="frameH">
+          <h2 id="frameH">One frame</h2>
+          <p>The hub uses version 2 on radio (KISS) and internet (WebSocket). Version 1 frames are still decoded.</p>
+          <p><code>msg_id</code> is not sent on v2: the receiver recomputes BLAKE3 of origin, dest, seq, and the uncompressed body. The timestamp is not part of the id. Two messages in the same second differ when the destination, the text, or the per-origin sequence differs.</p>
+        </section>
 
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 180" role="img" aria-labelledby="p1t p1d">
-            <title id="p1t">Packet layout in order</title>
-            <desc id="p1d">Header fields in order: ver 1 byte, type and flags 2, origin 6, dest 1 or 6, hops 1, ts 2, seq varint, len varint. Then the body up to 300 bytes, a 2 byte CRC, and an optional 64 byte signature.</desc>
-            <text class="tag" x="16" y="20">ONE FRAME, LEFT TO RIGHT</text>
-            <path class="lane" d="M16 60 V 50 H 451 V 60" />
-            <text class="sub" x="233" y="44" text-anchor="middle">header · 16–22 bytes</text>
-            <path class="lane" d="M454 60 V 50 H 574 V 60" />
-            <text class="sub" x="514" y="44" text-anchor="middle">payload</text>
-            <path class="lane" d="M620 60 V 50 H 704 V 60" />
-            <text class="sub" x="662" y="44" text-anchor="middle">optional</text>
+        <figure class="diagram">
+          <div class="dgm-wrap">
+            <svg class="dgm fit" viewBox="0 0 440 252" role="img" aria-labelledby="p1t p1d">
+              <title id="p1t">Packet layout in order</title>
+              <desc id="p1d">Header fields in order: ver 1 byte, type and flags 2, origin 6, dest 1 or 6, hops 1, ts 2, seq varint, len varint. Then the body up to 300 bytes, a 2 byte CRC, and an optional 64 byte signature.</desc>
 
-            <rect class="box" x="16" y="64" width="40" height="52" />
-            <text class="sub" x="36" y="88" text-anchor="middle">ver</text>
-            <text class="sub" x="36" y="104" text-anchor="middle">1</text>
-            <rect class="box gate" x="59" y="64" width="62" height="52" />
-            <text class="sub" x="90" y="84" text-anchor="middle">type+</text>
-            <text class="sub" x="90" y="97" text-anchor="middle">flags</text>
-            <text class="sub" x="90" y="110" text-anchor="middle">2</text>
-            <rect class="box" x="124" y="64" width="62" height="52" />
-            <text class="sub" x="155" y="88" text-anchor="middle">origin</text>
-            <text class="sub" x="155" y="104" text-anchor="middle">6</text>
-            <rect class="box" x="189" y="64" width="66" height="52" />
-            <text class="sub" x="222" y="88" text-anchor="middle">dest</text>
-            <text class="sub" x="222" y="104" text-anchor="middle">1 or 6</text>
-            <rect class="box" x="258" y="64" width="40" height="52" />
-            <text class="sub" x="278" y="88" text-anchor="middle">hops</text>
-            <text class="sub" x="278" y="104" text-anchor="middle">1</text>
-            <rect class="box" x="301" y="64" width="40" height="52" />
-            <text class="sub" x="321" y="88" text-anchor="middle">ts</text>
-            <text class="sub" x="321" y="104" text-anchor="middle">2</text>
-            <rect class="box" x="344" y="64" width="52" height="52" />
-            <text class="sub" x="370" y="88" text-anchor="middle">seq</text>
-            <text class="sub" x="370" y="104" text-anchor="middle">varint</text>
-            <rect class="box" x="399" y="64" width="52" height="52" />
-            <text class="sub" x="425" y="88" text-anchor="middle">len</text>
-            <text class="sub" x="425" y="104" text-anchor="middle">varint</text>
-            <rect class="box orange" x="454" y="64" width="120" height="52" />
-            <text class="on-orange" x="514" y="88" text-anchor="middle">body</text>
-            <text class="sub" x="514" y="104" text-anchor="middle">n, max 300</text>
-            <rect class="box" x="577" y="64" width="40" height="52" />
-            <text class="sub" x="597" y="88" text-anchor="middle">crc</text>
-            <text class="sub" x="597" y="104" text-anchor="middle">2</text>
-            <rect class="box off" x="620" y="64" width="84" height="52" />
-            <text class="on-off" x="662" y="88" text-anchor="middle">sig</text>
-            <text class="sub" x="662" y="104" text-anchor="middle">64</text>
+              <!-- header: one row of eight fields -->
+              <path class="lane" d="M10 30 V22 H430 V30" />
+              <text class="sub" x="220" y="16" text-anchor="middle">header · 16–22 bytes</text>
 
-            <text class="sub" x="16" y="142">the body may be compressed; it is never encrypted on RF</text>
-            <text class="sub" x="16" y="160">sig is dropped on the slow HF presets, where 64 bytes cost too much air time</text>
-          </svg>
-        </div>
-        <figcaption>About 16–22 bytes of header, then the message text (optionally compressed), then a checksum. Signature is optional and omitted on slow HF.</figcaption>
-      </figure>
+              <rect class="box" x="10" y="34" width="36" height="52" />
+              <text class="sub" x="28" y="56" text-anchor="middle">ver</text>
+              <text class="sub" x="28" y="72" text-anchor="middle">1</text>
+              <rect class="box gate" x="49" y="34" width="54" height="52" />
+              <text class="sub" x="76" y="52" text-anchor="middle">type+</text>
+              <text class="sub" x="76" y="65" text-anchor="middle">flags</text>
+              <text class="sub" x="76" y="78" text-anchor="middle">2</text>
+              <rect class="box" x="106" y="34" width="56" height="52" />
+              <text class="sub" x="134" y="56" text-anchor="middle">origin</text>
+              <text class="sub" x="134" y="72" text-anchor="middle">6</text>
+              <rect class="box" x="165" y="34" width="56" height="52" />
+              <text class="sub" x="193" y="56" text-anchor="middle">dest</text>
+              <text class="sub" x="193" y="72" text-anchor="middle">1 or 6</text>
+              <rect class="box" x="224" y="34" width="44" height="52" />
+              <text class="sub" x="246" y="56" text-anchor="middle">hops</text>
+              <text class="sub" x="246" y="72" text-anchor="middle">1</text>
+              <rect class="box" x="271" y="34" width="44" height="52" />
+              <text class="sub" x="293" y="56" text-anchor="middle">ts</text>
+              <text class="sub" x="293" y="72" text-anchor="middle">2</text>
+              <rect class="box" x="318" y="34" width="54" height="52" />
+              <text class="sub" x="345" y="56" text-anchor="middle">seq</text>
+              <text class="sub" x="345" y="72" text-anchor="middle">varint</text>
+              <rect class="box" x="375" y="34" width="55" height="52" />
+              <text class="sub" x="402" y="56" text-anchor="middle">len</text>
+              <text class="sub" x="402" y="72" text-anchor="middle">varint</text>
 
-      <h2>Version 2 header</h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>Field</th><th>Size</th><th>Notes</th></tr>
-          </thead>
-          <tbody>
-            <tr><td>ver</td><td>1</td><td><code>2</code></td></tr>
-            <tr><td>packed</td><td>2</td><td>type (high 4 bits) + flags (low 12 bits)</td></tr>
-            <tr><td>origin</td><td>6</td><td>packed callsign</td></tr>
-            <tr><td>dest</td><td>1 or 6</td><td>1-byte group index if <code>GROUP_IDX</code> (<code>0</code> = BULLETIN, <code>1</code> = BEACON)</td></tr>
-            <tr><td>hops_left</td><td>1</td><td>TTL, default 3</td></tr>
-            <tr><td>ts</td><td>2</td><td>minutes since epoch mod 2<sup>16</sup></td></tr>
-            <tr><td>seq</td><td>varint</td><td>per-origin counter (clock-tolerant identity)</td></tr>
-            <tr><td>body_len</td><td>varint</td><td>max 300 uncompressed</td></tr>
-            <tr><td>body</td><td>n</td><td>UTF-8, optionally smaz-compressed</td></tr>
-            <tr><td>crc</td><td>2</td><td>CRC-16/IBM-3740 of everything before CRC</td></tr>
-            <tr><td>signature</td><td>64</td><td>optional Ed25519 if SIGNED</td></tr>
-          </tbody>
-        </table>
+              <!-- then the payload, checksum and optional signature -->
+              <path class="lane" d="M10 120 V112 H264 V120" />
+              <text class="sub" x="137" y="106" text-anchor="middle">payload</text>
+              <path class="lane" d="M330 120 V112 H430 V120" />
+              <text class="sub" x="380" y="106" text-anchor="middle">optional</text>
+
+              <rect class="box orange" x="10" y="124" width="254" height="52" />
+              <text class="on-orange" x="137" y="146" text-anchor="middle">body</text>
+              <text class="sub" x="137" y="164" text-anchor="middle">n, max 300</text>
+              <rect class="box" x="267" y="124" width="60" height="52" />
+              <text class="sub" x="297" y="146" text-anchor="middle">crc</text>
+              <text class="sub" x="297" y="164" text-anchor="middle">2</text>
+              <rect class="box off" x="330" y="124" width="100" height="52" />
+              <text class="on-off" x="380" y="146" text-anchor="middle">sig</text>
+              <text class="sub" x="380" y="164" text-anchor="middle">64</text>
+
+              <text class="sub" x="10" y="206">the body may be compressed; it is never</text>
+              <text class="sub" x="10" y="221">encrypted on RF. sig is dropped on the slow HF</text>
+              <text class="sub" x="10" y="236">presets, where 64 bytes cost too much air time</text>
+            </svg>
+          </div>
+          <figcaption>About 16–22 bytes of header, then the message text (optionally compressed), then a checksum. Signature is optional and omitted on slow HF.</figcaption>
+        </figure>
       </div>
 
-      <h2>Flags</h2>
-      <ul>
-        <li>0 <code>INET_OK</code> — gateways may forward to the internet</li>
-        <li>1 <code>GROUP</code></li>
-        <li>2 <code>SIGNED</code></li>
-        <li>3 <code>REQ_ACK</code></li>
-        <li>4 <code>THIRD_PARTY</code> — guest nick origin</li>
-        <li>5–6 priority: 0 routine, 1 priority, 2 emergency</li>
-        <li>7 <code>NO_INET</code> — never forward to the internet (<code>radio</code> mode)</li>
-        <li>8 <code>GROUP_IDX</code> — v2 wire only: dest is a 1-byte group index</li>
-        <li>9 <code>COMPRESSED</code> — v2 wire only: body is smaz-compressed</li>
-      </ul>
-      <p><code>!!</code> at the start of a message is emergency (sent twice). <code>!</code> is priority. Unacked frames are retried and the modem steps down: QPSK 1/2 → RDM-1200S → RDM-600S → RDM-300S → MFSK-32R.</p>
-
-      <h2>BEACON</h2>
-      <p>Type BEACON. Body is UTF-8 <code>B|&lt;mode&gt;|&lt;khz&gt;</code> (example <code>B|internet-radio|144950</code>). The kHz field is the origin’s dial so gateways and the map know which band a station is on. A fourth field carries the station’s grid square, <code>B|&lt;mode&gt;|&lt;khz&gt;|&lt;grid&gt;</code> (example <code>B|radio|144950|IO91WM12</code>): the GPS square while a USB GPS has a fix (8 characters, about 500 m), otherwise the grid from setup, and none when the station does not share its position on the map. Older readers stop at the frequency. Legacy <code>B|&lt;mode&gt;</code> is still decoded. Beacons heard on RF are also tagged with the receiving station’s own dial. A station’s first three beacons go about a minute apart, then one every 5 minutes, each gap counted from when the last one reached the modem. A beacon that falls due waits while an exchange the station takes part in is in progress: a line and its receipt, or a mail and its acceptance. It goes ahead of this station's own queued lines. Keyed during an exchange, it would leave the station deaf to the answer. It waits out one exchange at most, a warm-up beacon never more than two minutes after the last, so a busy chain still hears it about every 5 minutes. A busy channel holds a due beacon only while frames are being decoded: a steady noise floor or stuck carrier sense reads near 100% with nothing on the air. The countdown shows that time: <code>after exchange</code> while it waits, <code>pending</code> until the beacon reaches the modem, and <code>busy</code> while a decoded frame is still fresh.</p>
-
-      <h2>Callsign packing</h2>
-      <p>6 bits per character, 8 characters, alphabet:</p>
-      <pre class="plain"> space A–Z 0–9 / - ~</pre>
-      <p>Guests: <code>~ALICE</code>. Amateur callsigns must look like a callsign (letter and digit).</p>
-
-      <h2 id="delivery-marks">Delivery marks</h2>
-      <p>These marks are on <strong>your</strong> line in live chat. They only move forward: <code>[..]</code> then <code>[tx]</code>, then maybe <code>[rl]</code>, then <code>[gw]</code> when a gateway accepts the frame onto the hub, then <code>[ok]</code>, then <code>[all]</code> for a closed group. A later mark never slides back to an earlier one: a retry after <code>[rl]</code> or <code>[ok]</code> goes out without a new mark, and a closed group that is still missing some ACKs stays <code>[ok]</code> until a late ACK makes it <code>[all]</code>. <code>[gw]</code> is not an ACK, and retries continue. In <code>radio</code> mode <code>[rl]</code> is as far as the frame goes: it is marked to stay off the internet. A closed group keeps retrying after the first member ACK until every stored member has ACKed, or the retries run out. <code>#bulletin</code> is public and has no member list, so it stops at <code>[ok]</code> and never shows <code>[all]</code>. <code>[rl]</code> can be skipped when you do not hear your own frame. <code>[xN]</code> is how many times the line was keyed, counted until <code>[rl]</code>, <code>[gw]</code>, or <code>[ok]</code>: <code>[x1]</code> is the first send, and with the default of 3 retries the last copy is <code>[x4]</code>. <code>[no]</code> waits two more full intervals after that copy, so a late receipt does not turn <code>[no]</code> into <code>[ok]</code>.</p>
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 328" role="img" aria-labelledby="dm1t dm1d">
-            <title id="dm1t">How a live-chat line moves from sent to delivered</title>
-            <desc id="dm1d">You key the message and the line shows tx. If you hear that same message come back, with your callsign still the origin, the line shows rl. That return is a speaker echo or a relay, and it can be skipped. When the other station sends an ACK, origin their callsign, the line shows ok. When every member of a group has acknowledged, the line shows all.</desc>
-            <defs>
-              <marker id="mrfDm" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-              <marker id="maccDm" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-              <marker id="mdimDm" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-dim" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-            </defs>
-            <text class="tag" x="16" y="20">LIVE CHAT · MARKS ON YOUR LINE</text>
-            <circle class="step" cx="28" cy="64" r="9" />
-            <text class="step-n" x="28" y="67.5" text-anchor="middle">1</text>
-            <line class="rf" marker-end="url(#mrfDm)" x1="348" y1="64" x2="418" y2="64" />
-            <rect class="box orange" x="48" y="40" width="296" height="48" />
-            <text class="on-orange" x="196" y="60" text-anchor="middle">you key the message</text>
-            <text class="sub" x="196" y="76" text-anchor="middle">this station transmits</text>
-            <rect class="box orange" x="422" y="40" width="88" height="48" />
-            <text class="on-orange" x="466" y="68" text-anchor="middle">[tx]</text>
-            <text class="sub" x="524" y="68">sent</text>
-
-            <circle class="step" cx="28" cy="132" r="9" />
-            <text class="step-n" x="28" y="135.5" text-anchor="middle">2</text>
-            <line class="none" marker-end="url(#mdimDm)" x1="348" y1="132" x2="418" y2="132" />
-            <rect class="box radio" x="48" y="108" width="296" height="48" />
-            <text class="on-radio" x="196" y="128" text-anchor="middle">you hear your own frame</text>
-            <text class="sub" x="196" y="144" text-anchor="middle">origin is still your callsign</text>
-            <rect class="box radio" x="422" y="108" width="88" height="48" />
-            <text class="on-radio" x="466" y="136" text-anchor="middle">[rl]</text>
-            <text class="sub" x="524" y="132">optional</text>
-            <text class="sub" x="524" y="146">echo or relay</text>
-
-            <circle class="step" cx="28" cy="200" r="9" />
-            <text class="step-n" x="28" y="203.5" text-anchor="middle">3</text>
-            <line class="wire" marker-end="url(#maccDm)" x1="348" y1="200" x2="418" y2="200" />
-            <rect class="box accent" x="48" y="176" width="296" height="48" />
-            <text class="on-accent" x="196" y="196" text-anchor="middle">they send an ACK</text>
-            <text class="sub" x="196" y="212" text-anchor="middle">origin is their callsign</text>
-            <rect class="box accent" x="422" y="176" width="88" height="48" />
-            <text class="on-accent" x="466" y="204" text-anchor="middle">[ok]</text>
-            <text class="sub" x="524" y="204">delivered</text>
-
-            <circle class="step" cx="28" cy="268" r="9" />
-            <text class="step-n" x="28" y="271.5" text-anchor="middle">4</text>
-            <line class="wire" marker-end="url(#maccDm)" x1="348" y1="268" x2="418" y2="268" />
-            <rect class="box" x="48" y="244" width="296" height="48" />
-            <text x="196" y="264" text-anchor="middle">every group member</text>
-            <text class="sub" x="196" y="280" text-anchor="middle">each one has acknowledged</text>
-            <rect class="box accent" x="422" y="244" width="88" height="48" />
-            <text class="on-accent" x="466" y="272" text-anchor="middle">[all]</text>
-            <text class="sub" x="524" y="268">closed</text>
-            <text class="sub" x="524" y="282">groups</text>
-
-            <text class="sub" x="48" y="314">step 2 can be missing — their ACK still moves the line from [tx] to [ok]</text>
-          </svg>
+      <section class="article-section" aria-labelledby="v2H">
+        <h2 id="v2H">Version 2 header</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Field</th><th>Size</th><th>Notes</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>ver</td><td>1</td><td><code>2</code></td></tr>
+              <tr><td>packed</td><td>2</td><td>type (high 4 bits) + flags (low 12 bits)</td></tr>
+              <tr><td>origin</td><td>6</td><td>packed callsign</td></tr>
+              <tr><td>dest</td><td>1 or 6</td><td>1-byte group index if <code>GROUP_IDX</code> (<code>0</code> = BULLETIN, <code>1</code> = BEACON)</td></tr>
+              <tr><td>hops_left</td><td>1</td><td>TTL, default 3</td></tr>
+              <tr><td>ts</td><td>2</td><td>minutes since epoch mod 2<sup>16</sup></td></tr>
+              <tr><td>seq</td><td>varint</td><td>per-origin counter (clock-tolerant identity)</td></tr>
+              <tr><td>body_len</td><td>varint</td><td>max 300 uncompressed</td></tr>
+              <tr><td>body</td><td>n</td><td>UTF-8, optionally smaz-compressed</td></tr>
+              <tr><td>crc</td><td>2</td><td>CRC-16/IBM-3740 of everything before CRC</td></tr>
+              <tr><td>signature</td><td>64</td><td>optional Ed25519 if SIGNED</td></tr>
+            </tbody>
+          </table>
         </div>
-        <figcaption><code>[rl]</code> is your own message coming back (speaker echo or a relay). <code>[ok]</code> is their ACK. VOX often shows <code>[rl]</code> because the speaker reaches the microphone. A cleaner path often goes <code>[tx]</code> then <code>[ok]</code>.</figcaption>
-      </figure>
+      </section>
 
-      <h2>ACK</h2>
-      <p>Type ACK. This is step 3 above: it paints <code>[ok]</code> on the sender. Body is the 8-byte <code>msg_id</code> of the original, then the receiver SNR in dB as a signed byte (<code>-128</code> for none), then the hops left on the original when this station heard it. Relayed with TTL, and only toward the originator: a station carries a receipt only if it heard the line with more hops left than the receipt's sender did. Next to the sender a carried receipt goes twice at most. Further out it keeps walking home, a retry interval apart, until the next station toward the sender is heard carrying it. It never goes again just because another copy of it was heard. Unacked messages are retransmitted up to <code>rf.max_retries</code> times (default 3). Routine waits before each extra copy are 45s, then 90s, then 180s (priority 20/40/80, emergency 8/16/32). After the last copy the station waits that step twice (routine 360s, then 360s again) and then marks <code>[no]</code> if no ACK arrived. Each wait is multiplied by 0.75–1.25 when retry jitter is on. A busy channel can hold the copy after the timer, so the gap between keys can run longer than that band. Group ACKs wait a random whole-frame slot (up to 6 for routine) plus 0–<code>ack_dither_ms</code> (default 800 ms) before keying, so two members on either side of the sender do not land on it together; direct ACKs are not delayed. The hops byte may be followed by the sender’s grid square in ASCII (4, 6 or 8 characters), added when it changed or every 10 minutes, so VOX stations, which send no beacons, still get their position out. Older readers stop at the hops byte.</p>
+      <section class="article-section" aria-labelledby="flagsH">
+        <h2 id="flagsH">Flags</h2>
+        <p class="section-lead">Bit number, then the flag. They sit in the low 12 bits of <code>packed</code>.</p>
+        <dl class="mark-list">
+          <div><dt>0</dt><dd><code>INET_OK</code> — gateways may forward to the internet</dd></div>
+          <div><dt>1</dt><dd><code>GROUP</code></dd></div>
+          <div><dt>2</dt><dd><code>SIGNED</code></dd></div>
+          <div><dt>3</dt><dd><code>REQ_ACK</code></dd></div>
+          <div><dt>4</dt><dd><code>THIRD_PARTY</code> — guest nick origin</dd></div>
+          <div><dt>5–6</dt><dd>priority: 0 routine, 1 priority, 2 emergency</dd></div>
+          <div><dt>7</dt><dd><code>NO_INET</code> — never forward to the internet (<code>radio</code> mode)</dd></div>
+          <div><dt>8</dt><dd><code>GROUP_IDX</code> — v2 wire only: dest is a 1-byte group index</dd></div>
+          <div><dt>9</dt><dd><code>COMPRESSED</code> — v2 wire only: body is smaz-compressed</dd></div>
+        </dl>
+        <p><code>!!</code> at the start of a message is emergency (sent twice). <code>!</code> is priority. Unacked frames are retried and the modem steps down: QPSK 1/2 → RDM-1200S → RDM-600S → RDM-300S → MFSK-32R.</p>
+      </section>
 
-      <h2>HAVE / WANT</h2>
-      <p>Body is a comma-separated list of hex msg ids in a closed group window.</p>
+      <section class="article-section" aria-labelledby="beaconH">
+        <h2 id="beaconH">BEACON</h2>
+        <p>Type BEACON. Body is UTF-8 <code>B|&lt;mode&gt;|&lt;khz&gt;</code> (example <code>B|internet-radio|144950</code>). The kHz field is the origin’s dial so gateways and the map know which band a station is on. A fourth field carries the station’s grid square, <code>B|&lt;mode&gt;|&lt;khz&gt;|&lt;grid&gt;</code> (example <code>B|radio|144950|IO91WM12</code>): the GPS square while a USB GPS has a fix (8 characters, about 500 m), otherwise the grid from setup, and none when the station does not share its position on the map. Older readers stop at the frequency. Legacy <code>B|&lt;mode&gt;</code> is still decoded. Beacons heard on RF are also tagged with the receiving station’s own dial.</p>
+        <p>A station’s first three beacons go about a minute apart, then one every 5 minutes, each gap counted from when the last one reached the modem. A beacon that falls due waits while an exchange the station takes part in is in progress: a line and its receipt, or a mail and its acceptance. It goes ahead of this station's own queued lines. Keyed during an exchange, it would leave the station deaf to the answer. It waits out one exchange at most, a warm-up beacon never more than two minutes after the last, so a busy chain still hears it about every 5 minutes. A busy channel holds a due beacon only while frames are being decoded: a steady noise floor or stuck carrier sense reads near 100% with nothing on the air. The countdown shows that time: <code>after exchange</code> while it waits, <code>pending</code> until the beacon reaches the modem, and <code>busy</code> while a decoded frame is still fresh.</p>
+      </section>
 
-      <h2>FRAG</h2>
-      <p>Type <code>FRAG</code> (10). Group messages on HF, or any payload larger than the PHY frame, are split into Reed–Solomon shards. Any <code>k</code> of <code>k+m</code> reconstruct the original (default 2 of 3). <code>k</code> grows until every fragment fits the PHY frame, because a modem drops an oversized frame instead of keying it, and the TX mode is chosen from the largest fragment rather than the whole envelope. Gateways forward fragments as they hear them; the hub reassembles from shards received via different gateways.</p>
-      <p>Fragments carry the original flags with <code>SIGNED</code> cleared, since a signature covers the whole body rather than one shard. <code>REQ_ACK</code> is preserved so the reassembled message still asks for a single ACK; a fragment never acknowledges on its own.</p>
+      <section class="article-section" aria-labelledby="callH">
+        <h2 id="callH">Callsign packing</h2>
+        <p>6 bits per character, 8 characters, alphabet:</p>
+        <pre class="plain"> space A–Z 0–9 / - ~</pre>
+        <p>Guests: <code>~ALICE</code>. Amateur callsigns must look like a callsign (letter and digit).</p>
+      </section>
 
-      <h2>Federation (reserved)</h2>
-      <p>Hub-to-hub uses the same envelope and the same <code>msg_id</code> dedupe. Not enabled in v1.</p>
+      <section class="article-section" aria-labelledby="delivery-marks">
+        <h2 id="delivery-marks">Delivery marks</h2>
+        <div class="pair">
+          <div class="article-section">
+            <p>These marks are on <strong>your</strong> line in live chat. They only move forward: <code>[..]</code> then <code>[tx]</code>, then maybe <code>[rl]</code>, then <code>[gw]</code> when a gateway accepts the frame onto the hub, then <code>[ok]</code>, then <code>[all]</code> for a closed group.</p>
+            <p>A later mark never slides back to an earlier one: a retry after <code>[rl]</code> or <code>[ok]</code> goes out without a new mark, and a closed group that is still missing some ACKs stays <code>[ok]</code> until a late ACK makes it <code>[all]</code>. <code>[gw]</code> is not an ACK, and retries continue. In <code>radio</code> mode <code>[rl]</code> is as far as the frame goes: it is marked to stay off the internet.</p>
+          </div>
+
+          <figure class="diagram">
+            <div class="dgm-wrap">
+              <svg class="dgm fit" viewBox="0 0 440 318" role="img" aria-labelledby="dm1t dm1d">
+                <title id="dm1t">How a live-chat line moves from sent to delivered</title>
+                <desc id="dm1d">You key the message and the line shows tx. If you hear that same message come back, with your callsign still the origin, the line shows rl. That return is a speaker echo or a relay, and it can be skipped. When the other station sends an ACK, origin their callsign, the line shows ok. When every member of a group has acknowledged, the line shows all.</desc>
+                <defs>
+                  <marker id="mrfDm" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
+                  </marker>
+                  <marker id="maccDm" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
+                  </marker>
+                  <marker id="mdimDm" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path class="mk-dim" d="M0 0 L6 3 L0 6 z" />
+                  </marker>
+                </defs>
+
+                <circle class="step" cx="18" cy="38" r="9" />
+                <text class="step-n" x="18" y="41.5" text-anchor="middle">1</text>
+                <rect class="box orange" x="34" y="14" width="214" height="48" />
+                <text class="on-orange" x="141" y="34" text-anchor="middle">you key the message</text>
+                <text class="sub" x="141" y="51" text-anchor="middle">this station transmits</text>
+                <line class="rf" marker-end="url(#mrfDm)" x1="252" y1="38" x2="286" y2="38" />
+                <rect class="box orange" x="290" y="14" width="62" height="48" />
+                <text class="on-orange" x="321" y="42" text-anchor="middle">[tx]</text>
+                <text class="sub" x="358" y="42">sent</text>
+
+                <circle class="step" cx="18" cy="106" r="9" />
+                <text class="step-n" x="18" y="109.5" text-anchor="middle">2</text>
+                <rect class="box radio" x="34" y="82" width="214" height="48" />
+                <text class="on-radio" x="141" y="102" text-anchor="middle">you hear your own frame</text>
+                <text class="sub" x="141" y="119" text-anchor="middle">origin is still your callsign</text>
+                <line class="none" marker-end="url(#mdimDm)" x1="252" y1="106" x2="286" y2="106" />
+                <rect class="box radio" x="290" y="82" width="62" height="48" />
+                <text class="on-radio" x="321" y="110" text-anchor="middle">[rl]</text>
+                <text class="sub" x="358" y="96">optional</text>
+                <text class="sub" x="358" y="110">echo or</text>
+                <text class="sub" x="358" y="124">relay</text>
+
+                <circle class="step" cx="18" cy="174" r="9" />
+                <text class="step-n" x="18" y="177.5" text-anchor="middle">3</text>
+                <rect class="box accent" x="34" y="150" width="214" height="48" />
+                <text class="on-accent" x="141" y="170" text-anchor="middle">they send an ACK</text>
+                <text class="sub" x="141" y="187" text-anchor="middle">origin is their callsign</text>
+                <line class="wire" marker-end="url(#maccDm)" x1="252" y1="174" x2="286" y2="174" />
+                <rect class="box accent" x="290" y="150" width="62" height="48" />
+                <text class="on-accent" x="321" y="178" text-anchor="middle">[ok]</text>
+                <text class="sub" x="358" y="178">delivered</text>
+
+                <circle class="step" cx="18" cy="242" r="9" />
+                <text class="step-n" x="18" y="245.5" text-anchor="middle">4</text>
+                <rect class="box" x="34" y="218" width="214" height="48" />
+                <text x="141" y="238" text-anchor="middle">every group member</text>
+                <text class="sub" x="141" y="255" text-anchor="middle">each one has acknowledged</text>
+                <line class="wire" marker-end="url(#maccDm)" x1="252" y1="242" x2="286" y2="242" />
+                <rect class="box accent" x="290" y="218" width="62" height="48" />
+                <text class="on-accent" x="321" y="246" text-anchor="middle">[all]</text>
+                <text class="sub" x="358" y="239">closed</text>
+                <text class="sub" x="358" y="253">groups</text>
+                <text class="sub" x="34" y="292">step 2 can be missing — their ACK still</text>
+                <text class="sub" x="34" y="307">moves the line from [tx] to [ok]</text>
+              </svg>
+            </div>
+            <figcaption><code>[rl]</code> is your own message coming back (speaker echo or a relay). <code>[ok]</code> is their ACK. VOX often shows <code>[rl]</code> because the speaker reaches the microphone. A cleaner path often goes <code>[tx]</code> then <code>[ok]</code>.</figcaption>
+          </figure>
+        </div>
+
+        <p>A closed group keeps retrying after the first member ACK until every stored member has ACKed, or the retries run out. <code>#bulletin</code> is public and has no member list, so it stops at <code>[ok]</code> and never shows <code>[all]</code>. <code>[rl]</code> can be skipped when you do not hear your own frame.</p>
+        <p><code>[xN]</code> is how many times the line was keyed, counted until <code>[rl]</code>, <code>[gw]</code>, or <code>[ok]</code>: <code>[x1]</code> is the first send, and with the default of 3 retries the last copy is <code>[x4]</code>. <code>[no]</code> waits two more full intervals after that copy, so a late receipt does not turn <code>[no]</code> into <code>[ok]</code>.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="ackH">
+        <h2 id="ackH">ACK</h2>
+        <p>Type ACK. This is step 3 above: it paints <code>[ok]</code> on the sender. Body is the 8-byte <code>msg_id</code> of the original, then the receiver SNR in dB as a signed byte (<code>-128</code> for none), then the hops left on the original when this station heard it. The hops byte may be followed by the sender’s grid square in ASCII (4, 6 or 8 characters), added when it changed or every 10 minutes, so VOX stations, which send no beacons, still get their position out. Older readers stop at the hops byte.</p>
+        <p>Relayed with TTL, and only toward the originator: a station carries a receipt only if it heard the line with more hops left than the receipt's sender did. Next to the sender a carried receipt goes twice at most. Further out it keeps walking home, a retry interval apart, until the next station toward the sender is heard carrying it. It never goes again just because another copy of it was heard.</p>
+        <p>Unacked messages are retransmitted up to <code>rf.max_retries</code> times (default 3). Routine waits before each extra copy are 45s, then 90s, then 180s (priority 20/40/80, emergency 8/16/32). After the last copy the station waits that step twice (routine 360s, then 360s again) and then marks <code>[no]</code> if no ACK arrived. Each wait is multiplied by 0.75–1.25 when retry jitter is on. A busy channel can hold the copy after the timer, so the gap between keys can run longer than that band.</p>
+        <p>Group ACKs wait a random whole-frame slot (up to 6 for routine) plus 0–<code>ack_dither_ms</code> (default 800 ms) before keying, so two members on either side of the sender do not land on it together; direct ACKs are not delayed.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="haveH">
+        <h2 id="haveH">HAVE / WANT</h2>
+        <p>Body is a comma-separated list of hex msg ids in a closed group window.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="fragH">
+        <h2 id="fragH">FRAG</h2>
+        <p>Type <code>FRAG</code> (10). Group messages on HF, or any payload larger than the PHY frame, are split into Reed–Solomon shards. Any <code>k</code> of <code>k+m</code> reconstruct the original (default 2 of 3). <code>k</code> grows until every fragment fits the PHY frame, because a modem drops an oversized frame instead of keying it, and the TX mode is chosen from the largest fragment rather than the whole envelope. Gateways forward fragments as they hear them; the hub reassembles from shards received via different gateways.</p>
+        <p>Fragments carry the original flags with <code>SIGNED</code> cleared, since a signature covers the whole body rather than one shard. <code>REQ_ACK</code> is preserved so the reassembled message still asks for a single ACK; a fragment never acknowledges on its own.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="fedH">
+        <h2 id="fedH">Federation (reserved)</h2>
+        <p>Hub-to-hub uses the same envelope and the same <code>msg_id</code> dedupe. Not enabled in v1.</p>
+      </section>
     </main>
   </div>
   <script src="/copy.js?v=1"></script>
