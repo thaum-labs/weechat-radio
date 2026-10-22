@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -44,44 +45,66 @@
       <div class="sub" id="clock-local">LCL --:--</div>
     </div>
   </header>
+
+  <!-- Line icons shared by the "what you need" cards. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-laptop" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="11" /><path d="M2 19 H22" /></symbol>
+    <symbol id="ico-app" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" /><path d="M7 10 L10 12.5 L7 15 M12 15 H17" /></symbol>
+  </svg>
+
   <div class="page-wrap">
     <main class="page-panel">
       <p class="crumb"><a href="/guides.html">guides</a> / Windows</p>
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> Windows</h1>
       <p class="lead">Install on Windows 10 or 11, then open the chat window.</p>
 
-      <div class="need">
-        <h2>What you need</h2>
-        <ul>
-          <li>Windows 10 or 11</li>
-          <li>PowerShell, a normal window (Start → type <code>PowerShell</code> → open it). The install is for your user only, so it does not need administrator.</li>
+      <section class="article-section article-section--first" aria-labelledby="needH">
+        <h2 id="needH">What you need</h2>
+        <ul class="cards">
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-laptop" /></svg>
+              <strong>Windows 10 or 11</strong>
+            </li>
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-app" /></svg>
+              <strong>PowerShell</strong>
+              <span>A normal window (Start → type <code>PowerShell</code> → open it). The install is for your user only, so it does not need administrator.</span>
+            </li>
         </ul>
-      </div>
+      </section>
 
-      <h2>Steps</h2>
-      <ol class="steps">
-        <li>
-          <p>In that PowerShell window, paste this and press Enter:</p>
-          <pre>irm https://weechatradio.com/install.ps1 | iex</pre>
-          <p>Leave the window open. The installer downloads the program, then WeeChat through Cygwin. It prints <code>waiting for WeeChat...</code> and can sit for several minutes, sometimes toward 20. It is finished when it prints the next step. That adds WeeChat Radio to your user PATH. This window does not see it yet, so open a new PowerShell window before <code>wcr setup</code>. Or download a zip from <a href="https://github.com/thaum-labs/weechat-radio/releases">GitHub Releases</a> and put <code>wcr.exe</code> somewhere on your PATH.</p>
-        </li>
-        <li>
-          <p>Run setup first. It asks for your callsign, grid, and whether you have a radio:</p>
-          <pre>wcr setup</pre>
-        </li>
-        <li>
-          <p>Then open the chat window:</p>
-          <pre>wcr gui</pre>
-        </li>
-        <li>
-          <p>To keep the node running after you close the window, open PowerShell as Administrator and run:</p>
-          <pre>wcr service install</pre>
-          <p><code>wcr update</code> replaces the binary. Stop the station and start it again, including this service. A station you started by hand keeps the old code until you do.</p>
-        </li>
-        <li>
-          <p>The installer also sets up WeeChat. After <code>wcr node</code>, run <code>wcr weechat</code>. To rewrite the server and script: <code>wcr weechat --configure</code>. Other IRC programs can connect to <code>127.0.0.1:6667</code>.</p>
-        </li>
-      </ol>
+      <section class="article-section" aria-labelledby="stepsH">
+        <h2 id="stepsH">Steps</h2>
+        <ol class="steps">
+          <li>
+            <strong class="step-title">Install <code>wcr</code></strong>
+            <p>In that PowerShell window, paste this and press Enter:</p>
+            <pre>irm https://weechatradio.com/install.ps1 | iex</pre>
+            <p>Leave the window open. The installer downloads the program, then WeeChat through Cygwin. It prints <code>waiting for WeeChat...</code> and can sit for several minutes, sometimes toward 20. It is finished when it prints the next step.</p>
+            <p>That adds WeeChat Radio to your user PATH. This window does not see it yet, so open a new PowerShell window before <code>wcr setup</code>. Or download a zip from <a href="https://github.com/thaum-labs/weechat-radio/releases">GitHub Releases</a> and put <code>wcr.exe</code> somewhere on your PATH.</p>
+          </li>
+          <li>
+            <strong class="step-title">Run setup</strong>
+            <p>Run setup first. It asks for your callsign, grid, and whether you have a radio:</p>
+            <pre>wcr setup</pre>
+          </li>
+          <li>
+            <strong class="step-title">Open the chat window</strong>
+            <p>Then open the chat window:</p>
+            <pre>wcr gui</pre>
+          </li>
+          <li>
+            <strong class="step-title">Run in the background</strong>
+            <p>To keep the node running after you close the window, open PowerShell as Administrator and run:</p>
+            <pre>wcr service install</pre>
+            <p><code>wcr update</code> replaces the binary. Stop the station and start it again, including this service. A station you started by hand keeps the old code until you do.</p>
+          </li>
+          <li>
+            <strong class="step-title">Open WeeChat</strong>
+            <p>The installer also sets up WeeChat. After <code>wcr node</code>, run <code>wcr weechat</code>. To rewrite the server and script: <code>wcr weechat --configure</code>. Other IRC programs can connect to <code>127.0.0.1:6667</code>.</p>
+          </li>
+        </ol>
+      </section>
 
       <div class="ok">
         <h2>How you know it worked</h2>
