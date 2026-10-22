@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -44,75 +45,177 @@
       <div class="sub" id="clock-local">LCL --:--</div>
     </div>
   </header>
+
+  <!-- Line icons for the cards. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-rig" viewBox="0 0 24 24"><rect x="2" y="10" width="20" height="10" rx="1" /><circle cx="7.5" cy="15" r="2.5" /><path d="M13 13.5 H19 M13 16.5 H19 M18 10 V3" /></symbol>
+    <symbol id="ico-app" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" /><path d="M7 10 L10 12.5 L7 15 M12 15 H17" /></symbol>
+  </svg>
+
   <div class="page-wrap">
     <main class="page-panel">
       <p class="crumb"><a href="/guides.html">guides</a> / <a href="/guides/radio.html">radio</a> / HF CAT</p>
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> HF rig with CAT</h1>
       <p class="lead">CAT means the computer can talk to the radio over USB: change frequency and press the transmit button. About five minutes after Hamlib is installed.</p>
 
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 180" role="img" aria-labelledby="hf1t hf1d">
-            <title id="hf1t">HF rig with CAT through Hamlib</title>
-            <desc id="hf1d">The rig's USB CAT link goes to Hamlib's rigctld, which wcr queries on TCP 4532 to read the dial. Audio still runs through the sound card.</desc>
-            <defs>
-              <marker id="maccHF" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-            </defs>
-            <text class="tag" x="16" y="20">CAT TELLS THE APP YOUR DIAL</text>
-            <line class="wire" marker-start="url(#maccHF)" marker-end="url(#maccHF)" x1="224" y1="88" x2="262" y2="88" />
-            <text class="sub" x="243" y="80" text-anchor="middle">USB</text>
-            <line class="wire" marker-start="url(#maccHF)" marker-end="url(#maccHF)" x1="448" y1="88" x2="486" y2="88" />
-            <text class="sub" x="467" y="80" text-anchor="middle">4532</text>
-            <rect class="box orange" x="16" y="62" width="206" height="54" />
-            <text class="on-orange" x="119" y="84" text-anchor="middle">HF radio</text>
-            <text class="sub" x="119" y="102" text-anchor="middle">USB CAT</text>
-            <rect class="box" x="264" y="62" width="182" height="54" />
-            <text x="355" y="84" text-anchor="middle">Hamlib</text>
-            <text class="sub" x="355" y="102" text-anchor="middle">rigctld</text>
-            <rect class="box accent" x="488" y="62" width="216" height="54" />
-            <text class="on-accent" x="596" y="84" text-anchor="middle">wcr</text>
-            <text class="sub" x="596" y="102" text-anchor="middle">reads the dial, never turns it</text>
-            <text class="sub" x="360" y="146" text-anchor="middle">audio still runs through the sound card, as on any other path</text>
-          </svg>
+      <section class="article-section article-section--first" aria-labelledby="needH">
+        <h2 id="needH">What you need</h2>
+        <div class="pair">
+          <ul class="cards">
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-rig" /></svg>
+              <strong>An HF transceiver with USB CAT</strong>
+              <span>IC-7300, FT-891, Xiegu, and most modern rigs.</span>
+            </li>
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-app" /></svg>
+              <strong><a href="https://github.com/Hamlib/Hamlib/releases">Hamlib</a></strong>
+              <span>So <code>rigctld</code> is on your PATH (a command the computer can find).</span>
+            </li>
+          </ul>
+        <figure class="diagram live-dgm live-dgm--wide" data-live-dgm>
+          <div class="live-dgm__body">
+            <div class="live-dgm__pic">
+              <div class="dgm-wrap">
+                <svg class="dgm" viewBox="0 0 440 286" role="img" aria-labelledby="hfT hfD">
+                <title id="hfT">HF rig with CAT through Hamlib</title>
+                <desc id="hfD">Two leads join this computer and the HF radio. The CAT lead goes through Hamlib's rigctld, which reads the dial and presses the transmit button. Sound runs through the sound card, as on any other path. The radio sends on the air to another station on the same frequency, and the receipt comes back through the sound card.</desc>
+                <g data-node="other">
+                  <rect class="box orange" x="318" y="12" width="112" height="40" />
+                  <text class="on-orange" x="374" y="29" text-anchor="middle">other station</text>
+                  <text class="sub" x="374" y="44" text-anchor="middle">same frequency</text>
+                </g>
+                <g class="seg seg-rf" data-seg="rf"><path class="rf" d="M374 128 q5 -6 0 -12 t0 -12 t0 -12 t0 -12 t0 -12 t0 -12" /><path class="pkt" d="M374 128 q5 -6 0 -12 t0 -12 t0 -12 t0 -12 t0 -12 t0 -12" /></g>
+                <text class="sub on-rf" x="364" y="96" text-anchor="end">on the air</text>
+                <g data-node="pc">
+                  <rect class="box accent" x="24" y="26" width="140" height="84" />
+                  <path class="laptop-base" d="M12 110 H176 L184 120 H4 Z" />
+                  <text class="sub" x="34" y="43">this computer</text>
+                  <text class="scr" data-show="me-hi" x="34" y="70">&lt;G4ABC&gt; hi</text>
+                  <text class="scr ok" data-show="me-ok" x="116" y="70">[ok]</text>
+                  <text class="scr-input" x="34" y="98">&gt; _</text>
+                  <text class="scr-dim" data-show="freq" x="154" y="98" text-anchor="end">7.045 MHz</text>
+                </g>
+                <g class="seg seg-sound" data-seg="snd"><path class="wire" d="M110 120 V206 H300" /><path class="pkt" d="M110 120 V206 H300" /></g>
+                <g class="seg seg-sound" data-seg="cat"><path class="wire" d="M94 120 V228 H300" /><path class="pkt" d="M94 120 V228 H300" /></g>
+                <text class="sub" x="205" y="200" text-anchor="middle">sound card</text>
+                <text class="sub" x="197" y="244" text-anchor="middle">CAT · Hamlib rigctld</text>
+                <text class="sub" x="16" y="276">the computer presses transmit over CAT</text>
+                <g data-node="rig">
+                  <path class="mast" d="M374 194 V134 M366 142 H382 M368 152 H380" />
+                  <rect class="box orange" x="300" y="194" width="120" height="46" rx="3" />
+                  <circle class="led" cx="406" cy="205" r="3.5" />
+                  <circle class="grille" cx="320" cy="222" r="7" />
+                  <path class="grille" d="M338 214 H396 M338 221 H396 M338 228 H396" />
+                  <text class="on-orange" x="360" y="258" text-anchor="middle">HF radio</text>
+                </g>
+                </svg>
+              </div>
+              <div class="live-status">
+                <p class="live-status__text" data-live-status aria-live="polite"></p>
+                <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
+              </div>
+            </div>
+          </div>
+          <figcaption>The radio USB cable goes into the computer. Hamlib is the translator. WeeChat Radio never changes frequency unless you type <code>/radio qsy</code>.</figcaption>
+          <script type="application/json" data-live-steps>
+          {
+            "main": {
+              "steps": [
+                {
+                  "say": "The computer reads the dial over CAT and shows the frequency the radio reports.",
+                  "segs": [
+                    "<cat"
+                  ],
+                  "show": [
+                    "freq"
+                  ],
+                  "ms": 1700
+                },
+                {
+                  "say": "The computer presses transmit over CAT and plays “hi” through the sound card.",
+                  "segs": [
+                    "cat",
+                    "snd"
+                  ],
+                  "show": [
+                    "me-hi"
+                  ],
+                  "ms": 1700
+                },
+                {
+                  "say": "The radio transmits and its light comes on.",
+                  "segs": [
+                    "rf"
+                  ],
+                  "on": [
+                    "rig"
+                  ],
+                  "ms": 1700
+                },
+                {
+                  "say": "The other station hears it and sends a receipt back.",
+                  "segs": [
+                    "<rf"
+                  ],
+                  "on": [
+                    "other"
+                  ],
+                  "ms": 1700
+                },
+                {
+                  "say": "The radio’s sound comes back through the sound card.",
+                  "segs": [
+                    "<snd"
+                  ]
+                },
+                {
+                  "say": "Your line shows [ok]: it was delivered.",
+                  "show": [
+                    "me-ok"
+                  ]
+                }
+              ]
+            }
+          }
+          </script>
+        </figure>
         </div>
-        <figcaption>The radio USB cable goes into the computer. Hamlib is the translator. WeeChat Radio never changes frequency unless you type <code>/radio qsy</code>.</figcaption>
-      </figure>
+      </section>
 
-      <div class="need">
-        <h2>What you need</h2>
-        <ul>
-          <li>An HF transceiver with USB CAT (IC-7300, FT-891, Xiegu, and most modern rigs)</li>
-          <li><a href="https://github.com/Hamlib/Hamlib/releases">Hamlib</a> so <code>rigctld</code> is on your PATH (a command the computer can find)</li>
-        </ul>
-      </div>
-
-      <h2>Steps</h2>
-      <ol class="steps">
-        <li>
-          <p>Plug the radio USB into the computer. Leave the radio in USB, 2400 Hz filter if you have one.</p>
-        </li>
-        <li>
-          <p>Find your Hamlib model number:</p>
-          <pre>rigctl -l</pre>
-          <p>On Windows: <code>rigctl.exe -l</code>.</p>
-        </li>
-        <li>
-          <p>Start CAT. Replace MODEL, COM port, and baud with yours:</p>
-          <pre>rigctld -m MODEL -r COM3 -s 19200</pre>
-        </li>
-        <li>
-          <p>Run <code>wcr setup</code> and choose <strong>HF rig with CAT</strong>. Keep the default <code>127.0.0.1:4532</code>.</p>
-        </li>
-        <li>
-          <p>Pick a preset: <code>hf-good</code> on a clear band, <code>hf-poor</code> for NVIS (nearby skywave), <code>hf-weak</code> when signals are faint, <code>hf-deep</code> as a last-resort MFSK backup. Retries automatically step the modem down if ACKs do not come back.</p>
-        </li>
-        <li>
-          <p>To change frequency, you type it. It never happens automatically:</p>
-          <pre>/radio qsy 7.045</pre>
-        </li>
-      </ol>
+      <section class="article-section" aria-labelledby="stepsH">
+        <h2 id="stepsH">Steps</h2>
+        <ol class="steps">
+          <li>
+            <strong class="step-title">Plug in the radio</strong>
+            <p>Plug the radio USB into the computer. Leave the radio in USB, 2400 Hz filter if you have one.</p>
+          </li>
+          <li>
+            <strong class="step-title">Find your model number</strong>
+            <p>Find your Hamlib model number:</p>
+            <pre>rigctl -l</pre>
+            <p>On Windows: <code>rigctl.exe -l</code>.</p>
+          </li>
+          <li>
+            <strong class="step-title">Start CAT</strong>
+            <p>Start CAT. Replace MODEL, COM port, and baud with yours:</p>
+            <pre>rigctld -m MODEL -r COM3 -s 19200</pre>
+          </li>
+          <li>
+            <strong class="step-title">Run setup</strong>
+            <p>Run <code>wcr setup</code> and choose <strong>HF rig with CAT</strong>. Keep the default <code>127.0.0.1:4532</code>.</p>
+          </li>
+          <li>
+            <strong class="step-title">Pick a preset</strong>
+            <p>Pick a preset: <code>hf-good</code> on a clear band, <code>hf-poor</code> for NVIS (nearby skywave), <code>hf-weak</code> when signals are faint, <code>hf-deep</code> as a last-resort MFSK backup. Retries automatically step the modem down if ACKs do not come back.</p>
+          </li>
+          <li>
+            <strong class="step-title">Change frequency by hand</strong>
+            <p>To change frequency, you type it. It never happens automatically:</p>
+            <pre>/radio qsy 7.045</pre>
+          </li>
+        </ol>
+      </section>
 
       <div class="ok">
         <h2>How you know it worked</h2>
@@ -124,5 +227,6 @@
   </div>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=10"></script>
+  <script src="/live-dgm.js?v=1"></script>
 </body>
 </html>

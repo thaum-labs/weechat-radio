@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -44,48 +45,69 @@
       <div class="sub" id="clock-local">LCL --:--</div>
     </div>
   </header>
+
+  <!-- Line icons shared by the "what you need" cards. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-laptop" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="11" /><path d="M2 19 H22" /></symbol>
+    <symbol id="ico-app" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" /><path d="M7 10 L10 12.5 L7 15 M12 15 H17" /></symbol>
+  </svg>
+
   <div class="page-wrap">
     <main class="page-panel">
       <p class="crumb"><a href="/guides.html">guides</a> / Linux</p>
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> Linux</h1>
       <p class="lead">Same install command as macOS. Then run setup, then the window.</p>
 
-      <div class="need">
-        <h2>What you need</h2>
-        <ul>
-          <li>A current Linux</li>
-          <li>A terminal</li>
+      <section class="article-section article-section--first" aria-labelledby="needH">
+        <h2 id="needH">What you need</h2>
+        <ul class="cards">
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-laptop" /></svg>
+              <strong>A current Linux</strong>
+            </li>
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-app" /></svg>
+              <strong>A terminal</strong>
+            </li>
         </ul>
-      </div>
+      </section>
 
-      <h2>Steps</h2>
-      <ol class="steps">
-        <li>
-          <p>Install:</p>
-          <pre>curl -fsSL https://weechatradio.com/install.sh | sh</pre>
-          <p>Before WeeChat is installed, the installer says it will use apt or dnf and that sudo may ask for your password. If <code>~/.local/bin</code> is not on PATH, it adds that directory to your bash, zsh, or fish profile and prints the line to run in this terminal.</p>
-        </li>
-        <li>
-          <p>If you will plug in a USB radio cable, add your user to the serial group, then log out and back in:</p>
-          <pre>sudo usermod -aG dialout $USER</pre>
-        </li>
-        <li>
-          <p>Run setup first. It asks for your callsign, grid, and whether you have a radio:</p>
-          <pre>wcr setup</pre>
-        </li>
-        <li>
-          <p>Then open the chat window:</p>
-          <pre>wcr gui</pre>
-        </li>
-        <li>
-          <p>Background service:</p>
-          <pre>wcr service install</pre>
-          <p><code>wcr update</code> replaces the binary and restarts this service. A station you started by hand keeps the old code until you stop it and start it again.</p>
-        </li>
-        <li>
-          <p>The installer also sets up WeeChat. After <code>wcr node</code>, run <code>wcr weechat</code>. To rewrite the server and script: <code>wcr weechat --configure</code>.</p>
-        </li>
-      </ol>
+      <section class="article-section" aria-labelledby="stepsH">
+        <h2 id="stepsH">Steps</h2>
+        <ol class="steps">
+          <li>
+            <strong class="step-title">Install <code>wcr</code></strong>
+            <p>Install:</p>
+            <pre>curl -fsSL https://weechatradio.com/install.sh | sh</pre>
+            <p>Before WeeChat is installed, the installer says it will use apt or dnf and that sudo may ask for your password. If <code>~/.local/bin</code> is not on PATH, it adds that directory to your bash, zsh, or fish profile and prints the line to run in this terminal.</p>
+          </li>
+          <li>
+            <strong class="step-title">Join the serial group</strong>
+            <p>If you will plug in a USB radio cable, add your user to the serial group, then log out and back in:</p>
+            <pre>sudo usermod -aG dialout $USER</pre>
+          </li>
+          <li>
+            <strong class="step-title">Run setup</strong>
+            <p>Run setup first. It asks for your callsign, grid, and whether you have a radio:</p>
+            <pre>wcr setup</pre>
+          </li>
+          <li>
+            <strong class="step-title">Open the chat window</strong>
+            <p>Then open the chat window:</p>
+            <pre>wcr gui</pre>
+          </li>
+          <li>
+            <strong class="step-title">Run in the background</strong>
+            <p>Background service:</p>
+            <pre>wcr service install</pre>
+            <p><code>wcr update</code> replaces the binary and restarts this service. A station you started by hand keeps the old code until you stop it and start it again.</p>
+          </li>
+          <li>
+            <strong class="step-title">Open WeeChat</strong>
+            <p>The installer also sets up WeeChat. After <code>wcr node</code>, run <code>wcr weechat</code>. To rewrite the server and script: <code>wcr weechat --configure</code>.</p>
+          </li>
+        </ol>
+      </section>
 
       <div class="ok">
         <h2>How you know it worked</h2>

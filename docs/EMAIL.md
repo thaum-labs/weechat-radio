@@ -18,7 +18,7 @@ The address is `{callsign}@mail.weechatradio.com`. There is no domain setting. G
 ## Sent
 
 - **Hub:** Sent after the hub says Resend accepted the message. A rejection is Failed.
-- **Radio-plus, every PTT:** Keying the burst is Outbox `[tx]`. A chunk ack from the gateway is `[gw]` (the gateway has the bytes). Sent is only the gateway's `CompleteAck`, after Resend accepted it. Until then the line stays in the outbox.
+- **Radio-plus, every PTT:** Keying the burst is Outbox `[tx]`. When the gateway acks every chunk, the outbox shows `[gw]` (the gateway has the bytes). Sent is only the gateway's `CompleteAck`, after Resend accepted it. Until then the line stays in the outbox.
 - Missing acks are retried after the keyed burst should have finished, then with backoff (8s, then 16s, 32s, …) up to `[rf] max_retries` (at least 3). The clock starts at the end of that airtime, not at key-up. A retry sends only the chunks the gateway has not reported. When a retry has heard nothing back and more than four chunks are still missing, it keys only the first chunk, the one that names this station, and the gateway answers with what it holds. The log labels each key `try 1/4` through `try 4/4` when `max_retries` is 3: the first send plus three retries. Then the row is Failed, with the reason: the gateway never acknowledged, or it has the message but it was not accepted.
 - If the radio is not running, the row is Failed at once with `Radio is not running.`
 - If the row is still `[tx]` five minutes after this attempt started (or three times the planned airtime plus a minute, when that is longer), and nothing has moved it on, it is Failed. VOX lead, tail, and the modem drain are unchanged.

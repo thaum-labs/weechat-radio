@@ -1,0 +1,51 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Docs and guides index pages (docs.html, guides.html). Loaded after styles.css and docs.css.
+   .guide-card itself lives in styles.css; these are small layout tweaks for the index grids. */
+
+.page-index .article-section { margin: 34px 0; }
+.page-index .article-section--first { margin-top: 26px; }
+.page-index .section-lead { margin-bottom: 0; }
+.page-index .guide-grid { margin: 14px 0 0; }
+
+/* Tag sits on the bottom edge, so cards in one row line up. */
+.page-index a.guide-card {
+  display: flex;
+  flex-direction: column;
+}
+.page-index a.guide-card .tag {
+  align-self: flex-start;
+  margin-top: auto;
+  padding-top: 10px;
+}
+
+/* A card that spans the whole row (the "start here" card). */
+.page-index .guide-grid a.guide-card.is-wide {
+  grid-column: 1 / -1;
+  min-height: 0;
+}
+
+/* Small line icon in front of a section heading. */
+.page-index .article-section > h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.page-index .h2-ico {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+.page-index .h2-ico.is-radio { stroke: var(--orange); }
+
+/* On phones the site-wide 16px paragraph rule makes card text larger than its title. */
+@media (max-width: 960px) {
+  .page-index .guide-card h2 { font-size: 15px; }
+  .page-index .guide-card p {
+    font-size: 14px;
+    line-height: 1.5;
+  }
+}

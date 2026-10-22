@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=29" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -50,77 +51,126 @@
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> troubleshooting</h1>
       <p class="lead">The problems that show up on a first install, and what to do about each one.</p>
 
-      <h2 id="powershell">If PowerShell stops the installer</h2>
-      <p>On Windows the installer runs in a normal PowerShell window and installs for your user only. If it stops with <code>running scripts is disabled on this system</code>, an access error, or a window that closes before anything is installed, try it once from an Administrator PowerShell.</p>
-      <ol class="steps">
-        <li>
-          <p>Click Start and type <code>PowerShell</code>.</p>
-        </li>
-        <li>
-          <p>Right-click <strong>Windows PowerShell</strong> and choose <strong>Run as administrator</strong>. Confirm the prompt. The title bar says Administrator.</p>
-        </li>
-        <li>
-          <p>Paste this and press Enter:</p>
-          <pre>irm https://weechatradio.com/install.ps1 | iex</pre>
-        </li>
-      </ol>
-      <p>If that same scripts error is still on screen, allow scripts for your user account, then paste the install line again:</p>
-      <pre>Set-ExecutionPolicy -Scope CurrentUser RemoteSigned</pre>
-
-      <h2 id="slow">The installer sits there</h2>
-      <p>Leave the window open. On Windows the installer downloads WeeChat through Cygwin after the program itself. It prints <code>Installing WeeChat via Cygwin (a few minutes)...</code> and then <code>waiting for WeeChat...</code> every few seconds. That step often takes several minutes and can run toward 20. It is finished when the window prints <code>Next, run: wcr setup</code>.</p>
-      <p>On Linux, apt or dnf can sit on a package download, and sudo may ask for your password in that same window. On a Mac the program itself is quicker. The Mac installer skips WeeChat on purpose.</p>
-      <p>Run the same install command again if the window was closed early. It continues from what is already on disk.</p>
-
-      <h2 id="clock">The PC clock is wrong</h2>
-      <p>The status column shows <code>Clock skew — check system time or GPS</code> when a live beacon is more than five minutes off. The hub refuses a post the same way, with <code>replay or clock skew</code>. Chat, the map, and email all use that clock. The warning is about this computer’s clock. A chat line that took a long time on the radio does not raise it.</p>
-      <p>Set the computer to the correct time, including the time zone.</p>
-      <ul>
-        <li><strong>Windows:</strong> Settings → Time &amp; language → Date &amp; time → <strong>Sync now</strong>. If the clock drifts again, or Sync now fails, use <a href="https://www.thinkman.com/dimension4/">Dimension 4</a>. Open it, set the server, and update. Leave it on a schedule so the clock stays inside five minutes. A GPS receiver that sets the PC clock works the same way.</li>
-        <li><strong>Mac:</strong> System Settings → General → Date &amp; Time → Set time and date automatically.</li>
-        <li><strong>Linux:</strong> <code>timedatectl set-ntp true</code></li>
-      </ul>
-      <p>The warning clears when the next timely frame arrives.</p>
-
-      <h2 id="path"><code>wcr</code> is not recognized</h2>
-      <p>The installer adds its folder to PATH. The window you installed from does not see that yet. Open a new PowerShell or terminal, then run <code>wcr setup</code>.</p>
-      <ul>
-        <li><strong>Windows:</strong> the program is in <code>%LOCALAPPDATA%\wcr</code>. The Start menu and desktop shortcut named <strong>WeeChat Radio</strong> open the window without PATH.</li>
-        <li><strong>Mac and Linux:</strong> run the <code>export</code> line the installer printed. It looks like <code>export PATH="$HOME/.local/bin:$PATH"</code>. That line is also written to your shell profile for the next terminal.</li>
-      </ul>
-
-      <h2 id="blocked">Windows or the Mac blocked the file</h2>
-      <p>SmartScreen or antivirus software can quarantine <code>wcr.exe</code>, <code>wcr-gui.exe</code>, or the Cygwin setup program. In Windows Security, open Protection history, choose the blocked file, and allow it. Then run the installer again.</p>
-      <p>On a Mac, a zip you unpacked yourself can be stopped by Gatekeeper. The install script clears that flag. If you used the zip, run:</p>
-      <pre>xattr -dr com.apple.quarantine ~/.local/bin/wcr ~/.local/bin/wcr-gui ~/.local/bin/modem73</pre>
-
-      <h2 id="weechat">WeeChat did not install</h2>
-      <p>Chat works without WeeChat. Open <strong>WeeChat Radio</strong> from the Start menu, or run <code>wcr gui</code>. To install the station and skip WeeChat, set this in the same PowerShell window, then run the installer again:</p>
-      <pre>$env:WCR_SKIP_WEECHAT=1
+      <section class="article-section article-section--first" aria-labelledby="installH">
+        <h2 id="installH">While it installs</h2>
+        <p class="section-lead">Problems while the install line runs, or right after it finishes.</p>
+        <dl class="fix-list fix-list--long">
+          <div id="powershell">
+            <dt>PowerShell stops the installer</dt>
+            <dd>
+              <p>On Windows the installer runs in a normal PowerShell window and installs for your user only. If it stops with <code>running scripts is disabled on this system</code>, an access error, or a window that closes before anything is installed, try it once from an Administrator PowerShell.</p>
+              <ol>
+                <li>Click Start and type <code>PowerShell</code>.</li>
+                <li>Right-click <strong>Windows PowerShell</strong> and choose <strong>Run as administrator</strong>. Confirm the prompt. The title bar says Administrator.</li>
+                <li>Paste this and press Enter:
+                  <pre>irm https://weechatradio.com/install.ps1 | iex</pre>
+                </li>
+              </ol>
+              <p>If that same scripts error is still on screen, allow scripts for your user account, then paste the install line again:</p>
+              <pre>Set-ExecutionPolicy -Scope CurrentUser RemoteSigned</pre>
+            </dd>
+          </div>
+          <div id="slow">
+            <dt>The installer sits there</dt>
+            <dd>
+              <p>Leave the window open. On Windows the installer downloads WeeChat through Cygwin after the program itself. It prints <code>Installing WeeChat via Cygwin (a few minutes)...</code> and then <code>waiting for WeeChat...</code> every few seconds. That step often takes several minutes and can run toward 20. It is finished when the window prints <code>Next, run: wcr setup</code>.</p>
+              <p>On Linux, apt or dnf can sit on a package download, and sudo may ask for your password in that same window. On a Mac the program itself is quicker. The Mac installer skips WeeChat on purpose.</p>
+              <p>Run the same install command again if the window was closed early. It continues from what is already on disk.</p>
+            </dd>
+          </div>
+          <div id="path">
+            <dt><code>wcr</code> is not recognized</dt>
+            <dd>
+              <p>The installer adds its folder to PATH. The window you installed from does not see that yet. Open a new PowerShell or terminal, then run <code>wcr setup</code>.</p>
+              <ul>
+                <li><strong>Windows:</strong> the program is in <code>%LOCALAPPDATA%\wcr</code>. The Start menu and desktop shortcut named <strong>WeeChat Radio</strong> open the window without PATH.</li>
+                <li><strong>Mac and Linux:</strong> run the <code>export</code> line the installer printed. It looks like <code>export PATH="$HOME/.local/bin:$PATH"</code>. That line is also written to your shell profile for the next terminal.</li>
+              </ul>
+            </dd>
+          </div>
+          <div id="blocked">
+            <dt>Windows or the Mac blocked the file</dt>
+            <dd>
+              <p>SmartScreen or antivirus software can quarantine <code>wcr.exe</code>, <code>wcr-gui.exe</code>, or the Cygwin setup program. In Windows Security, open Protection history, choose the blocked file, and allow it. Then run the installer again.</p>
+              <p>On a Mac, a zip you unpacked yourself can be stopped by Gatekeeper. The install script clears that flag. If you used the zip, run:</p>
+              <pre>xattr -dr com.apple.quarantine ~/.local/bin/wcr ~/.local/bin/wcr-gui ~/.local/bin/modem73</pre>
+            </dd>
+          </div>
+          <div id="weechat">
+            <dt>WeeChat did not install</dt>
+            <dd>
+              <p>Chat works without WeeChat. Open <strong>WeeChat Radio</strong> from the Start menu, or run <code>wcr gui</code>. To install the station and skip WeeChat, set this in the same PowerShell window, then run the installer again:</p>
+              <pre>$env:WCR_SKIP_WEECHAT=1
 irm https://weechatradio.com/install.ps1 | iex</pre>
-      <p>On Linux, if apt or dnf did not finish, install WeeChat from your distribution and run <code>wcr weechat --configure</code>. The <a href="/guides/weechat.html">WeeChat guide</a> is the later setup.</p>
+              <p>On Linux, if apt or dnf did not finish, install WeeChat from your distribution and run <code>wcr weechat --configure</code>. The <a href="/guides/weechat.html">WeeChat guide</a> is the later setup.</p>
+            </dd>
+          </div>
+        </dl>
+      </section>
 
-      <h2 id="linux-window">The window does not open on Linux</h2>
-      <p><code>wcr gui</code> needs two libraries. On Debian and Ubuntu:</p>
-      <pre>sudo apt-get install -y libxkbcommon-x11-0 libayatana-appindicator3-1</pre>
-      <p>Then run <code>wcr gui</code> again. <code>wcr tui</code> is the same station in the terminal if the window still will not start.</p>
+      <section class="article-section" aria-labelledby="openH">
+        <h2 id="openH">Opening and updating</h2>
+        <p class="section-lead">The install finished, but the window will not open or an update did not take.</p>
+        <dl class="fix-list fix-list--long">
+          <div id="linux-window">
+            <dt>The window does not open on Linux</dt>
+            <dd>
+              <p><code>wcr gui</code> needs two libraries. On Debian and Ubuntu:</p>
+              <pre>sudo apt-get install -y libxkbcommon-x11-0 libayatana-appindicator3-1</pre>
+              <p>Then run <code>wcr gui</code> again. <code>wcr tui</code> is the same station in the terminal if the window still will not start.</p>
+            </dd>
+          </div>
+          <div id="update">
+            <dt>An update changed nothing</dt>
+            <dd>
+              <p><code>wcr update</code> replaces the program on disk. The station that is already running keeps the old code until you stop it and start it again. On Windows that includes a service from <code>wcr service install</code>. On Linux and macOS that service restarts itself. A station you started by hand does not.</p>
+            </dd>
+          </div>
+        </dl>
+      </section>
 
-      <h2 id="update">An update changed nothing</h2>
-      <p><code>wcr update</code> replaces the program on disk. The station that is already running keeps the old code until you stop it and start it again. On Windows that includes a service from <code>wcr service install</code>. On Linux and macOS that service restarts itself. A station you started by hand does not.</p>
-
-      <h2 id="hub">The hub stays down</h2>
-      <p>The status column shows <code>HUB DOWN</code> when this computer cannot reach the public hub. Check the network, then the <a href="#clock">clock</a>. A clock more than five minutes off looks like a refused connection. Outbound HTTPS has to be allowed. Radio-only mode leaves the hub unused on purpose. <a href="/docs/modes.html">Modes</a>.</p>
-
-      <h2 id="radio">The radio stays quiet</h2>
-      <ul>
-        <li>Run <code>wcr setup</code> again and pick the sound devices. A test line in radio mode should play tones on the speakers.</li>
-        <li>On Linux, a USB cable needs your user in the <code>dialout</code> group. Log out and back in after that. <a href="/guides/linux.html">Linux</a>.</li>
-        <li>With VOX, set the volume so the radio keys on the tones, and keep the VOX hang on the long side. <a href="/guides/vox.html">Any radio with VOX</a>.</li>
-        <li>The other paths are on <a href="/guides/radio.html">Pick a radio path</a>.</li>
-      </ul>
-
-      <h2 id="delivery">A line never shows <code>[ok]</code></h2>
-      <p>In internet mode, with the hub up and the clock right, a line in <code>#bulletin</code> moves to <code>[ok]</code> when it is acknowledged. On the radio, <code>[tx]</code> means it was keyed, and <code>[ok]</code> waits on a station that heard it. A faint path retries. <code>[no]</code> is the end of those retries. The marks are listed on the <a href="/guides/start.html">5-minute start</a>, and faint paths are on <a href="/docs/weak.html">Weak signals</a>.</p>
+      <section class="article-section" aria-labelledby="sendH">
+        <h2 id="sendH">Connecting and sending</h2>
+        <p class="section-lead">The station runs, but lines do not get out or nothing comes back.</p>
+        <dl class="fix-list fix-list--long">
+          <div id="clock">
+            <dt>The PC clock is wrong</dt>
+            <dd>
+              <p>The status column shows <code>Clock skew — check system time or GPS</code> when a live beacon is more than five minutes off. The hub refuses a post the same way, with <code>replay or clock skew</code>. Chat, the map, and email all use that clock. The warning is about this computer’s clock. A chat line that took a long time on the radio does not raise it.</p>
+              <p>Set the computer to the correct time, including the time zone.</p>
+              <ul>
+                <li><strong>Windows:</strong> Settings → Time &amp; language → Date &amp; time → <strong>Sync now</strong>. If the clock drifts again, or Sync now fails, use <a href="https://www.thinkman.com/dimension4/">Dimension 4</a>. Open it, set the server, and update. Leave it on a schedule so the clock stays inside five minutes. A GPS receiver that sets the PC clock works the same way.</li>
+                <li><strong>Mac:</strong> System Settings → General → Date &amp; Time → Set time and date automatically.</li>
+                <li><strong>Linux:</strong> <code>timedatectl set-ntp true</code></li>
+              </ul>
+              <p>The warning clears when the next timely frame arrives.</p>
+            </dd>
+          </div>
+          <div id="hub">
+            <dt>The hub stays down</dt>
+            <dd>
+              <p>The status column shows <code>HUB DOWN</code> when this computer cannot reach the public hub. Check the network, then the <a href="#clock">clock</a>. A clock more than five minutes off looks like a refused connection. Outbound HTTPS has to be allowed. Radio-only mode leaves the hub unused on purpose. <a href="/docs/modes.html">Modes</a>.</p>
+            </dd>
+          </div>
+          <div id="radio">
+            <dt>The radio stays quiet</dt>
+            <dd>
+              <ul>
+                <li>Run <code>wcr setup</code> again and pick the sound devices. A test line in radio mode should play tones on the speakers.</li>
+                <li>On Linux, a USB cable needs your user in the <code>dialout</code> group. Log out and back in after that. <a href="/guides/linux.html">Linux</a>.</li>
+                <li>With VOX, set the volume so the radio keys on the tones, and keep the VOX hang on the long side. <a href="/guides/vox.html">Any radio with VOX</a>.</li>
+                <li>The other paths are on <a href="/guides/radio.html">Pick a radio path</a>.</li>
+              </ul>
+            </dd>
+          </div>
+          <div id="delivery">
+            <dt>A line never shows <code>[ok]</code></dt>
+            <dd>
+              <p>In internet mode, with the hub up and the clock right, a line in <code>#bulletin</code> moves to <code>[ok]</code> when it is acknowledged. On the radio, <code>[tx]</code> means it was keyed, and <code>[ok]</code> waits on a station that heard it. A faint path retries. <code>[no]</code> is the end of those retries. The marks are listed on the <a href="/guides/start.html">5-minute start</a>, and faint paths are on <a href="/docs/weak.html">Weak signals</a>.</p>
+            </dd>
+          </div>
+        </dl>
+      </section>
 
       <p class="next">Back to <a href="/downloads.html">downloads</a> · <a href="/guides/windows.html">Windows</a> · <a href="/guides/start.html">5-minute start</a>.</p>
     </main>

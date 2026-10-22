@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -56,6 +57,9 @@
         <p>HF data is USB, including 160/80/40 (voice on those bands is LSB). 60m is USB. CB is listed per region: AM/FM for typical sets, USB/LSB for SSB-capable radios. Channel numbers are not the same in every country.</p>
       </div>
 
+      <section class="article-section" aria-labelledby="hfH">
+        <h2 id="hfH">HF</h2>
+        <p class="section-lead">160m to 10m. All USB except the 10m FM spot.</p>
       <div class="table-wrap">
         <table>
           <thead>
@@ -72,6 +76,22 @@
             <tr><td>WW</td><td>17m</td><td>18.100 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
             <tr><td>WW</td><td>15m</td><td>21.070 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
             <tr><td>WW</td><td>12m</td><td>24.920 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>WW</td><td>10m</td><td>28.120 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
+            <tr><td>WW</td><td>10m</td><td>29.250 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      </section>
+
+      <section class="article-section" aria-labelledby="cbH">
+        <h2 id="cbH">CB</h2>
+        <p class="section-lead">Around 27 MHz, listed per region. Channel numbers are not the same in every country.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Where</th><th>Band</th><th>Frequency</th><th>Mode</th><th>Preset</th></tr>
+          </thead>
+          <tbody>
             <tr><td>DE</td><td>CB</td><td>26.565 MHz (ch 41)</td><td>FM</td><td><code>vhf-fm</code></td></tr>
             <tr><td>NZ</td><td>CB</td><td>26.720 MHz (26ch 35)</td><td>LSB</td><td><code>hf-poor</code></td></tr>
             <tr><td>DE</td><td>CB</td><td>26.965 MHz (ch 1)</td><td>FM</td><td><code>vhf-fm</code></td></tr>
@@ -89,8 +109,20 @@
             <tr><td>US/CA</td><td>CB</td><td>27.365 MHz (ch 36)</td><td>USB</td><td><code>hf-poor</code></td></tr>
             <tr><td>US/CA</td><td>CB</td><td>27.385 MHz (ch 38)</td><td>LSB</td><td><code>hf-poor</code></td></tr>
             <tr><td>UK</td><td>CB</td><td>27.781 MHz (UK ch 19)</td><td>FM</td><td><code>vhf-fm</code></td></tr>
-            <tr><td>WW</td><td>10m</td><td>28.120 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
-            <tr><td>WW</td><td>10m</td><td>29.250 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      </section>
+
+      <section class="article-section" aria-labelledby="vuH">
+        <h2 id="vuH">VHF and UHF</h2>
+        <p class="section-lead">6m and up, plus licence-free PMR446, FRS and MURS.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Where</th><th>Band</th><th>Frequency</th><th>Mode</th><th>Preset</th></tr>
+          </thead>
+          <tbody>
             <tr><td>WW</td><td>6m</td><td>50.230 MHz</td><td>USB</td><td><code>hf-poor</code></td></tr>
             <tr><td>UK/EU</td><td>6m</td><td>50.620 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
             <tr><td>UK/EU</td><td>4m</td><td>70.488 MHz</td><td>FM</td><td><code>vhf-fm</code></td></tr>
@@ -109,10 +141,14 @@
           </tbody>
         </table>
       </div>
+      </section>
 
-      <p>Same list in the program: <code>wcr help calling</code>.</p>
-      <p>On a rough HF path use <code>hf-weak</code> or <code>hf-deep</code> instead of <code>hf-poor</code>. See <a href="/docs/weak.html">weak signals</a>.</p>
+      <section class="article-section" aria-labelledby="moreH">
+        <h2 id="moreH">More</h2>
+        <p>Same list in the program: <code>wcr help calling</code>.</p>
+        <p>On a rough HF path use <code>hf-weak</code> or <code>hf-deep</code> instead of <code>hf-poor</code>. See <a href="/docs/weak.html">weak signals</a>.</p>
       <p>Stations on different bands talk through a gateway and the hub. See <a href="/docs/bridging.html">cross-frequency chat</a>.</p>
+      </section>
 
       <p class="next">Need a radio cable first? <a href="/guides/radio.html">Radio setup</a>.</p>
     </main>
