@@ -80,6 +80,11 @@ pub fn topics() -> &'static [(&'static str, &'static str, &'static str)] {
             include_str!("../../../docs/BRIDGING.md"),
         ),
         (
+            "mixed-band",
+            "PMR, CB, 2m, and internet in one group",
+            include_str!("../../../docs/MIXED-BAND.md"),
+        ),
+        (
             "hops",
             "relay on one dial when not everyone is in range",
             include_str!("../../../docs/HOPS.md"),
