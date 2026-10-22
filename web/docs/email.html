@@ -152,7 +152,8 @@
                     <text class="sub" x="16" y="116">reply stays on the WCR address</text>
                     <text class="sub" x="124" y="208">outbox</text>
                     <text class="scr" data-show="o-tx" x="124" y="226">[tx]</text>
-                    <text class="scr ok" data-show="o-sent" x="162" y="226">Sent</text>
+                    <text class="scr ok" data-show="o-gw" x="158" y="226">[gw]</text>
+                    <text class="scr ok" data-show="o-sent" x="196" y="226">Sent</text>
                   </g>
 
                   <!-- receiving -->
@@ -188,6 +189,7 @@
           {
             "out": { "viewBox": "0 0 440 334", "steps": [
               { "say": "After you confirm, M7TJF keys the mail to G0ABC as one burst, and the outbox shows [tx].", "segs": ["rf"], "on": ["you"], "show": ["o-tx"], "ms": 2000 },
+              { "say": "G0ABC has every chunk and acks on the air. The outbox shows [gw].", "segs": ["<rf"], "on": ["gw"], "show": ["o-gw"], "ms": 1900 },
               { "say": "With every chunk in, G0ABC posts the mail to the hub.", "segs": ["gw-hub"], "on": ["gw"] },
               { "say": "The hub hands it to Resend, which accepts it and sends it to alex@example.com.", "segs": ["hub-mail"], "on": ["resend"], "show": ["o-from"], "ms": 1700 },
               { "say": "G0ABC keys a CompleteAck back, and only then does the outbox say Sent.", "segs": ["<gw-hub", "<rf"], "chain": true, "on": ["gw"], "show": ["o-sent"], "ms": 2600 }
@@ -218,7 +220,7 @@
         <p><strong>Radio-plus, every PTT:</strong></p>
         <dl class="mark-list">
           <div><dt><code>[tx]</code></dt><dd>Keying the burst is Outbox <code>[tx]</code>.</dd></div>
-          <div><dt><code>[gw]</code></dt><dd>A chunk the gateway has is <code>[gw]</code>.</dd></div>
+          <div><dt><code>[gw]</code></dt><dd>The gateway has every chunk.</dd></div>
           <div><dt>Sent</dt><dd>Sent is only the gateway's acceptance, after Resend accepted it. Until then the line stays in the outbox.</dd></div>
         </dl>
         <p>A retry that has heard nothing back, with more than four chunks still missing, keys only the first chunk so the gateway can answer.</p>
@@ -283,7 +285,7 @@
           </li>
           <li>
             <strong class="step-title">Fetch the reply</strong>
-            <p>You tap Check mail, confirm, open the reply, confirm the airtime. The body comes over 144.950.</p>
+            <p>You tap Check mail, open the reply, confirm the airtime. The body comes over 144.950.</p>
           </li>
           <li>
             <strong class="step-title">Check your own inbox</strong>
