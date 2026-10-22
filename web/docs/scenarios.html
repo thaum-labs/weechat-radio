@@ -1,0 +1,743 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Common setups — WeeChat Radio</title>
+  <meta name="description" content="Five everyday WeeChat Radio setups, animated: walkie-talkies calling a home gateway, HF to HF with no internet, an internet guest, relays with hops, and email over radio." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="WeeChat Radio" />
+  <meta property="og:title" content="Common setups — WeeChat Radio" />
+  <meta property="og:description" content="Five everyday setups, animated: a home gateway, HF to HF, an internet guest, relays with hops, and email over radio." />
+  <meta property="og:url" content="https://weechatradio.com/docs/scenarios.html" />
+  <meta property="og:image" content="https://weechatradio.com/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="WeeChat Radio. Live messaging chat powered by radio." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://weechatradio.com/og.png" />
+  <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/map.html">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html" aria-current="page">docs</a>
+      <a href="/why.html">why</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/docs.html">docs</a> / common setups</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> common setups</h1>
+      <p class="lead">Five ways people use WeeChat Radio day to day. Pick one to watch a message travel, then see what each station is set to.</p>
+
+      <section class="article-section article-section--first" aria-labelledby="setupsH">
+        <h2 id="setupsH" class="sr-only">Setups</h2>
+        <figure class="diagram live-dgm" data-live-dgm data-setup="home">
+          <div class="setup-switch" role="group" aria-label="Setup" data-setup-switch hidden>
+            <button type="button" data-setup-btn="home" aria-pressed="true">home gateway</button>
+            <button type="button" data-setup-btn="hf" aria-pressed="false">HF to HF</button>
+            <button type="button" data-setup-btn="guest" aria-pressed="false">internet guest</button>
+            <button type="button" data-setup-btn="hops" aria-pressed="false">relay with hops</button>
+            <button type="button" data-setup-btn="email" aria-pressed="false">email</button>
+          </div>
+          <div class="live-dgm__body">
+            <div class="live-dgm__pic">
+              <div class="dgm-wrap">
+                <svg class="dgm" viewBox="0 0 440 362" role="img" aria-labelledby="scT scD">
+                  <title id="scT">Common WeeChat Radio setups</title>
+                  <desc id="scD">One picture per setup. Walkie-talkies on 144.950 in radio-plus mode reach a gateway at home that links them to the hub and an internet station. Two HF stations on 14.070 talk with no internet. An internet guest reaches a radio station through a gateway. Four stations relay a message hop by hop. A radio-plus station sends email through a mail gateway.</desc>
+                  <defs>
+                    <marker id="mScArrow" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                      <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
+                    </marker>
+                  </defs>
+<g data-setups="home">
+<rect class="lane-bg" x="10" y="92" width="232" height="266" />
+<text class="sub" x="20" y="108">out walking · 144.950 FM</text>
+<g data-node="home-x">
+  <rect class="box accent" x="20" y="14" width="140" height="70" />
+  <path class="laptop-base" d="M8 84 H172 L180 94 H0 Z" />
+  <text class="sub" x="30" y="31">G4XYZ · internet</text>
+  <text class="scr" data-show="hx-hi" x="30" y="52">&lt;G4ABC&gt; hi #walk</text>
+  <text class="scr" data-show="hx-re" x="30" y="68">&lt;G4XYZ&gt; hello</text>
+</g>
+<g data-node="hub">
+  <rect class="box hub" x="250" y="26" width="170" height="44" />
+  <text class="on-hub" x="335" y="45" text-anchor="middle">hub</text>
+  <text class="sub" x="335" y="61" text-anchor="middle">wss · TLS</text>
+</g>
+<g class="seg seg-net" data-seg="home-hub-x"><path class="net" d="M250 48 H162" /><path class="pkt" d="M250 48 H162" /></g>
+<text class="sub" x="206" y="42" text-anchor="middle">TLS</text>
+<g data-node="home-gw">
+  <path class="house" d="M280 200 L355 160 L430 200 V280 H280 Z" />
+  <path class="mast" d="M390 178 V130 M382 138 H398 M384 148 H396" />
+  <rect class="box gw" x="300" y="234" width="70" height="34" rx="3" />
+  <circle class="led" cx="310" cy="244" r="3.5" />
+  <path class="grille" d="M324 244 H362 M324 251 H362 M324 258 H362" />
+  <path class="mast" d="M370 242 H390 V178" />
+  <text class="on-gw" x="336" y="216" text-anchor="middle">M0GWY</text>
+  <text class="sub" x="336" y="229" text-anchor="middle">gateway at home</text>
+</g>
+<g class="seg seg-net" data-seg="home-gw-hub"><path class="net" d="M415 192 V72" /><path class="pkt" d="M415 192 V72" /></g>
+<text class="sub" x="409" y="104" text-anchor="end">TLS</text>
+<g class="seg seg-rf" data-seg="home-rf-a"><path class="rf" d="M74 113 q5.3 5.8 11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6" /><path class="pkt" d="M74 113 q5.3 5.8 11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6 t11.1 0.6" /></g>
+<g class="seg seg-rf" data-seg="home-rf-b"><path class="rf" d="M164 173 q6.3 4.4 10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2" /><path class="pkt" d="M164 173 q6.3 4.4 10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2 t10.6 -2" /></g>
+<g class="seg seg-rf" data-seg="home-rf-ab"><path class="rf" d="M72 118 q1.6 6.1 7.8 4.7 t7.8 4.7 t7.8 4.7 t7.8 4.7 t7.8 4.7 t7.8 4.7 t7.8 4.7 t7.8 4.7 t7.8 4.7 t7.8 4.7 t7.8 4.7" /><path class="pkt" d="M72 118 q1.6 6.1 7.8 4.7 t7.8 4.7 t7.8 4.7 t7.8 4.7 t7.8 4.7 t7.8 4.7 t7.8 4.7 t7.8 4.7 t7.8 4.7 t7.8 4.7 t7.8 4.7" /></g>
+<g data-node="home-a">
+  <line class="antenna" x1="70" y1="150" x2="70" y2="116" />
+  <circle class="antenna-tip" cx="70" cy="114" r="2.5" />
+  <rect class="box rplus" x="30" y="150" width="48" height="88" rx="5" />
+  <circle class="led" cx="66" cy="162" r="3.5" />
+  <path class="grille" d="M40 198 H68 M40 205 H68 M40 212 H68" />
+</g>
+<text class="on-rplus" x="54" y="256" text-anchor="middle">G4ABC</text>
+<text class="sub" x="54" y="270" text-anchor="middle">radio-plus</text>
+<g data-node="home-b">
+  <line class="antenna" x1="160" y1="210" x2="160" y2="176" />
+  <circle class="antenna-tip" cx="160" cy="174" r="2.5" />
+  <rect class="box rplus" x="120" y="210" width="48" height="88" rx="5" />
+  <circle class="led" cx="156" cy="222" r="3.5" />
+  <path class="grille" d="M130 258 H158 M130 265 H158 M130 272 H158" />
+</g>
+<text class="on-rplus" x="144" y="316" text-anchor="middle">G4DEF</text>
+<text class="sub" x="144" y="330" text-anchor="middle">radio-plus</text>
+<text class="scr ok" data-show="ha-gw" x="16" y="288">[gw]</text>
+<text class="scr" data-show="ha-re" x="52" y="288">“hello”</text>
+<text class="scr" data-show="hb-hi" x="112" y="348">“hi”</text>
+<text class="scr" data-show="hb-re" x="146" y="348">“hello”</text>
+<text class="sub" x="355" y="298" text-anchor="middle">internet-radio · 144.950</text>
+<text class="sub" x="355" y="312" text-anchor="middle">rf_egress = true</text>
+</g>
+<g data-setups="hf" class="is-off">
+<text class="sub on-rf" x="255" y="34" text-anchor="middle">14.070 USB · 20m</text>
+<g class="seg seg-rf" data-seg="hf-rf"><path class="rf" d="M134 58 q5.5 6.6 11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0" /><path class="pkt" d="M134 58 q5.5 6.6 11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0" /></g>
+<g data-node="hf-a">
+  <path class="house" d="M20 128 L95 88 L170 128 V208 H20 Z" />
+  <path class="mast" d="M130 106 V58 M122 66 H138 M124 76 H136" />
+  <rect class="box radio" x="40" y="162" width="70" height="34" rx="3" />
+  <circle class="led" cx="50" cy="172" r="3.5" />
+  <path class="grille" d="M64 172 H102 M64 179 H102 M64 186 H102" />
+  <path class="mast" d="M110 170 H130 V106" />
+  <text class="on-radio" x="76" y="144" text-anchor="middle">G4ABC</text>
+  <text class="sub" x="76" y="157" text-anchor="middle">radio</text>
+</g>
+<g data-node="hf-b">
+  <path class="house" d="M270 128 L345 88 L420 128 V208 H270 Z" />
+  <path class="mast" d="M380 106 V58 M372 66 H388 M374 76 H386" />
+  <rect class="box radio" x="290" y="162" width="70" height="34" rx="3" />
+  <circle class="led" cx="300" cy="172" r="3.5" />
+  <path class="grille" d="M314 172 H352 M314 179 H352 M314 186 H352" />
+  <path class="mast" d="M360 170 H380 V106" />
+  <text class="on-radio" x="326" y="144" text-anchor="middle">EA4XYZ</text>
+  <text class="sub" x="326" y="157" text-anchor="middle">radio</text>
+</g>
+<text class="sub" x="95" y="228" text-anchor="middle">preset hf-poor</text>
+<text class="sub" x="345" y="228" text-anchor="middle">preset hf-poor</text>
+<text class="scr ok" data-show="hfa-ok" x="95" y="248" text-anchor="middle">&lt;G4ABC&gt; hi [ok]</text>
+<text class="scr" data-show="hfb-hi" x="345" y="248" text-anchor="middle">&lt;G4ABC&gt; hi</text>
+<text class="sub" x="220" y="186" text-anchor="middle">no hub</text>
+<text class="sub" x="220" y="200" text-anchor="middle">no gateway</text>
+</g>
+<g data-setups="guest" class="is-off">
+<g data-node="g-sam">
+  <rect class="box accent" x="20" y="14" width="140" height="70" />
+  <path class="laptop-base" d="M8 84 H172 L180 94 H0 Z" />
+  <text class="sub" x="30" y="31">~sam · internet</text>
+  <text class="scr" data-show="gs-out" x="30" y="52">&lt;~sam&gt; hi G4ABC</text>
+  <text class="scr" data-show="gs-re" x="30" y="68">&lt;G4ABC&gt; hi ~sam</text>
+</g>
+<g data-node="hub">
+  <rect class="box hub" x="250" y="26" width="170" height="44" />
+  <text class="on-hub" x="335" y="45" text-anchor="middle">hub</text>
+  <text class="sub" x="335" y="61" text-anchor="middle">picks the gateway</text>
+</g>
+<g class="seg seg-net" data-seg="g-sam-hub"><path class="net" d="M162 48 H250" /><path class="pkt" d="M162 48 H250" /></g>
+<text class="sub" x="206" y="42" text-anchor="middle">TLS</text>
+<g data-node="g-gw">
+  <path class="house" d="M280 200 L355 160 L430 200 V280 H280 Z" />
+  <path class="mast" d="M390 178 V130 M382 138 H398 M384 148 H396" />
+  <rect class="box gw" x="300" y="234" width="70" height="34" rx="3" />
+  <circle class="led" cx="310" cy="244" r="3.5" />
+  <path class="grille" d="M324 244 H362 M324 251 H362 M324 258 H362" />
+  <path class="mast" d="M370 242 H390 V178" />
+  <text class="on-gw" x="336" y="216" text-anchor="middle">M0GWY</text>
+  <text class="sub" x="336" y="229" text-anchor="middle">gateway at home</text>
+</g>
+<g class="seg seg-net" data-seg="g-hub-gw"><path class="net" d="M415 72 V192" /><path class="pkt" d="M415 72 V192" /></g>
+<text class="sub" x="409" y="104" text-anchor="end">TLS</text>
+<g class="seg seg-rf" data-seg="g-gw-a"><path class="rf" d="M386 131 q-5.9 -5.1 -10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8" /><path class="pkt" d="M386 131 q-5.9 -5.1 -10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8 t-10.8 0.8" /></g>
+<text class="sub on-rf" x="236" y="128" text-anchor="middle">144.950</text>
+<g data-node="g-a">
+  <line class="antenna" x1="100" y1="190" x2="100" y2="156" />
+  <circle class="antenna-tip" cx="100" cy="154" r="2.5" />
+  <rect class="box rplus" x="60" y="190" width="48" height="88" rx="5" />
+  <circle class="led" cx="96" cy="202" r="3.5" />
+  <path class="grille" d="M70 238 H98 M70 245 H98 M70 252 H98" />
+</g>
+<text class="on-rplus" x="84" y="296" text-anchor="middle">G4ABC</text>
+<text class="sub" x="84" y="310" text-anchor="middle">radio-plus</text>
+<text class="scr" data-show="ga-hi" x="84" y="330" text-anchor="middle">&lt;~sam&gt; hi G4ABC</text>
+<text class="scr ok" data-show="g-chk" x="355" y="298" text-anchor="middle">rf_egress = true</text>
+<text class="scr ok" data-show="g-chk" x="355" y="314" text-anchor="middle">G4ABC heard here</text>
+<text class="scr ok" data-show="g-chk" x="355" y="330" text-anchor="middle">third_party = "allow"</text>
+</g>
+<g data-setups="hops" class="is-off">
+<text class="sub on-rf" x="220" y="22" text-anchor="middle">144.950 FM · one dial</text>
+<circle class="lane-bg" cx="62" cy="110" r="150" />
+<text class="sub" x="68" y="44">G4ABC’s reach</text>
+<g class="seg seg-rf" data-seg="hp-1"><path class="rf" d="M68 110 q5.2 5.5 10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0" /><path class="pkt" d="M68 110 q5.2 5.5 10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0" /></g>
+<g class="seg seg-rf" data-seg="hp-2"><path class="rf" d="M183 110 q5.2 5.5 10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0" /><path class="pkt" d="M183 110 q5.2 5.5 10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0" /></g>
+<g class="seg seg-rf" data-seg="hp-3"><path class="rf" d="M298 110 q5.2 5.5 10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0" /><path class="pkt" d="M298 110 q5.2 5.5 10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0 t10.3 0" /></g>
+<g data-node="hp-a">
+  <line class="antenna" x1="60" y1="140" x2="60" y2="106" />
+  <circle class="antenna-tip" cx="60" cy="104" r="2.5" />
+  <rect class="box radio" x="32" y="140" width="36" height="64" rx="5" />
+  <circle class="led" cx="56" cy="152" r="3.5" />
+  <path class="grille" d="M42 175 H58 M42 182 H58 M42 189 H58" />
+</g>
+<text class="on-radio" x="50" y="220" text-anchor="middle">G4ABC</text>
+<text class="sub" x="50" y="234" text-anchor="middle">radio</text>
+<g data-node="hp-b">
+  <line class="antenna" x1="175" y1="140" x2="175" y2="106" />
+  <circle class="antenna-tip" cx="175" cy="104" r="2.5" />
+  <rect class="box radio" x="147" y="140" width="36" height="64" rx="5" />
+  <circle class="led" cx="171" cy="152" r="3.5" />
+  <path class="grille" d="M157 175 H173 M157 182 H173 M157 189 H173" />
+</g>
+<text class="on-radio" x="165" y="220" text-anchor="middle">G4DEF</text>
+<text class="sub" x="165" y="234" text-anchor="middle">radio</text>
+<g data-node="hp-c">
+  <line class="antenna" x1="290" y1="140" x2="290" y2="106" />
+  <circle class="antenna-tip" cx="290" cy="104" r="2.5" />
+  <rect class="box radio" x="262" y="140" width="36" height="64" rx="5" />
+  <circle class="led" cx="286" cy="152" r="3.5" />
+  <path class="grille" d="M272 175 H288 M272 182 H288 M272 189 H288" />
+</g>
+<text class="on-radio" x="280" y="220" text-anchor="middle">G4JKL</text>
+<text class="sub" x="280" y="234" text-anchor="middle">radio</text>
+<g data-node="hp-d">
+  <line class="antenna" x1="405" y1="140" x2="405" y2="106" />
+  <circle class="antenna-tip" cx="405" cy="104" r="2.5" />
+  <rect class="box radio" x="377" y="140" width="36" height="64" rx="5" />
+  <circle class="led" cx="401" cy="152" r="3.5" />
+  <path class="grille" d="M387 175 H403 M387 182 H403 M387 189 H403" />
+</g>
+<text class="on-radio" x="395" y="220" text-anchor="middle">G4MNO</text>
+<text class="sub" x="395" y="234" text-anchor="middle">radio</text>
+<text class="scr" data-show="hp-a3" x="50" y="252" text-anchor="middle">3 hops left</text>
+<text class="scr ok" data-show="hp-aok" x="50" y="268" text-anchor="middle">[ok]</text>
+<text class="scr" data-show="hp-b2" x="165" y="252" text-anchor="middle">2 left</text>
+<text class="scr" data-show="hp-c1" x="280" y="252" text-anchor="middle">1 left</text>
+<text class="scr" data-show="hp-d0" x="395" y="252" text-anchor="middle">0 left</text>
+<text class="scr" data-show="hp-d0" x="395" y="268" text-anchor="middle">reads it</text>
+</g>
+<g data-setups="email" class="is-off">
+<g data-node="e-mail">
+  <rect class="box accent" x="20" y="26" width="140" height="44" />
+  <path class="wire" d="M30 36 H52 V54 H30 Z M30 36 L41 46 L52 36" />
+  <text class="on-accent" x="62" y="45">Resend</text>
+  <text class="sub" x="62" y="61">email service</text>
+</g>
+<text class="scr ok" data-show="e-acc" x="90" y="88" text-anchor="middle">accepted</text>
+<text class="sub" x="90" y="104" text-anchor="middle">to alex@example.com</text>
+<g data-node="hub">
+  <rect class="box hub" x="250" y="26" width="170" height="44" />
+  <text class="on-hub" x="335" y="45" text-anchor="middle">hub</text>
+  <text class="sub" x="335" y="61" text-anchor="middle">wss · TLS</text>
+</g>
+<g class="seg seg-net" data-seg="e-hub-mail"><path class="net" d="M250 48 H162" /><path class="pkt" d="M250 48 H162" /></g>
+<g data-node="e-gw">
+  <path class="house" d="M280 200 L355 160 L430 200 V280 H280 Z" />
+  <path class="mast" d="M390 178 V130 M382 138 H398 M384 148 H396" />
+  <rect class="box gw" x="300" y="234" width="70" height="34" rx="3" />
+  <circle class="led" cx="310" cy="244" r="3.5" />
+  <path class="grille" d="M324 244 H362 M324 251 H362 M324 258 H362" />
+  <path class="mast" d="M370 242 H390 V178" />
+  <text class="on-gw" x="336" y="216" text-anchor="middle">M0GWY</text>
+  <text class="sub" x="336" y="229" text-anchor="middle">mail gateway</text>
+</g>
+<g class="seg seg-net" data-seg="e-gw-hub"><path class="net" d="M415 192 V72" /><path class="pkt" d="M415 192 V72" /></g>
+<text class="sub" x="409" y="104" text-anchor="end">TLS</text>
+<g class="seg seg-rf" data-seg="e-a-gw"><path class="rf" d="M104 153 q5.9 5.1 10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8" /><path class="pkt" d="M104 153 q5.9 5.1 10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8 t10.8 -0.8" /></g>
+<text class="sub on-rf" x="236" y="128" text-anchor="middle">144.950</text>
+<g data-node="e-a">
+  <line class="antenna" x1="100" y1="190" x2="100" y2="156" />
+  <circle class="antenna-tip" cx="100" cy="154" r="2.5" />
+  <rect class="box rplus" x="60" y="190" width="48" height="88" rx="5" />
+  <circle class="led" cx="96" cy="202" r="3.5" />
+  <path class="grille" d="M70 238 H98 M70 245 H98 M70 252 H98" />
+</g>
+<text class="on-rplus" x="84" y="296" text-anchor="middle">G4ABC</text>
+<text class="sub" x="84" y="310" text-anchor="middle">radio-plus</text>
+<text class="scr" data-show="e-tx" x="26" y="330">[tx]</text>
+<text class="scr ok" data-show="e-gw" x="62" y="330">[gw]</text>
+<text class="scr ok" data-show="e-sent" x="98" y="330">Sent</text>
+<text class="scr" data-show="e-inbox" x="26" y="346">inbox: 1 new mail</text>
+<text class="sub" x="355" y="298" text-anchor="middle">internet-radio · 144.950</text>
+<text class="sub" x="355" y="312" text-anchor="middle">named in [mail] gateway</text>
+</g>
+                </svg>
+              </div>
+              <div class="live-status">
+                <p class="live-status__text" data-live-status aria-live="polite"></p>
+                <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
+              </div>
+            </div>
+            <div class="live-dgm__text">
+              <div class="setup-panel" data-setup-panel="home">
+                <h3>Walkie-talkies calling a home gateway</h3>
+                <p>A few people out walking each carry a 2m radio on one calling spot, linked to a computer running WeeChat Radio in <code>radio-plus</code>. At home, one station runs <code>internet-radio</code> on the same dial: a base station on a roof antenna, or a handheld by a window.</p>
+                <p>Everyone on 144.950 hears the chat on the air. The home gateway also carries it to the hub for people with no radio, and puts their replies back on the air.</p>
+                <dl class="who-list">
+                  <div class="mode-radio-plus"><dt>G4ABC, G4DEF<small>radio-plus</small></dt><dd>144.950 FM. Their computers never open the hub.</dd></div>
+                  <div class="mode-internet-radio"><dt>M0GWY<small>internet-radio</small></dt><dd>At home on 144.950, with <code>rf_egress = true</code>.</dd></div>
+                  <div class="mode-internet"><dt>G4XYZ<small>internet</small></dt><dd>No radio. Chats through the hub.</dd></div>
+                </dl>
+                <p class="setup-note">The gateway only puts a hub line on the air when the station, or a member of the group, was heard on this dial in the last 10 minutes. A base station with an outdoor antenna hears much further than a handheld indoors.</p>
+              </div>
+              <div class="setup-panel" data-setup-panel="hf">
+                <h3>HF to HF, no internet</h3>
+                <p>Two stations far apart, both on 14.070 MHz USB in <code>radio</code> mode. The line goes out on the air and the receipt comes back on the air. No hub, no gateway and no internet connection are involved.</p>
+                <dl class="who-list">
+                  <div class="mode-radio"><dt>G4ABC<small>radio</small></dt><dd>14.070 USB, 20m. Preset <code>hf-poor</code> on a rough path.</dd></div>
+                  <div class="mode-radio"><dt>EA4XYZ<small>radio</small></dt><dd>Same dial, same preset.</dd></div>
+                </dl>
+                <p class="setup-note">In <code>radio</code> mode the frame says do not forward, so a gateway that hears it leaves it on the air. Use <code>radio-plus</code> instead if a gateway may carry it to the internet.</p>
+              </div>
+              <div class="setup-panel" data-setup-panel="guest">
+                <h3>An internet guest through a gateway</h3>
+                <p>~sam has no radio and no licence, and joins with a guest name. They can still talk to G4ABC on the air, because a gateway on G4ABC’s dial puts hub lines on the air.</p>
+                <dl class="who-list">
+                  <div class="mode-internet"><dt>~sam<small>internet</small></dt><dd>Guest name. Chats through the hub.</dd></div>
+                  <div class="mode-internet-radio"><dt>M0GWY<small>internet-radio</small></dt><dd>144.950, <code>rf_egress = true</code>, <code>third_party = "allow"</code>.</dd></div>
+                  <div class="mode-radio-plus"><dt>G4ABC<small>radio-plus</small></dt><dd>144.950. Heard by the gateway in the last 10 minutes.</dd></div>
+                </dl>
+                <p class="setup-note">Guest names starting with <code>~</code> need <code>third_party = "allow"</code> on the gateway. The default is <code>deny</code>, and then the gateway stays quiet.</p>
+              </div>
+              <div class="setup-panel" data-setup-panel="hops">
+                <h3>Relay with hops</h3>
+                <p>Four stations on one dial, each only in reach of its neighbours. A station that hears a message for the first time shows it, takes one off the hop count, and sends it on while hops remain. The receipt comes back the same way.</p>
+                <dl class="who-list">
+                  <div class="mode-radio"><dt>G4ABC … G4MNO<small>radio</small></dt><dd>All on 144.950 FM. No setting to turn on.</dd></div>
+                </dl>
+                <p class="setup-note">A direct message starts with 3 hops left. Start a line with <code>!</code> for 4, or <code>!!</code> in an emergency for 5. <code>#bulletin</code> and groups start with 6.</p>
+              </div>
+              <div class="setup-panel" data-setup-panel="email">
+                <h3>Email over radio</h3>
+                <p>G4ABC has no internet on its computer, but can still send and fetch email as <code>G4ABC@mail.weechatradio.com</code>. The mail goes on the air to the gateway named in <code>[mail] gateway</code>, and that station posts it.</p>
+                <dl class="who-list">
+                  <div class="mode-radio-plus"><dt>G4ABC<small>radio-plus</small></dt><dd><code>[mail] gateway</code> set to M0GWY. Uses the Email tab.</dd></div>
+                  <div class="mode-internet-radio"><dt>M0GWY<small>internet-radio</small></dt><dd>Posts radio-plus mail it hears to the hub.</dd></div>
+                </dl>
+                <p class="setup-note">Sent means the email service accepted it, not that the gateway heard it. Guests (<code>~</code> names) and <code>radio</code> mode have no email.</p>
+              </div>
+            </div>
+          </div>
+          <script type="application/json" data-live-steps>
+{
+ "home": {
+  "viewBox": "0 0 440 362",
+  "steps": [
+   {
+    "say": "G4ABC says hi to #walk. Its computer keys the radio on 144.950 and does not open the hub.",
+    "segs": [
+     "home-rf-a",
+     "home-rf-ab"
+    ],
+    "on": [
+     "home-a"
+    ],
+    "ms": 1800
+   },
+   {
+    "say": "G4DEF hears it on the air and shows the line.",
+    "show": [
+     "hb-hi"
+    ],
+    "ms": 1200
+   },
+   {
+    "say": "The gateway at home hears a radio-plus line and sends it to the hub. G4ABC’s line shows [gw].",
+    "segs": [
+     "home-gw-hub"
+    ],
+    "on": [
+     "home-gw"
+    ],
+    "show": [
+     "ha-gw"
+    ],
+    "ms": 1800
+   },
+   {
+    "say": "The hub delivers it to G4XYZ, who has no radio.",
+    "segs": [
+     "home-hub-x"
+    ],
+    "show": [
+     "hx-hi"
+    ]
+   },
+   {
+    "say": "G4XYZ replies to #walk through the hub.",
+    "segs": [
+     "<home-hub-x"
+    ],
+    "show": [
+     "hx-re"
+    ]
+   },
+   {
+    "say": "The hub hands the reply to the gateway, which heard #walk members on this dial in the last 10 minutes.",
+    "segs": [
+     "<home-gw-hub"
+    ],
+    "ms": 1900
+   },
+   {
+    "say": "With rf_egress = true, the gateway keys the reply on 144.950. Both walkers read it.",
+    "segs": [
+     "<home-rf-a",
+     "<home-rf-b"
+    ],
+    "on": [
+     "home-gw"
+    ],
+    "show": [
+     "ha-re",
+     "hb-re"
+    ],
+    "ms": 2000
+   }
+  ],
+  "done": "Everyone on the dial, and G4XYZ on the internet, reads the same #walk thread."
+ },
+ "hf": {
+  "viewBox": "0 0 440 262",
+  "steps": [
+   {
+    "say": "G4ABC keys a line on 14.070. In radio mode it stays on the air: nothing goes to the hub.",
+    "segs": [
+     "hf-rf"
+    ],
+    "on": [
+     "hf-a"
+    ],
+    "ms": 1900
+   },
+   {
+    "say": "EA4XYZ decodes it and shows the line.",
+    "show": [
+     "hfb-hi"
+    ],
+    "ms": 1300
+   },
+   {
+    "say": "EA4XYZ sends its receipt back on the same frequency.",
+    "segs": [
+     "<hf-rf"
+    ],
+    "on": [
+     "hf-b"
+    ],
+    "ms": 1900
+   },
+   {
+    "say": "G4ABC shows [ok]. A gateway that heard it would leave it on the air.",
+    "show": [
+     "hfa-ok"
+    ]
+   }
+  ],
+  "done": "Two stations, one frequency, no internet anywhere. G4ABC shows [ok]."
+ },
+ "guest": {
+  "viewBox": "0 0 440 342",
+  "steps": [
+   {
+    "say": "~sam has no radio and no callsign. They message G4ABC through the hub.",
+    "segs": [
+     "g-sam-hub"
+    ],
+    "show": [
+     "gs-out"
+    ]
+   },
+   {
+    "say": "The hub picks the gateway that has heard G4ABC: M0GWY at home.",
+    "segs": [
+     "g-hub-gw"
+    ]
+   },
+   {
+    "say": "M0GWY checks: rf_egress is on, G4ABC was heard on this dial in the last 10 minutes, and guests are allowed.",
+    "on": [
+     "g-gw"
+    ],
+    "show": [
+     "g-chk"
+    ],
+    "ms": 2400
+   },
+   {
+    "say": "All three pass, so M0GWY keys the line on 144.950. G4ABC reads it.",
+    "segs": [
+     "g-gw-a"
+    ],
+    "on": [
+     "g-gw"
+    ],
+    "show": [
+     "ga-hi"
+    ],
+    "ms": 1900
+   },
+   {
+    "say": "G4ABC replies on the air in radio-plus.",
+    "segs": [
+     "<g-gw-a"
+    ],
+    "on": [
+     "g-a"
+    ],
+    "ms": 1900
+   },
+   {
+    "say": "The gateway hears a radio-plus line and sends it to the hub.",
+    "segs": [
+     "<g-hub-gw"
+    ]
+   },
+   {
+    "say": "The hub delivers the reply to ~sam.",
+    "segs": [
+     "<g-sam-hub"
+    ],
+    "show": [
+     "gs-re"
+    ]
+   }
+  ],
+  "done": "~sam and G4ABC chat through the gateway. With third_party = \"deny\", the default, the gateway would stay quiet."
+ },
+ "hops": {
+  "viewBox": "0 0 440 280",
+  "steps": [
+   {
+    "say": "G4ABC sends G4MNO a direct message with 3 hops left. Only G4DEF is in reach.",
+    "segs": [
+     "hp-1"
+    ],
+    "on": [
+     "hp-a"
+    ],
+    "show": [
+     "hp-a3"
+    ],
+    "ms": 1800
+   },
+   {
+    "say": "G4DEF hears it for the first time: it shows the line, takes one off, and sends it on with 2 left.",
+    "segs": [
+     "hp-2"
+    ],
+    "on": [
+     "hp-b"
+    ],
+    "show": [
+     "hp-b2"
+    ],
+    "ms": 2000
+   },
+   {
+    "say": "G4JKL does the same and sends it on with 1 left.",
+    "segs": [
+     "hp-3"
+    ],
+    "on": [
+     "hp-c"
+    ],
+    "show": [
+     "hp-c1"
+    ],
+    "ms": 1800
+   },
+   {
+    "say": "G4MNO reads it. Hops left is now 0, so it does not send it on.",
+    "show": [
+     "hp-d0"
+    ],
+    "ms": 1500
+   },
+   {
+    "say": "G4MNO’s receipt goes back with the same hop count.",
+    "segs": [
+     "<hp-3"
+    ],
+    "on": [
+     "hp-d"
+    ],
+    "ms": 1700
+   },
+   {
+    "say": "G4JKL relays the receipt.",
+    "segs": [
+     "<hp-2"
+    ],
+    "on": [
+     "hp-c"
+    ],
+    "ms": 1600
+   },
+   {
+    "say": "G4DEF relays it to G4ABC.",
+    "segs": [
+     "<hp-1"
+    ],
+    "on": [
+     "hp-b"
+    ],
+    "ms": 1600
+   },
+   {
+    "say": "G4ABC shows [ok]. It never heard G4MNO directly.",
+    "show": [
+     "hp-aok"
+    ]
+   }
+  ],
+  "done": "G4ABC shows [ok]. It never heard G4MNO directly: two stations in between relayed it."
+ },
+ "email": {
+  "viewBox": "0 0 440 356",
+  "steps": [
+   {
+    "say": "G4ABC writes to alex@example.com and keys the mail as a burst on 144.950. The outbox shows [tx].",
+    "segs": [
+     "e-a-gw"
+    ],
+    "on": [
+     "e-a"
+    ],
+    "show": [
+     "e-tx"
+    ],
+    "ms": 1900
+   },
+   {
+    "say": "The gateway has every chunk and acks on the air. The outbox shows [gw].",
+    "segs": [
+     "<e-a-gw"
+    ],
+    "on": [
+     "e-gw"
+    ],
+    "show": [
+     "e-gw"
+    ],
+    "ms": 1900
+   },
+   {
+    "say": "The gateway posts the mail to the hub.",
+    "segs": [
+     "e-gw-hub"
+    ]
+   },
+   {
+    "say": "The hub hands it to Resend, the email service, which accepts it.",
+    "segs": [
+     "e-hub-mail"
+    ],
+    "show": [
+     "e-acc"
+    ]
+   },
+   {
+    "say": "The gateway keys a CompleteAck. Only now does G4ABC’s mail show Sent.",
+    "segs": [
+     "<e-gw-hub",
+     "<e-a-gw"
+    ],
+    "chain": true,
+    "on": [
+     "e-gw"
+    ],
+    "show": [
+     "e-sent"
+    ],
+    "ms": 2400
+   },
+   {
+    "say": "Later, G4ABC presses Check mail. Nothing comes over the air unless it asks.",
+    "segs": [
+     "e-a-gw"
+    ],
+    "on": [
+     "e-a"
+    ],
+    "ms": 1900
+   },
+   {
+    "say": "The gateway pulls G4ABC’s inbox from the hub and sends the list back on the air.",
+    "segs": [
+     "e-gw-hub",
+     "<e-gw-hub",
+     "<e-a-gw"
+    ],
+    "chain": true,
+    "on": [
+     "e-gw"
+    ],
+    "show": [
+     "e-inbox"
+    ],
+    "ms": 3200
+   }
+  ],
+  "done": "Mail goes out and comes in through the gateway named in [mail] gateway. Radio-plus never opens the hub itself."
+ }
+}
+          </script>
+        </figure>
+      </section>
+
+      <section class="article-section" aria-labelledby="pickH">
+        <h2 id="pickH">Which one fits</h2>
+        <ul class="cards">
+          <li><strong>You have handhelds and one home station</strong><span>Home gateway. Walkers stay in <code>radio-plus</code>; the home station runs <code>internet-radio</code>.</span></li>
+          <li><strong>You only want the air</strong><span>HF to HF, or any two radios on one dial in <code>radio</code> mode.</span></li>
+          <li><strong>A friend has no radio</strong><span>Internet guest, through a gateway that allows guests.</span></li>
+          <li><strong>Stations are out of reach of each other</strong><span>Relay with hops on one dial.</span></li>
+          <li><strong>You need email with no internet</strong><span>Email over radio, through a mail gateway.</span></li>
+        </ul>
+      </section>
+
+      <p class="next">More detail: <a href="/docs/modes.html">modes</a>, <a href="/docs/bridging.html">cross-frequency chat</a>, <a href="/docs/hops.html">hops</a>, <a href="/docs/email.html">email</a>. Worked examples: <a href="/docs/mixed-band.html">one group across PMR, CB, 2m and internet</a>, <a href="/docs/try.html">try it with two computers</a>.</p>
+    </main>
+  </div>
+  <script src="/copy.js?v=1"></script>
+  <script src="/shell.js?v=10"></script>
+  <script src="/live-dgm.js?v=1"></script>
+</body>
+</html>
