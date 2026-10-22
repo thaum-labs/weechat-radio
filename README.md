@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.89-DEA584?logo=rust&logoColor=white" alt="Rust 1.89" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="Apache-2.0" /></a>
-  <img src="https://img.shields.io/badge/version-0.1.111-7d9bff" alt="Version 0.1.111" />
+  <img src="https://img.shields.io/badge/version-0.1.112-7d9bff" alt="Version 0.1.112" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6" alt="Windows, macOS and Linux" />
   <br/>
   <a href="https://weechat.org/"><img src="https://img.shields.io/badge/WeeChat-IRC-00A7E0" alt="WeeChat" /></a>
@@ -145,7 +145,7 @@ Same text: [modes](https://weechatradio.com/docs/modes.html). Offline: `wcr help
 
 ## Radio
 
-You need a valid licence, a radio, and audio into the PC. [modem73](https://github.com/RFnexus/modem73) is the TNC. Windows, macOS, and Linux installers put it next to `wcr`. If it is missing, `wcr` downloads the copy published with release `v0.1.79` and checks `third_party/modem73/sha256.json`. To move that pin, see `third_party/modem73/NOTICE`. Common paths:
+You need a valid licence, a radio, and audio into the PC. [modem73](https://github.com/RFnexus/modem73) is the TNC. Windows, macOS, and Linux installers put it next to `wcr`. If it is missing, `wcr` downloads the copy published with its own release and checks it against the SHA-256 built into `wcr`, so it gets the same modem73 the installer ships. See `third_party/modem73/NOTICE`. Common paths:
 
 | Path | What you need |
 |------|----------------|
