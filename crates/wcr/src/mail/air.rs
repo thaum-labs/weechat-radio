@@ -299,13 +299,19 @@ async fn dispatch(ctx: &TxCtx, asm: &mut Assembler, cmd: MailCmd) {
                 *n = n.wrapping_add(1);
                 *n
             };
+            tracing::info!("mail check asked");
+            // QA v0.1.113: the wait starts once the request is on air, not
+            // when asked, so the start-up hold does not eat into it.
+            if let Err(e) = send_control(ctx, MailOp::ListReq, MailMeta::default(), "").await {
+                ctx.store.set_notice(&e.to_string());
+                tracing::info!("mail check failed: {e}");
+                return;
+            }
             let tx = ctx.cmd_tx.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(45)).await;
                 let _ = tx.send(MailCmd::CheckQuiet { gen }).await;
             });
-            tracing::info!("mail check asked");
-            let _ = send_control(ctx, MailOp::ListReq, MailMeta::default(), "").await;
         }
         MailCmd::CheckQuiet { gen } => {
             if *ctx.checks.lock() != gen {
@@ -331,16 +337,16 @@ async fn dispatch(ctx: &TxCtx, asm: &mut Assembler, cmd: MailCmd) {
                     ..GetProgress::default()
                 });
                 tracing::info!("mail get asked {} via the gateway", ids.join(","));
-                arm_get_quiet(ctx);
             }
             let meta = MailMeta {
                 ids,
                 ..MailMeta::default()
             };
-            if let Err(e) = send_control(ctx, MailOp::GetReq, meta, "").await {
-                if rf {
-                    fail_get(ctx, &e.to_string());
-                }
+            match send_control(ctx, MailOp::GetReq, meta, "").await {
+                Ok(()) if rf => arm_get_quiet(ctx),
+                Ok(()) => {}
+                Err(e) if rf => fail_get(ctx, &e.to_string()),
+                Err(_) => {}
             }
         }
         MailCmd::GetQuiet { gen } => {

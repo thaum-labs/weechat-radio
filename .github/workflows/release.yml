@@ -81,7 +81,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # Pinned, not ubuntu-latest: binaries need the glibc of the build
+          # image, and ubuntu-latest moved to 26.04 (glibc 2.43) in v0.1.113.
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             asset: wcr-linux-x86_64.tar.gz
             modem_asset: modem73-linux-x86_64
@@ -183,6 +185,20 @@ jobs:
           echo "$ASSET sha256 $SUM"
           echo "WCR_MODEM73_SHA256=$SUM" >> "$GITHUB_ENV"
       - run: cargo build --release --target ${{ matrix.target }} -p wcr
+      - name: refuse linux binaries that need glibc newer than 2.39
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          for BIN in wcr wcr-gui; do
+            F="target/${{ matrix.target }}/release/$BIN"
+            [ -f "$F" ] || continue
+            NEED="$(objdump -T "$F" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -n 1)"
+            echo "$BIN needs glibc $NEED"
+            if [ "$(printf '%s\n2.39\n' "$NEED" | sort -V | tail -n 1)" != "2.39" ]; then
+              echo "::error::$BIN needs glibc $NEED; Ubuntu 24.04 and Debian 13 users could not start it (max 2.39)"
+              exit 1
+            fi
+          done
       - name: quickstart pdf
         if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
