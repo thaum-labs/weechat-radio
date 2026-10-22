@@ -953,55 +953,6 @@ svg.dgm .hop-run {
 }
 @keyframes hop-march { to { stroke-dashoffset: -44; } }
 
-/* Animated packet on a diagram path, shared by doc pages with live diagrams.
-   Markup: <g class="seg seg-rf|seg-net|seg-sound"><path …/><path class="pkt" …/></g>.
-   Page script sets --len (path length) on each .pkt and adds .is-live to the
-   .seg; --leg delays later hops, .is-rev runs the path backwards. */
-svg.dgm .pkt {
-  fill: none;
-  stroke-width: 4.5;
-  stroke-linecap: round;
-  stroke-dasharray: 12 2000;
-  stroke-dashoffset: 14;
-  opacity: 0;
-}
-svg.dgm .seg-rf .pkt {
-  stroke: #ffd6c4;
-  filter: drop-shadow(0 0 4px var(--orange));
-}
-svg.dgm .seg-net .pkt {
-  stroke: #ccfaff;
-  filter: drop-shadow(0 0 4px var(--mode-internet));
-}
-svg.dgm .seg-sound .pkt {
-  stroke: #dde4ff;
-  filter: drop-shadow(0 0 4px var(--accent));
-}
-@media (prefers-reduced-motion: no-preference) {
-  svg.dgm .seg.is-live .pkt {
-    opacity: 1;
-    animation: dgm-packet var(--pkt-dur, 0.9s) ease-in-out calc(var(--leg, 0) * var(--pkt-dur, 0.9s)) both;
-  }
-  svg.dgm .seg.is-live.is-rev .pkt { animation-direction: reverse; }
-}
-@keyframes dgm-packet {
-  from { stroke-dashoffset: 14; }
-  to { stroke-dashoffset: calc(-1px * var(--len, 200)); }
-}
-
-.btn-replay {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 5px 11px;
-  border: 1px solid var(--accent);
-  background: #0a0a12;
-  color: var(--accent);
-  cursor: pointer;
-}
-.btn-replay:hover {
-  border-color: var(--orange);
-  color: var(--orange);
-}
 .dgm-key i.k-range {
   height: 0;
   border: 0;
