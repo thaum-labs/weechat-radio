@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -50,92 +51,116 @@
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> deploy the hub</h1>
       <p class="lead">For people running the public server. Most users never need this page.</p>
 
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 216" role="img" aria-labelledby="dp1t dp1d">
-            <title id="dp1t">One droplet serving the site and the hub</title>
-            <desc id="dp1d">Traffic arrives on port 443. Caddy terminates HTTPS and serves the static site for weechatradio.com, and proxies hub.weechatradio.com to the wcr hub container.</desc>
-            <defs>
-              <marker id="mnetD" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-            </defs>
-            <text class="tag" x="16" y="20">ONE DROPLET · DOCKER COMPOSE</text>
-            <rect class="zone" x="196" y="40" width="508" height="152" />
-            <text class="sub" x="208" y="58">ubuntu + docker compose</text>
-            <line class="net" marker-end="url(#mnetD)" x1="152" y1="112" x2="220" y2="112" />
-            <text class="sub" x="186" y="104" text-anchor="middle">443</text>
-            <line class="net" marker-end="url(#mnetD)" x1="376" y1="100" x2="412" y2="90" />
-            <line class="net" marker-end="url(#mnetD)" x1="376" y1="124" x2="412" y2="152" />
-            <rect class="box" x="16" y="86" width="134" height="52" />
-            <text x="83" y="108" text-anchor="middle">internet</text>
-            <text class="sub" x="83" y="125" text-anchor="middle">visitors + nodes</text>
-            <rect class="box accent" x="222" y="86" width="152" height="52" />
-            <text class="on-accent" x="298" y="108" text-anchor="middle">Caddy</text>
-            <text class="sub" x="298" y="125" text-anchor="middle">certs, one config</text>
-            <rect class="box hub" x="414" y="66" width="272" height="48" />
-            <text class="on-hub" x="550" y="86" text-anchor="middle">weechatradio.com</text>
-            <text class="sub" x="550" y="102" text-anchor="middle">static files from web/</text>
-            <rect class="box orange" x="414" y="128" width="272" height="48" />
-            <text class="on-orange" x="550" y="148" text-anchor="middle">hub.weechatradio.com</text>
-            <text class="sub" x="550" y="164" text-anchor="middle">wcr hub · /ws and /api</text>
-            <text class="sub" x="16" y="208">pushing to main rebuilds the image and restarts compose on the droplet</text>
-          </svg>
-        </div>
-        <figcaption>One droplet. Caddy serves the website and proxies the hub.</figcaption>
-      </figure>
+      <div class="pair">
+        <section class="article-section article-section--first" aria-labelledby="needH">
+          <h2 id="needH">What you need</h2>
+          <ul class="cards">
+            <li><strong>A DigitalOcean account</strong></li>
+            <li><strong>Domain</strong><span><code>weechatradio.com</code> (already owned for the public hub)</span></li>
+            <li><strong>A 2 GB Ubuntu LTS droplet</strong></li>
+            <li><strong>A GitHub repo</strong><span>with Actions secrets: <code>DROPLET_HOST</code>, <code>DROPLET_USER</code>, <code>DROPLET_SSH_KEY</code></span></li>
+          </ul>
+        </section>
 
-      <div class="need">
-        <h2>What you need</h2>
-        <ul>
-          <li>A DigitalOcean account</li>
-          <li>Domain <code>weechatradio.com</code> (already owned for the public hub)</li>
-          <li>A 2 GB Ubuntu LTS droplet</li>
-          <li>A GitHub repo with Actions secrets: <code>DROPLET_HOST</code>, <code>DROPLET_USER</code>, <code>DROPLET_SSH_KEY</code></li>
-        </ul>
+        <figure class="diagram">
+          <div class="dgm-wrap">
+            <svg class="dgm fit" viewBox="0 0 440 304" role="img" aria-labelledby="dp1t dp1d">
+              <title id="dp1t">One droplet serving the site and the hub</title>
+              <desc id="dp1d">Traffic arrives on port 443. Caddy terminates HTTPS and serves the static site for weechatradio.com, and proxies hub.weechatradio.com to the wcr hub container.</desc>
+              <defs>
+                <marker id="mnetD" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
+                </marker>
+              </defs>
+
+              <rect class="box" x="16" y="16" width="180" height="50" />
+              <text x="106" y="37" text-anchor="middle">internet</text>
+              <text class="sub" x="106" y="54" text-anchor="middle">visitors + nodes</text>
+
+              <rect class="lane-bg" x="8" y="88" width="424" height="164" />
+              <text class="sub" x="420" y="106" text-anchor="end">one droplet · ubuntu + docker compose</text>
+
+              <line class="net" marker-end="url(#mnetD)" x1="106" y1="66" x2="106" y2="122" />
+              <text class="sub" x="114" y="84">443</text>
+
+              <rect class="box accent" x="24" y="124" width="164" height="54" />
+              <text class="on-accent" x="106" y="147" text-anchor="middle">Caddy</text>
+              <text class="sub" x="106" y="165" text-anchor="middle">certs, one config</text>
+
+              <line class="net" marker-end="url(#mnetD)" x1="188" y1="142" x2="232" y2="146" />
+              <line class="net" marker-end="url(#mnetD)" x1="188" y1="166" x2="232" y2="208" />
+
+              <rect class="box" x="234" y="122" width="186" height="48" />
+              <text x="327" y="142" text-anchor="middle">weechatradio.com</text>
+              <text class="sub" x="327" y="159" text-anchor="middle">static files from web/</text>
+              <rect class="box hub" x="234" y="188" width="186" height="48" />
+              <text class="on-hub" x="327" y="208" text-anchor="middle">hub.weechatradio.com</text>
+              <text class="sub" x="327" y="225" text-anchor="middle">wcr hub · /ws and /api</text>
+
+              <text class="sub" x="16" y="276">pushing to main rebuilds the image and</text>
+              <text class="sub" x="16" y="291">restarts compose on the droplet</text>
+            </svg>
+          </div>
+          <figcaption>One droplet. Caddy serves the website and proxies the hub.</figcaption>
+        </figure>
       </div>
 
-      <h2>DNS</h2>
-      <p>Create A records, all pointing at the droplet IP:</p>
-      <ul>
-        <li><code>weechatradio.com</code></li>
-        <li><code>www.weechatradio.com</code></li>
-        <li><code>hub.weechatradio.com</code></li>
-        <li><code>api.weechatradio.com</code></li>
-      </ul>
+      <section class="article-section" aria-labelledby="dnsH">
+        <h2 id="dnsH">DNS</h2>
+        <p>Create A records, all pointing at the droplet IP:</p>
+        <ul>
+          <li><code>weechatradio.com</code></li>
+          <li><code>www.weechatradio.com</code></li>
+          <li><code>hub.weechatradio.com</code></li>
+          <li><code>api.weechatradio.com</code></li>
+        </ul>
+      </section>
 
-      <h2>Steps</h2>
-      <ol class="steps">
-        <li>
-          <p>Create a 2 GB Ubuntu droplet in a region close to you. Allow ports 22, 80, 443.</p>
-        </li>
-        <li>
-          <p>Copy <code>deploy/</code> to the droplet (or clone this repo).</p>
-        </li>
-        <li>
-          <p>Copy <code>deploy/.env.example</code> to <code>/opt/wcr/.env</code> and set <code>WCR_DOMAIN=weechatradio.com</code>.</p>
-        </li>
-        <li>
-          <p>Point cloud-init at <code>deploy/cloud-init.yaml</code> on first boot, or run:</p>
-          <pre>cd /opt/wcr
+      <section class="article-section" aria-labelledby="stepsH">
+        <h2 id="stepsH">Steps</h2>
+        <p class="section-lead">Steps 1 to 5 set up a new droplet once. After that, each push to <code>main</code> redeploys.</p>
+        <ol class="steps">
+          <li>
+            <strong class="step-title">Create the droplet</strong>
+            <p>Create a 2 GB Ubuntu droplet in a region close to you. Allow ports 22, 80, 443.</p>
+          </li>
+          <li>
+            <strong class="step-title">Copy the deploy files</strong>
+            <p>Copy <code>deploy/</code> to the droplet (or clone this repo).</p>
+          </li>
+          <li>
+            <strong class="step-title">Set the domain</strong>
+            <p>Copy <code>deploy/.env.example</code> to <code>/opt/wcr/.env</code> and set <code>WCR_DOMAIN=weechatradio.com</code>.</p>
+          </li>
+          <li>
+            <strong class="step-title">Start the stack</strong>
+            <p>Point cloud-init at <code>deploy/cloud-init.yaml</code> on first boot, or run:</p>
+            <pre>cd /opt/wcr
 docker compose -f deploy/docker-compose.yml up -d</pre>
-        </li>
-        <li>
-          <p>Caddy issues certificates for the three names. Wait a minute.</p>
-        </li>
-        <li>
-          <p>GitHub Actions workflow <code>.github/workflows/deploy.yml</code> rebuilds images and runs <code>docker compose pull && up -d</code> on each push to <code>main</code>.</p>
-        </li>
-      </ol>
+          </li>
+          <li>
+            <strong class="step-title">Wait for certificates</strong>
+            <p>Caddy issues certificates for the three names. Wait a minute.</p>
+          </li>
+          <li>
+            <strong class="step-title">Push to redeploy</strong>
+            <p>GitHub Actions workflow <code>.github/workflows/deploy.yml</code> rebuilds images and runs <code>docker compose pull && up -d</code> on each push to <code>main</code>.</p>
+          </li>
+        </ol>
+      </section>
 
-      <h2>App version vs website</h2>
-      <p>The website and hub image update on every push to <code>main</code>. That does not bump the app version and does not make <code>wcr update</code> download anything.</p>
-      <p>Bump <code>Cargo.toml</code>, the README badge, OpenAPI version, the numbered changelog, and a <code>v*</code> tag only when <code>wcr</code> / <code>wcr-gui</code> behaviour (or the bits inside the binary) change. <code>wcr update</code> follows those tags.</p>
+      <section class="article-section" aria-labelledby="versionH">
+        <h2 id="versionH">App version vs website</h2>
+        <p>The website and hub image update on every push to <code>main</code>. That does not bump the app version and does not make <code>wcr update</code> download anything.</p>
+        <p>Bump <code>Cargo.toml</code>, the README badge, OpenAPI version, the numbered changelog, and a <code>v*</code> tag only when <code>wcr</code> / <code>wcr-gui</code> behaviour (or the bits inside the binary) change. <code>wcr update</code> follows those tags.</p>
+      </section>
 
-      <h2>Backups</h2>
-      <p>Production uses <strong>SQLite</strong> in the hub container (<code>/data/hub.db</code> and telemetry DB). Optional nightly copy:</p>
-      <pre>docker compose -f deploy/docker-compose.yml exec -T hub \
+      <section class="article-section" aria-labelledby="backupH">
+        <h2 id="backupH">Backups</h2>
+        <p>Production uses <strong>SQLite</strong> in the hub container (<code>/data/hub.db</code> and telemetry DB). Optional nightly copy:</p>
+        <pre>docker compose -f deploy/docker-compose.yml exec -T hub \
   sh -c 'tar -czf - /data/*.db' &gt; /var/backups/wcr-sqlite-$(date +%F).tar.gz</pre>
+      </section>
 
       <div class="ok">
         <h2>How you know it worked</h2>

@@ -23,10 +23,10 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=33" />
-  <link rel="stylesheet" href="/try.css?v=1" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
-<body class="page-doc page-article-try">
+<body class="page-doc">
   <div id="scan"></div>
   <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
   <header class="topbar">
@@ -54,26 +54,26 @@
   </svg>
 
   <div class="page-wrap">
-    <main class="page-panel article-try">
+    <main class="page-panel">
       <p class="crumb"><a href="/docs.html">docs</a> / try it</p>
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> try it with two computers</h1>
       <p class="lead">You can try this with no radio at all, or with two cheap walkie-talkies from a shop. You do not need a special radio cable. The computers pass the message as sound.</p>
 
-      <section class="try-need" aria-labelledby="needH">
+      <section class="article-section article-section--first" aria-labelledby="needH">
         <h2 id="needH">What you need</h2>
-        <ul class="need-cards">
+        <ul class="cards">
           <li>
-            <svg class="need-ico" aria-hidden="true"><use href="#ico-laptop" /></svg>
+            <svg class="card-ico" aria-hidden="true"><use href="#ico-laptop" /></svg>
             <strong>Two computers</strong>
             <span>One person can sit them on the same desk. A friend on the second computer is fine too.</span>
           </li>
           <li>
-            <svg class="need-ico" aria-hidden="true"><use href="#ico-app" /></svg>
+            <svg class="card-ico" aria-hidden="true"><use href="#ico-app" /></svg>
             <strong>WeeChat Radio on both</strong>
             <span>The <a href="/guides/start.html">5-minute start</a> installs it. A guest name such as <code>~alex</code> is fine if you have no callsign.</span>
           </li>
-          <li class="need-optional">
-            <svg class="need-ico" aria-hidden="true"><use href="#ico-radio" /></svg>
+          <li class="is-optional">
+            <svg class="card-ico" aria-hidden="true"><use href="#ico-radio" /></svg>
             <strong>Optional: two small walkie-talkies</strong>
             <span>Leave them on the channels printed in the box, and put both on the same channel.</span>
           </li>
@@ -84,17 +84,17 @@
         <h2 id="setupH">Pick your setup</h2>
         <p class="section-lead">Whichever you pick, the message crosses as sound. Watch a <code>hi</code> go over and the <code>[ok]</code> come back.</p>
 
-        <figure class="diagram try-setup" data-try-setup data-setup="cable">
+        <figure class="diagram live-dgm" data-live-dgm data-setup="cable">
           <div class="setup-switch" role="group" aria-label="Setup" data-setup-switch hidden>
             <button type="button" data-setup-btn="cable" aria-pressed="true">radios + cable</button>
             <button type="button" data-setup-btn="nocable" aria-pressed="false">radios, no cable</button>
             <button type="button" data-setup-btn="noradio" aria-pressed="false">no radio</button>
           </div>
 
-          <div class="try-setup__body">
-            <div class="try-setup__pic">
+          <div class="live-dgm__body">
+            <div class="live-dgm__pic">
               <div class="dgm-wrap">
-                <svg class="dgm try-dgm show-a-hi show-b-hi show-a-ok" viewBox="0 0 440 322" role="img" aria-labelledby="tryT tryD">
+                <svg class="dgm" viewBox="0 0 440 322" role="img" aria-labelledby="tryT tryD">
                   <title id="tryT">Two computers passing a message as sound</title>
                   <desc id="tryD">Each computer has its own walkie-talkie. One lead carries the computer speaker into the radio microphone, the other carries the radio speaker into the computer microphone. The radios are on the same channel. With no radio, each computer's speaker faces the other's microphone about an arm's length apart.</desc>
                   <defs>
@@ -108,24 +108,28 @@
                     <rect class="box accent screen" x="40" y="14" width="140" height="84" />
                     <path class="laptop-base" d="M28 98 H192 L200 108 H20 Z" />
                     <text class="sub" x="50" y="31">computer A</text>
-                    <text class="scr scr-a-hi" x="50" y="58">&lt;~alex&gt; hi</text>
-                    <text class="scr scr-a-ok on-gw" x="130" y="58">[ok]</text>
+                    <text class="scr" data-show="a-hi" x="50" y="58">&lt;~alex&gt; hi</text>
+                    <text class="scr ok" data-show="a-ok" x="130" y="58">[ok]</text>
                     <text class="scr-input" x="50" y="86">&gt; _</text>
                   </g>
                   <g data-node="pc-b">
                     <rect class="box accent screen" x="260" y="14" width="140" height="84" />
                     <path class="laptop-base" d="M248 98 H412 L420 108 H240 Z" />
                     <text class="sub" x="270" y="31">computer B</text>
-                    <text class="scr scr-b-hi" x="270" y="58">&lt;~alex&gt; hi</text>
+                    <text class="scr" data-show="b-hi" x="270" y="58">&lt;~alex&gt; hi</text>
                     <text class="scr-input" x="270" y="86">&gt; _</text>
                   </g>
 
                   <!-- radio setups: leads, radios, RF -->
-                  <g class="radio-part">
-                    <g class="seg seg-sound lead" data-seg="a-out"><path class="wire" marker-end="url(#mTryLead)" d="M94 110 V194" /><path class="pkt" d="M94 110 V194" /></g>
-                    <g class="seg seg-sound lead" data-seg="a-in"><path class="wire" marker-end="url(#mTryLead)" d="M108 194 V110" /><path class="pkt" d="M108 194 V110" /></g>
-                    <g class="seg seg-sound lead" data-seg="b-out"><path class="wire" marker-end="url(#mTryLead)" d="M346 110 V194" /><path class="pkt" d="M346 110 V194" /></g>
-                    <g class="seg seg-sound lead" data-seg="b-in"><path class="wire" marker-end="url(#mTryLead)" d="M332 194 V110" /><path class="pkt" d="M332 194 V110" /></g>
+                  <g data-setups="cable nocable">
+                    <g class="seg seg-sound" data-setups="cable" data-seg="a-out"><path class="wire" marker-end="url(#mTryLead)" d="M94 110 V194" /><path class="pkt" d="M94 110 V194" /></g>
+                    <g class="seg seg-sound" data-setups="cable" data-seg="a-in"><path class="wire" marker-end="url(#mTryLead)" d="M108 194 V110" /><path class="pkt" d="M108 194 V110" /></g>
+                    <g class="seg seg-sound" data-setups="cable" data-seg="b-out"><path class="wire" marker-end="url(#mTryLead)" d="M346 110 V194" /><path class="pkt" d="M346 110 V194" /></g>
+                    <g class="seg seg-sound" data-setups="cable" data-seg="b-in"><path class="wire" marker-end="url(#mTryLead)" d="M332 194 V110" /><path class="pkt" d="M332 194 V110" /></g>
+                    <g class="seg seg-sound is-off" data-setups="nocable" data-seg="a-out"><path class="wire air" marker-end="url(#mTryLead)" d="M94 110 V194" /><path class="pkt" d="M94 110 V194" /></g>
+                    <g class="seg seg-sound is-off" data-setups="nocable" data-seg="a-in"><path class="wire air" marker-end="url(#mTryLead)" d="M108 194 V110" /><path class="pkt" d="M108 194 V110" /></g>
+                    <g class="seg seg-sound is-off" data-setups="nocable" data-seg="b-out"><path class="wire air" marker-end="url(#mTryLead)" d="M346 110 V194" /><path class="pkt" d="M346 110 V194" /></g>
+                    <g class="seg seg-sound is-off" data-setups="nocable" data-seg="b-in"><path class="wire air" marker-end="url(#mTryLead)" d="M332 194 V110" /><path class="pkt" d="M332 194 V110" /></g>
                     <text class="sub" x="88" y="142" text-anchor="end">speaker out</text>
                     <text class="sub" x="114" y="142">mic in</text>
                     <text class="sub" x="352" y="142">speaker out</text>
@@ -154,20 +158,20 @@
                   </g>
 
                   <!-- no radio: speaker to microphone across the desk -->
-                  <g class="air-part">
+                  <g data-setups="noradio" class="is-off">
                     <g class="seg seg-sound" data-seg="air-ab"><path class="wire" marker-end="url(#mTryLead)" d="M186 50 q4.25 -3 8.5 0 t8.5 0 t8.5 0 t8.5 0 t8.5 0 t8.5 0 t8.5 0 t8.5 0" /><path class="pkt" d="M186 50 q4.25 -3 8.5 0 t8.5 0 t8.5 0 t8.5 0 t8.5 0 t8.5 0 t8.5 0 t8.5 0" /></g>
                     <g class="seg seg-sound" data-seg="air-ba"><path class="wire" marker-end="url(#mTryLead)" d="M254 76 q-4.25 3 -8.5 0 t-8.5 0 t-8.5 0 t-8.5 0 t-8.5 0 t-8.5 0 t-8.5 0 t-8.5 0" /><path class="pkt" d="M254 76 q-4.25 3 -8.5 0 t-8.5 0 t-8.5 0 t-8.5 0 t-8.5 0 t-8.5 0 t-8.5 0 t-8.5 0" /></g>
                     <text class="sub" x="220" y="132" text-anchor="middle">about an arm’s length apart</text>
                   </g>
                 </svg>
               </div>
-              <div class="try-status">
-                <p class="try-status__text" data-try-status aria-live="polite"></p>
-                <button type="button" class="btn-replay" data-try-replay hidden>Replay</button>
+              <div class="live-status">
+                <p class="live-status__text" data-live-status aria-live="polite"></p>
+                <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
               </div>
             </div>
 
-            <div class="try-setup__text">
+            <div class="live-dgm__text">
               <div class="setup-panel" data-setup-panel="cable">
                 <h3>With two walkie-talkies</h3>
                 <p>Each computer stays with its own radio. A plain headphone cable joins them. One lead carries the computer speaker into the radio microphone. The other lead carries the radio speaker into the computer microphone. Many small radios have one socket that does both jobs. The cable that came as a headset for that radio is the one to use.</p>
@@ -184,23 +188,50 @@
               </div>
             </div>
           </div>
+        <script type="application/json" data-live-steps>
+          {
+            "cable": { "viewBox": "0 0 440 322", "steps": [
+              { "say": "Computer A plays “hi” as sound into radio A’s microphone.", "segs": ["a-out"], "show": ["a-hi"] },
+              { "say": "Radio A hears the sound and transmits. Its light comes on.", "segs": ["rf"], "on": ["radio-a"], "ms": 1700 },
+              { "say": "Radio B plays it from its speaker into computer B’s microphone.", "segs": ["b-in"] },
+              { "say": "Computer B shows the line and plays [ok] back into radio B.", "segs": ["b-out"], "show": ["b-hi"] },
+              { "say": "Radio B transmits the [ok]. Its light comes on.", "segs": ["<rf"], "on": ["radio-b"], "ms": 1700 },
+              { "say": "Radio A plays it into computer A’s microphone.", "segs": ["a-in"] },
+              { "say": "Computer A shows [ok]. It worked both ways.", "show": ["a-ok"] }
+            ] },
+            "nocable": { "viewBox": "0 0 440 322", "steps": [
+              { "say": "Computer A plays “hi” through the air into radio A’s microphone.", "segs": ["a-out"], "show": ["a-hi"] },
+              { "say": "Radio A hears the sound and transmits. Its light comes on.", "segs": ["rf"], "on": ["radio-a"], "ms": 1700 },
+              { "say": "Radio B plays it from its speaker into computer B’s microphone.", "segs": ["b-in"] },
+              { "say": "Computer B shows the line and plays [ok] back into radio B.", "segs": ["b-out"], "show": ["b-hi"] },
+              { "say": "Radio B transmits the [ok]. Its light comes on.", "segs": ["<rf"], "on": ["radio-b"], "ms": 1700 },
+              { "say": "Radio A plays it into computer A’s microphone.", "segs": ["a-in"] },
+              { "say": "Computer A shows [ok]. It worked both ways.", "show": ["a-ok"] }
+            ] },
+            "noradio": { "viewBox": "0 0 440 146", "steps": [
+              { "say": "Computer A plays “hi” as sound. Computer B’s microphone hears it.", "segs": ["air-ab"], "show": ["a-hi"] },
+              { "say": "Computer B shows the line and plays [ok] back.", "segs": ["air-ba"], "show": ["b-hi"] },
+              { "say": "Computer A shows [ok]. It worked both ways.", "show": ["a-ok"] }
+            ] }
+          }
+          </script>
         </figure>
       </section>
 
-      <div class="ok try-preset">
+      <div class="ok">
         <h2>Which sound setting</h2>
-        <div class="preset-flow" aria-hidden="true">
-          <div class="preset preset--slow">
+        <div class="flow" aria-hidden="true">
+          <div class="flow-chip is-start">
             <svg viewBox="0 0 78 16"><path d="M0 8 q6.5 -7 13 0 t13 0 t13 0 t13 0 t13 0 t13 0" /></svg>
             <code>hf-poor</code>
             <span>slow, steady · start here</span>
           </div>
-          <div class="preset-step">
+          <div class="flow-step">
             <span>hi got through both ways</span>
-            <span class="preset-step__arrow">→</span>
-            <span class="preset-step__back">still quiet? back to hf-poor</span>
+            <span class="flow-step__arrow">→</span>
+            <span class="flow-step__back">still quiet? back to hf-poor</span>
           </div>
-          <div class="preset preset--fast">
+          <div class="flow-chip">
             <svg viewBox="0 0 78 16"><path d="M0 8 q2.17 -7 4.33 0 t4.33 0 t4.33 0 t4.33 0 t4.33 0 t4.33 0 t4.33 0 t4.33 0 t4.33 0 t4.33 0 t4.33 0 t4.33 0 t4.33 0 t4.33 0 t4.33 0 t4.33 0 t4.33 0 t4.33 0" /></svg>
             <code>vhf-fm</code>
             <span>faster · clear path</span>
@@ -212,7 +243,7 @@
 
       <section class="article-section" aria-labelledby="stepsH">
         <h2 id="stepsH">Steps</h2>
-        <ol class="steps try-steps">
+        <ol class="steps">
           <li>
             <strong class="step-title">Install and open</strong>
             <p>Install on both computers and open the window with <code>wcr gui</code>. Follow the <a href="/guides/start.html">5-minute start</a> if this is the first time.</p>
@@ -282,6 +313,6 @@
   </div>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=10"></script>
-  <script src="/try-anim.js?v=1"></script>
+  <script src="/live-dgm.js?v=1"></script>
 </body>
 </html>

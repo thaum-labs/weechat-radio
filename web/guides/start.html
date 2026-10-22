@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -44,137 +45,177 @@
       <div class="sub" id="clock-local">LCL --:--</div>
     </div>
   </header>
+
+  <!-- Line icons shared by the "what you need" cards. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-laptop" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="11" /><path d="M2 19 H22" /></symbol>
+    <symbol id="ico-key" viewBox="0 0 24 24"><circle cx="8" cy="12" r="4" /><path d="M12 12 H21 M18 12 V15" /></symbol>
+    <symbol id="ico-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M3 12 H21 M12 3 C8 7 8 17 12 21 C16 17 16 7 12 3" /></symbol>
+  </svg>
+
   <div class="page-wrap">
     <main class="page-panel">
       <p class="crumb"><a href="/guides.html">guides</a> / 5-minute start</p>
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> 5-minute start</h1>
       <p class="lead">You will install a small program called <code>wcr</code>, give it a name, and send a chat line. You do not need a radio for this.</p>
 
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 216" role="img" aria-labelledby="s1t s1d">
-            <title id="s1t">What you need on day one</title>
-            <desc id="s1d">You type into WeeChat Radio on this computer, which talks to the hub and the public map over the internet. A radio is an optional addition for when the internet is gone.</desc>
-            <defs>
-              <marker id="mnetS1" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-              <marker id="maccS1" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-              <marker id="mdimS1" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-dim" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-            </defs>
-            <text class="tag" x="16" y="20">START HERE · NO RADIO NEEDED</text>
-            <line class="wire" marker-end="url(#maccS1)" x1="182" y1="82" x2="218" y2="82" />
-            <line class="net" marker-end="url(#mnetS1)" x1="426" y1="82" x2="462" y2="82" />
-            <text class="sub" x="444" y="44" text-anchor="middle">internet</text>
-            <path class="none" marker-end="url(#mdimS1)" d="M320 110 V 146" />
-            <text class="sub" x="332" y="132">add later</text>
-            <rect class="box" x="16" y="56" width="164" height="52" />
-            <text x="98" y="78" text-anchor="middle">you</text>
-            <text class="sub" x="98" y="95" text-anchor="middle">keyboard</text>
-            <rect class="box accent" x="220" y="56" width="204" height="52" />
-            <text class="on-accent" x="322" y="78" text-anchor="middle">wcr</text>
-            <text class="sub" x="322" y="95" text-anchor="middle">runs on this computer</text>
-            <rect class="box hub" x="464" y="56" width="240" height="52" />
-            <text class="on-hub" x="584" y="78" text-anchor="middle">hub + map</text>
-            <text class="sub" x="584" y="95" text-anchor="middle">chat with other stations</text>
-            <rect class="box orange" x="220" y="148" width="204" height="52" />
-            <text class="on-orange" x="322" y="170" text-anchor="middle">radio</text>
-            <text class="sub" x="322" y="187" text-anchor="middle">for when the internet goes</text>
-            <text class="sub" x="444" y="176">everything still works with the hub unplugged</text>
-          </svg>
-        </div>
-        <figcaption>Chat goes through this computer. The public map is extra. A radio is extra.</figcaption>
-      </figure>
-
-      <div class="need">
-        <h2>What you need</h2>
-        <ul>
-          <li>This computer (Windows, Mac, or Linux)</li>
-          <li>A ham radio callsign, <em>or</em> a guest name starting with <code>~</code> (example: <code>~alice</code>)</li>
-          <li>A grid square if you want to show up on the map (example: <code>IO91wm</code>). Search the web for “maidenhead grid square map” and click where you live.</li>
-        </ul>
-      </div>
-
-      <h2>Steps</h2>
-      <ol class="steps">
-        <li>
-          <p>Open a command window.</p>
-          <ul>
-            <li><strong>Windows:</strong> click Start, type <code>PowerShell</code>, and open <strong>Windows PowerShell</strong>. No administrator needed.</li>
-            <li><strong>Mac:</strong> press Command + Space, type <code>Terminal</code>, press Enter.</li>
-            <li><strong>Linux:</strong> open Terminal from the applications menu.</li>
+      <section class="article-section article-section--first" aria-labelledby="needH">
+        <h2 id="needH">What you need</h2>
+        <div class="pair">
+          <ul class="cards">
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-laptop" /></svg>
+              <strong>This computer</strong>
+              <span>Windows, Mac, or Linux.</span>
+            </li>
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-key" /></svg>
+              <strong>A ham radio callsign</strong>
+              <span><em>or</em> a guest name starting with <code>~</code> (example: <code>~alice</code>)</span>
+            </li>
+            <li class="is-optional">
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-globe" /></svg>
+              <strong>A grid square</strong>
+              <span>If you want to show up on the map (example: <code>IO91wm</code>). Search the web for “maidenhead grid square map” and click where you live.</span>
+            </li>
           </ul>
-        </li>
-        <li>
-          <p>Paste the install line, then press Enter.</p>
-          <p><strong>Linux / Mac</strong></p>
-          <pre>curl -fsSL https://weechatradio.com/install.sh | sh</pre>
-          <p><strong>Windows (PowerShell)</strong></p>
-          <pre>irm https://weechatradio.com/install.ps1 | iex</pre>
-          <p>Leave the window open until it prints the next step. On Windows, WeeChat downloads after the program and the window can sit for several minutes. More fixes are on the <a href="/guides/troubleshooting.html">troubleshooting</a> page.</p>
-        </li>
-        <li>
-          <p>Run setup first. It asks for your callsign, grid, and whether you have a radio.</p>
-          <pre>wcr setup</pre>
-          <p>If you have no radio, choose internet-only. You can add a radio later.</p>
-        </li>
-        <li>
-          <p>Then open the chat window.</p>
-          <pre>wcr gui</pre>
-        </li>
-        <li>
-          <p>You land in a room called <code>#bulletin</code>. Type a short hello and press Enter.</p>
-          <p>The top bar also has <strong>email</strong>. A licensed callsign can mail an internet address as <code>callsign@mail.weechatradio.com</code>. That works in Internet, Internet+Radio, or Radio+ with a gateway callsign. Radio-only leaves Email grey. Guests (<code>~name</code>) do not see it. <a href="/docs/email.html">Email</a>.</p>
-        </li>
-      </ol>
 
-      <p><code>wcr update</code> replaces the binary with a newer release. On Linux and macOS it restarts a station installed with <code>wcr service install</code>. A station you started by hand keeps the old code until you stop it and start it again. On Windows, restart that station yourself, including a service.</p>
+          <figure class="diagram">
+            <div class="dgm-wrap">
+              <svg class="dgm fit" viewBox="0 0 440 276" role="img" aria-labelledby="s1t s1d">
+                <title id="s1t">What you need on day one</title>
+                <desc id="s1d">You type into WeeChat Radio on this computer, which talks to the hub and the public map over the internet. A radio is an optional addition for when the internet is gone.</desc>
+                <defs>
+                  <marker id="mnetS1" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
+                  </marker>
+                  <marker id="maccS1" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
+                  </marker>
+                  <marker id="mdimS1" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path class="mk-dim" d="M0 0 L6 3 L0 6 z" />
+                  </marker>
+                </defs>
+                <text class="sub" x="8" y="14">start here · no radio needed</text>
+
+                <rect class="box" x="150" y="26" width="140" height="46" />
+                <text x="220" y="46" text-anchor="middle">you</text>
+                <text class="sub" x="220" y="63" text-anchor="middle">keyboard</text>
+                <line class="wire" marker-end="url(#maccS1)" x1="220" y1="72" x2="220" y2="98" />
+
+                <rect class="box accent" x="60" y="100" width="320" height="46" />
+                <text class="on-accent" x="220" y="120" text-anchor="middle">wcr</text>
+                <text class="sub" x="220" y="137" text-anchor="middle">runs on this computer</text>
+
+                <line class="net" marker-end="url(#mnetS1)" x1="108" y1="146" x2="108" y2="186" />
+                <text class="sub" x="116" y="171">internet</text>
+                <path class="none" marker-end="url(#mdimS1)" d="M332 146 V186" />
+                <text class="sub" x="340" y="171">add later</text>
+
+                <rect class="box hub" x="8" y="188" width="200" height="46" />
+                <text class="on-hub" x="108" y="208" text-anchor="middle">hub + map</text>
+                <text class="sub" x="108" y="225" text-anchor="middle">chat with other stations</text>
+
+                <rect class="box orange" x="232" y="188" width="200" height="46" />
+                <text class="on-orange" x="332" y="208" text-anchor="middle">radio</text>
+                <text class="sub" x="332" y="225" text-anchor="middle">for when the internet goes</text>
+                <text class="sub" x="332" y="254" text-anchor="middle">everything still works</text>
+                <text class="sub" x="332" y="268" text-anchor="middle">with the hub unplugged</text>
+              </svg>
+            </div>
+            <figcaption>Chat goes through this computer. The public map is extra. A radio is extra.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="article-section" aria-labelledby="stepsH">
+        <h2 id="stepsH">Steps</h2>
+        <ol class="steps">
+          <li>
+            <strong class="step-title">Open a command window</strong>
+            <ul>
+              <li><strong>Windows:</strong> click Start, type <code>PowerShell</code>, and open <strong>Windows PowerShell</strong>. No administrator needed.</li>
+              <li><strong>Mac:</strong> press Command + Space, type <code>Terminal</code>, press Enter.</li>
+              <li><strong>Linux:</strong> open Terminal from the applications menu.</li>
+            </ul>
+          </li>
+          <li>
+            <strong class="step-title">Install <code>wcr</code></strong>
+            <p>Paste the install line, then press Enter.</p>
+            <p><strong>Linux / Mac</strong></p>
+            <pre>curl -fsSL https://weechatradio.com/install.sh | sh</pre>
+            <p><strong>Windows (PowerShell)</strong></p>
+            <pre>irm https://weechatradio.com/install.ps1 | iex</pre>
+            <p>Leave the window open until it prints the next step. On Windows, WeeChat downloads after the program and the window can sit for several minutes. More fixes are on the <a href="/guides/troubleshooting.html">troubleshooting</a> page.</p>
+          </li>
+          <li>
+            <strong class="step-title">Run setup</strong>
+            <p>Run setup first. It asks for your callsign, grid, and whether you have a radio.</p>
+            <pre>wcr setup</pre>
+            <p>If you have no radio, choose internet-only. You can add a radio later.</p>
+          </li>
+          <li>
+            <strong class="step-title">Open the chat window</strong>
+            <p>Then open the chat window.</p>
+            <pre>wcr gui</pre>
+          </li>
+          <li>
+            <strong class="step-title">Say hello</strong>
+            <p>You land in a room called <code>#bulletin</code>. Type a short hello and press Enter.</p>
+            <p>The top bar also has <strong>email</strong>. A licensed callsign can mail an internet address as <code>callsign@mail.weechatradio.com</code>. That works in Internet, Internet+Radio, or Radio+ with a gateway callsign. Radio-only leaves Email grey. Guests (<code>~name</code>) do not see it. <a href="/docs/email.html">Email</a>.</p>
+          </li>
+        </ol>
+
+        <div class="note">
+          <p><code>wcr update</code> replaces the binary with a newer release. On Linux and macOS it restarts a station installed with <code>wcr service install</code>. A station you started by hand keeps the old code until you stop it and start it again. On Windows, restart that station yourself, including a service.</p>
+        </div>
+      </section>
 
       <div class="ok">
         <h2>How you know it worked</h2>
         <p>The bar at the bottom of the window shows your callsign.</p>
         <p>After you send, a mark appears on the line:</p>
-        <ul>
-          <li><code>[..]</code> waiting to go out</li>
-          <li><code>[tx]</code> sent</li>
-          <li><code>[rl]</code> you heard your own frame come back (echo or a relay, not a receipt). A noisy path can skip this. In <code>radio</code> mode this is as far as the frame goes.</li>
-          <li><code>[gw]</code> a gateway accepted the frame onto the hub. Not an acknowledgement. Retries continue.</li>
-          <li><code>[ok]</code> delivered. A direct message and <code>#bulletin</code> stop here. <code>#bulletin</code> has no member list, so it never shows <code>[all]</code>.</li>
-          <li><code>[all]</code> every member of a closed group acknowledged</li>
-          <li><code>[no]</code> refused, or the last copy waited out two more intervals with no acknowledgement. A line a relay was heard carrying stays <code>[rl]</code> until its receipt or it is an hour old.</li>
-          <li><code>[xN]</code> how many times the line was keyed, until <code>[rl]</code>, <code>[gw]</code>, or <code>[ok]</code>. <code>[x1]</code> is the first send. With 3 retries the last copy is <code>[x4]</code>, then two more waits before <code>[no]</code>.</li>
-        </ul>
+        <dl class="mark-list">
+          <div><dt><code>[..]</code></dt><dd>waiting to go out</dd></div>
+          <div><dt><code>[tx]</code></dt><dd>sent</dd></div>
+          <div><dt><code>[rl]</code></dt><dd>you heard your own frame come back (echo or a relay, not a receipt). A noisy path can skip this. In <code>radio</code> mode this is as far as the frame goes.</dd></div>
+          <div><dt><code>[gw]</code></dt><dd>a gateway accepted the frame onto the hub. Not an acknowledgement. Retries continue.</dd></div>
+          <div><dt><code>[ok]</code></dt><dd>delivered. A direct message and <code>#bulletin</code> stop here. <code>#bulletin</code> has no member list, so it never shows <code>[all]</code>.</dd></div>
+          <div><dt><code>[all]</code></dt><dd>every member of a closed group acknowledged</dd></div>
+          <div><dt><code>[no]</code></dt><dd>refused, or the last copy waited out two more intervals with no acknowledgement. A line a relay was heard carrying stays <code>[rl]</code> until its receipt or it is an hour old.</dd></div>
+          <div><dt><code>[xN]</code></dt><dd>how many times the line was keyed, until <code>[rl]</code>, <code>[gw]</code>, or <code>[ok]</code>. <code>[x1]</code> is the first send. With 3 retries the last copy is <code>[x4]</code>, then two more waits before <code>[no]</code>.</dd></div>
+        </dl>
         <p>In the desktop app, the <strong>key</strong> button above the chat lists these marks, and hovering a mark explains it. A line that reached you by radio also shows the SNR it was decoded at, for example <code>-4 dB</code>. <code>/snr off</code> hides it.</p>
         <p>The diagram is on the <a href="/docs/protocol.html#delivery-marks">wire protocol</a> page, under delivery marks.</p>
+      </div>
 
-        <h2>Signal reports and weather</h2>
+      <section class="article-section" aria-labelledby="reportsH">
+        <h2 id="reportsH">Signal reports and weather</h2>
         <ul>
           <li><code>/report CALL</code> asks that station for a signal report. A station on v0.1.109 or later answers on its own with the SNR it heard you at, at most once every 5 minutes per callsign. <code>/report auto off</code> stops yours answering. The request and the answer are private, so look in the CALL tab. <code>/report</code> is the radio signal; <code>/wx</code> is the weather.</li>
           <li><code>/wx</code> shows the weather for your grid square. <code>/wx CALL</code> sends it to CALL. It comes from Open-Meteo, so your station needs internet. The station receiving it does not.</li>
         </ul>
-      </div>
+      </section>
 
-      <h2>Words you will see</h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>Word</th><th>Meaning</th></tr>
-          </thead>
-          <tbody>
-            <tr><td><code>wcr</code></td><td>The WeeChat Radio program</td></tr>
-            <tr><td>callsign</td><td>Your ham ID, or a guest name like <code>~alice</code></td></tr>
-            <tr><td>grid</td><td>Short location code for the map</td></tr>
-            <tr><td>hub</td><td>The public internet meeting point</td></tr>
-            <tr><td>GUI</td><td>The window (<code>wcr gui</code>): live chat and email</td></tr>
-          </tbody>
-        </table>
-      </div>
+      <section class="article-section" aria-labelledby="wordsH">
+        <h2 id="wordsH">Words you will see</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Word</th><th>Meaning</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>wcr</code></td><td>The WeeChat Radio program</td></tr>
+              <tr><td>callsign</td><td>Your ham ID, or a guest name like <code>~alice</code></td></tr>
+              <tr><td>grid</td><td>Short location code for the map</td></tr>
+              <tr><td>hub</td><td>The public internet meeting point</td></tr>
+              <tr><td>GUI</td><td>The window (<code>wcr gui</code>): live chat and email</td></tr>
+            </tbody>
+          </table>
+        </div>
 
-      <p>The window uses the same indigo / orange look as this site. Change it later with <code>/radio theme hacker</code> or <code>/radio theme terminal</code>.</p>
+        <p>The window uses the same indigo / orange look as this site. Change it later with <code>/radio theme hacker</code> or <code>/radio theme terminal</code>.</p>
+      </section>
 
       <p class="next">Have a radio? <a href="/guides/radio.html">Pick a radio path</a>. More detail for <a href="/guides/windows.html">Windows</a>, <a href="/guides/macos.html">macOS</a>, or <a href="/guides/linux.html">Linux</a>.</p>
     </main>

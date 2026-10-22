@@ -21,7 +21,7 @@ There is no radio path between two frequencies, however strong the signals are. 
 
 Different frequencies (hub bridge)
 
-   (1) [ you ]          2m    144.950    radio
+   (1) [ you ]          2m    144.950    radio-plus
           |  RF
           v
    (2) [ gateway A ]    2m    internet-radio
@@ -33,7 +33,7 @@ Different frequencies (hub bridge)
    (4) [ gateway B ]    40m   internet-radio
           |  RF
           v
-   (5) [ them ]         40m   7.045      radio
+   (5) [ them ]         40m   7.045      radio-plus
 
 Each gateway is in internet-radio mode and stays on its own dial. The map ticker shows this as `2m -> 40m`.
 
