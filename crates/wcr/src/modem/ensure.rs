@@ -10,11 +10,23 @@ use std::sync::OnceLock;
 
 const PINNED_SHA256_JSON: &str = include_str!("../../../../third_party/modem73/sha256.json");
 
-/// Modem binaries shipped beside this wcr tag. Do not use `/releases/latest`:
-/// a newer tag would invalidate `third_party/modem73/sha256.json`.
-/// To move the pin: publish the new modem73 assets on a wcr release, recompute
-/// each SHA-256 into `third_party/modem73/sha256.json`, and set this tag.
-const MODEM73_RELEASE: &str = "v0.1.79";
+/// SHA-256 of this platform's modem73 asset, set by the release workflow
+/// from the exact file it bundles and uploads beside this wcr build.
+const RELEASE_MODEM73_SHA256: Option<&str> = option_env!("WCR_MODEM73_SHA256");
+
+/// Release builds download modem73 from their own tag, so the fallback is the
+/// same binary the release bundles. Other builds (cargo build, CI) use the
+/// older pin checked by `third_party/modem73/sha256.json`.
+/// Never `/releases/latest`: a newer tag would not match the hash.
+fn modem73_release() -> String {
+    if RELEASE_MODEM73_SHA256.is_some() {
+        format!("v{}", env!("CARGO_PKG_VERSION"))
+    } else {
+        DEV_MODEM73_RELEASE.to_string()
+    }
+}
+
+const DEV_MODEM73_RELEASE: &str = "v0.1.79";
 
 pub fn exe_name() -> &'static str {
     if cfg!(windows) {
@@ -150,9 +162,17 @@ fn is_writable_dir(dir: &Path) -> bool {
 
 async fn download(asset: &str, dest: &Path) -> Result<()> {
     let url = format!(
-        "https://github.com/thaum-labs/weechat-radio/releases/download/{MODEM73_RELEASE}/{asset}"
+        "https://github.com/thaum-labs/weechat-radio/releases/download/{}/{asset}",
+        modem73_release()
     );
-    let bytes = fetch_verified_bytes(&url).await?;
+    let bytes = match RELEASE_MODEM73_SHA256 {
+        Some(expected) => {
+            let bytes = fetch_bytes(&url).await?;
+            verify_sha256_hex(&bytes, expected)?;
+            bytes
+        }
+        None => fetch_verified_bytes(&url).await?,
+    };
     if asset.ends_with(".tar.gz") {
         unpack_tar_gz(&bytes, dest)?;
     } else {
@@ -199,6 +219,46 @@ async fn download_rfnexus_macos(dest: &Path) -> Result<()> {
     tracing::info!("downloading {url}");
     let bytes = fetch_verified_bytes(&url).await?;
     unpack_tar_gz(&bytes, dest)
+}
+
+/// modem73 has no `--version` and its control port does not report one. Its
+/// TUI title bar is the literal `" v" MODEM73_VERSION`, so that string sits
+/// in every build as `\0 v2.4.2\0`. Read it from the file on disk.
+pub fn binary_version(binary: &Path) -> Option<String> {
+    version_in(&std::fs::read(binary).ok()?)
+}
+
+fn version_in(bytes: &[u8]) -> Option<String> {
+    const MARK: &[u8] = b"\0 v";
+    let mut from = 0;
+    while let Some(at) = find(&bytes[from..], MARK) {
+        let start = from + at + MARK.len();
+        let rest = &bytes[start..];
+        let end = rest.iter().position(|b| *b == 0)?;
+        let text = std::str::from_utf8(&rest[..end]).unwrap_or("");
+        if looks_like_version(text) {
+            return Some(text.to_string());
+        }
+        from = start;
+    }
+    None
+}
+
+/// `2.4.2`, `2.4.3-rc1`: three dotted numbers, an optional short suffix.
+fn looks_like_version(text: &str) -> bool {
+    if text.len() > 24 {
+        return false;
+    }
+    let core = text.split(['-', '+']).next().unwrap_or("");
+    let parts: Vec<&str> = core.split('.').collect();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+}
+
+fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    hay.windows(needle.len()).position(|w| w == needle)
 }
 
 fn pinned_sha256_table() -> &'static HashMap<String, String> {
@@ -430,7 +490,17 @@ mod tests {
 
     #[test]
     fn modem_download_is_a_tagged_release() {
-        assert!(super::MODEM73_RELEASE.starts_with('v'));
-        assert!(!super::MODEM73_RELEASE.contains("latest"));
+        let tag = super::modem73_release();
+        assert!(tag.starts_with('v'));
+        assert!(!tag.contains("latest"));
+    }
+
+    #[test]
+    fn version_is_read_from_the_title_bar_string() {
+        let mut bin = b"\x7fELF junk\0 v1.2\0version 2.3>\0".to_vec();
+        bin.extend_from_slice(b"\0 v2.4.2\0more\0");
+        assert_eq!(super::version_in(&bin).as_deref(), Some("2.4.2"));
+        assert_eq!(super::version_in(b"\0 vdev\0"), None);
+        assert_eq!(super::version_in(b"nothing here"), None);
     }
 }
