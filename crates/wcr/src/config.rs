@@ -513,6 +513,37 @@ fn default_true() -> bool {
     true
 }
 
+/// Keys of `full` that `old` already has or whose value is not the default.
+fn sparse(full: &toml::Value, base: &toml::Value, old: &toml::Value) -> toml::Value {
+    let (Some(full), Some(base)) = (full.as_table(), base.as_table()) else {
+        return full.clone();
+    };
+    let empty = toml::Table::new();
+    let old = old.as_table().unwrap_or(&empty);
+    let mut out = toml::Table::new();
+    for (key, value) in full {
+        let default = base.get(key);
+        match (value, old.get(key)) {
+            (toml::Value::Table(_), kept) => {
+                let none = toml::Value::Table(toml::Table::new());
+                let inner = sparse(value, default.unwrap_or(&none), kept.unwrap_or(&none));
+                let has_keys = inner.as_table().is_some_and(|t| !t.is_empty());
+                if has_keys || kept.is_some() {
+                    out.insert(key.clone(), inner);
+                }
+            }
+            (_, Some(_)) => {
+                out.insert(key.clone(), value.clone());
+            }
+            (_, None) if default != Some(value) => {
+                out.insert(key.clone(), value.clone());
+            }
+            _ => {}
+        }
+    }
+    toml::Value::Table(out)
+}
+
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path)?;
@@ -531,7 +562,23 @@ impl Config {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let text = toml::to_string_pretty(self).map_err(|e| Error::config(e.to_string()))?;
+        let full = toml::Value::try_from(self).map_err(|e| Error::config(e.to_string()))?;
+        // An existing file keeps its own keys and only gains the ones that
+        // now differ from the default, so a short `-c` file stays short.
+        let value = match std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+        {
+            Some(old) => {
+                let mut base: Config = toml::from_str("")?;
+                base.normalize();
+                let base =
+                    toml::Value::try_from(&base).map_err(|e| Error::config(e.to_string()))?;
+                sparse(&full, &base, &old)
+            }
+            None => full,
+        };
+        let text = toml::to_string_pretty(&value).map_err(|e| Error::config(e.to_string()))?;
         std::fs::write(path, text)?;
         Ok(())
     }
@@ -684,6 +731,31 @@ mod tests {
         assert_eq!(cfg.startup_hold_s(), crate::relay::STARTUP_HOLD_S);
         cfg.modem.ptt = "vox".into();
         assert_eq!(cfg.startup_hold_s(), 0);
+    }
+
+    #[test]
+    fn save_keeps_a_short_file_short() {
+        // QA v0.1.110: one changed setting rewrote a -c file with ~110 lines.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wcr.toml");
+        std::fs::write(&path, "callsign = \"Q0RFA\"\n[modem]\nkiss_port = 8101\n").unwrap();
+        let mut cfg = Config::load(&path).unwrap();
+        cfg.rf.auto_report = false;
+        cfg.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.lines().count() < 10, "{text}");
+        let back = Config::load(&path).unwrap();
+        assert_eq!(back.callsign, "Q0RFA");
+        assert_eq!(back.modem.kiss_port, 8101);
+        assert!(!back.rf.auto_report);
+        assert_eq!(
+            toml::to_string(&back).unwrap(),
+            toml::to_string(&cfg).unwrap()
+        );
+        // A new file is still written in full.
+        let fresh = dir.path().join("new.toml");
+        cfg.save(&fresh).unwrap();
+        assert!(std::fs::read_to_string(&fresh).unwrap().lines().count() > 50);
     }
 
     #[test]
