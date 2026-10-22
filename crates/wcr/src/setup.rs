@@ -69,11 +69,9 @@ pub fn run_wizard() -> Result<Config> {
             .default(true)
             .interact()?;
         if accepted_detected {
-            // `.default` is only a hint. The field itself has to be filled or
-            // Enter stores an empty grid.
-            grid_prompt = grid_prompt
-                .default(hit.grid.clone())
-                .with_initial_text(hit.grid.clone());
+            // Shown as the default, not typed into the field: typing over it
+            // must replace the square, not add to it. Enter keeps it.
+            grid_prompt = grid_prompt.default(hit.grid.clone());
         }
     } else {
         println!(
@@ -82,14 +80,18 @@ pub fn run_wizard() -> Result<Config> {
                 .apply_to("Could not detect reliably — leave empty or type e.g. IO81UF",)
         );
     }
-    let typed: String = grid_prompt.interact_text()?;
-    let grid = match &guessed {
-        Some(hit) => grid_from_setup(accepted_detected, &hit.grid, &typed),
-        None => typed.trim().to_ascii_uppercase(),
+    // A bad square asks again instead of ending the wizard.
+    let grid = loop {
+        let typed: String = grid_prompt.clone().interact_text()?;
+        let grid = match &guessed {
+            Some(hit) => grid_from_setup(accepted_detected, &hit.grid, &typed),
+            None => typed.trim().to_ascii_uppercase(),
+        };
+        match crate::grid::normalize(&grid) {
+            Err(e) if !grid.is_empty() => println!("  {}", ui_style::dim().apply_to(e)),
+            _ => break grid,
+        }
     };
-    if !grid.is_empty() {
-        crate::grid::normalize(&grid)?;
-    }
 
     let paths = [
         "Internet only (no radio yet)",

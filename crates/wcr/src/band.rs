@@ -49,22 +49,28 @@ pub fn band_label(khz: u32) -> String {
     band_for_khz(khz).unwrap_or("?").into()
 }
 
-/// Parse an operator-typed MHz string (`144.950`, `7.045 MHz`) into kHz.
+/// Parse an operator-typed frequency into kHz. MHz is the norm (`144.950`,
+/// `7.045 MHz`); a bare number of 1000 or more is read as kHz (`14105`), and
+/// a `kHz` suffix always means kHz.
 pub fn parse_mhz(s: &str) -> Option<u32> {
-    let t = s
-        .trim()
-        .trim_end_matches(|c: char| {
-            c.is_ascii_whitespace() || matches!(c, 'm' | 'M' | 'h' | 'H' | 'z' | 'Z')
-        })
-        .trim();
+    let lower = s.trim().to_ascii_lowercase();
+    let (t, unit) = if let Some(t) = lower.strip_suffix("khz") {
+        (t.trim(), Some(1.0))
+    } else if let Some(t) = lower.strip_suffix("mhz") {
+        (t.trim(), Some(1000.0))
+    } else {
+        (lower.as_str(), None)
+    };
     if t.is_empty() {
         return None;
     }
-    let mhz: f64 = t.parse().ok()?;
-    if !(0.1..=10_000.0).contains(&mhz) {
+    let n: f64 = t.parse().ok()?;
+    let per_khz = unit.unwrap_or(if n >= 1000.0 { 1.0 } else { 1000.0 });
+    let khz = (n * per_khz).round();
+    if !(100.0..=10_000_000.0).contains(&khz) {
         return None;
     }
-    Some((mhz * 1000.0).round() as u32)
+    Some(khz as u32)
 }
 
 /// Format kHz as MHz with three decimal places (`144.950`, `7.045`).
@@ -432,6 +438,12 @@ mod tests {
         assert_eq!(parse_mhz("144.950"), Some(144950));
         assert_eq!(parse_mhz("7.045 MHz"), Some(7045));
         assert_eq!(parse_mhz(" 145.530mhz "), Some(145530));
+        // QA v0.1.111: `/freq 14105` was rejected. Big bare numbers are kHz.
+        assert_eq!(parse_mhz("14105"), Some(14105));
+        assert_eq!(parse_mhz("7045 kHz"), Some(7045));
+        assert_eq!(parse_mhz("1296 MHz"), Some(1_296_000));
+        assert_eq!(parse_mhz("0"), None);
+        assert_eq!(parse_mhz("abc"), None);
         assert_eq!(fmt_mhz(144950), "144.950");
         assert_eq!(fmt_mhz(7045), "7.045");
         assert_eq!(describe(144950), "144.950 MHz (2m)");

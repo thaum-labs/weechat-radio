@@ -4183,7 +4183,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             if let Some(mhz) = sp.next() {
                 match crate::band::parse_mhz(mhz) {
                     Some(khz) => set_manual_freq(rt, khz),
-                    None => "usage: /radio freq <MHz>  (example: 144.950)".into(),
+                    None => "usage: /radio freq <MHz or kHz>  (example: 144.950 or 14105)".into(),
                 }
             } else {
                 let s = snap.lock();
