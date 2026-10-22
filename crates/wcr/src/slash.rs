@@ -262,7 +262,7 @@ const COMMANDS: &[Cmd] = &[
     },
     Cmd {
         name: "freq",
-        usage: "/freq [MHz]",
+        usage: "/freq [MHz or kHz]",
         summary: "Show or set this station's frequency",
         args: &[],
         send_bare: true,

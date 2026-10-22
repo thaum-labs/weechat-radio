@@ -544,6 +544,56 @@ fn sparse(full: &toml::Value, base: &toml::Value, old: &toml::Value) -> toml::Va
     toml::Value::Table(out)
 }
 
+/// Write the keys of `wanted` into `doc`, touching only the ones whose value
+/// differs from `old` (the file as last read). Comments and order are kept.
+fn edit_in_place(
+    doc: &mut toml_edit::Table,
+    wanted: &toml::Value,
+    old: &toml::Value,
+) -> Result<()> {
+    let Some(wanted) = wanted.as_table() else {
+        return Ok(());
+    };
+    for (key, value) in wanted {
+        let before = old.get(key);
+        if before == Some(value) {
+            continue;
+        }
+        if let toml::Value::Table(_) = value {
+            let none = toml::Value::Table(toml::Table::new());
+            if !doc.get(key).is_some_and(|item| item.is_table()) {
+                doc.insert(key, toml_edit::Item::Table(toml_edit::Table::new()));
+            }
+            let table = doc[key.as_str()].as_table_mut().expect("just made a table");
+            edit_in_place(table, value, before.unwrap_or(&none))?;
+            continue;
+        }
+        let mut one = toml::Table::new();
+        one.insert(key.clone(), value.clone());
+        let text = toml::to_string(&one).map_err(|e| Error::config(e.to_string()))?;
+        let parsed = text
+            .parse::<toml_edit::Document>()
+            .map_err(|e| Error::config(e.to_string()))?;
+        let Some(mut item) = parsed.get(key).cloned() else {
+            continue;
+        };
+        // Replace only the value, so the key's comment lines and the line's
+        // trailing comment stay.
+        match doc.get_mut(key) {
+            Some(slot) => {
+                if let (Some(new), Some(prev)) = (item.as_value_mut(), slot.as_value()) {
+                    *new.decor_mut() = prev.decor().clone();
+                }
+                *slot = item;
+            }
+            None => {
+                doc.insert(key, item);
+            }
+        }
+    }
+    Ok(())
+}
+
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path)?;
@@ -564,21 +614,25 @@ impl Config {
         }
         let full = toml::Value::try_from(self).map_err(|e| Error::config(e.to_string()))?;
         // An existing file keeps its own keys and only gains the ones that
-        // now differ from the default, so a short `-c` file stays short.
-        let value = match std::fs::read_to_string(path)
-            .ok()
-            .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
-        {
-            Some(old) => {
+        // now differ from the default, so a short `-c` file stays short. It is
+        // edited in place, so comments and line order stay as written.
+        let existing = std::fs::read_to_string(path).ok().and_then(|text| {
+            let old = toml::from_str::<toml::Value>(&text).ok()?;
+            let doc = text.parse::<toml_edit::Document>().ok()?;
+            Some((old, doc))
+        });
+        let text = match existing {
+            Some((old, mut doc)) => {
                 let mut base: Config = toml::from_str("")?;
                 base.normalize();
                 let base =
                     toml::Value::try_from(&base).map_err(|e| Error::config(e.to_string()))?;
-                sparse(&full, &base, &old)
+                let wanted = sparse(&full, &base, &old);
+                edit_in_place(doc.as_table_mut(), &wanted, &old)?;
+                doc.to_string()
             }
-            None => full,
+            None => toml::to_string_pretty(&full).map_err(|e| Error::config(e.to_string()))?,
         };
-        let text = toml::to_string_pretty(&value).map_err(|e| Error::config(e.to_string()))?;
         std::fs::write(path, text)?;
         Ok(())
     }
@@ -756,6 +810,33 @@ mod tests {
         let fresh = dir.path().join("new.toml");
         cfg.save(&fresh).unwrap();
         assert!(std::fs::read_to_string(&fresh).unwrap().lines().count() > 50);
+    }
+
+    #[test]
+    fn save_keeps_comments_and_order() {
+        // QA v0.1.111: a hand comment vanished and keys were sorted A-Z.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wcr.toml");
+        let text = "# my station\ncallsign = \"Q0RFA\"\n\n[ui]\n# quiet\nshow_snr = false\n\n[modem]\nkiss_port = 8101 # B side\n";
+        std::fs::write(&path, text).unwrap();
+        let mut cfg = Config::load(&path).unwrap();
+        cfg.ui.show_snr = true;
+        cfg.rf.auto_report = false;
+        cfg.save(&path).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        let expected = text.replace("show_snr = false", "show_snr = true");
+        assert!(saved.starts_with(&expected), "{saved}");
+        assert!(
+            saved[expected.len()..].contains("auto_report = false"),
+            "{saved}"
+        );
+        let back = Config::load(&path).unwrap();
+        assert!(back.ui.show_snr);
+        assert!(!back.rf.auto_report);
+        assert_eq!(back.modem.kiss_port, 8101);
+        // Saving again with nothing changed leaves the file as it is.
+        back.save(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
     }
 
     #[test]
