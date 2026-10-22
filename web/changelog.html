@@ -50,6 +50,13 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v0.1.111</p>
+          <p>Thu, 22 Oct 2026</p>
+        </h3>
+        <pre>Desktop app: the / command list now lines up exactly with the typing box. With wcr -c FILE, changing a setting only adds what changed, so a short FILE stays short. The Radio+ log names the same mail in "get asked" and "fetched".</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>site</p>
           <p>Thu, 22 Oct 2026</p>
         </h3>
@@ -60,15 +67,7 @@
           <p>v0.1.110</p>
           <p>Thu, 22 Oct 2026</p>
         </h3>
-        <pre>Email on Radio+: Get now opens a progress window (asking the gateway, chunks received, fetched) and says "No reply from the gateway." if nothing comes back. Fetched mail no longer shows [ok] in the Inbox, and its time is when the mail arrived, not when you fetched it.
-
-Desktop app: Stop stops the station and keeps the window open, also on Windows. The / command list sits on a solid panel above the typing line, so every row is readable.
-
-Chat: a /report request heard on the radio is answered on the radio, not through the hub first. /report and /wx say the answer is private and lives in the CALL tab, and the help tells the two apart (signal report versus weather). Bare /report mentions /report auto on|off.
-
-Gateways: a private line addressed to the gateway itself is no longer passed to the hub. On the map, a station placed "via" a tower now shows its real mode, such as Radio+.
-
-Settings: with wcr -c FILE, settings changed by commands (/freq, /snr, /report auto and the rest) are saved to FILE, not the default wcr.toml.</pre>
+        <pre>Email on Radio+: Get shows a progress window and says so when the gateway does not answer; fetched mail shows the time it arrived. Desktop app: Stop keeps the window open, also on Windows. Chat: a /report heard on the radio is answered on the radio, and /report and /wx explain where the answer goes. Gateways keep private lines meant for them off the hub, and the map shows stations placed via a tower in their real mode. With wcr -c FILE, settings changed by commands are saved to FILE.</pre>
       </article>
       <article class="release">
         <h3 class="title">

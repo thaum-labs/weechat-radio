@@ -32,6 +32,10 @@ const DIM: Color32 = Color32::from_rgb(122, 115, 136);
 const LINE: Color32 = Color32::from_rgb(33, 40, 64);
 const GREEN: Color32 = Color32::from_rgb(57, 255, 20);
 const CODE: Color32 = Color32::from_rgb(18, 18, 24);
+/// Chat input's text margin (egui's default), so the `/` list can match its box.
+const INPUT_MARGIN: egui::Margin = egui::Margin::symmetric(4.0, 2.0);
+/// Padding inside the `/` command list.
+const PALETTE_PAD: f32 = 6.0;
 
 static TRAY_QUIT_ID: OnceLock<MenuId> = OnceLock::new();
 static TRAY_SHOW_ID: OnceLock<MenuId> = OnceLock::new();
@@ -2370,12 +2374,15 @@ impl eframe::App for GuiApp {
                             egui::TextEdit::singleline(&mut self.draft)
                                 .desired_width(ui.available_width() - 90.0)
                                 .hint_text("message in this channel, or /join /invite /part")
+                                .margin(INPUT_MARGIN)
                                 .font(FontId::monospace(14.0)),
                         );
                         if enter {
                             resp.request_focus();
                         }
-                        input_rect = Some(resp.rect);
+                        // egui hands back the text area; the drawn box is
+                        // the margin wider on each side.
+                        input_rect = Some(resp.rect + INPUT_MARGIN);
                         if ui
                             .add(
                                 egui::Button::new(RichText::new("send").color(ACCENT).monospace())
@@ -2482,7 +2489,8 @@ impl eframe::App for GuiApp {
                 if let (Some(input), false) = (input_rect, suggestions.is_empty()) {
                     let room = (input.top() - panel_top - 8.0).max(28.0);
                     let height = palette_h.min(room);
-                    let width = input.width().max(320.0);
+                    // Same edges as the input box (QA v0.1.110: 4–6 px off).
+                    let width = input.width() - 2.0 * PALETTE_PAD;
                     let mut pick = None;
                     egui::Area::new(egui::Id::new("slash_palette_popup"))
                         .order(egui::Order::Foreground)
@@ -2491,7 +2499,7 @@ impl eframe::App for GuiApp {
                             egui::Frame::none()
                                 .fill(SHELL)
                                 .stroke(hairline(ACCENT))
-                                .inner_margin(egui::Margin::same(6.0))
+                                .inner_margin(egui::Margin::same(PALETTE_PAD))
                                 .show(ui, |ui| {
                                     ui.set_width(width);
                                     ui.set_max_height(height);
