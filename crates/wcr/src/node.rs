@@ -50,6 +50,10 @@ struct IoSwap {
     drop_peer: bool,
 }
 
+/// Grid square, when it was heard, and the mode the station runs (from its
+/// beacon, else from the frame's internet flags).
+type HeardGrid = (String, u32, String);
+
 #[derive(Clone)]
 struct Runtime {
     cfg: Arc<Mutex<Config>>,
@@ -115,8 +119,9 @@ struct Runtime {
     retries_heard: Arc<Mutex<HashMap<MsgId, u32>>>,
     own_receipts: Arc<Mutex<HashMap<MsgId, u32>>>,
     /// Grid squares other stations sent over the air (beacon or receipt),
-    /// and when. The hub places radio-only stations from these.
-    heard_grids: Arc<Mutex<HashMap<String, (String, u32)>>>,
+    /// when, and the mode they run. The hub places radio-only stations from
+    /// these.
+    heard_grids: Arc<Mutex<HashMap<String, HeardGrid>>>,
     /// The grid our last receipt carried, and when.
     ack_grid_sent: Arc<Mutex<(String, u32)>>,
 }
@@ -1326,12 +1331,18 @@ fn answer_report_request(rt: &Runtime, from: &str, medium: &str, snr: Option<f32
     let rt = rt.clone();
     let from = from.to_string();
     let text = crate::signal_report::answer_text(medium, snr);
+    // A request heard on the air is answered on the air only: the report is
+    // about that path, and a gateway's hub copy beat the radio copy by a
+    // minute (QA v0.1.109).
+    let rf_only = medium == "rf";
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        match send_chat(&rt, &from, &text).await {
+        match send_chat_with(&rt, &from, &text, rf_only).await {
             Ok(()) => {
                 rt.irc
-                    .notice_all(&format!("signal report sent to {from}: {text}"))
+                    .notice_all(&format!(
+                        "signal report sent privately to {from} (see the {from} tab): {text}"
+                    ))
                     .await
             }
             Err(e) => {
@@ -1606,7 +1617,14 @@ async fn send_form(rt: &Runtime, target: &str, form: Form) -> Result<String> {
 }
 
 async fn send_chat(rt: &Runtime, target: &str, text: &str) -> Result<()> {
+    send_chat_with(rt, target, text, false).await
+}
+
+/// `rf_only` keeps the line on the radio: no hub or LAN copy, and a gateway
+/// that hears it leaves it there.
+async fn send_chat_with(rt: &Runtime, target: &str, text: &str, rf_only: bool) -> Result<()> {
     let cfg_g = rt.cfg.lock().clone();
+    let rf_only = rf_only && cfg_g.mode.uses_radio();
     let had_prefix = Priority::has_prefix(text);
     let (explicit, text) = Priority::parse_prefix(text);
     let origin = Callsign::parse(&cfg_g.callsign)?;
@@ -1665,17 +1683,21 @@ async fn send_chat(rt: &Runtime, target: &str, text: &str) -> Result<()> {
             rt.keys.sign_envelope(&mut env)?;
         }
         rt.store.insert(&env, Delivery::Queued)?;
-        if let Some(reason) = hub_refusal(rt) {
-            if !cfg_g.mode.uses_radio() {
-                rt.irc.notice_all(&reason).await;
-                rt.irc.tagmsg_delivery(&env.msg_id.hex(), "failed").await;
-                continue;
+        if rf_only {
+            dispatch_rf_at(rt, &env, 0, Duration::ZERO, 0).await?;
+        } else {
+            if let Some(reason) = hub_refusal(rt) {
+                if !cfg_g.mode.uses_radio() {
+                    rt.irc.notice_all(&reason).await;
+                    rt.irc.tagmsg_delivery(&env.msg_id.hex(), "failed").await;
+                    continue;
+                }
+                rt.irc
+                    .notice_all(&format!("{reason}. The radio copy was still keyed."))
+                    .await;
             }
-            rt.irc
-                .notice_all(&format!("{reason}. The radio copy was still keyed."))
-                .await;
+            dispatch(rt, &env).await?;
         }
-        dispatch(rt, &env).await?;
         rt.store.set_delivery(&env.msg_id, Delivery::Sent)?;
         if env.flags.req_ack() && cfg_g.mode.uses_radio() {
             let now = crate::proto::now_ts();
@@ -2898,8 +2920,24 @@ fn note_heard_grid(rt: &Runtime, env: &Envelope, medium: &str) {
     if let Some(g) = grid {
         rt.heard_grids.lock().insert(
             env.origin.as_str().to_ascii_uppercase(),
-            (g, crate::proto::now_ts()),
+            (g, crate::proto::now_ts(), heard_mode(env).to_string()),
         );
+    }
+}
+
+/// The mode a station heard on the air runs. Its beacon says so; otherwise
+/// the frame's flags tell a radio-plus station (internet allowed) from a
+/// radio one (QA v0.1.109: the hub showed a radio-plus /M as "radio").
+fn heard_mode(env: &Envelope) -> &'static str {
+    if env.kind == MsgType::Beacon {
+        if let Some(m) = crate::band::beacon_mode(&env.body) {
+            return m.as_str();
+        }
+    }
+    if env.flags.inet_ok() && !env.flags.no_inet() {
+        Mode::RadioPlus.as_str()
+    } else {
+        Mode::Radio.as_str()
     }
 }
 
@@ -3186,11 +3224,15 @@ fn relayed_next_to_origin(store: &Store, ack: &Envelope) -> bool {
 
 async fn forward_gateway(rt: &Runtime, env: &Envelope, medium: &str) -> Result<()> {
     let cfg_g = rt.cfg.lock().clone();
-    let upload = relay::may_inet_forward(
-        cfg_g.mode.is_gateway(),
-        env.flags.inet_ok(),
-        env.flags.no_inet(),
-    );
+    // A 1:1 frame addressed to this gateway has arrived; the hub has no one
+    // else to hand it to (QA v0.1.109: TF101 stored Q0RFA/M -> Q0RFB).
+    let to_us = !env.flags.group() && env.dest.as_str().eq_ignore_ascii_case(&rt.engine.our_call);
+    let upload = !to_us
+        && relay::may_inet_forward(
+            cfg_g.mode.is_gateway(),
+            env.flags.inet_ok(),
+            env.flags.no_inet(),
+        );
     if medium == "rf" && upload {
         if offer_hub(rt, env).await {
             mark_hub_forward(rt, env).await;
@@ -3369,11 +3411,13 @@ fn refresh_heard(rt: &Runtime) {
             .heard_grids
             .lock()
             .get(&h.callsign.to_ascii_uppercase())
-            .filter(|(_, at)| *at >= cutoff)
-            .map(|(g, _)| g.clone())
+            .filter(|(_, at, _)| *at >= cutoff)
+            .map(|(g, _, m)| (g.clone(), m.clone()))
             .unwrap_or_default();
+        let (grid, mode) = grid;
         briefs.push(crate::status::HeardBrief {
             grid,
+            mode,
             callsign: h.callsign,
             band,
             freq_khz: h.freq_khz,
@@ -3591,7 +3635,7 @@ fn parse_chan_meta_prio(body: &str) -> Option<Priority> {
 }
 
 fn persist_cfg(cfg: &Config) {
-    let _ = cfg.save(&Config::default_path());
+    let _ = cfg.save(&Config::active_path());
 }
 
 fn drain_io_swap(
@@ -4290,13 +4334,18 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             }
             let call = arg.to_ascii_uppercase();
             if call.is_empty() || call.starts_with('#') {
-                return "usage: /report CALL asks that station for a signal report".into();
+                return format!(
+                    "usage: /report CALL asks that station how well it hears you (a signal report, not weather); the answer comes back privately in the CALL tab. /report auto on|off turns your own automatic answers on or off (now {})",
+                    if cfg.lock().rf.auto_report { "on" } else { "off" }
+                );
             }
             rt.irc.begin_origin(client_id, &call);
             let sent = send_chat(rt, &call, crate::signal_report::REQUEST_TEXT).await;
             rt.irc.end_origin();
             match sent {
-                Ok(()) => format!("asked {call} for a signal report"),
+                Ok(()) => format!(
+                    "asked {call} for a signal report; the answer comes back privately (see the {call} tab)"
+                ),
                 Err(e) => format!("report request failed: {e}"),
             }
         }
@@ -4317,7 +4366,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             let sent = send_chat(rt, &call, &line).await;
             rt.irc.end_origin();
             match sent {
-                Ok(()) => format!("sent to {call}: {line}"),
+                Ok(()) => format!("weather sent privately to {call} (see the {call} tab): {line}"),
                 Err(e) => format!("weather send failed: {e}"),
             }
         }
@@ -4418,7 +4467,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             }
         }
         "" | "help" => {
-            "RADIO commands: mode preset tower status form group queue flush trace history freq qsy prio ptt checkin net mute theme activity snr update report wx. /report CALL asks for a signal report; /wx [CALL] sends the weather for your grid. Channels: /join #name (closed, +i)  /invite CALL (over-air notice from you)  /part /prio. /radio status shows relayed (every forwarded frame), unique (distinct messages), and groups (group_prios). /radio flush marks unacked outbound [no]."
+            "RADIO commands: mode preset tower status form group queue flush trace history freq qsy prio ptt checkin net mute theme activity snr update report wx. /report CALL asks a station how well it hears you (signal report); /wx shows the weather for your grid and /wx CALL sends it to that station. Both answers are private lines in the CALL tab. Channels: /join #name (closed, +i)  /invite CALL (over-air notice from you)  /part /prio. /radio status shows relayed (every forwarded frame), unique (distinct messages), and groups (group_prios). /radio flush marks unacked outbound [no]."
                 .into()
         }
         other => format!("unknown RADIO subcommand '{other}'. Try /radio help"),

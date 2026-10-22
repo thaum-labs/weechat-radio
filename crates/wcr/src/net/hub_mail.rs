@@ -218,7 +218,7 @@ impl MailHubDb {
         let mut out = Vec::new();
         for id in ids {
             let row = conn.query_row(
-                "SELECT id, from_addr, to_addr, subject, body FROM hub_mail
+                "SELECT id, from_addr, to_addr, subject, body, received FROM hub_mail
                  WHERE id = ?1 AND callsign = ?2 AND direction = 'in'",
                 params![id, callsign.to_ascii_uppercase()],
                 |r| {
@@ -228,6 +228,9 @@ impl MailHubDb {
                         "to": r.get::<_, String>(2)?,
                         "subject": r.get::<_, String>(3)?,
                         "body": r.get::<_, String>(4)?,
+                        // When the mail reached the hub: the Inbox shows this,
+                        // not when the station fetched it.
+                        "ts": r.get::<_, i64>(5)?,
                     }))
                 },
             );

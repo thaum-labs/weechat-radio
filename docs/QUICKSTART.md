@@ -64,8 +64,8 @@ In the desktop app, the **key** button above the chat lists these marks, and hov
 
 ## Signal reports and weather
 
-- `/report CALL` sends that station `SNR? Please send me a signal report.` A station on v0.1.109 or later answers on its own with the SNR it heard you at, for example `SNR -4 dB: your request reached me by radio at -4 dB.` It answers each callsign at most once every 5 minutes. `/report auto off` stops your station answering, and `/report auto on` turns it back on. An older station just shows the request as a normal line.
-- `/wx` shows the current weather at the centre of your grid square, for example `WX IO81UF 20:45Z: 12C, light rain, wind SW 15 km/h`. `/wx CALL` sends that line to CALL. The weather comes from Open-Meteo, so your station needs internet for this. The station receiving it does not.
+- `/report CALL` sends that station `SNR? Please send me a signal report.` A station on v0.1.109 or later answers on its own with the SNR it heard you at, for example `SNR -4 dB: your request reached me by radio at -4 dB.` It answers each callsign at most once every 5 minutes. `/report auto off` stops your station answering, and `/report auto on` turns it back on. An older station just shows the request as a normal line. The request and the answer are private lines, so they show in the CALL tab, not the open channel. A request heard on the radio is answered on the radio only. `/report` is about the radio signal, `/wx` is the weather.
+- `/wx` shows the current weather at the centre of your grid square, for example `WX IO81UF 20:45Z: 12C, light rain, wind SW 15 km/h`. `/wx CALL` sends that line privately to CALL (it shows in the CALL tab). The weather comes from Open-Meteo, so your station needs internet for this. The station receiving it does not.
 
 Routine retries wait 45s, then 90s, then 180s, then 360s twice with no further key, each ±25% (`retry_jitter`). Emergency is 8s / 16s / 32s / 64s twice. Priority is 20s / 40s / 80s / 160s twice. A busy channel can make the gap between copies longer than that band. `/radio flush` marks unacked outbound `[no]`. Rows older than one hour are not keyed again after a restart.
 
