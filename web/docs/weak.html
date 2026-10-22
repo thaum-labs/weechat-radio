@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -44,6 +45,13 @@
       <div class="sub" id="clock-local">LCL --:--</div>
     </div>
   </header>
+
+  <!-- Line icons for the "what you need" cards. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-app" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" /><path d="M7 10 L10 12.5 L7 15 M12 15 H17" /></symbol>
+    <symbol id="ico-radio" viewBox="0 0 24 24"><rect x="7" y="8" width="10" height="14" rx="1.5" /><path d="M15 8 V2 M10 15 H14 M10 18 H14" /></symbol>
+    <symbol id="ico-wave" viewBox="0 0 24 24"><path d="M2 12 Q6.5 4 11 12 T20 12 M20 12 H22" /></symbol>
+  </svg>
   <div class="page-wrap">
     <main class="page-panel">
       <p class="crumb"><a href="/docs.html">docs</a> / weak signals</p>
@@ -55,104 +63,164 @@
         <p>This build of <code>wcr</code> (v0.1.111) speaks protocol version 2, and so does the hub. Older nodes speak a different packet layout. Version 1 frames are still decoded, but every station that wants to talk on radio with this hub should run this build.</p>
       </div>
 
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 204" role="img" aria-labelledby="w1t w1d">
-            <title id="w1t">What happens on a faint path</title>
-            <desc id="w1d">A weak signal reaches modem73, which turns audio into a frame. WeeChat Radio retries, shrinks the packet, and asks modem73 for a tougher waveform, which changes what the radio sends next.</desc>
-            <defs>
-              <marker id="mrfW" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-              <marker id="maccW" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-            </defs>
-            <text class="tag" x="16" y="20">FAINT PATH · WHAT ADAPTS</text>
-            <line class="rf" marker-end="url(#mrfW)" x1="208" y1="90" x2="246" y2="90" />
-            <text class="sub" x="227" y="82" text-anchor="middle">audio</text>
-            <line class="rf" marker-end="url(#mrfW)" x1="442" y1="90" x2="480" y2="90" />
-            <text class="sub" x="461" y="82" text-anchor="middle">frame</text>
-            <path class="wire" marker-end="url(#maccW)" d="M584 118 V 158 H 111 V 118" />
-            <text class="sub" x="352" y="176" text-anchor="middle">retry · slower preset · smaller packet</text>
-            <rect class="box orange" x="16" y="64" width="190" height="54" />
-            <text class="on-orange" x="111" y="86" text-anchor="middle">faint radio</text>
-            <text class="sub" x="111" y="104" text-anchor="middle">noise · fade · clip</text>
-            <rect class="box" x="248" y="64" width="192" height="54" />
-            <text x="344" y="86" text-anchor="middle">modem73</text>
-            <text class="sub" x="344" y="104" text-anchor="middle">audio in, frame out</text>
-            <rect class="box accent" x="482" y="64" width="204" height="54" />
-            <text class="on-accent" x="584" y="86" text-anchor="middle">wcr</text>
-            <text class="sub" x="584" y="104" text-anchor="middle">decides what to send next</text>
-          </svg>
+      <div class="pair">
+        <section class="article-section article-section--first" aria-labelledby="needH">
+          <h2 id="needH">What you need</h2>
+          <ul class="cards">
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-app" /></svg>
+              <strong>This build of <code>wcr</code></strong>
+            </li>
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-radio" /></svg>
+              <strong>A radio path that already works on a clear signal.</strong>
+              <span>See <a href="/guides/radio.html">radio setup</a>.</span>
+            </li>
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-wave" /></svg>
+              <strong>For HF: start with <code>hf-poor</code>.</strong>
+              <span>Drop to <code>hf-weak</code> or <code>hf-deep</code> only if frames keep failing.</span>
+            </li>
+          </ul>
+        </section>
+
+        <figure class="diagram">
+          <div class="dgm-wrap">
+            <svg class="dgm fit" viewBox="0 0 440 238" role="img" aria-labelledby="w1t w1d">
+              <title id="w1t">What happens on a faint path</title>
+              <desc id="w1d">A faint signal reaches modem73 as audio, and modem73 turns it into a frame for wcr. If no ACK comes back, wcr retries on a slower, tougher waveform; a good signal report in an ACK steps it back up. That changes what the radio sends next.</desc>
+              <defs>
+                <marker id="maccW" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
+                </marker>
+              </defs>
+
+              <rect class="box orange" x="10" y="12" width="250" height="52" />
+              <text class="on-orange" x="135" y="34" text-anchor="middle">faint radio</text>
+              <text class="sub" x="135" y="52" text-anchor="middle">noise · fade · clip</text>
+
+              <line class="wire" marker-end="url(#maccW)" x1="135" y1="64" x2="135" y2="92" />
+              <text class="sub" x="143" y="82">audio</text>
+
+              <rect class="box" x="10" y="94" width="250" height="52" />
+              <text x="135" y="116" text-anchor="middle">modem73</text>
+              <text class="sub" x="135" y="134" text-anchor="middle">audio in, frame out</text>
+
+              <line class="wire" marker-end="url(#maccW)" x1="135" y1="146" x2="135" y2="174" />
+              <text class="sub" x="143" y="164">frame</text>
+
+              <rect class="box accent" x="10" y="176" width="250" height="52" />
+              <text class="on-accent" x="135" y="198" text-anchor="middle">wcr</text>
+              <text class="sub" x="135" y="216" text-anchor="middle">decides what to send next</text>
+
+              <path class="wire" marker-end="url(#maccW)" d="M260 202 H296 V38 H262" />
+              <text class="sub" x="306" y="56">next send</text>
+              <text class="sub on-orange" x="306" y="96">no ACK:</text>
+              <text class="sub" x="306" y="111">retry on a</text>
+              <text class="sub" x="306" y="126">slower waveform</text>
+              <text class="sub on-gw" x="306" y="160">good report:</text>
+              <text class="sub" x="306" y="175">step back up</text>
+            </svg>
+          </div>
+          <figcaption>The sound program decodes the signal. WeeChat Radio retries, shrinks the packet, and asks modem73 for a tougher waveform.</figcaption>
+        </figure>
+      </div>
+
+      <section class="article-section" aria-labelledby="presetsH">
+        <h2 id="presetsH">Presets</h2>
+        <p class="section-lead">Each preset is a sound speed. On HF, go slower only when the faster one keeps failing.</p>
+        <div class="flow flow--ladder" aria-hidden="true">
+          <div class="flow-chip is-start">
+            <svg viewBox="0 0 78 16"><path d="M0 8 q6.5 -7 13 0 t13 0 t13 0 t13 0 t13 0 t13 0" /></svg>
+            <code>hf-poor</code>
+            <span>RDM-600S · start here</span>
+          </div>
+          <div class="flow-step">
+            <span>frames keep failing</span>
+            <span class="flow-step__arrow">→</span>
+          </div>
+          <div class="flow-chip">
+            <svg viewBox="0 0 78 16"><path d="M0 8 q9.75 -7 19.5 0 t19.5 0 t19.5 0 t19.5 0" /></svg>
+            <code>hf-weak</code>
+            <span>RDM-300S · the other station is faint</span>
+          </div>
+          <div class="flow-step">
+            <span>nothing decodes after several tries</span>
+            <span class="flow-step__arrow">→</span>
+          </div>
+          <div class="flow-chip">
+            <svg viewBox="0 0 78 16"><path d="M0 8 q19.5 -7 39 0 t39 0" /></svg>
+            <code>hf-deep</code>
+            <span>MFSK-32R · last resort, short messages only</span>
+          </div>
         </div>
-        <figcaption>The sound program decodes the signal. WeeChat Radio retries, shrinks the packet, and asks modem73 for a tougher waveform.</figcaption>
-      </figure>
+        <p>Switch with <code>/radio preset &lt;name&gt;</code> or <code>/preset &lt;name&gt;</code> in the window. <strong>First mode</strong> is what the status bar <strong>TX</strong> field shows on the first key-up. A missed ACK steps down that list and stops at the last one.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Preset</th><th>First mode</th><th>If it retries</th><th>Use when</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>vhf-fm</code></td><td>OFDM QPSK 1/2</td><td>RDM-1200S, RDM-600S, RDM-300S</td><td>Local VHF/UHF FM, a clean signal</td></tr>
+              <tr><td><code>hf-good</code></td><td>OFDM QPSK 1/2</td><td>RDM-1200S, RDM-600S, RDM-300S</td><td>Steady HF SSB</td></tr>
+              <tr><td><code>hf-poor</code></td><td>RDM-600S</td><td>RDM-300S, then MFSK-32R</td><td>Fading HF / NVIS (the usual HF calling preset)</td></tr>
+              <tr><td><code>hf-weak</code></td><td>RDM-300S</td><td>MFSK-32R</td><td>The other station is faint</td></tr>
+              <tr><td><code>hf-deep</code></td><td>MFSK-32R</td><td>Stays on MFSK-32R</td><td>Last resort. Very slow. Short messages only</td></tr>
+              <tr><td><code>vox-safe</code></td><td>RDM-600S</td><td>Stays on RDM-600S</td><td>Any radio keyed by VOX. Long lead so the radio is keyed before data</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>The receiver hears all of these at once. You can send <code>hf-weak</code> while they are still set to <code>hf-poor</code>.</p>
+      </section>
 
-      <div class="need">
-        <h2>What you need</h2>
-        <ul>
-          <li>This build of <code>wcr</code></li>
-          <li>A radio path that already works on a clear signal. See <a href="/guides/radio.html">radio setup</a>.</li>
-          <li>For HF: start with <code>hf-poor</code>. Drop to <code>hf-weak</code> or <code>hf-deep</code> only if frames keep failing.</li>
-        </ul>
-      </div>
+      <section class="article-section" aria-labelledby="doesH">
+        <h2 id="doesH">What the program does for you</h2>
+        <ol>
+            <li>If nobody ACKs your message, it sends it again (three tries by default).</li>
+            <li>Each retry uses a slower, tougher waveform. The status bar <strong>TX</strong> field shows the current one (for example <code>RDM-300S</code>).</li>
+            <li><strong>RETRY</strong> counts how many extra sends have gone out.</li>
+            <li>When an ACK comes back, it includes how strong they heard you. A good report steps the waveform back up.</li>
+            <li>Lines that start with <code>!!</code> (emergency) go out twice, a moment apart, so a fade is less likely to take both.</li>
+            <li>Group chat on HF is split into pieces. Any two of three pieces rebuild the message. If several internet gateways each hear a different piece, the hub stitches them.</li>
+            <li>If the frequency is already busy, the program waits for a gap (status bar <strong>PTT</strong> reads <code>wait</code>). A station’s first three beacons go about a minute apart, then one every 5 minutes. A due beacon waits until an exchange in progress is over (a line and its receipt, a mail and its acceptance), for one exchange at most, and goes ahead of this station’s own queued lines. High occupancy holds it only while frames are being decoded. The countdown shows that time: <code>after exchange</code>, <code>pending</code> until the beacon reaches the modem, and <code>busy</code> while a decoded frame is still fresh. Lines sent in the first <code>rf.startup_hold_s</code> seconds after start (120) wait until another station has been heard (not on VOX, which sends no beacons). Group ACKs and retries are staggered so they do not all key at once. <code>#bulletin</code> stops at <code>[ok]</code>. When the retries are used up the line waits two more intervals, then shows <code>[no]</code>.</li>
+        </ol>
+      </section>
 
-      <h2>Presets</h2>
-      <p>Switch with <code>/radio preset &lt;name&gt;</code> or <code>/preset &lt;name&gt;</code> in the window. <strong>First mode</strong> is what the status bar <strong>TX</strong> field shows on the first key-up. A missed ACK steps down that list and stops at the last one.</p>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>Preset</th><th>First mode</th><th>If it retries</th><th>Use when</th></tr>
-          </thead>
-          <tbody>
-            <tr><td><code>vhf-fm</code></td><td>OFDM QPSK 1/2</td><td>RDM-1200S, RDM-600S, RDM-300S</td><td>Local VHF/UHF FM, a clean signal</td></tr>
-            <tr><td><code>hf-good</code></td><td>OFDM QPSK 1/2</td><td>RDM-1200S, RDM-600S, RDM-300S</td><td>Steady HF SSB</td></tr>
-            <tr><td><code>hf-poor</code></td><td>RDM-600S</td><td>RDM-300S, then MFSK-32R</td><td>Fading HF / NVIS (the usual HF calling preset)</td></tr>
-            <tr><td><code>hf-weak</code></td><td>RDM-300S</td><td>MFSK-32R</td><td>The other station is faint</td></tr>
-            <tr><td><code>hf-deep</code></td><td>MFSK-32R</td><td>Stays on MFSK-32R</td><td>Last resort. Very slow. Short messages only</td></tr>
-            <tr><td><code>vox-safe</code></td><td>RDM-600S</td><td>Stays on RDM-600S</td><td>Any radio keyed by VOX. Long lead so the radio is keyed before data</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p>The receiver hears all of these at once. You can send <code>hf-weak</code> while they are still set to <code>hf-poor</code>.</p>
+      <section class="article-section" aria-labelledby="busyH">
+        <h2 id="busyH">Busy channel</h2>
+        <p>modem73 carrier-sense is on for every preset. On top of that, <code>wcr</code> keeps a single air queue: one frame (or fragment burst) at a time, emergency first, then ACKs, then your chat, then relays, then beacons.</p>
+        <p><strong>OCC</strong> in the station panel is channel occupancy 0–100. <code>wait</code> means a frame is queued until the channel is idle. After the defer cap it is handed to the modem anyway: 3 seconds for an emergency or an ACK, 15 seconds for chat and relays. An ACK is then keyed with the modem's carrier sense off. Chat and relays can still be held by a carrier the modem hears.</p>
+      </section>
 
-      <h2>What the program does for you</h2>
-      <ol>
-        <li>If nobody ACKs your message, it sends it again (three tries by default).</li>
-        <li>Each retry uses a slower, tougher waveform. The status bar <strong>TX</strong> field shows the current one (for example <code>RDM-300S</code>).</li>
-        <li><strong>RETRY</strong> counts how many extra sends have gone out.</li>
-        <li>When an ACK comes back, it includes how strong they heard you. A good report steps the waveform back up.</li>
-        <li>Lines that start with <code>!!</code> (emergency) go out twice, a moment apart, so a fade is less likely to take both.</li>
-        <li>Group chat on HF is split into pieces. Any two of three pieces rebuild the message. If several internet gateways each hear a different piece, the hub stitches them.</li>
-        <li>If the frequency is already busy, the program waits for a gap (status bar <strong>PTT</strong> reads <code>wait</code>). A station’s first three beacons go about a minute apart, then one every 5 minutes. A due beacon waits until an exchange in progress is over (a line and its receipt, a mail and its acceptance), for one exchange at most, and goes ahead of this station’s own queued lines. High occupancy holds it only while frames are being decoded. The countdown shows that time: <code>after exchange</code>, <code>pending</code> until the beacon reaches the modem, and <code>busy</code> while a decoded frame is still fresh. Lines sent in the first <code>rf.startup_hold_s</code> seconds after start (120) wait until another station has been heard (not on VOX, which sends no beacons). Group ACKs and retries are staggered so they do not all key at once. <code>#bulletin</code> stops at <code>[ok]</code>. When the retries are used up the line waits two more intervals, then shows <code>[no]</code>.</li>
-      </ol>
+      <section class="article-section" aria-labelledby="stepsH">
+        <h2 id="stepsH">Steps (HF fading)</h2>
+        <ol class="steps">
+          <li>
+            <strong class="step-title">Check audio first</strong>
+            <p>Confirm audio is <strong>good</strong>, not <strong>low</strong> or <strong>hot</strong>. Distortion is worse than a weak but clean signal.</p>
+          </li>
+          <li>
+            <strong class="step-title">Start on hf-poor</strong>
+            <p>Set a starting preset:</p>
+            <pre>/radio preset hf-poor</pre>
+          </li>
+          <li>
+            <strong class="step-title">Test one line</strong>
+            <p>Send a short test to a station you can already hear, or to <code>#bulletin</code>.</p>
+          </li>
+          <li>
+            <strong class="step-title">Let it step down</strong>
+            <p>Watch the status bar. If <strong>RETRY</strong> climbs, <strong>TX</strong> steps down the list in the table above (on <code>hf-poor</code> that is RDM-600S → RDM-300S → MFSK-32R). Leave it.</p>
+          </li>
+          <li>
+            <strong class="step-title">Go slower by hand</strong>
+            <p>If nothing decodes after several tries, set <code>hf-weak</code> yourself, then <code>hf-deep</code> for a one-line check.</p>
+          </li>
+        </ol>
+      </section>
 
-      <h2>Busy channel</h2>
-      <p>modem73 carrier-sense is on for every preset. On top of that, <code>wcr</code> keeps a single air queue: one frame (or fragment burst) at a time, emergency first, then ACKs, then your chat, then relays, then beacons.</p>
-      <p><strong>OCC</strong> in the station panel is channel occupancy 0–100. <code>wait</code> means a frame is queued until the channel is idle. After the defer cap it is handed to the modem anyway: 3 seconds for an emergency or an ACK, 15 seconds for chat and relays. An ACK is then keyed with the modem's carrier sense off. Chat and relays can still be held by a carrier the modem hears.</p>
-
-      <h2>Steps (HF fading)</h2>
-      <ol class="steps">
-        <li>
-          <p>Confirm audio is <strong>good</strong>, not <strong>low</strong> or <strong>hot</strong>. Distortion is worse than a weak but clean signal.</p>
-        </li>
-        <li>
-          <p>Set a starting preset:</p>
-          <pre>/radio preset hf-poor</pre>
-        </li>
-        <li>
-          <p>Send a short test to a station you can already hear, or to <code>#bulletin</code>.</p>
-        </li>
-        <li>
-          <p>Watch the status bar. If <strong>RETRY</strong> climbs, <strong>TX</strong> steps down the list in the table above (on <code>hf-poor</code> that is RDM-600S → RDM-300S → MFSK-32R). Leave it.</p>
-        </li>
-        <li>
-          <p>If nothing decodes after several tries, set <code>hf-weak</code> yourself, then <code>hf-deep</code> for a one-line check.</p>
-        </li>
-      </ol>
-
-      <h2>Knobs in <code>wcr.toml</code></h2>
+      <section class="article-section" aria-labelledby="knobsH">
+        <h2 id="knobsH">Knobs in <code>wcr.toml</code></h2>
       <pre class="plain">[rf]
 max_retries = 3       # extra sends. [x4] is the last copy, then two waits before [no]
 frag_k = 2            # pieces of data
@@ -170,6 +238,7 @@ beacon_jitter_s = 15
 retry_jitter = true   # routine waits 45s, 90s, 180s, then 360s twice before [no], each × 0.75–1.25
 startup_hold_s = 120  # own lines wait until another station is heard. 0 sends at once. None on VOX
 outbound_max_age_secs = 3600  # older unacked outbound is [no], including after restart</pre>
+      </section>
 
       <div class="ok">
         <h2>How you know it worked</h2>
