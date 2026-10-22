@@ -50,17 +50,18 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
-          <p>v0.1.108</p>
+          <p>v0.1.109</p>
           <p>Wed, 21 Oct 2026</p>
         </h3>
-        <pre>The chat has a key button that explains the marks after each line, like [tx], [rl] and [ok]. Lines that reached you by radio show the SNR they were heard at (/snr off hides it). /report CALL asks a station for a signal report, and stations answer on their own, at most once every 5 minutes per callsign. /wx sends a one-line weather report for your grid square.</pre>
-      </article>
-      <article class="release">
-        <h3 class="title">
-          <p>v0.1.107</p>
-          <p>Wed, 21 Oct 2026</p>
-        </h3>
-        <pre>VOX now sends with RDM-600S, the same waveform as hf-poor, because the old slow MFSK mode was heard but never decoded over a speaker and mic. It keeps the long lead so your radio is keyed before the data starts, and older stations still hear it. On Windows, Stop and Quit no longer print "OpenService FAILED" in the console.</pre>
+        <pre>Email: pressing Send opens a progress window that follows the real steps (on the air, chunks at the gateway, accepted by Resend, delivered) and keeps you on that screen until it says Success. The hub now asks Resend whether each mail was delivered, and the Sent list shows delivered, bounced or delayed. On Radio+, a waiting mail clears once Get brings it in, and a waiting line can be deleted.
+
+On the move: plug in a USB GPS and pick its port under GPS in setup. Your grid then follows you to about 500 m. Beacons and receipts carry it, your home tower passes it to the hub, and the map shows /M, /P, /MM or /AM stations with a small tag and "via" the tower that heard them.
+
+Chat: a key button explains the marks after each line, like [tx], [rl] and [ok]. Lines that reached you by radio show their SNR (/snr off hides it). /report CALL asks a station for a signal report, and stations answer on their own, at most once every 5 minutes per callsign. /wx sends a one-line weather report for your grid square.
+
+VOX now sends with RDM-600S, the same waveform as hf-poor, because the old slow MFSK mode was heard but never decoded over a speaker and mic. It keeps the long lead, and older stations still hear it. The setup page no longer has its own Freq box: FREQ on the main page is the one place to set the frequency. On Windows, Stop and Quit no longer print "OpenService FAILED" in the console.
+
+Map: the 24H TAPE has a speed button next to Play: 1x (the day in about 15 s), ½x or ¼x.</pre>
       </article>
       <article class="release">
         <h3 class="title">
