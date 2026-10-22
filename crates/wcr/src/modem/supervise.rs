@@ -132,6 +132,13 @@ impl ModemProcess {
         if let Some(parent) = binary.parent() {
             ensure::strip_quarantine(&parent.join("libs"));
         }
+        // Extra decode attempt on a failed ROBUST frame (Tobias, #96). Receive
+        // only, so it cannot make sending worse.
+        if preset.is_robust()
+            && ensure::binary_version(&binary).is_some_and(|v| ensure::has_robust_retry(&v))
+        {
+            args.push("--robust-enhanced-retry".into());
+        }
         if let Some(call) = modem_callsign(&cfg.callsign) {
             args.extend(["--callsign".into(), call]);
         }
