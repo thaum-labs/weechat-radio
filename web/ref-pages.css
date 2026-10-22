@@ -1,0 +1,47 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Reference pages (docs/api.html, docs/deploy.html). Loaded after styles.css and docs.css.
+   .ref-pair: a column of cards beside a static diagram drawn to fit a phone (viewBox ~440 wide).
+   Stacks on phones. */
+
+.page-ref .ref-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 440px);
+  gap: 18px;
+  align-items: start;
+}
+.page-ref .ref-pair > figure.diagram,
+.page-ref .ref-pair > .article-section { margin: 0; }
+.page-ref .ref-pair + .article-section { margin-top: 36px; }
+.page-ref .ref-pair .cards {
+  grid-template-columns: minmax(0, 1fr);
+  margin-top: 0;
+}
+@media (max-width: 760px) {
+  .page-ref .ref-pair { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* These diagrams fit a phone, so skip the shared 620px scroll width. */
+.page-ref svg.dgm { min-width: 0; }
+.page-ref svg.dgm .sub { font-size: 11px; }
+
+/* Read table: on phones each row becomes a small block, path above what you get. */
+@media (max-width: 600px) {
+  .page-ref .ref-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .page-ref .ref-table tr {
+    display: block;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(125, 155, 255, 0.12);
+  }
+  .page-ref .ref-table td {
+    display: block;
+    padding: 2px 4px;
+    border: 0;
+  }
+  .page-ref .ref-table td:first-child code { white-space: nowrap; }
+}
