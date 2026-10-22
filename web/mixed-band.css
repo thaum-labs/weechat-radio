@@ -1,0 +1,466 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Mixed-band article only (docs/mixed-band.html).
+   Tokens, .dgm diagram basics, .dgm-key and .warn-box come from styles.css. */
+
+.article-mixed {
+  --body: #c8c0d8;
+  --panel: #050509;
+  --panel-raised: #0a0a10;
+}
+.article-mixed .lead,
+.article-mixed .section-lead,
+.article-mixed .path-note,
+.article-mixed figcaption {
+  color: var(--body);
+}
+
+.article-kicker {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.article-mixed .article-section { margin: 44px 0; }
+.article-mixed .article-section > h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+.article-mixed .section-lead {
+  margin: 0 0 16px;
+  font-size: 14px;
+  line-height: 1.55;
+  max-width: 46rem;
+}
+
+/* --- three steps a line takes ------------------------------------------ */
+
+.article-mixed .path-steps {
+  list-style: none;
+  counter-reset: pathstep;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 22px 0 0;
+  padding: 0;
+}
+.article-mixed .path-steps li {
+  counter-increment: pathstep;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--step);
+  background: var(--panel);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--body);
+}
+.article-mixed .path-steps li::before {
+  content: counter(pathstep);
+  display: block;
+  width: 22px;
+  height: 22px;
+  margin-bottom: 10px;
+  border: 1px solid var(--step);
+  color: var(--step);
+  text-align: center;
+  line-height: 20px;
+  font-size: 12px;
+}
+.article-mixed .path-steps strong {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--fg);
+}
+.path-steps .step-rf { --step: var(--orange); }
+.path-steps .step-gw { --step: var(--mode-internet-radio); }
+.path-steps .step-hub { --step: var(--mode-internet); }
+.article-mixed code.code-wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 720px) {
+  .article-mixed .path-steps { grid-template-columns: minmax(0, 1fr); }
+  .article-mixed .path-steps li {
+    position: relative;
+    padding-left: 50px;
+  }
+  .article-mixed .path-steps li::before {
+    position: absolute;
+    left: 14px;
+    top: 14px;
+    margin: 0;
+  }
+}
+
+/* --- live figure: band diagram + #field thread ------------------------- */
+
+.mb-live {
+  display: grid;
+  grid-template-columns: minmax(0, 420px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+}
+@media (max-width: 760px) {
+  .mb-live { grid-template-columns: minmax(0, 1fr); }
+}
+.mb-bands-wrap {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+/* Built to fit a phone, so skip the shared 620px scroll width for diagrams. */
+svg.dgm.mb-bands { min-width: 0; }
+
+svg.mb-bands text { font-size: 12.5px; }
+svg.mb-bands .sub { font-size: 10.5px; }
+svg.mb-bands .on-rf { fill: var(--orange); }
+svg.mb-bands .band { font-size: 11.5px; fill: var(--fg); }
+svg.mb-bands .lane-bg {
+  fill: rgba(125, 155, 255, 0.03);
+  stroke: var(--line);
+  stroke-dasharray: 3 5;
+}
+svg.mb-bands .box.internet { stroke: var(--mode-internet); }
+svg.mb-bands .rf,
+svg.mb-bands .net { stroke-width: 1.6; }
+
+/* Dim everything off the current route so the path reads at a glance. */
+svg.mb-bands .seg,
+svg.mb-bands [data-node] { transition: opacity 0.3s ease; }
+.mb-live.has-route svg.mb-bands .seg:not(.is-live) { opacity: 0.2; }
+.mb-live.has-route svg.mb-bands [data-node]:not(.is-live) { opacity: 0.4; }
+svg.mb-bands .seg.is-live .rf,
+svg.mb-bands .seg.is-live .net { stroke-width: 2.4; }
+svg.mb-bands .is-live .box { transition: fill 0.3s ease; }
+svg.mb-bands .is-live .box.rplus { fill: rgba(255, 77, 255, 0.14); }
+svg.mb-bands .is-live .box.gw { fill: rgba(57, 255, 20, 0.11); }
+svg.mb-bands .is-live .box.hub,
+svg.mb-bands .is-live .box.internet { fill: rgba(0, 229, 255, 0.1); }
+
+/* Packet: one short dash run along the path. --len is set by the script;
+   --leg delays later hops so the packet goes RF first, then TLS. */
+svg.mb-bands .pkt {
+  fill: none;
+  stroke-width: 4.5;
+  stroke-linecap: round;
+  stroke-dasharray: 12 2000;
+  stroke-dashoffset: 14;
+  opacity: 0;
+}
+svg.mb-bands .seg-rf .pkt {
+  stroke: #ffd6c4;
+  filter: drop-shadow(0 0 4px var(--orange));
+}
+svg.mb-bands .seg-net .pkt {
+  stroke: #ccfaff;
+  filter: drop-shadow(0 0 4px var(--mode-internet));
+}
+@media (prefers-reduced-motion: no-preference) {
+  svg.mb-bands .seg.is-live .pkt {
+    opacity: 1;
+    animation: mb-packet 0.9s ease-in-out calc(var(--leg, 0) * 0.9s) both;
+  }
+  .mb-live.is-down svg.mb-bands .seg.is-live .pkt { animation-direction: reverse; }
+}
+@keyframes mb-packet {
+  from { stroke-dashoffset: 14; }
+  to { stroke-dashoffset: calc(-1px * var(--len, 200)); }
+}
+
+/* #field buffer, styled after a WeeChat window */
+.mb-thread {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+.mb-thread__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: #08080d;
+}
+.article-mixed .mb-thread__title {
+  margin: 0;
+  font-size: 13px;
+  color: var(--accent);
+}
+.mb-thread__title span {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--dim);
+}
+.mb-thread__controls { display: flex; gap: 6px; }
+.article-mixed .mb-thread__status {
+  margin: 0;
+  padding: 8px 12px 2px;
+  min-height: 2.1em;
+  font-size: 11px;
+  color: var(--dim);
+}
+.article-mixed .mb-lines {
+  list-style: none;
+  margin: 0;
+  padding: 2px 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.article-mixed .mb-line {
+  margin: 0;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(6px);
+  transition: opacity 0.35s ease, transform 0.35s ease, visibility 0s linear 0.35s;
+}
+.article-mixed .mb-line.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+.mb-line__btn {
+  display: grid;
+  grid-template-columns: 7.2rem minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 3px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+.mb-line__btn:hover { background: rgba(125, 155, 255, 0.05); }
+.mb-line__btn:focus-visible { outline: 1px solid var(--orange); outline-offset: -1px; }
+.mb-line.is-highlight .mb-line__btn {
+  border-color: var(--accent);
+  background: rgba(125, 155, 255, 0.08);
+}
+.mb-line__who {
+  grid-row: span 2;
+  padding-right: 10px;
+  border-right: 1px solid var(--line);
+  text-align: right;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.mb-who--rplus { color: var(--mode-radio-plus); }
+.mb-who--net { color: var(--mode-internet); }
+.mb-who--gw { color: var(--mode-internet-radio); }
+.mb-line__path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--dim);
+}
+.mb-line__path i {
+  display: inline-block;
+  width: 16px;
+  height: 0;
+  border-top: 2px solid var(--orange);
+  flex: none;
+}
+.mb-line__path i.k-net { border-top-color: var(--mode-internet); }
+@media (prefers-reduced-motion: reduce) {
+  .article-mixed .mb-line { transition: none; transform: none; }
+}
+
+.btn-replay {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 5px 11px;
+  border: 1px solid var(--accent);
+  background: #0a0a12;
+  color: var(--accent);
+  cursor: pointer;
+}
+.btn-replay:hover {
+  border-color: var(--orange);
+  color: var(--orange);
+}
+
+.mb-key { margin-bottom: 4px; }
+.article-mixed .mb-key code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.mb-key .key-wave {
+  width: 20px;
+  height: 8px;
+  flex: none;
+  fill: none;
+  stroke: var(--orange);
+  stroke-width: 1.6;
+}
+
+.article-mixed .path-note {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--mode-internet-radio);
+  background: var(--panel);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+/* --- station settings, one lane per dial ------------------------------- */
+
+.dial-lanes {
+  display: grid;
+  gap: 12px;
+}
+.dial-lane {
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.35);
+}
+.article-mixed .dial-lane__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--fg);
+}
+.dial-lane__meta {
+  font-size: 12px;
+  color: var(--dim);
+}
+.dial-lane__pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 60px minmax(0, 1fr);
+  align-items: stretch;
+}
+.dial-lane__link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--orange);
+}
+.dial-lane__link svg {
+  width: 48px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+}
+.dial-lane__link--net { color: var(--mode-internet); }
+
+.station-card {
+  --mode: var(--line);
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--mode);
+  background: var(--panel);
+  font-size: 13px;
+}
+.station-card.mode-internet { --mode: var(--mode-internet); }
+.station-card.mode-rplus { --mode: var(--mode-radio-plus); }
+.station-card.mode-gw { --mode: var(--mode-internet-radio); }
+.station-card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.article-mixed .station-card__head h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--fg);
+}
+.station-card__mode {
+  font-size: 11px;
+  color: var(--mode);
+}
+.station-card__dl {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+.station-card__dl div {
+  display: grid;
+  grid-template-columns: 4.6rem minmax(0, 1fr);
+  gap: 8px;
+}
+.station-card__dl dt {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dim);
+}
+.station-card__dl dd {
+  margin: 0;
+  font-size: 12px;
+}
+.article-mixed .station-card__foot {
+  margin: 10px 0 0;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.hub-pill {
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 12px;
+  border: 1px solid var(--mode-internet);
+  background: rgba(0, 229, 255, 0.05);
+  color: var(--mode-internet);
+  font-size: 14px;
+}
+.hub-pill small {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+@media (max-width: 600px) {
+  .dial-lane__pair { grid-template-columns: minmax(0, 1fr); }
+  .dial-lane__link {
+    flex-direction: row;
+    gap: 8px;
+    padding: 6px 0;
+  }
+  .dial-lane__link svg { width: 32px; }
+}
+
+/* --- limits ------------------------------------------------------------ */
+
+.article-mixed .warn-box { margin-top: 36px; }
+.article-mixed .warn-box ul {
+  list-style: none;
+  padding-left: 0;
+}
+.article-mixed .warn-box li {
+  position: relative;
+  margin: 6px 0;
+  padding-left: 20px;
+}
+.article-mixed .warn-box li::before {
+  content: "×";
+  position: absolute;
+  left: 2px;
+  color: var(--warn);
+}
