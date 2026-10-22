@@ -23,7 +23,9 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=31" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
+  <link rel="stylesheet" href="/index-pages.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -44,76 +46,100 @@
       <div class="sub" id="clock-local">LCL --:--</div>
     </div>
   </header>
+
+  <!-- Line icons for the section headings. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M3 12 H21 M12 3 C8 7 8 17 12 21 C16 17 16 7 12 3" /></symbol>
+    <symbol id="ico-app" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" /><path d="M7 10 L10 12.5 L7 15 M12 15 H17" /></symbol>
+  </svg>
+
   <div class="page-wrap">
-    <main class="page-panel">
+    <main class="page-panel page-index">
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> docs</h1>
       <p class="lead">New to radio? Start with the orange card. The other pages are the reference. Hands-on setup is in <a href="/guides.html">guides</a>.</p>
 
-      <h2 class="docs-section-title" id="featured">Featured</h2>
-      <div class="guide-grid docs-featured-grid">
-        <a class="guide-card featured" href="/docs/try.html">
-          <h2>Try it with two computers</h2>
-          <p>No radio, or two cheap walkie-talkies. A speaker and a microphone are enough. Start here if you have never used a radio.</p>
-          <span class="tag">start here →</span>
-        </a>
-        <a class="guide-card featured featured-star" href="/docs/mixed-band.html">
-          <h2>One group: PMR, CB, 2m, and internet</h2>
-          <p>How PMR446, CB, 2m, and a laptop share <code>#field</code>: who sets what, and how a line crosses the hub.</p>
-          <span class="tag">featured ★</span>
-        </a>
-      </div>
+      <section class="article-section article-section--first" aria-labelledby="featured">
+        <h2 id="featured">Featured</h2>
+        <div class="guide-grid docs-featured-grid">
+          <a class="guide-card featured is-wide" href="/docs/try.html">
+            <h2>Try it with two computers</h2>
+            <p>No radio, or two cheap walkie-talkies. A speaker and a microphone are enough. Start here if you have never used a radio.</p>
+            <span class="tag">start here →</span>
+          </a>
+          <a class="guide-card featured featured-star" href="/docs/mixed-band.html">
+            <h2>One group: PMR, CB, 2m, and internet</h2>
+            <p>How PMR446, CB, 2m, and a laptop share <code>#field</code>: who sets what, and how a line crosses the hub.</p>
+            <span class="tag">featured ★</span>
+          </a>
+          <a class="guide-card featured featured-star" href="/docs/scenarios.html">
+            <h2>Common setups</h2>
+            <p>Five everyday setups, animated: walkie-talkies calling a home gateway, HF to HF with no internet, an internet guest, relays with hops, and email over radio.</p>
+            <span class="tag">featured ★</span>
+          </a>
+        </div>
+      </section>
 
-      <h2 class="docs-section-title">All docs</h2>
-      <div class="guide-grid">
-        <a class="guide-card" href="/guides/troubleshooting.html">
-          <h2>Troubleshooting</h2>
-          <p>Administrator PowerShell, a slow install, a wrong PC clock, and the other first-day stops.</p>
-        </a>
-        <a class="guide-card" href="/why.html">
-          <h2>Why WeeChat Radio</h2>
-          <p>An easier radio app, chat with no radio, and hops between stations.</p>
-        </a>
-        <a class="guide-card" href="/docs/modes.html">
-          <h2>Modes</h2>
-          <p>What each mode is for. Radio and radio-plus both post map data and never send chat text. A gateway may forward radio-plus only.</p>
-        </a>
-        <a class="guide-card" href="/docs/bridging.html">
-          <h2>Cross-frequency chat</h2>
-          <p>Same dial on RF. Different bands via a gateway and the hub.</p>
-        </a>
-        <a class="guide-card" href="/docs/hops.html">
-          <h2>Hops</h2>
-          <p>One dial, a group that is not all in range. 20m across Europe, 2m around Kyiv, and the same Europe map with internet-radio and internet.</p>
-        </a>
-        <a class="guide-card" href="/docs/weak.html">
-          <h2>Weak signals</h2>
-          <p>Retries, slower presets, and what TX / RETRY mean on the bar.</p>
-        </a>
-        <a class="guide-card" href="/docs/compare.html">
-          <h2>Compare modes</h2>
-          <p>WeeChat Radio HF vs JS8, FT8, Olivia, PSK31, APRS. Sortable scores.</p>
-        </a>
-        <a class="guide-card" href="/docs/calling.html">
-          <h2>Calling frequencies</h2>
-          <p>Suggested VHF and HF spots. Check your band plan first.</p>
-        </a>
-        <a class="guide-card" href="/docs/protocol.html">
-          <h2>Wire protocol</h2>
-          <p>What a message looks like on radio and on the internet.</p>
-        </a>
-        <a class="guide-card" href="/docs/email.html">
-          <h2>Email</h2>
-          <p>Internet mail beside Live Chat. Radio-plus goes through a gateway.</p>
-        </a>
-        <a class="guide-card" href="/docs/api.html">
-          <h2>Public API</h2>
-          <p>Live map data. No key to read. Writes are signed.</p>
-        </a>
-        <a class="guide-card" href="/docs/deploy.html">
-          <h2>Deploy the hub</h2>
-          <p>For people running the public server. Most users skip this.</p>
-        </a>
-      </div>
+      <section class="article-section" aria-labelledby="howH">
+        <h2 id="howH"><svg class="h2-ico" aria-hidden="true"><use href="#ico-globe" /></svg>How it works</h2>
+        <p class="section-lead">What each mode does, and how a line reaches people out of range or on other dials.</p>
+        <div class="guide-grid">
+          <a class="guide-card" href="/why.html">
+            <h2>Why WeeChat Radio</h2>
+            <p>An easier radio app, chat with no radio, and hops between stations.</p>
+          </a>
+          <a class="guide-card" href="/docs/modes.html">
+            <h2>Modes</h2>
+            <p>What each mode is for. Radio and radio-plus both post map data and never send chat text. A gateway may forward radio-plus only.</p>
+          </a>
+          <a class="guide-card" href="/docs/bridging.html">
+            <h2>Cross-frequency chat</h2>
+            <p>Same dial on RF. Different bands via a gateway and the hub.</p>
+          </a>
+          <a class="guide-card" href="/docs/hops.html">
+            <h2>Hops</h2>
+            <p>One dial, a group that is not all in range. 20m across Europe, 2m around Kyiv, and the same Europe map with internet-radio and internet.</p>
+          </a>
+          <a class="guide-card" href="/docs/weak.html">
+            <h2>Weak signals</h2>
+            <p>Retries, slower presets, and what TX / RETRY mean on the bar.</p>
+          </a>
+          <a class="guide-card" href="/docs/email.html">
+            <h2>Email</h2>
+            <p>Internet mail beside Live Chat. Radio-plus goes through a gateway.</p>
+          </a>
+        </div>
+      </section>
+
+      <section class="article-section" aria-labelledby="refH">
+        <h2 id="refH"><svg class="h2-ico" aria-hidden="true"><use href="#ico-app" /></svg>Reference</h2>
+        <p class="section-lead">Look things up when you need them. Most people never need the hub pages.</p>
+        <div class="guide-grid">
+          <a class="guide-card" href="/guides/troubleshooting.html">
+            <h2>Troubleshooting</h2>
+            <p>Administrator PowerShell, a slow install, a wrong PC clock, and the other first-day stops.</p>
+          </a>
+          <a class="guide-card" href="/docs/calling.html">
+            <h2>Calling frequencies</h2>
+            <p>Suggested VHF and HF spots. Check your band plan first.</p>
+          </a>
+          <a class="guide-card" href="/docs/compare.html">
+            <h2>Compare modes</h2>
+            <p>WeeChat Radio HF vs JS8, FT8, Olivia, PSK31, APRS. Sortable scores.</p>
+          </a>
+          <a class="guide-card" href="/docs/protocol.html">
+            <h2>Wire protocol</h2>
+            <p>What a message looks like on radio and on the internet.</p>
+          </a>
+          <a class="guide-card" href="/docs/api.html">
+            <h2>Public API</h2>
+            <p>Live map data. No key to read. Writes are signed.</p>
+          </a>
+          <a class="guide-card" href="/docs/deploy.html">
+            <h2>Deploy the hub</h2>
+            <p>For people running the public server. Most users skip this.</p>
+          </a>
+        </div>
+      </section>
 
       <p>Offline, on your computer: <code>wcr help</code></p>
     </main>
