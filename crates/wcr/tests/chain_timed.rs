@@ -2545,12 +2545,6 @@ async fn a_retry_waits_for_the_neighbours_receipt() {
     );
     eprintln!("{trace}{report}");
     let mut problems = Vec::new();
-    if !marks.iter().any(|m| m == "delivered") {
-        problems.push("A never saw B's receipt".to_string());
-    }
-    if marks.iter().any(|m| m == "failed") {
-        problems.push("the line showed failed although B is next to A".to_string());
-    }
     // A copy that met a frame of B's own or of C's at B is no miss of B's
     // (see `an_early_direct_message_reaches_the_neighbour_first_time`).
     let clear: Vec<f64> = keyed
@@ -2558,6 +2552,19 @@ async fn a_retry_waits_for_the_neighbours_receipt() {
         .copied()
         .filter(|k| !keyed_around(&chain.log, 2, *k) && !keyed_around(&chain.log, 3, *k))
         .collect();
+    // B's first receipt is the one this test drops. A owes the receipt only
+    // when a later copy reached B clear for B to answer again. CI run
+    // 39648269904 (Windows): copies 1 and 2 met C's beacons, copy 3 drew the
+    // dropped receipt, copy 4 met B's own beacon, so no answer could come.
+    let answerable = receipts
+        .first()
+        .is_some_and(|first| clear.iter().any(|k| k > first));
+    if !marks.iter().any(|m| m == "delivered") && answerable {
+        problems.push("A never saw B's receipt".to_string());
+    }
+    if marks.iter().any(|m| m == "failed") {
+        problems.push("the line showed failed although B is next to A".to_string());
+    }
     match shown {
         None => problems.push("B never showed the line".to_string()),
         Some(at) if !clear.is_empty() => {

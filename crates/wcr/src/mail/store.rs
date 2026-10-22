@@ -97,9 +97,28 @@ pub const COPY_ON: &str = "on";
 const MAIL_COLS: &str =
     "id, folder, from_addr, to_addr, subject, body, ts, state, unread, ack, retries, detail, chunks, got, delivery";
 
+/// Where a Radio+ Get stands, for the Email tab's Get window.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct GetProgress {
+    /// "", "asking", "receiving", "fetched", or "failed".
+    pub state: String,
+    pub subject: String,
+    pub got: u16,
+    pub total: u16,
+    /// Why it failed.
+    pub detail: String,
+}
+
+impl GetProgress {
+    pub fn active(&self) -> bool {
+        matches!(self.state.as_str(), "asking" | "receiving")
+    }
+}
+
 pub struct MailStore {
     conn: Mutex<Connection>,
     notice: Mutex<String>,
+    get: Mutex<GetProgress>,
 }
 
 impl MailStore {
@@ -114,6 +133,7 @@ impl MailStore {
         Ok(Self {
             conn: Mutex::new(conn),
             notice: Mutex::new(String::new()),
+            get: Mutex::new(GetProgress::default()),
         })
     }
 
@@ -124,6 +144,7 @@ impl MailStore {
         Ok(Self {
             conn: Mutex::new(conn),
             notice: Mutex::new(String::new()),
+            get: Mutex::new(GetProgress::default()),
         })
     }
 
@@ -133,6 +154,28 @@ impl MailStore {
 
     pub fn notice(&self) -> String {
         self.notice.lock().clone()
+    }
+
+    pub fn get_progress(&self) -> GetProgress {
+        self.get.lock().clone()
+    }
+
+    pub fn set_get_progress(&self, p: GetProgress) {
+        *self.get.lock() = p;
+    }
+
+    /// Chunks of the fetched mail so far. The count never goes back.
+    pub fn note_get_chunks(&self, got: u16, total: u16) -> bool {
+        let mut g = self.get.lock();
+        if !g.active() || total == 0 {
+            return false;
+        }
+        let got = got.min(total).max(if g.total == total { g.got } else { 0 });
+        let moved = g.state != "receiving" || g.got != got || g.total != total;
+        g.state = "receiving".into();
+        g.got = got;
+        g.total = total;
+        moved
     }
 
     pub fn insert(&self, row: &MailRow) -> Result<()> {
@@ -451,6 +494,23 @@ impl MailStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn get_progress_counts_chunks_and_never_goes_back() {
+        let store = MailStore::open_memory().unwrap();
+        // No Get under way: chunks are not a Get's.
+        assert!(!store.note_get_chunks(1, 6));
+        store.set_get_progress(GetProgress {
+            state: "asking".into(),
+            ..GetProgress::default()
+        });
+        assert!(store.note_get_chunks(2, 6));
+        assert!(!store.note_get_chunks(1, 6));
+        let p = store.get_progress();
+        assert_eq!((p.state.as_str(), p.got, p.total), ("receiving", 2, 6));
+        assert!(store.note_get_chunks(9, 6));
+        assert_eq!(store.get_progress().got, 6);
+    }
 
     #[test]
     fn a_fetched_mail_clears_its_waiting_header_and_a_header_can_be_deleted() {
