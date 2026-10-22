@@ -2,28 +2,63 @@ name: release
 on:
   push:
     tags: ["v*"]
+  # Release button. Give a version like v0.1.111. If the tag does not exist
+  # yet, it is created on main (the version must match Cargo.toml), then the
+  # release is built and published. If the tag already exists, the assets are
+  # rebuilt and uploaded again (repair).
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag to build and upload assets for
+        description: Release version, e.g. v0.1.111 (tagged on main if new)
         required: true
         type: string
 permissions:
   contents: write
+concurrency:
+  group: release
+  cancel-in-progress: false
 env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 jobs:
   notes:
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: write notes from git log
+          ref: main
+      - name: create the tag on main (release button only)
+        if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${RELEASE_TAG}"
+          case "$TAG" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "tag must look like v0.1.111"; exit 1 ;; esac
+          git fetch --tags --force
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "$TAG already exists, rebuilding its assets"
+            exit 0
+          fi
+          WANT="$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
+          if [ "v$WANT" != "$TAG" ]; then
+            echo "Cargo.toml on main says $WANT, not ${TAG#v}. Merge the version bump first."
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG"
+          # A tag pushed with GITHUB_TOKEN does not start this workflow again.
+          git push origin "refs/tags/$TAG"
+      - name: write notes from git log
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${RELEASE_TAG}"
+          git fetch --tags --force
+          if gh release view "$TAG" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release $TAG already exists"
+            exit 0
+          fi
           PREV="$(git tag --list 'v*' --sort=-v:refname | awk -v t="$TAG" '$0==t {getline; print; exit}')"
           {
             git log -1 --format='%s.' "$TAG"
@@ -39,14 +74,9 @@ jobs:
             fi
           } > release-notes.md
           cat release-notes.md
-      - uses: softprops/action-gh-release@v2.2.2
-        with:
-          body_path: release-notes.md
-          generate_release_notes: false
-          draft: true
+          gh release create "$TAG" --repo "${GITHUB_REPOSITORY}" --verify-tag --draft --title "$TAG" --notes-file release-notes.md
   build:
     needs: notes
-    if: ${{ !failure() && !cancelled() && (needs.notes.result == 'success' || needs.notes.result == 'skipped') }}
     strategy:
       fail-fast: false
       matrix:
@@ -80,7 +110,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          ref: refs/tags/${{ env.RELEASE_TAG }}
       - name: linux windowing libs
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxdo-dev libasound2-dev libudev-dev pkg-config
@@ -208,7 +238,7 @@ jobs:
     # pointing at the previous complete release. Re-run the failed jobs to
     # finish it.
     needs: [notes, build]
-    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.notes.result == 'success' || needs.notes.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.notes.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: publish release after assets upload
@@ -218,9 +248,17 @@ jobs:
         run: |
           set -euo pipefail
           gh release edit "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false
+      - name: check every asset is on the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          COUNT="$(gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets | length')"
+          echo "${RELEASE_TAG} has ${COUNT} assets"
+          test "$COUNT" -ge 15
   sync_install_manifests:
     needs: [build, publish]
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -228,16 +266,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: main
       - name: download checksum sidecars
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/wcr-sha
-          gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --pattern '*.sha256' --dir /tmp/wcr-sha
+          gh release download "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --pattern '*.sha256' --dir /tmp/wcr-sha
           ls -la /tmp/wcr-sha
       - name: patch install manifests
-        run: python scripts/sync_install_sha256.py /tmp/wcr-sha "${GITHUB_REF_NAME}"
+        run: python scripts/sync_install_sha256.py /tmp/wcr-sha "${RELEASE_TAG}"
       - name: commit manifest hashes
         run: |
           set -euo pipefail
@@ -248,5 +287,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add install/
-          git commit -m "Sync install manifest SHA256 for ${GITHUB_REF_NAME}."
+          git commit -m "Sync install manifest SHA256 for ${RELEASE_TAG}."
           git push origin HEAD:main
