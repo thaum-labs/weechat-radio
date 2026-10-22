@@ -27,7 +27,9 @@
 /* breathing room between blocks that follow each other inside a section */
 .page-panel .article-section > p + p,
 .page-panel .article-section > p + .table-wrap,
-.page-panel .article-section > .table-wrap + p { margin-top: 10px; }
+.page-panel .article-section > .table-wrap + p,
+.page-panel .article-section > ol + p,
+.page-panel .article-section > ul + p { margin-top: 10px; }
 .page-panel .article-section > .live-dgm,
 .page-panel .article-section > .pair { margin: 14px 0 18px; }
 .page-panel .article-section > ol:not(.steps) { padding-left: 24px; }
@@ -285,7 +287,11 @@
 /* --- 6. diagrams that fit a phone, and cards beside a diagram ----------- */
 
 /* A static diagram drawn ~420–440 wide: add "fit" to the svg to skip the shared 620px scroll width. */
-svg.dgm.fit { min-width: 0; }
+svg.dgm.fit {
+  min-width: 0;
+  max-width: 520px;
+  margin: 0 auto;
+}
 svg.dgm.fit .sub { font-size: 11px; }
 
 /* .pair: a column of cards (or text) beside a diagram; stacks on phones. */
