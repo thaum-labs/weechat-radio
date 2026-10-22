@@ -257,6 +257,7 @@ pub async fn apply() -> Result<Applied> {
     let exe = running_exe()?;
     let extracted = extract_payload(&bytes, info.name.as_deref())?;
     install_binary(&exe, &extracted)?;
+    let mut replaced = vec![exe.clone()];
     if let Some(dir) = extracted.parent() {
         if let Some(parent) = exe.parent() {
             let gui_name = if cfg!(windows) {
@@ -265,7 +266,10 @@ pub async fn apply() -> Result<Applied> {
                 "wcr-gui"
             };
             if let Some(gui_src) = find_named(dir, gui_name) {
-                let _ = install_binary(&parent.join(gui_name), &gui_src);
+                let gui = parent.join(gui_name);
+                if install_binary(&gui, &gui_src).is_ok() {
+                    replaced.push(gui);
+                }
             }
             let modem_name = if cfg!(windows) {
                 "modem73.exe"
@@ -273,12 +277,24 @@ pub async fn apply() -> Result<Applied> {
                 "modem73"
             };
             if let Some(modem_src) = find_named(dir, modem_name) {
-                let _ = install_binary(&parent.join(modem_name), &modem_src);
+                let modem = parent.join(modem_name);
+                if install_binary(&modem, &modem_src).is_ok() {
+                    replaced.push(modem);
+                }
             }
             if let Some(libs_src) = find_dir_named(dir, "libs") {
                 let _ = replace_dir(&libs_src, &parent.join("libs"));
             }
         }
+    }
+    // QA v0.1.113: a build that cannot start on this machine (newer glibc)
+    // must not be left in place, or `wcr update` can never run again.
+    if let Err(why) = new_binary_starts(&exe) {
+        return Err(Error::Msg(rollback_message(
+            &info.version,
+            &why,
+            &restore_backups(&replaced),
+        )));
     }
     let removed_mintty = remove_stray_minttyrc(&exe);
     let restarted = crate::service::restart_if_installed();
@@ -287,6 +303,59 @@ pub async fn apply() -> Result<Applied> {
         version: info.version.clone(),
         restarted,
     })
+}
+
+/// Run the freshly installed `wcr --version`; Err holds why it did not start.
+fn new_binary_starts(exe: &Path) -> std::result::Result<(), String> {
+    match Command::new(exe).arg("--version").output() {
+        Ok(out) if out.status.success() => Ok(()),
+        Ok(out) => {
+            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            Err(if err.is_empty() {
+                format!("it exited with {}", out.status)
+            } else {
+                err
+            })
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// The backup `install_binary` leaves for `dest` (`wcr.bak`, `wcr.exe.bak`).
+fn backup_path(dest: &Path) -> PathBuf {
+    if cfg!(windows) {
+        dest.with_extension("exe.bak")
+    } else {
+        dest.with_extension("bak")
+    }
+}
+
+/// Put each replaced file's backup back in place. Returns the files that
+/// could not be restored. Windows only keeps a backup when the file was in
+/// use, and an older `.bak` may be left there, so it restores nothing.
+fn restore_backups(replaced: &[PathBuf]) -> Vec<String> {
+    replaced
+        .iter()
+        .filter(|dest| {
+            let backup = backup_path(dest);
+            cfg!(windows) || (backup.is_file() && fs::rename(backup, dest).is_err())
+        })
+        .map(|dest| dest.display().to_string())
+        .collect()
+}
+
+fn rollback_message(version: &str, why: &str, not_restored: &[String]) -> String {
+    let mut msg =
+        format!("update to {version} cancelled: the new wcr does not start here ({why}).");
+    if not_restored.is_empty() {
+        msg.push_str(" Put the previous version back.");
+    } else {
+        msg.push_str(&format!(
+            " Could not put back: {}. Re-run the installer from https://weechatradio.com",
+            not_restored.join(", ")
+        ));
+    }
+    msg
 }
 
 /// A station started by hand keeps running the old code after `wcr update`
@@ -634,6 +703,31 @@ fn unsupported_platform_msg(version: &str) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // QA v0.1.113: a new wcr that cannot start must give way to the old one.
+    #[cfg(unix)]
+    #[test]
+    fn a_new_binary_that_cannot_start_is_rolled_back() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("wcr");
+        fs::write(dir.path().join("wcr.bak"), "old").unwrap();
+        fs::write(&exe, "#!/bin/sh\necho 'GLIBC_2.43 not found' >&2\nexit 1\n").unwrap();
+        fs::set_permissions(&exe, fs::Permissions::from_mode(0o755)).unwrap();
+        let gui = dir.path().join("wcr-gui");
+        fs::write(&gui, "new gui, nothing to restore").unwrap();
+
+        let why = new_binary_starts(&exe).unwrap_err();
+        assert!(why.contains("GLIBC_2.43"), "{why}");
+        assert!(restore_backups(&[exe.clone(), gui.clone()]).is_empty());
+        assert_eq!(fs::read_to_string(&exe).unwrap(), "old");
+        assert!(!dir.path().join("wcr.bak").exists());
+        assert!(gui.exists());
+        assert_eq!(
+            rollback_message("0.1.114", &why, &[]),
+            "update to 0.1.114 cancelled: the new wcr does not start here (GLIBC_2.43 not found). Put the previous version back."
+        );
+    }
 
     #[test]
     fn update_prints_the_path_without_the_verbatim_prefix() {
