@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -50,84 +51,432 @@
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> modes</h1>
       <p class="lead">Four ways to chat. Switch with <code>/radio mode &lt;name&gt;</code> or press F2 in the TUI. <code>radio</code> and <code>radio-plus</code> both post map telemetry when <code>[telemetry] url</code> is set, and that post never contains message text. Neither mode sends chat to the hub or the LAN from this computer. The only difference is whether an internet-radio gateway that hears you may forward your messages (and email) to the internet.</p>
 
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 302" role="img" aria-labelledby="m1t m1d">
-            <title id="m1t">What each mode connects to</title>
-            <desc id="m1d">Internet mode uses the hub only. Internet-radio uses both and acts as a gateway. Radio and radio-plus both keep chat on RF and can still post map data. The only difference is that a gateway may forward radio-plus messages and email.</desc>
-            <defs>
-              <marker id="mrfM" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-              <marker id="mnetM" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-            </defs>
-            <text class="tag" x="16" y="20">WHAT EACH MODE IS ALLOWED TO USE</text>
-            <rect class="box radio" x="16" y="44" width="118" height="232" />
-            <text class="on-radio" x="75" y="152" text-anchor="middle">on the air</text>
-            <text class="sub" x="75" y="169" text-anchor="middle">RF</text>
-            <rect class="box hub" x="586" y="44" width="118" height="232" />
-            <text class="on-hub" x="645" y="152" text-anchor="middle">hub</text>
-            <text class="sub" x="645" y="169" text-anchor="middle">internet</text>
+      <section class="article-section article-section--first" aria-labelledby="pickH">
+        <h2 id="pickH">Which mode should I pick</h2>
+        <p class="section-lead">Pick a mode to watch where a line goes from this computer. The same colours appear on the live map, in the nicklist, and in the status bar.</p>
+        <figure class="diagram live-dgm" data-live-dgm data-setup="radio-plus">
+          <div class="setup-switch" role="group" aria-label="Mode" data-setup-switch hidden>
+            <button type="button" data-setup-btn="internet" aria-pressed="false">internet</button>
+            <button type="button" data-setup-btn="internet-radio" aria-pressed="false">internet-radio</button>
+            <button type="button" data-setup-btn="radio" aria-pressed="false">radio</button>
+            <button type="button" data-setup-btn="radio-plus" aria-pressed="true">radio-plus</button>
+          </div>
+          <div class="live-dgm__body">
+            <div class="live-dgm__pic">
+              <div class="dgm-wrap">
+                <svg class="dgm" viewBox="0 0 440 310" role="img" aria-labelledby="m1t m1d">
+                  <title id="m1t">What each mode connects to</title>
+                  <desc id="m1d">Internet mode uses the hub only. Internet-radio uses both and acts as a gateway. Radio and radio-plus both keep chat on RF and can still post map data. The only difference is that a gateway may forward radio-plus messages and email.</desc>
+<g data-setups="internet" class="is-off">
+<g data-node="internet-pc">
+  <rect class="box accent" x="20" y="14" width="140" height="70" />
+  <path class="laptop-base" d="M8 84 H172 L180 94 H0 Z" />
+  <text class="sub" x="30" y="31">you · internet</text>
+  <text class="scr" data-show="in-hi" x="30" y="52">&lt;G4ABC&gt; hi G4XYZ</text>
+</g>
+<text class="scr ok" data-show="in-ok" x="30" y="68">[ok]</text>
+<text class="sub" x="90" y="124" text-anchor="middle">radio stays off</text>
+<g data-node="hub">
+  <rect class="box hub" x="250" y="26" width="170" height="44" />
+  <text class="on-hub" x="335" y="45" text-anchor="middle">hub</text>
+  <text class="sub" x="335" y="61" text-anchor="middle">wss · TLS</text>
+</g>
+<g class="seg seg-net" data-seg="in-hub"><path class="net" d="M162 48 H250" /><path class="pkt" d="M162 48 H250" /></g>
+<text class="sub" x="206" y="42" text-anchor="middle">TLS</text>
+<g data-node="in-x"><rect class="box hub" x="250" y="120" width="170" height="44" /><text class="on-hub" x="335" y="139" text-anchor="middle">G4XYZ</text><text class="sub" x="335" y="155" text-anchor="middle">internet station</text></g>
+<g class="seg seg-net" data-seg="in-x"><path class="net" d="M335 70 V120" /><path class="pkt" d="M335 70 V120" /></g>
+</g>
+<g data-setups="internet-radio" class="is-off">
+<g data-node="internet-radio-pc">
+  <rect class="box accent" x="20" y="14" width="140" height="70" />
+  <path class="laptop-base" d="M8 84 H172 L180 94 H0 Z" />
+  <text class="sub" x="30" y="31">you · internet-radio</text>
+  <text class="scr" data-show="ir-hi" x="30" y="52">&lt;G4ABC&gt; hi all</text>
+  <text class="scr" data-show="ir-re" x="30" y="68">&lt;G4DEF&gt; hello</text>
+</g>
+<g class="seg seg-sound" data-seg="ir-lead"><path class="wire" d="M84 96 V168" /><path class="pkt" d="M84 96 V168" /></g>
+<g data-node="ir-you">
+  <line class="antenna" x1="100" y1="170" x2="100" y2="136" />
+  <circle class="antenna-tip" cx="100" cy="134" r="2.5" />
+  <rect class="box gw" x="60" y="170" width="48" height="88" rx="5" />
+  <circle class="led" cx="96" cy="182" r="3.5" />
+  <path class="grille" d="M70 218 H98 M70 225 H98 M70 232 H98" />
+</g>
+<text class="on-gw" x="84" y="276" text-anchor="middle">G4ABC</text>
+<text class="sub" x="84" y="290" text-anchor="middle">internet-radio</text>
+<g data-node="hub">
+  <rect class="box hub" x="250" y="26" width="170" height="44" />
+  <text class="on-hub" x="335" y="45" text-anchor="middle">hub</text>
+  <text class="sub" x="335" y="61" text-anchor="middle">wss · TLS</text>
+</g>
+<g class="seg seg-net" data-seg="ir-hub"><path class="net" d="M162 48 H250" /><path class="pkt" d="M162 48 H250" /></g>
+<text class="sub" x="206" y="42" text-anchor="middle">TLS</text>
+<g data-node="ir-x"><rect class="box hub" x="250" y="100" width="170" height="40" /><text class="on-hub" x="335" y="117" text-anchor="middle">G4XYZ</text><text class="sub" x="335" y="132" text-anchor="middle">internet station</text></g>
+<g class="seg seg-net" data-seg="ir-x"><path class="net" d="M335 70 V100" /><path class="pkt" d="M335 70 V100" /></g>
+<g class="seg seg-rf" data-seg="ir-rf"><path class="rf" d="M104 135 q4.9 6.1 10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2" /><path class="pkt" d="M104 135 q4.9 6.1 10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2 t10.9 1.2" /></g>
+<text class="sub on-rf" x="236" y="140" text-anchor="middle">144.950</text>
+<g data-node="ir-def">
+  <line class="antenna" x1="370" y1="200" x2="370" y2="166" />
+  <circle class="antenna-tip" cx="370" cy="164" r="2.5" />
+  <rect class="box rplus" x="330" y="200" width="48" height="88" rx="5" />
+  <circle class="led" cx="366" cy="212" r="3.5" />
+  <path class="grille" d="M340 248 H368 M340 255 H368 M340 262 H368" />
+</g>
+<text class="on-rplus" x="354" y="306" text-anchor="middle">G4DEF</text>
+<text class="sub" x="354" y="320" text-anchor="middle">radio-plus</text>
+</g>
+<g data-setups="radio" class="is-off">
+<g data-node="radio-pc">
+  <rect class="box accent" x="20" y="14" width="140" height="70" />
+  <path class="laptop-base" d="M8 84 H172 L180 94 H0 Z" />
+  <text class="sub" x="30" y="31">you · radio</text>
+  <text class="scr" data-show="r-hi" x="30" y="52">&lt;G4ABC&gt; hi G4DEF</text>
+</g>
+<text class="scr ok" data-show="r-ok" x="30" y="68">[ok]</text>
+<g class="seg seg-sound" data-seg="r-lead"><path class="wire" d="M84 96 V168" /><path class="pkt" d="M84 96 V168" /></g>
+<g data-node="r-you">
+  <line class="antenna" x1="100" y1="170" x2="100" y2="136" />
+  <circle class="antenna-tip" cx="100" cy="134" r="2.5" />
+  <rect class="box radio" x="60" y="170" width="48" height="88" rx="5" />
+  <circle class="led" cx="96" cy="182" r="3.5" />
+  <path class="grille" d="M70 218 H98 M70 225 H98 M70 232 H98" />
+</g>
+<text class="on-radio" x="84" y="276" text-anchor="middle">G4ABC</text>
+<text class="sub" x="84" y="290" text-anchor="middle">radio</text>
+<g data-node="hub">
+  <rect class="box hub" x="250" y="26" width="170" height="44" />
+  <text class="on-hub" x="335" y="45" text-anchor="middle">hub</text>
+  <text class="sub" x="335" y="61" text-anchor="middle">wss · TLS</text>
+</g>
+<path class="none" d="M415 192 V72" />
+<line class="cross" x1="406" y1="88" x2="424" y2="104" /><line class="cross" x1="424" y1="88" x2="406" y2="104" />
+<text class="sub" x="400" y="100" text-anchor="end">never</text>
+<g data-node="r-gw">
+  <path class="house" d="M280 200 L355 160 L430 200 V280 H280 Z" />
+  <path class="mast" d="M390 178 V130 M382 138 H398 M384 148 H396" />
+  <rect class="box gw" x="300" y="234" width="70" height="34" rx="3" />
+  <circle class="led" cx="310" cy="244" r="3.5" />
+  <path class="grille" d="M324 244 H362 M324 251 H362 M324 258 H362" />
+  <path class="mast" d="M370 242 H390 V178" />
+  <text class="on-gw" x="336" y="216" text-anchor="middle">M0GWY</text>
+  <text class="sub" x="336" y="229" text-anchor="middle">gateway</text>
+</g>
+<g class="seg seg-rf" data-seg="r-rf-def"><path class="rf" d="M104 136 q4.2 5.3 10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1" /><path class="pkt" d="M104 136 q4.2 5.3 10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1 t10.2 2.1" /></g>
+<g class="seg seg-rf" data-seg="r-rf-gw"><path class="rf" d="M104 133 q5.5 5.5 10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1" /><path class="pkt" d="M104 133 q5.5 5.5 10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1" /></g>
+<g data-node="r-def">
+  <line class="antenna" x1="240" y1="200" x2="240" y2="166" />
+  <circle class="antenna-tip" cx="240" cy="164" r="2.5" />
+  <rect class="box radio" x="200" y="200" width="48" height="88" rx="5" />
+  <circle class="led" cx="236" cy="212" r="3.5" />
+  <path class="grille" d="M210 248 H238 M210 255 H238 M210 262 H238" />
+</g>
+<text class="on-radio" x="224" y="306" text-anchor="middle">G4DEF</text>
+<text class="sub" x="224" y="320" text-anchor="middle">radio</text>
+<text class="scr" data-show="r-stay" x="355" y="298" text-anchor="middle">left on the air</text>
+</g>
+<g data-setups="radio-plus">
+<g data-node="radio-plus-pc">
+  <rect class="box accent" x="20" y="14" width="140" height="70" />
+  <path class="laptop-base" d="M8 84 H172 L180 94 H0 Z" />
+  <text class="sub" x="30" y="31">you · radio-plus</text>
+  <text class="scr" data-show="p-hi" x="30" y="52">&lt;G4ABC&gt; hi G4XYZ</text>
+</g>
+<text class="scr ok" data-show="p-gwm" x="30" y="68">[gw]</text>
+<text class="scr ok" data-show="p-ok" x="66" y="68">[ok]</text>
+<g class="seg seg-sound" data-seg="p-lead"><path class="wire" d="M84 96 V168" /><path class="pkt" d="M84 96 V168" /></g>
+<g data-node="p-you">
+  <line class="antenna" x1="100" y1="170" x2="100" y2="136" />
+  <circle class="antenna-tip" cx="100" cy="134" r="2.5" />
+  <rect class="box rplus" x="60" y="170" width="48" height="88" rx="5" />
+  <circle class="led" cx="96" cy="182" r="3.5" />
+  <path class="grille" d="M70 218 H98 M70 225 H98 M70 232 H98" />
+</g>
+<text class="on-rplus" x="84" y="276" text-anchor="middle">G4ABC</text>
+<text class="sub" x="84" y="290" text-anchor="middle">radio-plus</text>
+<g data-node="p-x"><rect class="box hub" x="250" y="8" width="170" height="36" /><text class="on-hub" x="335" y="23" text-anchor="middle">G4XYZ</text><text class="sub" x="335" y="38" text-anchor="middle">internet station</text></g>
+<g data-node="hub">
+  <rect class="box hub" x="250" y="64" width="170" height="44" />
+  <text class="on-hub" x="335" y="83" text-anchor="middle">hub</text>
+  <text class="sub" x="335" y="99" text-anchor="middle">wss · TLS</text>
+</g>
+<g class="seg seg-net" data-seg="p-hub-x"><path class="net" d="M335 64 V44" /><path class="pkt" d="M335 64 V44" /></g>
+<g data-node="p-gw">
+  <path class="house" d="M280 200 L355 160 L430 200 V280 H280 Z" />
+  <path class="mast" d="M390 178 V130 M382 138 H398 M384 148 H396" />
+  <rect class="box gw" x="300" y="234" width="70" height="34" rx="3" />
+  <circle class="led" cx="310" cy="244" r="3.5" />
+  <path class="grille" d="M324 244 H362 M324 251 H362 M324 258 H362" />
+  <path class="mast" d="M370 242 H390 V178" />
+  <text class="on-gw" x="336" y="216" text-anchor="middle">M0GWY</text>
+  <text class="sub" x="336" y="229" text-anchor="middle">gateway</text>
+</g>
+<g class="seg seg-net" data-seg="p-gw-hub"><path class="net" d="M415 192 V108" /><path class="pkt" d="M415 192 V108" /></g>
+<text class="sub" x="409" y="160" text-anchor="end">TLS</text>
+<g class="seg seg-rf" data-seg="p-rf"><path class="rf" d="M104 133 q5.5 5.5 10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1" /><path class="pkt" d="M104 133 q5.5 5.5 10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1 t10.8 -0.1" /></g>
+<text class="sub on-rf" x="236" y="122" text-anchor="middle">144.950</text>
+<text class="sub" x="355" y="298" text-anchor="middle">internet-radio · 144.950</text>
+</g>
+                </svg>
+              </div>
+              <div class="live-status">
+                <p class="live-status__text" data-live-status aria-live="polite"></p>
+                <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
+              </div>
+            </div>
+            <div class="live-dgm__text">
+              <div class="setup-panel mode-card cyan" data-setup-panel="internet">
+                <h3><img class="mode-mark" src="/icons/mark-internet.svg" alt="">internet</h3>
+                <p>Chat with no radio. This computer talks to the hub.</p>
+                <p class="setup-note">No radio, and you only want the hub: <code>internet</code>.</p>
+              </div>
+              <div class="setup-panel mode-card green" data-setup-panel="internet-radio">
+                <h3><img class="mode-mark" src="/icons/mark-internet-radio.svg" alt="">internet-radio</h3>
+                <p>Your radio plus the internet. This computer is a gateway: it keys the dial and also talks to the hub, and it can carry other stations' radio-plus traffic onward.</p>
+                <p class="setup-note">You have a radio and an internet link, and you want to be the station others use to reach the hub: <code>internet-radio</code>.</p>
+              </div>
+              <div class="setup-panel mode-card amber" data-setup-panel="radio">
+                <h3><img class="mode-mark" src="/icons/mark-radio.svg" alt="">radio</h3>
+                <p>Chat on the radio only. A gateway that hears you must leave the message on the radio.</p>
+                <p class="setup-note">You have a radio, and you want the message to stay on the air even if a gateway hears it: <code>radio</code>.</p>
+              </div>
+              <div class="setup-panel mode-card magenta" data-setup-panel="radio-plus">
+                <h3><img class="mode-mark" src="/icons/mark-radio-plus.svg" alt="">radio-plus</h3>
+                <p>Chat on the radio only, from this computer. The one difference from radio is that a gateway that hears you may carry the message, and email, onto the internet.</p>
+                <p class="setup-note">You have a radio, no internet on this computer, and you want a nearby gateway to carry the line to internet stations: <code>radio-plus</code>.</p>
+              </div>
+            </div>
+          </div>
+          <figcaption>Mode decides where chat may go; map telemetry is a separate URL. Cross-band details: <a href="/docs/bridging.html">cross-frequency chat</a>.</figcaption>
+          <script type="application/json" data-live-steps>
+{
+ "internet": {
+  "viewBox": "0 0 440 180",
+  "steps": [
+   {
+    "say": "This computer sends the line to the hub.",
+    "segs": [
+     "in-hub"
+    ],
+    "show": [
+     "in-hi"
+    ]
+   },
+   {
+    "say": "The hub delivers it to G4XYZ.",
+    "segs": [
+     "in-x"
+    ],
+    "on": [
+     "in-x"
+    ]
+   },
+   {
+    "say": "G4XYZ’s receipt comes back on the hub. Your line shows [ok].",
+    "segs": [
+     "<in-x",
+     "<in-hub"
+    ],
+    "chain": true,
+    "show": [
+     "in-ok"
+    ],
+    "ms": 2000
+   }
+  ],
+  "done": "No radio needed. Chat and receipts both go through the hub."
+ },
+ "internet-radio": {
+  "viewBox": "0 0 440 330",
+  "steps": [
+   {
+    "say": "You send to #bulletin. This computer keys every chat line on the radio.",
+    "segs": [
+     "ir-lead",
+     "ir-rf"
+    ],
+    "chain": true,
+    "on": [
+     "ir-you"
+    ],
+    "show": [
+     "ir-hi"
+    ],
+    "ms": 2400
+   },
+   {
+    "say": "#bulletin always goes to the hub as well, so G4XYZ reads it too.",
+    "segs": [
+     "ir-hub",
+     "ir-x"
+    ],
+    "chain": true,
+    "ms": 2100
+   },
+   {
+    "say": "G4DEF replies on the air in radio-plus.",
+    "segs": [
+     "<ir-rf"
+    ],
+    "on": [
+     "ir-def"
+    ],
+    "ms": 1800
+   },
+   {
+    "say": "You hear a radio-plus frame and upload it to the hub. You are the gateway.",
+    "segs": [
+     "<ir-lead",
+     "ir-hub"
+    ],
+    "chain": true,
+    "show": [
+     "ir-re"
+    ],
+    "ms": 2200
+   },
+   {
+    "say": "The hub delivers it to G4XYZ.",
+    "segs": [
+     "ir-x"
+    ],
+    "on": [
+     "ir-x"
+    ]
+   }
+  ],
+  "done": "You are on the air and on the hub at once, and you carry radio-plus lines onward."
+ },
+ "radio": {
+  "viewBox": "0 0 440 330",
+  "steps": [
+   {
+    "say": "This computer keys the line on the radio. It never opens the hub.",
+    "segs": [
+     "r-lead"
+    ],
+    "on": [
+     "r-you"
+    ],
+    "show": [
+     "r-hi"
+    ]
+   },
+   {
+    "say": "Everyone on the dial hears it: G4DEF and the gateway.",
+    "segs": [
+     "r-rf-def",
+     "r-rf-gw"
+    ],
+    "on": [
+     "r-you"
+    ],
+    "ms": 1900
+   },
+   {
+    "say": "G4DEF sends its receipt on the air. Your line shows [ok].",
+    "segs": [
+     "<r-rf-def",
+     "<r-lead"
+    ],
+    "chain": true,
+    "on": [
+     "r-def"
+    ],
+    "show": [
+     "r-ok"
+    ],
+    "ms": 2400
+   },
+   {
+    "say": "The gateway leaves it on the radio: the frame says do not forward.",
+    "on": [
+     "r-gw"
+    ],
+    "show": [
+     "r-stay"
+    ],
+    "ms": 2000
+   }
+  ],
+  "done": "Chat stays on the air. Only a station that hears you can send a receipt."
+ },
+ "radio-plus": {
+  "viewBox": "0 0 440 310",
+  "steps": [
+   {
+    "say": "This computer keys the message on the radio. It does not open the hub.",
+    "segs": [
+     "p-lead",
+     "p-rf"
+    ],
+    "chain": true,
+    "on": [
+     "p-you"
+    ],
+    "show": [
+     "p-hi"
+    ],
+    "ms": 2400
+   },
+   {
+    "say": "An internet-radio gateway on 144.950 hears the frame and sees that it may go to the internet.",
+    "on": [
+     "p-gw"
+    ],
+    "ms": 1900
+   },
+   {
+    "say": "The gateway sends it to the hub. Your line shows [gw].",
+    "segs": [
+     "p-gw-hub"
+    ],
+    "show": [
+     "p-gwm"
+    ]
+   },
+   {
+    "say": "The hub delivers it to the internet station.",
+    "segs": [
+     "p-hub-x"
+    ],
+    "on": [
+     "p-x"
+    ]
+   },
+   {
+    "say": "That station’s receipt comes back to the gateway.",
+    "segs": [
+     "<p-hub-x",
+     "<p-gw-hub"
+    ],
+    "chain": true,
+    "ms": 2000
+   },
+   {
+    "say": "The gateway keys the receipt on the radio, because it has heard you on this dial. Your line shows [ok].",
+    "segs": [
+     "<p-rf",
+     "<p-lead"
+    ],
+    "chain": true,
+    "on": [
+     "p-gw"
+    ],
+    "show": [
+     "p-ok"
+    ],
+    "ms": 2600
+   }
+  ],
+  "done": "Your computer never opens the hub. The gateway carries the line and brings the receipt back."
+ }
+}
+          </script>
+        </figure>
+      </section>
 
-            <path class="none" d="M136 66 H 210" />
-            <text class="sub" x="173" y="58" text-anchor="middle">radio off</text>
-            <line class="cross" x1="164" y1="58" x2="182" y2="74" />
-            <line class="cross" x1="182" y1="58" x2="164" y2="74" />
-            <line class="net" marker-start="url(#mnetM)" marker-end="url(#mnetM)" x1="512" y1="66" x2="584" y2="66" />
-            <rect class="box hub" x="212" y="44" width="298" height="44" />
-            <text class="on-hub" x="361" y="63" text-anchor="middle">internet</text>
-            <text class="sub" x="361" y="79" text-anchor="middle">hub only · no hardware needed</text>
-
-            <line class="rf" marker-start="url(#mrfM)" marker-end="url(#mrfM)" x1="136" y1="130" x2="210" y2="130" />
-            <line class="net" marker-start="url(#mnetM)" marker-end="url(#mnetM)" x1="512" y1="130" x2="584" y2="130" />
-            <rect class="box gw" x="212" y="108" width="298" height="44" />
-            <text class="on-gw" x="361" y="127" text-anchor="middle">internet-radio</text>
-            <text class="sub" x="361" y="143" text-anchor="middle">radio plus the hub · this station is a gateway</text>
-
-            <line class="rf" marker-start="url(#mrfM)" marker-end="url(#mrfM)" x1="136" y1="194" x2="210" y2="194" />
-            <path class="none" d="M512 194 H 584" />
-            <text class="sub" x="548" y="186" text-anchor="middle">never</text>
-            <line class="cross" x1="539" y1="186" x2="557" y2="202" />
-            <line class="cross" x1="557" y1="186" x2="539" y2="202" />
-            <rect class="box radio" x="212" y="172" width="298" height="44" />
-            <text class="on-radio" x="361" y="191" text-anchor="middle">radio</text>
-            <text class="sub" x="361" y="207" text-anchor="middle">RF chat only · map can still update</text>
-
-            <line class="rf" marker-start="url(#mrfM)" marker-end="url(#mrfM)" x1="136" y1="258" x2="210" y2="258" />
-            <path class="none" marker-end="url(#mnetM)" d="M512 258 H 584" />
-            <text class="sub" x="548" y="250" text-anchor="middle">gateway</text>
-            <rect class="box rplus" x="212" y="236" width="298" height="44" />
-            <text class="on-rplus" x="361" y="255" text-anchor="middle">radio-plus</text>
-            <text class="sub" x="361" y="271" text-anchor="middle">you never upload chat · a gateway may forward</text>
-
-            <text class="sub" x="16" y="296">mode decides where chat may go; map telemetry is a separate URL</text>
-          </svg>
-        </div>
-        <figcaption>The same mode colours appear on the live map, in the nicklist, and in the status bar. Cross-band details: <a href="/docs/bridging.html">cross-frequency chat</a>.</figcaption>
-      </figure>
-
-      <div class="mode-grid-docs">
-        <article class="mode-card cyan">
-          <h3><img class="mode-mark" src="/icons/mark-internet.svg" alt="">internet</h3>
-          <p>Chat with no radio. This computer talks to the hub.</p>
-        </article>
-        <article class="mode-card green">
-          <h3><img class="mode-mark" src="/icons/mark-internet-radio.svg" alt="">internet-radio</h3>
-          <p>Your radio plus the internet. This computer is a gateway: it keys the dial and also talks to the hub, and it can carry other stations' radio-plus traffic onward.</p>
-        </article>
-        <article class="mode-card amber">
-          <h3><img class="mode-mark" src="/icons/mark-radio.svg" alt="">radio</h3>
-          <p>Chat on the radio only. A gateway that hears you must leave the message on the radio.</p>
-        </article>
-        <article class="mode-card magenta">
-          <h3><img class="mode-mark" src="/icons/mark-radio-plus.svg" alt="">radio-plus</h3>
-          <p>Chat on the radio only, from this computer. The one difference from radio is that a gateway that hears you may carry the message, and email, onto the internet.</p>
-        </article>
-      </div>
-
-      <h2>internet</h2>
+      <section class="article-section" aria-labelledby="internetH">
+        <h2 id="internetH">internet</h2>
       <p><strong>What it's for.</strong> Chat with no radio. This computer talks to the hub.</p>
       <div class="table-wrap">
         <table>
@@ -142,8 +491,10 @@
           </tbody>
         </table>
       </div>
+      </section>
 
-      <h2>internet-radio</h2>
+      <section class="article-section" aria-labelledby="internet-radioH">
+        <h2 id="internet-radioH">internet-radio</h2>
       <p><strong>What it's for.</strong> Your radio plus the internet. This computer is a gateway: it keys the dial and also talks to the hub, and it can carry other stations' radio-plus traffic onward.</p>
       <div class="table-wrap">
         <table>
@@ -158,8 +509,10 @@
           </tbody>
         </table>
       </div>
+      </section>
 
-      <h2>radio</h2>
+      <section class="article-section" aria-labelledby="radioH">
+        <h2 id="radioH">radio</h2>
       <p><strong>What it's for.</strong> Chat on the radio only. A gateway that hears you must leave the message on the radio.</p>
       <div class="table-wrap">
         <table>
@@ -174,8 +527,10 @@
           </tbody>
         </table>
       </div>
+      </section>
 
-      <h2>radio-plus</h2>
+      <section class="article-section" aria-labelledby="radio-plusH">
+        <h2 id="radio-plusH">radio-plus</h2>
       <p><strong>What it's for.</strong> Chat on the radio only, from this computer. The one difference from radio is that a gateway that hears you may carry the message, and email, onto the internet.</p>
       <div class="table-wrap">
         <table>
@@ -190,16 +545,10 @@
           </tbody>
         </table>
       </div>
+      </section>
 
-      <h2>Which mode should I pick</h2>
-      <ul>
-        <li>No radio, and you only want the hub: <code>internet</code>.</li>
-        <li>You have a radio and an internet link, and you want to be the station others use to reach the hub: <code>internet-radio</code>.</li>
-        <li>You have a radio, and you want the message to stay on the air even if a gateway hears it: <code>radio</code>.</li>
-        <li>You have a radio, no internet on this computer, and you want a nearby gateway to carry the line to internet stations: <code>radio-plus</code>.</li>
-      </ul>
-
-      <h2>Worked example: radio-plus</h2>
+      <section class="article-section" aria-labelledby="worked-example-radio-plusH">
+        <h2 id="worked-example-radio-plusH">Worked example: radio-plus</h2>
       <p>You are in <code>radio-plus</code> on 144.950. You send a direct message. <code>#bulletin</code> and a closed group use this same path.</p>
       <ol>
         <li>This computer keys the message on the radio. It does not open the hub.</li>
@@ -210,11 +559,13 @@
         <li>Your line can show <code>[gw]</code> when the gateway accepted the frame, then <code>[ok]</code> when the receipt comes back on the radio. <code>[rl]</code> only means you heard your own frame on the radio again.</li>
       </ol>
       <p>In <code>radio</code> mode the same air path runs. The gateway does not upload the frame, and there is no receipt from the internet station.</p>
+      </section>
 
-      <h2>If the hub dies</h2>
+      <section class="article-section" aria-labelledby="if-the-hub-diesH">
+        <h2 id="if-the-hub-diesH">If the hub dies</h2>
       <figure class="diagram">
         <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 190" role="img" aria-labelledby="m2t m2d">
+          <svg class="dgm fit" viewBox="0 0 440 150" role="img" aria-labelledby="m2t m2d">
             <title id="m2t">Store and forward</title>
             <desc id="m2d">A message nobody hears is saved on disk with its hops left intact, and goes out again when another station appears, minutes or hours later.</desc>
             <defs>
@@ -222,36 +573,42 @@
                 <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
               </marker>
             </defs>
-            <text class="tag" x="16" y="20">STORE AND FORWARD</text>
-            <text class="sub" x="115" y="52" text-anchor="middle">nobody answers</text>
-            <text class="sub" x="473" y="52" text-anchor="middle">minutes or hours later</text>
-            <line class="rf" marker-end="url(#mrfS)" x1="198" y1="96" x2="230" y2="96" />
-            <line class="rf" marker-end="url(#mrfS)" x1="458" y1="96" x2="490" y2="96" />
-            <rect class="box radio" x="16" y="70" width="180" height="54" />
-            <text class="on-radio" x="106" y="92" text-anchor="middle">you send</text>
-            <text class="sub" x="106" y="110" text-anchor="middle">out on the air</text>
-            <rect class="box accent" x="232" y="70" width="224" height="54" />
-            <text class="on-accent" x="344" y="92" text-anchor="middle">saved on disk</text>
-            <text class="sub" x="344" y="110" text-anchor="middle">keeps its hops left</text>
-            <rect class="box gw" x="492" y="70" width="212" height="54" />
-            <text class="on-gw" x="598" y="92" text-anchor="middle">next station</text>
-            <text class="sub" x="598" y="110" text-anchor="middle">hears it and passes it on</text>
-            <text class="sub" x="16" y="164">the message survives a reboot; it stops when its hops run out</text>
+            <text class="sub" x="76" y="30" text-anchor="middle">nobody answers</text>
+            <text class="sub" x="364" y="30" text-anchor="middle">minutes or hours later</text>
+            <rect class="box radio" x="10" y="42" width="132" height="54" />
+            <text class="on-radio" x="76" y="64" text-anchor="middle">you send</text>
+            <text class="sub" x="76" y="81" text-anchor="middle">out on the air</text>
+            <line class="rf" marker-end="url(#mrfS)" x1="144" y1="69" x2="152" y2="69" />
+            <rect class="box accent" x="154" y="42" width="132" height="54" />
+            <text class="on-accent" x="220" y="64" text-anchor="middle">saved on disk</text>
+            <text class="sub" x="220" y="81" text-anchor="middle">keeps its hops left</text>
+            <line class="rf" marker-end="url(#mrfS)" x1="288" y1="69" x2="296" y2="69" />
+            <rect class="box gw" x="298" y="42" width="132" height="54" />
+            <text class="on-gw" x="364" y="64" text-anchor="middle">next station</text>
+            <text class="sub" x="364" y="81" text-anchor="middle">passes it on</text>
+            <text class="sub" x="12" y="124">the message survives a reboot;</text>
+            <text class="sub" x="12" y="140">it stops when its hops run out</text>
           </svg>
         </div>
         <figcaption>Messages wait. Nobody has to leave a radio on all night.</figcaption>
       </figure>
       <p>Switching to <code>radio</code> asks for confirmation: it drops hub and LAN chat. Changing mode starts or stops hub chat and the radio path immediately. Switching between <code>radio</code> and <code>radio-plus</code> leaves both paths as they are: radio stays on, and this computer still does not open hub chat. Clear <code>[telemetry] url</code> to stay off the map. An arc is drawn only between two station pins that addressed each other. That line glows for a few seconds after the contact, settles to a dimmer line, then fades and stays faintly visible until 48 hours after the last contact. Reduced motion skips the glow. A station pin stays bright in its mode colour while the station is reporting, then dims, and drops off the map 48 hours after it was last heard. A <code>#bulletin</code> or closed-group destination is not a callsign, so it does not draw a line to every other pin.</p>
       <p>If you are in <code>internet-radio</code> and the hub goes away, radio keeps working. The status bar says <strong>Internet down, radio only</strong>. Traffic that still needed the hub waits in an internet hold and goes out when the hub returns. That is separate from the RF retry hold queue.</p>
+      </section>
 
-      <h2>Email</h2>
+      <section class="article-section" aria-labelledby="emailH">
+        <h2 id="emailH">Email</h2>
       <p>Email is not another operating mode. The map pin keeps its mode colour, and an <strong>e</strong> beside that logo means mail moved recently. <code>internet</code> and <code>internet-radio</code> post their own mail to the hub. <code>radio-plus</code> sends mail by radio to the Mail gateway callsign in setup, and that station posts it. <code>radio</code> has no path, so Email stays grey. <a href="/docs/email.html">Email</a>.</p>
+      </section>
 
-      <h2>Weak-signal behaviour</h2>
+      <section class="article-section" aria-labelledby="weak-signal-behaviourH">
+        <h2 id="weak-signal-behaviourH">Weak-signal behaviour</h2>
       <p>On a faint or fading path the program retries your message and asks modem73 for a slower waveform. The status bar shows <strong>TX</strong> (current waveform) and <strong>RETRY</strong>. Presets: <code>hf-good</code>, <code>hf-poor</code>, <code>hf-weak</code>, <code>hf-deep</code>, <code>vox-safe</code> (always RDM-600S).</p>
       <p>Operator steps: <a href="/docs/weak.html">weak signals</a>. Versus JS8 / FT8 / Olivia: <a href="/docs/compare.html">compare modes</a>. Packet layout: <a href="/docs/protocol.html">wire protocol</a>.</p>
+      </section>
 
-      <h2>Busy channel</h2>
+      <section class="article-section" aria-labelledby="busy-channelH">
+        <h2 id="busy-channelH">Busy channel</h2>
       <p>When several stations talk at once, frames would otherwise pile onto the modem and key over each other. Two layers stop that:</p>
       <ol>
         <li><strong>modem73 CSMA</strong> is on for every preset. The modem waits for a quiet carrier before PTT. On VOX it counts anything over -30 dB at the sound card as a busy channel, so loud music or talking near a built-in mic holds sends back until the room is quiet.</li>
@@ -270,8 +627,10 @@ ack_dither_ms = 800
 beacon_jitter_s = 15
 retry_jitter = true
 startup_hold_s = 120</pre>
+      </section>
 
-      <h2>Gateway knobs</h2>
+      <section class="article-section" aria-labelledby="gateway-knobsH">
+        <h2 id="gateway-knobsH">Gateway knobs</h2>
       <p>In <code>wcr.toml</code>:</p>
       <pre class="plain">[gateway]
 rf_egress = true          # put internet traffic on the air
@@ -279,6 +638,7 @@ third_party = "deny"      # guest (~nick) traffic on RF: allow or deny
 tower = false             # internet-radio only</pre>
       <p>In internet-radio the station panel has a <strong>TOWER</strong> switch (<code>/tower on</code> or <code>/tower off</code>). On draws that station as a small tower on the public map, with the dial frequency beside the icon. Other modes keep the station mark. The switch does not change what goes on the air.</p>
       <p>Stations on different frequencies use two gateways and the hub. Diagrams: <a href="/docs/bridging.html">cross-frequency chat</a>.</p>
+      </section>
 
       <div class="ok">
         <h2>How you know it worked</h2>
@@ -288,5 +648,6 @@ tower = false             # internet-radio only</pre>
   </div>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=10"></script>
+  <script src="/live-dgm.js?v=1"></script>
 </body>
 </html>

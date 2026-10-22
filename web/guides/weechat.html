@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -44,96 +45,130 @@
       <div class="sub" id="clock-local">LCL --:--</div>
     </div>
   </header>
+
+  <!-- Line icons for the cards. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-laptop" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="11" /><path d="M2 19 H22" /></symbol>
+    <symbol id="ico-app" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" /><path d="M7 10 L10 12.5 L7 15 M12 15 H17" /></symbol>
+  </svg>
+
   <div class="page-wrap">
     <main class="page-panel">
       <p class="crumb"><a href="/guides.html">guides</a> / WeeChat</p>
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> WeeChat</h1>
       <p class="lead">WeeChat is a separate chat program. Most people should run <code>wcr setup</code> then <code>wcr gui</code>. Use this page if you want WeeChat instead.</p>
 
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 196" role="img" aria-labelledby="wc1t wc1d">
-            <title id="wc1t">Where WeeChat sits</title>
-            <desc id="wc1d">WeeChat connects to the wcr node on this computer over loopback IRC on port 6667. The node is the only part that talks to the hub or the radio.</desc>
-            <defs>
-              <marker id="maccWC" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-              <marker id="mnetWC" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-              <marker id="mrfWC" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-            </defs>
-            <text class="tag" x="16" y="20">ONE HOP ON THIS COMPUTER</text>
-            <line class="wire" marker-start="url(#maccWC)" marker-end="url(#maccWC)" x1="212" y1="88" x2="252" y2="88" />
-            <text class="sub" x="232" y="80" text-anchor="middle">IRC</text>
-            <line class="net" marker-start="url(#mnetWC)" marker-end="url(#mnetWC)" x1="460" y1="76" x2="500" y2="60" />
-            <line class="rf" marker-start="url(#mrfWC)" marker-end="url(#mrfWC)" x1="460" y1="100" x2="500" y2="126" />
-            <rect class="box" x="16" y="62" width="194" height="54" />
-            <text x="113" y="84" text-anchor="middle">WeeChat</text>
-            <text class="sub" x="113" y="102" text-anchor="middle">what you type in</text>
-            <rect class="box accent" x="254" y="62" width="204" height="54" />
-            <text class="on-accent" x="356" y="84" text-anchor="middle">wcr node</text>
-            <text class="sub" x="356" y="102" text-anchor="middle">127.0.0.1:6667</text>
-            <rect class="box hub" x="502" y="36" width="202" height="48" />
-            <text class="on-hub" x="603" y="56" text-anchor="middle">hub</text>
-            <text class="sub" x="603" y="72" text-anchor="middle">internet</text>
-            <rect class="box orange" x="502" y="104" width="202" height="48" />
-            <text class="on-orange" x="603" y="124" text-anchor="middle">radio</text>
-            <text class="sub" x="603" y="140" text-anchor="middle">on the air</text>
-            <text class="sub" x="16" y="180">WeeChat never talks to the internet by itself; the node decides what leaves</text>
-          </svg>
+      <section class="article-section article-section--first" aria-labelledby="needH">
+        <h2 id="needH">What you need</h2>
+        <div class="pair">
+          <ul class="cards">
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-laptop" /></svg>
+              <strong><code>wcr node</code> or <code>wcr tui</code></strong>
+              <span>Already running on this computer.</span>
+            </li>
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-app" /></svg>
+              <strong>WeeChat with the Python plugin</strong>
+            </li>
+          </ul>
+        <figure class="diagram">
+          <div class="dgm-wrap">
+            <svg class="dgm fit" viewBox="0 0 440 280" role="img" aria-labelledby="wcT wcD">
+              <title id="wcT">Where WeeChat sits</title>
+              <desc id="wcD">On this computer, WeeChat connects to the wcr node over IRC on 127.0.0.1 port 6667. The node is the only part that talks to the hub over the internet or to the radio. WeeChat never talks to the internet by itself.</desc>
+              <defs>
+                <marker id="mWcNet" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
+                </marker>
+                <marker id="mWcAcc" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
+                </marker>
+              </defs>
+              <rect class="lane-bg" x="10" y="10" width="206" height="218" />
+              <text class="sub" x="113" y="220" text-anchor="middle">this computer</text>
+
+              <rect class="box accent" x="40" y="26" width="140" height="84" />
+              <path class="laptop-base" d="M28 110 H192 L200 120 H20 Z" />
+              <text class="sub" x="50" y="43">WeeChat</text>
+              <text class="scr" x="50" y="70">#bulletin</text>
+              <text class="scr-input" x="50" y="98">&gt; _</text>
+
+              <line class="wire" marker-start="url(#mWcAcc)" marker-end="url(#mWcAcc)" x1="110" y1="122" x2="110" y2="158" />
+              <text class="sub" x="118" y="144">IRC</text>
+
+              <rect class="box accent" x="40" y="160" width="140" height="44" />
+              <text class="on-accent" x="110" y="178" text-anchor="middle">wcr node</text>
+              <text class="sub" x="110" y="195" text-anchor="middle">127.0.0.1:6667</text>
+
+              <path class="net" marker-start="url(#mWcNet)" marker-end="url(#mWcNet)" d="M182 170 H250 V64 H292" />
+              <rect class="box hub" x="294" y="40" width="134" height="48" />
+              <text class="on-hub" x="361" y="60" text-anchor="middle">hub</text>
+              <text class="sub" x="361" y="77" text-anchor="middle">internet</text>
+
+              <path class="wire" marker-start="url(#mWcAcc)" marker-end="url(#mWcAcc)" d="M182 194 H332" />
+              <line class="antenna" x1="374" y1="150" x2="374" y2="116" />
+              <circle class="antenna-tip" cx="374" cy="114" r="2.5" />
+              <rect class="box orange" x="334" y="150" width="48" height="88" rx="5" />
+              <circle class="led" cx="370" cy="162" r="3.5" />
+              <path class="grille" d="M344 198 H372 M344 205 H372 M344 212 H372 M344 219 H372" />
+              <text class="on-orange" x="358" y="256" text-anchor="middle">radio</text>
+              <text class="sub" x="358" y="271" text-anchor="middle">on the air</text>
+
+              <text class="sub" x="16" y="252">WeeChat never talks to the internet</text>
+              <text class="sub" x="16" y="267">by itself; the node decides what leaves</text>
+            </svg>
+          </div>
+          <figcaption>WeeChat talks to WeeChat Radio on this computer, on port 6667. It never talks to the internet by itself.</figcaption>
+        </figure>
         </div>
-        <figcaption>WeeChat talks to WeeChat Radio on this computer, on port 6667. It never talks to the internet by itself.</figcaption>
-      </figure>
+      </section>
 
-      <div class="need">
-        <h2>What you need</h2>
-        <ul>
-          <li><code>wcr node</code> or <code>wcr tui</code> already running on this computer</li>
-          <li>WeeChat with the Python plugin</li>
-        </ul>
-      </div>
-
-      <h2>Easy way</h2>
-      <p>On Linux, the official installer tries to install WeeChat with the system package manager.</p>
-      <p>On a Mac it does not. Homebrew has no bottles on older macOS, so <code>brew install weechat</code> compiles dozens of packages from source and looks stuck. Install WeeChat yourself, then point it at the node:</p>
-      <pre>brew install weechat
+      <section class="article-section" aria-labelledby="easyH">
+        <h2 id="easyH">Easy way</h2>
+        <p>On Linux, the official installer tries to install WeeChat with the system package manager.</p>
+        <p>On a Mac it does not. Homebrew has no bottles on older macOS, so <code>brew install weechat</code> compiles dozens of packages from source and looks stuck. Install WeeChat yourself, then point it at the node:</p>
+        <pre>brew install weechat
 wcr weechat --configure
 wcr node
 wcr weechat</pre>
-      <p>If Homebrew has no bottle for your macOS, use <a href="https://www.macports.org">MacPorts</a> instead (<code>sudo port install weechat</code>), then the same <code>wcr weechat --configure</code> line.</p>
-      <p>To rewrite the server and script later:</p>
-      <pre>wcr weechat --configure</pre>
+        <p>If Homebrew has no bottle for your macOS, use <a href="https://www.macports.org">MacPorts</a> instead (<code>sudo port install weechat</code>), then the same <code>wcr weechat --configure</code> line.</p>
+        <p>To rewrite the server and script later:</p>
+        <pre>wcr weechat --configure</pre>
+      </section>
 
-      <h2>Manual way</h2>
-      <p>Only if you installed WeeChat yourself.</p>
-      <ol class="steps">
-        <li>
-          <p>Copy <code>radio.py</code> into WeeChat’s Python folder:</p>
-          <ul>
-            <li>Linux and macOS: <code>~/.weechat/python/</code></li>
-            <li>Windows (WSL): same path inside WSL</li>
-          </ul>
-        </li>
-        <li>
-          <p>In WeeChat, paste these lines one at a time:</p>
-          <pre class="plain">/server add radio 127.0.0.1/6667 -autoconnect
+      <section class="article-section" aria-labelledby="manualH">
+        <h2 id="manualH">Manual way</h2>
+        <p class="section-lead">Only if you installed WeeChat yourself.</p>
+        <ol class="steps">
+          <li>
+            <strong class="step-title">Copy the script</strong>
+            <p>Copy <code>radio.py</code> into WeeChat’s Python folder:</p>
+            <ul>
+              <li>Linux and macOS: <code>~/.weechat/python/</code></li>
+              <li>Windows (WSL): same path inside WSL</li>
+            </ul>
+          </li>
+          <li>
+            <strong class="step-title">Add the server</strong>
+            <p>In WeeChat, paste these lines one at a time:</p>
+            <pre class="plain">/server add radio 127.0.0.1/6667 -autoconnect
 /set irc.server.radio.tls off
 /set irc.server.radio.capabilities "message-tags,echo-message,server-time,msgid"
 /connect radio
 /script load radio.py</pre>
-        </li>
-        <li>
-          <p>You land in <code>#bulletin</code>. Chat as usual. <code>/radio help</code> lists node commands.</p>
-        </li>
-        <li>
-          <p>The script defaults to theme <code>tron</code> (indigo / orange, same as this site). Turn it off with:</p>
-          <pre class="plain">/set plugins.var.python.radio.theme plain</pre>
-        </li>
-      </ol>
+          </li>
+          <li>
+            <strong class="step-title">Start chatting</strong>
+            <p>You land in <code>#bulletin</code>. Chat as usual. <code>/radio help</code> lists node commands.</p>
+          </li>
+          <li>
+            <strong class="step-title">Change the theme</strong>
+            <p>The script defaults to theme <code>tron</code> (indigo / orange, same as this site). Turn it off with:</p>
+            <pre class="plain">/set plugins.var.python.radio.theme plain</pre>
+          </li>
+        </ol>
+      </section>
 
       <div class="ok">
         <h2>How you know it worked</h2>

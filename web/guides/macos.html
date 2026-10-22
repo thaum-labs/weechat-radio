@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -44,48 +45,70 @@
       <div class="sub" id="clock-local">LCL --:--</div>
     </div>
   </header>
+
+  <!-- Line icons shared by the "what you need" cards. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-laptop" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="11" /><path d="M2 19 H22" /></symbol>
+    <symbol id="ico-app" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" /><path d="M7 10 L10 12.5 L7 15 M12 15 H17" /></symbol>
+  </svg>
+
   <div class="page-wrap">
     <main class="page-panel">
       <p class="crumb"><a href="/guides.html">guides</a> / macOS</p>
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> macOS</h1>
       <p class="lead">Same install command as Linux. Then run setup, then the window.</p>
 
-      <div class="need">
-        <h2>What you need</h2>
-        <ul>
-          <li>A Mac</li>
-          <li>Terminal (Command + Space, type <code>Terminal</code>, press Enter)</li>
+      <section class="article-section article-section--first" aria-labelledby="needH">
+        <h2 id="needH">What you need</h2>
+        <ul class="cards">
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-laptop" /></svg>
+              <strong>A Mac</strong>
+            </li>
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-app" /></svg>
+              <strong>Terminal</strong>
+              <span>Command + Space, type <code>Terminal</code>, press Enter.</span>
+            </li>
         </ul>
-      </div>
+      </section>
 
-      <h2>Steps</h2>
-      <ol class="steps">
-        <li>
-          <p>Install:</p>
-          <pre>curl -fsSL https://weechatradio.com/install.sh | sh</pre>
-          <p>This downloads <code>wcr</code>. It does not run <code>brew install weechat</code>. Homebrew has no tap for this project yet, and on older macOS it would compile WeeChat from source.</p>
-        </li>
-        <li>
-          <p>The installer adds <code>~/.local/bin</code> to your bash, zsh, or fish profile when it is not already on PATH. This terminal does not see that yet. Run the <code>export</code> line it printed, then <code>wcr setup</code>.</p>
-        </li>
-        <li>
-          <p>Run setup first. It asks for your callsign, grid, and whether you have a radio:</p>
-          <pre>wcr setup</pre>
-          <p>The installer puts <code>modem73</code> (the radio sound box) next to <code>wcr</code>, same as Windows and Linux. After setup, a test line in radio mode should play tones on the speakers.</p>
-        </li>
-        <li>
-          <p>Then open the chat window:</p>
-          <pre>wcr gui</pre>
-        </li>
-        <li>
-          <p>To run in the background:</p>
-          <pre>wcr service install</pre>
-          <p><code>wcr update</code> replaces the binary and restarts this service. A station you started by hand keeps the old code until you stop it and start it again.</p>
-        </li>
-        <li>
-          <p>WeeChat is optional. To add it later, see the <a href="/guides/weechat.html">WeeChat guide</a>.</p>
-        </li>
-      </ol>
+      <section class="article-section" aria-labelledby="stepsH">
+        <h2 id="stepsH">Steps</h2>
+        <ol class="steps">
+          <li>
+            <strong class="step-title">Install <code>wcr</code></strong>
+            <p>Install:</p>
+            <pre>curl -fsSL https://weechatradio.com/install.sh | sh</pre>
+            <p>This downloads <code>wcr</code>. It does not run <code>brew install weechat</code>. Homebrew has no tap for this project yet, and on older macOS it would compile WeeChat from source.</p>
+          </li>
+          <li>
+            <strong class="step-title">Run the <code>export</code> line</strong>
+            <p>The installer adds <code>~/.local/bin</code> to your bash, zsh, or fish profile when it is not already on PATH. This terminal does not see that yet. Run the <code>export</code> line it printed, then <code>wcr setup</code>.</p>
+          </li>
+          <li>
+            <strong class="step-title">Run setup</strong>
+            <p>Run setup first. It asks for your callsign, grid, and whether you have a radio:</p>
+            <pre>wcr setup</pre>
+            <p>The installer puts <code>modem73</code> (the radio sound box) next to <code>wcr</code>, same as Windows and Linux. After setup, a test line in radio mode should play tones on the speakers.</p>
+          </li>
+          <li>
+            <strong class="step-title">Open the chat window</strong>
+            <p>Then open the chat window:</p>
+            <pre>wcr gui</pre>
+          </li>
+          <li>
+            <strong class="step-title">Run in the background</strong>
+            <p>To run in the background:</p>
+            <pre>wcr service install</pre>
+            <p><code>wcr update</code> replaces the binary and restarts this service. A station you started by hand keeps the old code until you stop it and start it again.</p>
+          </li>
+          <li>
+            <strong class="step-title">Add WeeChat later</strong>
+            <p>WeeChat is optional. To add it later, see the <a href="/guides/weechat.html">WeeChat guide</a>.</p>
+          </li>
+        </ol>
+      </section>
 
       <div class="ok">
         <h2>How you know it worked</h2>

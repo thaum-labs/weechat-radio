@@ -1,0 +1,575 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Docs and guides kit. Loaded after styles.css by every page under /docs and /guides.
+   styles.css still owns the site shell, tokens, .dgm basics, .dgm-key, callout boxes
+   (.need .ok .note .warn-box), .steps, code blocks and copy buttons.
+
+   Contents
+     1. Article basics       .lead tone, .article-section, .section-lead, .article-kicker
+     2. Cards                .cards > li (+ .card-ico, .is-optional)
+     3. Steps                .steps .step-title
+     4. Lists                .fix-list (+ --long), .fix-also, .who-list (station rows), .mark-list
+     5. Flow                 .flow (A → B chips with a short condition between)
+     6. Fitting              svg.dgm.fit, .pair (cards beside a diagram), table.stack-table
+     7. Live diagram         .live-dgm figure, .setup-switch, .live-status, .setup-panel
+     8. Diagram glyphs       laptop, handheld radio, base station, house
+     9. Packets              .seg + .pkt animation, .btn-replay */
+
+.page-panel {
+  --body: #c8c0d8;
+  --panel: #050509;
+}
+
+/* --- 1. article basics -------------------------------------------------- */
+
+.page-panel .lead { color: var(--body); }
+.page-panel .article-section { margin: 44px 0; }
+.page-panel .article-section--first { margin-top: 24px; }
+/* breathing room between blocks that follow each other inside a section */
+.page-panel .article-section > p + p,
+.page-panel .article-section > p + .table-wrap,
+.page-panel .article-section > .table-wrap + p,
+.page-panel .article-section > ol + p,
+.page-panel .article-section > ul + p { margin-top: 10px; }
+.page-panel .article-section > .live-dgm,
+.page-panel .article-section > .pair { margin: 14px 0 18px; }
+.page-panel .article-section > ol:not(.steps) { padding-left: 24px; }
+.page-panel .article-section > ol:not(.steps) > li + li { margin-top: 4px; }
+.page-panel .article-section > h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+.page-panel .section-lead {
+  margin: 0 0 16px;
+  max-width: 46rem;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--body);
+}
+.page-panel .section-lead--after { margin: 12px 0 0; }
+.page-panel .article-kicker {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+/* --- 2. cards ----------------------------------------------------------- */
+
+.page-panel .cards {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  margin: 10px 0 0;
+  padding: 0;
+}
+.page-panel .cards > li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--body);
+}
+.page-panel .cards > li.is-optional { border-style: dashed; }
+.page-panel .cards > li > strong {
+  color: var(--fg);
+  font-weight: 400;
+}
+/* compact cards: icon on the left, for a column of choices beside a diagram */
+.page-panel .cards--compact { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.page-panel .cards--compact > li {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  column-gap: 12px;
+  row-gap: 2px;
+  padding: 10px 12px;
+}
+.page-panel .cards--compact > li > .card-ico {
+  grid-row: span 2;
+  margin: 0;
+}
+.card-ico {
+  width: 26px;
+  height: 26px;
+  margin-bottom: 6px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+}
+.is-optional .card-ico { stroke: var(--orange); }
+
+/* --- 3. steps ----------------------------------------------------------- */
+
+.page-panel .steps .step-title {
+  display: block;
+  margin: 3px 0 4px;
+  font-size: inherit;
+  font-weight: 400;
+  color: var(--fg);
+}
+.page-panel .steps .step-title + p,
+.page-panel .steps > li > p + p { margin-top: 0; }
+.page-panel .steps > li > p { margin: 0 0 8px; }
+.page-panel .steps > li > p:last-child { margin-bottom: 0; }
+
+/* --- 4. fix list -------------------------------------------------------- */
+
+.page-panel .fix-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+.fix-list > div {
+  display: grid;
+  grid-template-columns: minmax(0, 14rem) minmax(0, 1fr);
+  gap: 4px 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+.fix-list dt {
+  font-size: 13px;
+  color: var(--orange);
+}
+.fix-list dd {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.page-panel .fix-also li { color: var(--body); }
+@media (max-width: 600px) {
+  .fix-list > div { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* who's who: one row per station, mode in its map colour */
+.page-panel .who-list {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 12px;
+}
+.who-list > div {
+  display: grid;
+  grid-template-columns: minmax(0, 7.5rem) minmax(0, 1fr);
+  gap: 2px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--who, var(--line));
+  background: var(--panel);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.who-list dt { color: var(--fg); }
+.who-list dt small {
+  display: block;
+  font-size: 11px;
+  color: var(--who, var(--dim));
+}
+.who-list dd { margin: 0; color: var(--body); }
+.who-list .mode-internet { --who: var(--mode-internet); }
+.who-list .mode-internet-radio { --who: var(--mode-internet-radio); }
+.who-list .mode-radio { --who: var(--mode-radio); }
+.who-list .mode-radio-plus { --who: var(--mode-radio-plus); }
+
+/* long fixes (paragraphs, lists, commands): symptom on top, fix at full width */
+.fix-list--long > div {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  padding: 14px 16px;
+}
+.page-panel .fix-list--long dt { font-size: 14px; }
+.page-panel .fix-list--long dd > p,
+.page-panel .fix-list--long dd li {
+  font-size: 14px;
+  line-height: 1.6;
+}
+.fix-list--long dd > * + * { margin-top: 8px; }
+.fix-list--long dd > :first-child { margin-top: 0; }
+.fix-list--long dd > :last-child,
+.fix-list--long dd .pre-wrap:last-child { margin-bottom: 0; }
+.fix-list--long dd ul,
+.fix-list--long dd ol {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+.fix-list--long dd li + li { margin-top: 4px; }
+.fix-list--long pre {
+  padding-right: 64px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.fix-list > div[id] { scroll-margin-top: 72px; }
+.fix-list > div:target { border-color: var(--orange); }
+@media (max-width: 960px) {
+  .fix-list--long pre { padding-right: 14px; }
+  .page-panel .fix-list--long dt,
+  .page-panel .fix-list--long dd > p,
+  .page-panel .fix-list--long dd li {
+    font-size: 15px;
+    line-height: 1.55;
+  }
+}
+
+/* mark list: a short code in a narrow column, its meaning beside it ([ok] → delivered) */
+.page-panel .mark-list {
+  display: grid;
+  margin: 8px 0 12px;
+}
+.mark-list > div {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(125, 155, 255, 0.12);
+}
+.mark-list > div:last-child { border-bottom: 0; }
+.mark-list dt,
+.mark-list dd {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--fg);
+}
+@media (max-width: 960px) {
+  .mark-list dt,
+  .mark-list dd { font-size: 16px; }
+  .mark-list > div { grid-template-columns: 4rem minmax(0, 1fr); gap: 10px; }
+}
+
+/* --- 5. flow ------------------------------------------------------------ */
+
+.flow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0 14px;
+}
+/* three chips: A → B → C */
+.flow--ladder {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+}
+.flow--ladder .flow-step { max-width: 9rem; }
+.flow-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+  color: var(--body);
+}
+.flow-chip svg {
+  width: 78px;
+  height: 16px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.6;
+}
+.flow-chip.is-start svg { stroke: var(--mode-internet-radio); }
+.page-panel .flow-chip code {
+  align-self: flex-start;
+  font-size: 13px;
+}
+.flow-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--dim);
+  text-align: center;
+}
+.flow-step__arrow {
+  font-size: 16px;
+  color: var(--mode-internet-radio);
+}
+.flow-step__back { color: var(--orange); }
+@media (max-width: 600px) {
+  .flow,
+  .flow--ladder { grid-template-columns: minmax(0, 1fr); }
+  .flow--ladder .flow-step { max-width: none; }
+  .flow-step__arrow { transform: rotate(90deg); }
+}
+
+/* --- 6. diagrams that fit a phone, and cards beside a diagram ----------- */
+
+/* A static diagram drawn ~420–440 wide: add "fit" to the svg to skip the shared 620px scroll width. */
+svg.dgm.fit {
+  min-width: 0;
+  max-width: 520px;
+  margin: 0 auto;
+}
+svg.dgm.fit .sub { font-size: 11px; }
+
+/* .pair: a column of cards (or text) beside a diagram; stacks on phones. */
+.page-panel .pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 440px);
+  gap: 18px;
+  align-items: start;
+  margin-top: 10px;
+}
+.page-panel .pair > figure.diagram,
+.page-panel .pair > .article-section { margin: 0; }
+.page-panel .pair > div > p + p { margin-top: 10px; }
+.page-panel .pair .cards {
+  grid-template-columns: minmax(0, 1fr);
+  margin-top: 0;
+}
+@media (max-width: 760px) {
+  .page-panel .pair { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* A reference table whose rows stack on phones (cell above cell). */
+@media (max-width: 600px) {
+  .stack-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .stack-table tr {
+    display: block;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(125, 155, 255, 0.12);
+  }
+  .stack-table td {
+    display: block;
+    padding: 2px 4px;
+    border: 0;
+  }
+  .stack-table td:first-child code { white-space: nowrap; }
+}
+
+/* --- 7. live diagram ---------------------------------------------------- */
+/* <figure class="diagram live-dgm" data-live-dgm data-setup="…"> … see live-dgm.js */
+
+.page-panel .live-dgm { margin: 0; }
+.setup-switch {
+  display: flex;
+  flex-wrap: wrap;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0 10px;
+  border: 1px solid var(--line);
+}
+.setup-switch[hidden] { display: none; }
+.setup-switch button {
+  padding: 7px 12px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: none;
+  color: var(--dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.setup-switch button:last-child { border-right: 0; }
+.setup-switch button:hover { color: var(--orange); }
+.setup-switch button[aria-pressed="true"] {
+  background: rgba(125, 155, 255, 0.12);
+  color: var(--accent);
+}
+.setup-switch button:focus-visible {
+  outline: 1px solid var(--orange);
+  outline-offset: -1px;
+}
+
+/* Picture beside its text on desktop; .live-dgm--wide stacks text under a wide picture. */
+.live-dgm__body {
+  display: grid;
+  grid-template-columns: minmax(0, 440px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.live-dgm--wide .live-dgm__body { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 760px) {
+  .live-dgm__body { grid-template-columns: minmax(0, 1fr); }
+}
+/* Live diagrams are drawn to fit a phone, so skip the shared 620px scroll width. */
+.live-dgm svg.dgm { min-width: 0; }
+
+.live-status {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+}
+.page-panel .live-status__text {
+  margin: 0;
+  min-height: 2.8em;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--body);
+}
+.live-status .btn-replay { flex: none; }
+
+.page-panel .setup-panel h3 {
+  margin: 0 0 6px;
+  font-size: inherit;
+  color: var(--fg);
+}
+.page-panel .setup-panel p {
+  margin: 0 0 10px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.page-panel .setup-panel + .setup-panel { margin-top: 18px; }
+.page-panel .setup-note {
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+  font-size: 12.5px;
+  color: var(--body);
+}
+/* With the script running, only the chosen setup's text shows. */
+.live-dgm.has-switch .setup-panel:not(.is-active) { display: none; }
+.live-dgm.has-switch .setup-panel + .setup-panel { margin-top: 0; }
+
+/* Parts that belong to some setups only: data-setups="a b". Mark the ones that are not in
+   the default setup with class="is-off" in the markup so the page reads right without script. */
+.live-dgm [data-setups] { transition: opacity 0.35s ease; }
+.live-dgm [data-setups].is-off {
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* Text and boxes in live diagrams read a touch larger than the shared .dgm defaults. */
+.live-dgm svg.dgm text { font-size: 12px; }
+.live-dgm svg.dgm .sub { font-size: 11px; }
+.live-dgm svg.dgm .on-rf { fill: var(--orange); }
+svg.dgm .seg.is-live .wire,
+svg.dgm .seg.is-live .rf,
+svg.dgm .seg.is-live .net { stroke-width: 2.3; }
+svg.dgm .is-on .box { transition: fill 0.3s ease; }
+svg.dgm .is-on .box.accent { fill: rgba(125, 155, 255, 0.12); }
+svg.dgm .is-on .box.orange,
+svg.dgm .is-on .box.radio { fill: rgba(255, 122, 61, 0.12); }
+svg.dgm .is-on .box.gw { fill: rgba(57, 255, 20, 0.11); }
+svg.dgm .is-on .box.hub { fill: rgba(0, 229, 255, 0.1); }
+svg.dgm .is-on .box.rplus { fill: rgba(255, 77, 255, 0.14); }
+
+/* --- 8. diagram glyphs -------------------------------------------------- */
+/* Snippets live in docs/KIT.md. */
+
+/* laptop: <rect class="box accent"> screen + <path class="laptop-base"> */
+svg.dgm .laptop-base {
+  fill: #0a0a12;
+  stroke: var(--accent);
+  stroke-width: 1;
+}
+/* screen lines that appear as the demo runs: class="scr" data-show="name" */
+svg.dgm .scr {
+  font-size: 11px;
+  fill: var(--fg);
+}
+svg.dgm .scr-input,
+svg.dgm .scr-dim { font-size: 11px; fill: var(--dim); }
+svg.dgm .scr.ok { fill: var(--mode-internet-radio); }
+.live-dgm.js-live svg.dgm [data-show] { opacity: 0; transition: opacity 0.3s ease; }
+.live-dgm.js-live svg.dgm [data-show].is-shown { opacity: 1; }
+
+/* sound through the air instead of a cable */
+svg.dgm .wire.air { stroke-dasharray: 2 4; }
+
+/* handheld radio / desk radio: body .box.orange, .antenna, .antenna-tip, .grille, .led */
+svg.dgm .antenna {
+  stroke: var(--orange);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+svg.dgm .antenna-tip { fill: var(--orange); }
+svg.dgm .grille {
+  fill: none;
+  stroke: rgba(255, 122, 61, 0.45);
+  stroke-width: 1.5;
+}
+svg.dgm .led {
+  fill: #2a1710;
+  stroke: rgba(255, 122, 61, 0.55);
+  stroke-width: 1;
+  transition: fill 0.15s ease;
+}
+svg.dgm .is-on .led {
+  fill: #ff5a3d;
+  filter: drop-shadow(0 0 5px #ff5a3d);
+}
+
+/* base station at home: .house outline + .mast with .mast-rung cross bars */
+svg.dgm .house {
+  fill: rgba(125, 155, 255, 0.03);
+  stroke: rgba(125, 155, 255, 0.45);
+  stroke-width: 1;
+  stroke-linejoin: round;
+}
+svg.dgm .mast {
+  fill: none;
+  stroke: var(--orange);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* a column or area that groups stations (one dial, one room) */
+svg.dgm .lane-bg {
+  fill: rgba(125, 155, 255, 0.03);
+  stroke: var(--line);
+  stroke-dasharray: 3 5;
+}
+
+/* --- 9. packets --------------------------------------------------------- */
+/* Animated packet on a diagram path.
+   Markup: <g class="seg seg-rf|seg-net|seg-sound"><path …/><path class="pkt" …/></g>.
+   Page script sets --len (path length) on each .pkt and adds .is-live to the
+   .seg; --leg delays later hops, .is-rev runs the path backwards. */
+svg.dgm .pkt {
+  fill: none;
+  stroke-width: 4.5;
+  stroke-linecap: round;
+  stroke-dasharray: 12 2000;
+  stroke-dashoffset: 14;
+  opacity: 0;
+}
+svg.dgm .seg-rf .pkt {
+  stroke: #ffd6c4;
+  filter: drop-shadow(0 0 4px var(--orange));
+}
+svg.dgm .seg-net .pkt {
+  stroke: #ccfaff;
+  filter: drop-shadow(0 0 4px var(--mode-internet));
+}
+svg.dgm .seg-sound .pkt {
+  stroke: #dde4ff;
+  filter: drop-shadow(0 0 4px var(--accent));
+}
+@media (prefers-reduced-motion: no-preference) {
+  svg.dgm .seg.is-live .pkt {
+    opacity: 1;
+    animation: dgm-packet var(--pkt-dur, 0.9s) ease-in-out calc(var(--leg, 0) * var(--pkt-dur, 0.9s)) both;
+  }
+  svg.dgm .seg.is-live.is-rev .pkt { animation-direction: reverse; }
+}
+@keyframes dgm-packet {
+  from { stroke-dashoffset: 14; }
+  to { stroke-dashoffset: calc(-1px * var(--len, 200)); }
+}
+
+.btn-replay {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 5px 11px;
+  border: 1px solid var(--accent);
+  background: #0a0a12;
+  color: var(--accent);
+  cursor: pointer;
+}
+.btn-replay:hover {
+  border-color: var(--orange);
+  color: var(--orange);
+}

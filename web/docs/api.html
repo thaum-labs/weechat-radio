@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -50,57 +51,73 @@
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> public API</h1>
       <p class="lead">The live map reads this API. You can skip this page unless you are building something that talks to the hub.</p>
 
-      <p>Base: <code>https://hub.weechatradio.com</code></p>
-      <p>OpenAPI: <a href="/docs/openapi.yaml">openapi.yaml</a> (machine-readable hub contract).</p>
-      <p>CORS is open. Reads need no key. Writes are signed.</p>
+      <div class="pair">
+        <ul class="cards">
+          <li><strong>Base</strong><span><code>https://hub.weechatradio.com</code></span></li>
+          <li><strong>OpenAPI</strong><span><a href="/docs/openapi.yaml">openapi.yaml</a> (machine-readable hub contract).</span></li>
+          <li><strong>CORS is open</strong><span>Reads need no key. Writes are signed.</span></li>
+        </ul>
 
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 206" role="img" aria-labelledby="a1t a1d">
-            <title id="a1t">How station reports reach the map</title>
-            <desc id="a1d">Your station signs a report and posts it to the hub API, which serves it to the public map and the live WebSocket feed. Message text is never part of a report.</desc>
-            <defs>
-              <marker id="mnetA" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-            </defs>
-            <text class="tag" x="16" y="20">WRITES ARE SIGNED · READS ARE OPEN</text>
-            <line class="net" marker-end="url(#mnetA)" x1="200" y1="86" x2="244" y2="86" />
-            <text class="sub" x="222" y="78" text-anchor="middle">HTTPS</text>
-            <line class="net" marker-end="url(#mnetA)" x1="432" y1="76" x2="514" y2="60" />
-            <line class="net" marker-end="url(#mnetA)" x1="432" y1="98" x2="514" y2="124" />
-            <path class="none" d="M106 116 V 138" />
-            <line class="cross" x1="97" y1="140" x2="115" y2="158" />
-            <line class="cross" x1="115" y1="140" x2="97" y2="158" />
-            <rect class="box accent" x="16" y="62" width="182" height="54" />
-            <text class="on-accent" x="107" y="84" text-anchor="middle">your station</text>
-            <text class="sub" x="107" y="102" text-anchor="middle">signs with its own key</text>
-            <rect class="box hub" x="246" y="62" width="184" height="54" />
-            <text class="on-hub" x="338" y="84" text-anchor="middle">hub API</text>
-            <text class="sub" x="338" y="102" text-anchor="middle">checks the signature</text>
-            <rect class="box" x="516" y="36" width="188" height="48" />
-            <text x="610" y="56" text-anchor="middle">live map</text>
-            <text class="sub" x="610" y="72" text-anchor="middle">public, no key</text>
-            <rect class="box" x="516" y="100" width="188" height="48" />
-            <text x="610" y="120" text-anchor="middle">/ws/live</text>
-            <text class="sub" x="610" y="136" text-anchor="middle">event firehose</text>
-            <text class="sub" x="132" y="154">message text never goes in a report</text>
-            <text class="sub" x="16" y="192">first sight of a public key binds it to that callsign; later posts must match</text>
-          </svg>
-        </div>
-        <figcaption>Stations report metadata only. Message text never goes in a report.</figcaption>
-      </figure>
+        <figure class="diagram">
+          <div class="dgm-wrap">
+            <svg class="dgm fit" viewBox="0 0 440 262" role="img" aria-labelledby="a1t a1d">
+              <title id="a1t">How station reports reach the map</title>
+              <desc id="a1d">Your station signs a report and posts it to the hub API, which serves it to the public map and the live WebSocket feed. Message text is never part of a report.</desc>
+              <defs>
+                <marker id="mnetA" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
+                </marker>
+              </defs>
 
-      <h2>Write — POST /api/v1/report</h2>
-      <p>Headers:</p>
-      <ul>
-        <li><code>X-Radio-Callsign</code></li>
-        <li><code>X-Radio-Pubkey</code> — hex Ed25519 public key</li>
-        <li><code>X-Radio-Signature</code> — hex signature of the <strong>raw body</strong></li>
-      </ul>
-      <p>First time a public key is seen, it is bound to that callsign. Later posts must use the same key.</p>
-      <p>Body is JSON metadata only. Never send message text.</p>
-      <pre class="plain">{
+              <!-- write: your station to the hub -->
+              <rect class="box accent" x="16" y="16" width="196" height="54" />
+              <text class="on-accent" x="114" y="39" text-anchor="middle">your station</text>
+              <text class="sub" x="114" y="57" text-anchor="middle">signs with its own key</text>
+
+              <path class="none" d="M212 43 H248" />
+              <line class="cross" x1="252" y1="35" x2="268" y2="51" />
+              <line class="cross" x1="268" y1="35" x2="252" y2="51" />
+              <text class="sub" x="278" y="40">message text never</text>
+              <text class="sub" x="278" y="54">goes in a report</text>
+
+              <line class="net" marker-end="url(#mnetA)" x1="114" y1="70" x2="114" y2="112" />
+              <text class="sub" x="122" y="95">HTTPS</text>
+
+              <rect class="box hub" x="16" y="114" width="196" height="54" />
+              <text class="on-hub" x="114" y="137" text-anchor="middle">hub API</text>
+              <text class="sub" x="114" y="155" text-anchor="middle">checks the signature</text>
+
+              <!-- read: the hub to the map and the live feed -->
+              <line class="net" marker-end="url(#mnetA)" x1="212" y1="130" x2="258" y2="114" />
+              <line class="net" marker-end="url(#mnetA)" x1="212" y1="152" x2="258" y2="178" />
+
+              <rect class="box" x="260" y="88" width="164" height="50" />
+              <text x="342" y="109" text-anchor="middle">live map</text>
+              <text class="sub" x="342" y="126" text-anchor="middle">public, no key</text>
+              <rect class="box" x="260" y="154" width="164" height="50" />
+              <text x="342" y="175" text-anchor="middle">/ws/live</text>
+              <text class="sub" x="342" y="192" text-anchor="middle">event firehose</text>
+
+              <text class="sub" x="16" y="234">first sight of a public key binds it to that callsign;</text>
+              <text class="sub" x="16" y="249">later posts must match</text>
+            </svg>
+          </div>
+          <figcaption>Stations report metadata only. Message text never goes in a report.</figcaption>
+        </figure>
+      </div>
+
+      <section class="article-section" aria-labelledby="writeH">
+        <h2 id="writeH">Write — POST /api/v1/report</h2>
+        <p class="section-lead">Sign the raw body with the station’s Ed25519 key, then send it with three headers.</p>
+        <p>Headers:</p>
+        <ul>
+          <li><code>X-Radio-Callsign</code></li>
+          <li><code>X-Radio-Pubkey</code> — hex Ed25519 public key</li>
+          <li><code>X-Radio-Signature</code> — hex signature of the <strong>raw body</strong></li>
+        </ul>
+        <p>First time a public key is seen, it is bound to that callsign. Later posts must use the same key.</p>
+        <p>Body is JSON metadata only. Never send message text.</p>
+        <pre class="plain">{
   "callsign": "G4ABC",
   "ts": 1710000000,
   "grid": "IO91wm",
@@ -118,25 +135,29 @@
     { "ts": 1710000000, "kind": "tx", "origin": "G4ABC", "dest": "NET", "hops": 3, "band": "2m" }
   ]
 }</pre>
-      <p><code>ts</code> must be within 5 minutes of the hub clock.</p>
+        <p><code>ts</code> must be within 5 minutes of the hub clock.</p>
+      </section>
 
-      <h2>Read</h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>Path</th><th>What you get</th></tr>
-          </thead>
-          <tbody>
-            <tr><td><code>GET /api/v1/nodes</code></td><td>live stations and settings (<code>band</code>, <code>freq_khz</code>, <code>frequency</code>)</td></tr>
-            <tr><td><code>GET /api/v1/events?since=&amp;limit=</code></td><td>TX/RX/relay events</td></tr>
-            <tr><td><code>GET /api/v1/hubs</code></td><td>hub/relay status, including <code>bands</code></td></tr>
-            <tr><td><code>GET /api/v1/bands</code></td><td>stations grouped by band</td></tr>
-            <tr><td><code>GET /api/v1/stats</code></td><td>totals</td></tr>
-            <tr><td><code>GET /ws/live</code></td><td>WebSocket firehose of the same events</td></tr>
-            <tr><td><code>GET /healthz</code></td><td><code>ok</code></td></tr>
-          </tbody>
-        </table>
-      </div>
+      <section class="article-section" aria-labelledby="readH">
+        <h2 id="readH">Read</h2>
+        <p class="section-lead">Plain GET requests. No key needed.</p>
+        <div class="table-wrap">
+          <table class="stack-table">
+            <thead>
+              <tr><th>Path</th><th>What you get</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>GET /api/v1/nodes</code></td><td>live stations and settings (<code>band</code>, <code>freq_khz</code>, <code>frequency</code>)</td></tr>
+              <tr><td><code>GET /api/v1/events?since=&amp;limit=</code></td><td>TX/RX/relay events</td></tr>
+              <tr><td><code>GET /api/v1/hubs</code></td><td>hub/relay status, including <code>bands</code></td></tr>
+              <tr><td><code>GET /api/v1/bands</code></td><td>stations grouped by band</td></tr>
+              <tr><td><code>GET /api/v1/stats</code></td><td>totals</td></tr>
+              <tr><td><code>GET /ws/live</code></td><td>WebSocket firehose of the same events</td></tr>
+              <tr><td><code>GET /healthz</code></td><td><code>ok</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       <div class="ok">
         <h2>How you know it worked</h2>

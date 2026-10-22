@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -44,66 +45,167 @@
       <div class="sub" id="clock-local">LCL --:--</div>
     </div>
   </header>
+
+  <!-- Line icons for the cards. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-radio" viewBox="0 0 24 24"><rect x="7" y="8" width="10" height="14" rx="1.5" /><path d="M15 8 V2 M10 15 H14 M10 18 H14" /></symbol>
+    <symbol id="ico-cable" viewBox="0 0 24 24"><path d="M3 12 H9 M15 12 H21 M9 9 H15 V15 H9 Z" /></symbol>
+    <symbol id="ico-sound" viewBox="0 0 24 24"><path d="M4 9 H8 L13 5 V19 L8 15 H4 Z M16.5 9 C18 10.5 18 13.5 16.5 15 M19 6.5 C22 9.5 22 14.5 19 17.5" /></symbol>
+  </svg>
+
   <div class="page-wrap">
     <main class="page-panel">
       <p class="crumb"><a href="/guides.html">guides</a> / <a href="/guides/radio.html">radio</a> / VOX</p>
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> any radio with VOX</h1>
       <p class="lead">VOX means the radio transmits when it hears sound. A plain audio cable is enough. About five minutes.</p>
 
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 210" role="img" aria-labelledby="v1t v1d">
-            <title id="v1t">Two audio cables between radio and computer</title>
-            <desc id="v1d">The radio speaker feeds the computer microphone input, and the computer headphone output feeds the radio microphone input. The radio keys itself on the data tones using VOX.</desc>
-            <defs>
-              <marker id="mrfV" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-            </defs>
-            <text class="tag" x="16" y="20">TWO CABLES · NO USB</text>
-            <line class="rf" marker-end="url(#mrfV)" x1="222" y1="82" x2="494" y2="82" />
-            <text class="sub" x="358" y="74" text-anchor="middle">radio speaker → computer mic</text>
-            <line class="rf" marker-end="url(#mrfV)" x1="494" y1="130" x2="222" y2="130" />
-            <text class="sub" x="358" y="150" text-anchor="middle">computer headphones → radio mic</text>
-            <rect class="box orange" x="16" y="48" width="204" height="116" />
-            <text class="on-orange" x="118" y="98" text-anchor="middle">radio</text>
-            <text class="sub" x="118" y="116" text-anchor="middle">keys itself on VOX</text>
-            <rect class="box accent" x="496" y="48" width="208" height="116" />
-            <text class="on-accent" x="600" y="98" text-anchor="middle">this computer</text>
-            <text class="sub" x="600" y="116" text-anchor="middle">sound card in and out</text>
-            <text class="sub" x="16" y="192">set the volume so the radio keys on data tones, not on room noise</text>
-          </svg>
+      <section class="article-section article-section--first" aria-labelledby="needH">
+        <h2 id="needH">What you need</h2>
+        <div class="pair">
+          <ul class="cards">
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-radio" /></svg>
+              <strong>Any radio that can key on VOX (voice-operated transmit)</strong>
+            </li>
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-cable" /></svg>
+              <strong>A 3.5&nbsp;mm audio cable</strong>
+              <span>From the computer sound card to the radio mic/speaker.</span>
+            </li>
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-sound" /></svg>
+              <strong>Volume set</strong>
+              <span>So the radio keys on data tones, not on room noise.</span>
+            </li>
+          </ul>
+        <figure class="diagram live-dgm live-dgm--wide" data-live-dgm>
+          <div class="live-dgm__body">
+            <div class="live-dgm__pic">
+              <div class="dgm-wrap">
+                <svg class="dgm" viewBox="0 0 440 286" role="img" aria-labelledby="vxT vxD">
+                <title id="vxT">Two audio cables between radio and computer</title>
+                <desc id="vxD">The computer headphone output feeds the radio microphone input, and the radio speaker feeds the computer microphone input. The radio keys itself when it hears the data tones (VOX) and sends on the air to another station on the same frequency. The receipt comes back from the radio speaker into the computer.</desc>
+                <defs>
+                  <marker id="mVoxLead" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
+                  </marker>
+                </defs>
+                <g data-node="other">
+                  <rect class="box orange" x="318" y="12" width="112" height="40" />
+                  <text class="on-orange" x="374" y="29" text-anchor="middle">other station</text>
+                  <text class="sub" x="374" y="44" text-anchor="middle">same frequency</text>
+                </g>
+                <g class="seg seg-rf" data-seg="rf"><path class="rf" d="M374 128 q5 -6 0 -12 t0 -12 t0 -12 t0 -12 t0 -12 t0 -12" /><path class="pkt" d="M374 128 q5 -6 0 -12 t0 -12 t0 -12 t0 -12 t0 -12 t0 -12" /></g>
+                <text class="sub on-rf" x="364" y="96" text-anchor="end">on the air</text>
+                <g data-node="pc">
+                  <rect class="box accent" x="24" y="26" width="140" height="84" />
+                  <path class="laptop-base" d="M12 110 H176 L184 120 H4 Z" />
+                  <text class="sub" x="34" y="43">this computer</text>
+                  <text class="scr" data-show="me-hi" x="34" y="70">&lt;G4ABC&gt; hi</text>
+                  <text class="scr ok" data-show="me-ok" x="116" y="70">[ok]</text>
+                  <text class="scr-input" x="34" y="98">&gt; _</text>
+                </g>
+                <g class="seg seg-sound" data-seg="v-out"><path class="wire" marker-end="url(#mVoxLead)" d="M110 120 V206 H334" /><path class="pkt" d="M110 120 V206 H334" /></g>
+                <g class="seg seg-sound" data-seg="v-in"><path class="wire" marker-end="url(#mVoxLead)" d="M334 222 H94 V120" /><path class="pkt" d="M334 222 H94 V120" /></g>
+                <text class="sub" x="222" y="200" text-anchor="middle">computer headphones → radio mic</text>
+                <text class="sub" x="214" y="238" text-anchor="middle">radio speaker → computer mic</text>
+                <text class="sub" x="16" y="276">VOX: the radio keys itself on the sound</text>
+                <g data-node="radio">
+                  <line class="antenna" x1="374" y1="170" x2="374" y2="136" />
+                  <circle class="antenna-tip" cx="374" cy="134" r="2.5" />
+                  <rect class="box orange" x="334" y="170" width="48" height="88" rx="5" />
+                  <circle class="led" cx="370" cy="182" r="3.5" />
+                  <path class="grille" d="M344 218 H372 M344 225 H372 M344 232 H372 M344 239 H372" />
+                  <text class="on-orange" x="358" y="276" text-anchor="middle">radio</text>
+                </g>
+                </svg>
+              </div>
+              <div class="live-status">
+                <p class="live-status__text" data-live-status aria-live="polite"></p>
+                <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
+              </div>
+            </div>
+          </div>
+          <figcaption>Sound out of the radio into the computer, and sound out of the computer into the radio. Two 3.5&nbsp;mm cables, or one combined cable.</figcaption>
+          <script type="application/json" data-live-steps>
+          {
+            "main": {
+              "steps": [
+                {
+                  "say": "The computer plays a 900 ms lead, then “hi”, into the radio’s microphone.",
+                  "segs": [
+                    "v-out"
+                  ],
+                  "show": [
+                    "me-hi"
+                  ],
+                  "ms": 1700
+                },
+                {
+                  "say": "The radio hears the sound, keys itself and transmits, and its light comes on.",
+                  "segs": [
+                    "rf"
+                  ],
+                  "on": [
+                    "radio"
+                  ],
+                  "ms": 1900
+                },
+                {
+                  "say": "The other station hears it and sends a receipt back.",
+                  "segs": [
+                    "<rf"
+                  ],
+                  "on": [
+                    "other"
+                  ],
+                  "ms": 1700
+                },
+                {
+                  "say": "The radio speaker plays the receipt into the computer’s microphone.",
+                  "segs": [
+                    "v-in"
+                  ]
+                },
+                {
+                  "say": "Your line shows [ok]; it takes a little longer because of VOX delay.",
+                  "show": [
+                    "me-ok"
+                  ]
+                }
+              ]
+            }
+          }
+          </script>
+        </figure>
         </div>
-        <figcaption>Sound out of the radio into the computer, and sound out of the computer into the radio. Two 3.5&nbsp;mm cables, or one combined cable.</figcaption>
-      </figure>
+      </section>
 
-      <div class="need">
-        <h2>What you need</h2>
-        <ul>
-          <li>Any radio that can key on VOX (voice-operated transmit)</li>
-          <li>A 3.5&nbsp;mm audio cable from the computer sound card to the radio mic/speaker</li>
-          <li>Volume set so the radio keys on data tones, not on room noise</li>
-        </ul>
-      </div>
-
-      <h2>Steps</h2>
-      <ol class="steps">
-        <li>
-          <p>Connect computer headphone-out to radio mic-in, and radio speaker-out to computer mic-in.</p>
-        </li>
-        <li>
-          <p>On the radio, turn <strong>VOX on</strong>. Start with a medium VOX delay.</p>
-        </li>
-        <li>
-          <p>Run <code>wcr setup</code> and choose <strong>Any radio with a plain audio cable (VOX)</strong>. This selects the <code>vox-safe</code> preset: RDM-600S (robust over a speaker and mic) and a 900 ms lead so the radio is fully keyed before data starts.</p>
-        </li>
-        <li>
-          <p>Start <code>wcr tui</code>. Send a short test to <code>#bulletin</code>. Tell the app the frequency on the dial: <code>/radio freq 144.950</code>.</p>
-        </li>
-        <li>
-          <p>Keep radio VOX hang on the long side. If the other station still hears a clipped start, raise <code>modem.vox_lead_ms</code> in <code>wcr.toml</code> (try <code>1200</code>).</p>
-        </li>
-      </ol>
+      <section class="article-section" aria-labelledby="stepsH">
+        <h2 id="stepsH">Steps</h2>
+        <ol class="steps">
+          <li>
+            <strong class="step-title">Connect the cables</strong>
+            <p>Connect computer headphone-out to radio mic-in, and radio speaker-out to computer mic-in.</p>
+          </li>
+          <li>
+            <strong class="step-title">Turn on VOX</strong>
+            <p>On the radio, turn <strong>VOX on</strong>. Start with a medium VOX delay.</p>
+          </li>
+          <li>
+            <strong class="step-title">Run setup</strong>
+            <p>Run <code>wcr setup</code> and choose <strong>Any radio with a plain audio cable (VOX)</strong>. This selects the <code>vox-safe</code> preset: RDM-600S (robust over a speaker and mic) and a 900 ms lead so the radio is fully keyed before data starts.</p>
+          </li>
+          <li>
+            <strong class="step-title">Send a test</strong>
+            <p>Start <code>wcr tui</code>. Send a short test to <code>#bulletin</code>. Tell the app the frequency on the dial: <code>/radio freq 144.950</code>.</p>
+          </li>
+          <li>
+            <strong class="step-title">Fix a clipped start</strong>
+            <p>Keep radio VOX hang on the long side. If the other station still hears a clipped start, raise <code>modem.vox_lead_ms</code> in <code>wcr.toml</code> (try <code>1200</code>).</p>
+          </li>
+        </ol>
+      </section>
 
       <div class="ok">
         <h2>How you know it worked</h2>
@@ -115,5 +217,6 @@
   </div>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=10"></script>
+  <script src="/live-dgm.js?v=1"></script>
 </body>
 </html>

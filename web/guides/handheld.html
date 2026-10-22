@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -44,95 +45,204 @@
       <div class="sub" id="clock-local">LCL --:--</div>
     </div>
   </header>
+
+  <!-- Line icons for the cards. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-radio" viewBox="0 0 24 24"><rect x="7" y="8" width="10" height="14" rx="1.5" /><path d="M15 8 V2 M10 15 H14 M10 18 H14" /></symbol>
+    <symbol id="ico-cable" viewBox="0 0 24 24"><path d="M3 12 H9 M15 12 H21 M9 9 H15 V15 H9 Z" /></symbol>
+    <symbol id="ico-app" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" /><path d="M7 10 L10 12.5 L7 15 M12 15 H17" /></symbol>
+  </svg>
+
   <div class="page-wrap">
     <main class="page-panel">
       <p class="crumb"><a href="/guides.html">guides</a> / <a href="/guides/radio.html">radio</a> / handheld</p>
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> handheld + Digirig</h1>
       <p class="lead">A VHF/UHF walkie-talkie and a USB sound cable. About five minutes.</p>
 
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 176" role="img" aria-labelledby="h1t h1d">
-            <title id="h1t">Handheld to computer through a Digirig</title>
-            <desc id="h1d">A cable runs from the handheld's speaker-mic jack to the Digirig or AIOC, which connects to one USB port on the computer. The cable carries audio both ways and keys the radio.</desc>
-            <defs>
-              <marker id="mrfH" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-              <marker id="maccH" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-            </defs>
-            <text class="tag" x="16" y="20">TWO PLUGS, NOTHING ELSE</text>
-            <line class="rf" marker-start="url(#mrfH)" marker-end="url(#mrfH)" x1="224" y1="88" x2="262" y2="88" />
-            <text class="sub" x="243" y="80" text-anchor="middle">audio</text>
-            <line class="wire" marker-start="url(#maccH)" marker-end="url(#maccH)" x1="448" y1="88" x2="486" y2="88" />
-            <text class="sub" x="467" y="80" text-anchor="middle">USB</text>
-            <rect class="box orange" x="16" y="62" width="206" height="54" />
-            <text class="on-orange" x="119" y="84" text-anchor="middle">handheld</text>
-            <text class="sub" x="119" y="102" text-anchor="middle">speaker-mic jack</text>
-            <rect class="box" x="264" y="62" width="182" height="54" />
-            <text x="355" y="84" text-anchor="middle">Digirig</text>
-            <text class="sub" x="355" y="102" text-anchor="middle">or AIOC</text>
-            <rect class="box accent" x="488" y="62" width="216" height="54" />
-            <text class="on-accent" x="596" y="84" text-anchor="middle">this computer</text>
-            <text class="sub" x="596" y="102" text-anchor="middle">one USB port</text>
-            <text class="sub" x="360" y="146" text-anchor="middle">the same cable carries audio both ways and keys the radio</text>
-          </svg>
-        </div>
-        <figcaption>One cable into the radio’s speaker-mic hole. One USB cable into the computer.</figcaption>
-      </figure>
-
-      <div class="need">
-        <h2>What you need</h2>
-        <ul>
-          <li>A VHF/UHF handheld (Baofeng, UV-K6, or similar)</li>
-          <li>A <a href="https://digirig.net/">Digirig</a> or AIOC USB cable</li>
-          <li><code>wcr setup</code> already run once</li>
-        </ul>
-      </div>
-
-      <h2>Steps</h2>
-      <ol class="steps">
-        <li>
-          <p>Plug the Digirig into the computer. Plug the audio/PTT cable into the radio’s speaker-mic jack.</p>
-        </li>
-        <li>
-          <p>Turn the radio on. Set <strong>FM</strong>, simplex (one frequency, not a repeater), low power. Turn off voice scramble and VOX on the radio itself — the Digirig presses the transmit button for you.</p>
-        </li>
-        <li>
-          <p>Find the serial port name (the USB “COM” address):</p>
-          <ul>
-            <li><strong>Windows:</strong> right-click Start → Device Manager → Ports (COM &amp; LPT). Look for something like <code>COM5</code>.</li>
-            <li><strong>Linux:</strong> in a terminal, run <code>ls /dev/ttyUSB* /dev/ttyACM*</code>. You want <code>/dev/ttyUSB0</code> or similar.</li>
-            <li><strong>Mac:</strong> in Terminal, run <code>ls /dev/cu.usb*</code>.</li>
+      <section class="article-section article-section--first" aria-labelledby="needH">
+        <h2 id="needH">What you need</h2>
+        <div class="pair">
+          <ul class="cards">
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-radio" /></svg>
+              <strong>A VHF/UHF handheld</strong>
+              <span>Baofeng, UV-K6, or similar.</span>
+            </li>
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-cable" /></svg>
+              <strong>A <a href="https://digirig.net/">Digirig</a> or AIOC USB cable</strong>
+            </li>
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-app" /></svg>
+              <strong><code>wcr setup</code> already run once</strong>
+            </li>
           </ul>
-        </li>
-        <li>
-          <p>Run <code>wcr setup</code> and choose <strong>Handheld + Digirig</strong>. Type that port name.</p>
-        </li>
-        <li>
-          <p>Start with <code>wcr tui</code>. Watch the status bar: audio should read <code>good</code>, not <code>low</code> or <code>hot</code>.</p>
-        </li>
-        <li>
-          <p>Ask a second station on the same frequency to send a short test. You should see their callsign in the heard list. Tell the app your dial: <code>/radio freq 144.950</code>.</p>
-        </li>
-      </ol>
+        <figure class="diagram live-dgm live-dgm--wide" data-live-dgm>
+          <div class="live-dgm__body">
+            <div class="live-dgm__pic">
+              <div class="dgm-wrap">
+                <svg class="dgm" viewBox="0 0 440 286" role="img" aria-labelledby="hhT hhD">
+                <title id="hhT">Handheld to computer through a Digirig</title>
+                <desc id="hhD">A USB cable runs from this computer to the Digirig or AIOC, and one audio/PTT cable runs from there into the handheld's speaker-mic jack. The same cable carries sound both ways and presses the radio's transmit button. The radio sends on the air to another station on the same frequency, and the receipt comes back the same way.</desc>
+                <g data-node="other">
+                  <rect class="box orange" x="318" y="12" width="112" height="40" />
+                  <text class="on-orange" x="374" y="29" text-anchor="middle">other station</text>
+                  <text class="sub" x="374" y="44" text-anchor="middle">same frequency</text>
+                </g>
+                <g class="seg seg-rf" data-seg="rf"><path class="rf" d="M374 128 q5 -6 0 -12 t0 -12 t0 -12 t0 -12 t0 -12 t0 -12" /><path class="pkt" d="M374 128 q5 -6 0 -12 t0 -12 t0 -12 t0 -12 t0 -12 t0 -12" /></g>
+                <text class="sub on-rf" x="364" y="96" text-anchor="end">on the air</text>
+                <g data-node="pc">
+                  <rect class="box accent" x="24" y="26" width="140" height="84" />
+                  <path class="laptop-base" d="M12 110 H176 L184 120 H4 Z" />
+                  <text class="sub" x="34" y="43">this computer</text>
+                  <text class="scr" data-show="me-hi" x="34" y="70">&lt;G4ABC&gt; hi</text>
+                  <text class="scr ok" data-show="me-ok" x="116" y="70">[ok]</text>
+                  <text class="scr-input" x="34" y="98">&gt; _</text>
+                </g>
+                <g class="seg seg-sound" data-seg="usb"><path class="wire" d="M94 120 V214 H168" /><path class="pkt" d="M94 120 V214 H168" /></g>
+                <g class="seg seg-sound" data-seg="jack"><path class="wire" d="M252 214 H334" /><path class="pkt" d="M252 214 H334" /></g>
+                <g data-node="digirig">
+                  <rect class="box accent" x="168" y="196" width="84" height="36" />
+                  <text class="on-accent" x="210" y="212" text-anchor="middle">Digirig</text>
+                  <text class="sub" x="210" y="226" text-anchor="middle">or AIOC</text>
+                </g>
+                <text class="sub" x="100" y="170">USB</text>
+                <text class="sub" x="293" y="206" text-anchor="middle">audio/PTT</text>
+                <text class="sub" x="16" y="276">the Digirig presses transmit for you</text>
+                <g data-node="radio">
+                  <line class="antenna" x1="374" y1="170" x2="374" y2="136" />
+                  <circle class="antenna-tip" cx="374" cy="134" r="2.5" />
+                  <rect class="box orange" x="334" y="170" width="48" height="88" rx="5" />
+                  <circle class="led" cx="370" cy="182" r="3.5" />
+                  <path class="grille" d="M344 218 H372 M344 225 H372 M344 232 H372 M344 239 H372" />
+                  <text class="on-orange" x="358" y="276" text-anchor="middle">handheld</text>
+                </g>
+                </svg>
+              </div>
+              <div class="live-status">
+                <p class="live-status__text" data-live-status aria-live="polite"></p>
+                <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
+              </div>
+            </div>
+          </div>
+          <figcaption>One cable into the radio’s speaker-mic hole. One USB cable into the computer.</figcaption>
+          <script type="application/json" data-live-steps>
+          {
+            "main": {
+              "steps": [
+                {
+                  "say": "The computer plays “hi” as sound into the Digirig over USB.",
+                  "segs": [
+                    "usb"
+                  ],
+                  "show": [
+                    "me-hi"
+                  ]
+                },
+                {
+                  "say": "The Digirig presses the radio’s transmit button and feeds the sound into its jack.",
+                  "segs": [
+                    "jack"
+                  ],
+                  "on": [
+                    "digirig"
+                  ]
+                },
+                {
+                  "say": "The radio transmits and its light comes on.",
+                  "segs": [
+                    "rf"
+                  ],
+                  "on": [
+                    "radio"
+                  ],
+                  "ms": 1700
+                },
+                {
+                  "say": "The other station hears it and sends a receipt back.",
+                  "segs": [
+                    "<rf"
+                  ],
+                  "on": [
+                    "other"
+                  ],
+                  "ms": 1700
+                },
+                {
+                  "say": "Your radio plays the receipt through the Digirig into the computer.",
+                  "segs": [
+                    "<jack",
+                    "<usb"
+                  ],
+                  "chain": true,
+                  "ms": 2100
+                },
+                {
+                  "say": "Your line shows [ok]: it was delivered.",
+                  "show": [
+                    "me-ok"
+                  ]
+                }
+              ]
+            }
+          }
+          </script>
+        </figure>
+        </div>
+      </section>
+
+      <section class="article-section" aria-labelledby="stepsH">
+        <h2 id="stepsH">Steps</h2>
+        <ol class="steps">
+          <li>
+            <strong class="step-title">Plug in the cables</strong>
+            <p>Plug the Digirig into the computer. Plug the audio/PTT cable into the radio’s speaker-mic jack.</p>
+          </li>
+          <li>
+            <strong class="step-title">Set up the radio</strong>
+            <p>Turn the radio on. Set <strong>FM</strong>, simplex (one frequency, not a repeater), low power. Turn off voice scramble and VOX on the radio itself — the Digirig presses the transmit button for you.</p>
+          </li>
+          <li>
+            <strong class="step-title">Find the serial port</strong>
+            <p>Find the serial port name (the USB “COM” address):</p>
+            <ul>
+              <li><strong>Windows:</strong> right-click Start → Device Manager → Ports (COM &amp; LPT). Look for something like <code>COM5</code>.</li>
+              <li><strong>Linux:</strong> in a terminal, run <code>ls /dev/ttyUSB* /dev/ttyACM*</code>. You want <code>/dev/ttyUSB0</code> or similar.</li>
+              <li><strong>Mac:</strong> in Terminal, run <code>ls /dev/cu.usb*</code>.</li>
+            </ul>
+          </li>
+          <li>
+            <strong class="step-title">Run setup</strong>
+            <p>Run <code>wcr setup</code> and choose <strong>Handheld + Digirig</strong>. Type that port name.</p>
+          </li>
+          <li>
+            <strong class="step-title">Check the audio</strong>
+            <p>Start with <code>wcr tui</code>. Watch the status bar: audio should read <code>good</code>, not <code>low</code> or <code>hot</code>.</p>
+          </li>
+          <li>
+            <strong class="step-title">Test with a second station</strong>
+            <p>Ask a second station on the same frequency to send a short test. You should see their callsign in the heard list. Tell the app your dial: <code>/radio freq 144.950</code>.</p>
+          </li>
+        </ol>
+      </section>
 
       <div class="ok">
         <h2>How you know it worked</h2>
         <p>The channel state flickers <code>rx</code> when they transmit, and SNR is a positive number. Your line gets <code>[tx]</code> after you send, then <code>[ok]</code> when it is delivered.</p>
       </div>
 
-      <h2>On the move</h2>
-      <p>Out with the handheld while your home station runs internet radio with the tower on? Add the standard suffix to your callsign in setup: <code>/M</code> mobile (moving vehicle), <code>/P</code> portable (set up away from home), <code>/MM</code> at sea, <code>/AM</code> in the air, for example <code>G4ABC/M</code>. Callsigns are 8 characters at most, suffix included.</p>
-      <p>Plug in a USB GPS (any u-blox type dongle, or a radio with a GPS output) and pick its port under <strong>GPS</strong> in setup, or set <code>[gps] port = "COM6"</code> in <code>wcr.toml</code>. While it has a fix your grid follows you, about 500 m at a time. Your beacons and receipts carry it, your home tower passes it to the hub, and the map shows your pin with the tag <code>/M</code> and “via” your tower. Without a fix, or with no GPS, the grid from setup is used. The status panel shows the GPS state.</p>
-      <p>Your position is only sent when you share your station on the public map.</p>
+      <section class="article-section" aria-labelledby="moveH">
+        <h2 id="moveH">On the move</h2>
+        <p>Out with the handheld while your home station runs internet radio with the tower on? Add the standard suffix to your callsign in setup: <code>/M</code> mobile (moving vehicle), <code>/P</code> portable (set up away from home), <code>/MM</code> at sea, <code>/AM</code> in the air, for example <code>G4ABC/M</code>. Callsigns are 8 characters at most, suffix included.</p>
+        <p>Plug in a USB GPS (any u-blox type dongle, or a radio with a GPS output) and pick its port under <strong>GPS</strong> in setup, or set <code>[gps] port = "COM6"</code> in <code>wcr.toml</code>. While it has a fix your grid follows you, about 500 m at a time. Your beacons and receipts carry it, your home tower passes it to the hub, and the map shows your pin with the tag <code>/M</code> and “via” your tower. Without a fix, or with no GPS, the grid from setup is used. The status panel shows the GPS state.</p>
+        <p>Your position is only sent when you share your station on the public map.</p>
+      </section>
 
       <p class="next">Other paths: <a href="/guides/vox.html">VOX cable</a> · <a href="/guides/hf.html">HF + CAT</a>. Frequencies: <a href="/docs/calling.html">calling</a>.</p>
     </main>
   </div>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=10"></script>
+  <script src="/live-dgm.js?v=1"></script>
 </body>
 </html>
