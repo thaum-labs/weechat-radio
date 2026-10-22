@@ -1,9 +1,19 @@
-/** Play, pause, and replay for the mixed-band thread demo. */
+/**
+ * Mixed-band demo: steps through the #field thread and lights each line's
+ * path on the band diagram. Click a line to show its path on demand.
+ *
+ * Each thread line carries:
+ *   data-route  segment ids in travel order, e.g. "rf-pmr tls-pmr"
+ *   data-nodes  boxes to light, e.g. "pmr1 m0pmr hub"
+ *   data-dir    "down" when the line travels hub → radio
+ */
 (function () {
-  const root = document.querySelector("[data-mixed-chat]");
+  const root = document.querySelector("[data-mixed-live]");
   if (!root) return;
 
-  const lines = Array.from(root.querySelectorAll(".mixed-chat-line"));
+  const lines = Array.from(root.querySelectorAll(".mb-line[data-route]"));
+  const segs = Array.from(root.querySelectorAll("[data-seg]"));
+  const nodes = Array.from(root.querySelectorAll("[data-node]"));
   const playBtn = root.querySelector("[data-mixed-play]");
   const replayBtn = root.querySelector("[data-mixed-replay]");
   const statusEl = root.querySelector("[data-mixed-status]");
@@ -13,20 +23,48 @@
   let timer = null;
   let index = -1;
   let playing = false;
+  let started = false;
+
+  // Packet animation needs each path's length (see .pkt in mixed-band.css).
+  root.querySelectorAll(".pkt").forEach((path) => {
+    path.style.setProperty("--len", String(Math.ceil(path.getTotalLength())));
+  });
 
   function setStatus(text) {
     if (statusEl) statusEl.textContent = text;
   }
 
+  function whoOf(line) {
+    const who = line.querySelector(".mb-line__who");
+    return who ? who.textContent.trim() : "";
+  }
+
+  function showRoute(line) {
+    segs.forEach((seg) => seg.classList.remove("is-live"));
+    nodes.forEach((node) => node.classList.remove("is-live"));
+    root.classList.toggle("has-route", Boolean(line));
+    root.classList.toggle("is-down", Boolean(line) && line.dataset.dir === "down");
+    if (!line) return;
+
+    void root.getBoundingClientRect(); // restart packet animations
+    line.dataset.route.split(" ").forEach((id, leg) => {
+      const seg = root.querySelector('[data-seg="' + id + '"]');
+      if (!seg) return;
+      seg.style.setProperty("--leg", String(leg));
+      seg.classList.add("is-live");
+    });
+    (line.dataset.nodes || "").split(" ").forEach((id) => {
+      const node = root.querySelector('[data-node="' + id + '"]');
+      if (node) node.classList.add("is-live");
+    });
+  }
+
   function paint(i) {
     lines.forEach((line, j) => {
       line.classList.toggle("is-visible", j <= i);
-      line.classList.toggle("is-highlight", j === i && i < lines.length);
+      line.classList.toggle("is-highlight", j === i);
     });
-    if (i >= 0 && i < lines.length) {
-      const who = lines[i].querySelector(".mixed-chat-who");
-      setStatus(who ? "Line " + (i + 1) + " of " + lines.length + ": " + who.textContent.trim() : "");
-    }
+    showRoute(lines[i] || null);
   }
 
   function stopTimer() {
@@ -43,35 +81,35 @@
     playBtn.setAttribute("aria-pressed", on ? "true" : "false");
   }
 
-  function showAll() {
+  function showAll(text) {
     stopTimer();
     lines.forEach((line) => {
       line.classList.add("is-visible");
       line.classList.remove("is-highlight");
     });
+    showRoute(null);
     index = lines.length - 1;
     setPlaying(false);
-    setStatus(reducedMotion ? "All lines shown. Reduced motion skips autoplay." : "Done. Replay starts again.");
+    setStatus(text);
   }
 
   function step() {
     index += 1;
     if (index >= lines.length) {
-      showAll();
+      showAll("Done. Replay starts again, or tap a line to see its path.");
       return;
     }
     paint(index);
+    setStatus("Line " + (index + 1) + " of " + lines.length + ": " + whoOf(lines[index]));
     timer = setTimeout(step, STEP_MS);
   }
 
   function play() {
     if (reducedMotion) {
-      showAll();
+      showAll("All lines shown. Reduced motion skips autoplay.");
       return;
     }
-    if (index >= lines.length - 1 && lines.every((line) => line.classList.contains("is-visible"))) {
-      return;
-    }
+    if (index >= lines.length - 1) index = -1; // at the end: start over
     stopTimer();
     setPlaying(true);
     step();
@@ -80,31 +118,61 @@
   function pause() {
     stopTimer();
     setPlaying(false);
-    if (index >= 0 && index < lines.length) {
-      const who = lines[index].querySelector(".mixed-chat-who");
-      setStatus(who ? "Paused on " + who.textContent.trim() : "Paused");
-    }
+    if (index >= 0 && index < lines.length) setStatus("Paused on " + whoOf(lines[index]));
   }
 
   function replay() {
     stopTimer();
     index = -1;
     lines.forEach((line) => line.classList.remove("is-visible", "is-highlight"));
-    if (reducedMotion) {
-      showAll();
-      return;
-    }
-    setPlaying(true);
-    setStatus("Playing");
-    step();
+    showRoute(null);
+    play();
+  }
+
+  function showLine(i) {
+    started = true;
+    stopTimer();
+    setPlaying(false);
+    index = i;
+    lines.forEach((line, j) => {
+      line.classList.toggle("is-visible", j <= i || line.classList.contains("is-visible"));
+      line.classList.toggle("is-highlight", j === i);
+    });
+    showRoute(lines[i]);
+    setStatus("Showing line " + (i + 1) + ": " + whoOf(lines[i]) + (reducedMotion ? "." : ". Play to continue."));
   }
 
   playBtn?.addEventListener("click", () => {
+    started = true;
     if (playing) pause();
     else play();
   });
-  replayBtn?.addEventListener("click", replay);
+  replayBtn?.addEventListener("click", () => {
+    started = true;
+    replay();
+  });
+  lines.forEach((line, i) => {
+    line.querySelector(".mb-line__btn")?.addEventListener("click", () => showLine(i));
+  });
 
-  if (reducedMotion) showAll();
-  else replay();
+  if (reducedMotion) {
+    showAll("All lines shown. Reduced motion skips autoplay. Tap a line to see its path.");
+    return;
+  }
+
+  // Autoplay once the figure is on screen, so readers don't miss the start.
+  if ("IntersectionObserver" in window) {
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      io.disconnect();
+      if (!started) {
+        started = true;
+        replay();
+      }
+    }, { threshold: 0.35 });
+    io.observe(root);
+  } else {
+    started = true;
+    replay();
+  }
 })();
