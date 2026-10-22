@@ -327,6 +327,7 @@ async fn dispatch(ctx: &TxCtx, asm: &mut Assembler, cmd: MailCmd) {
                 ctx.store.set_get_progress(GetProgress {
                     state: "asking".into(),
                     subject,
+                    asked: ids.join(","),
                     ..GetProgress::default()
                 });
                 tracing::info!("mail get asked {} via the gateway", ids.join(","));
@@ -1466,8 +1467,13 @@ async fn deliver(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Resul
     if get.active() {
         get.state = "fetched".into();
         get.got = get.total;
+        tracing::info!(
+            "mail fetched {} from {} (inbox row {})",
+            get.asked,
+            row.from_addr,
+            row.id
+        );
         ctx.store.set_get_progress(get);
-        tracing::info!("mail fetched {} from {}", row.id, row.from_addr);
     }
     let us = cfg.callsign.to_ascii_uppercase();
     if let Some(from_cs) = proto::callsign_from_wcr(&row.from_addr) {
