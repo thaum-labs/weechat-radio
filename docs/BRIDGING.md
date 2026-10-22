@@ -87,6 +87,11 @@ Beacons carry `B|<mode>|<khz>` so peers and the map know your dial. Tell the app
 
 LAN: nodes on the same local network can also pass frames without the public hub. Gateway rules still apply.
 
+Mixed band example (UK)
+
+PMR446, CB, 2m, and internet-only in one closed group: `wcr help mixed-band`
+Guide: https://weechatradio.com/docs/mixed-band.html
+
 Offline direct messages
 
 The hub keeps a direct message for a station that is not connected, for 10 minutes, up to 32 messages per callsign. The oldest is dropped when that fills. It is delivered when that station next says hello. Closed groups and `#bulletin` are not held: someone has to be connected to receive them. The hub does not key a radio. A station that is only on the air still depends on the RF retry while both ends can hear the path.
