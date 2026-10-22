@@ -3849,9 +3849,14 @@ impl GuiApp {
                 self.mail_waiting = rows;
             }
         }
-        if self.mail_toast == "Checking…" && !self.mail_waiting.is_empty() {
-            self.mail_toast = waiting_notice(self.mail_waiting.len());
-            self.mail_toast_warn = false;
+        if self.mail_toast == "Checking…" || is_waiting_notice(&self.mail_toast) {
+            // QA v0.1.113: keep the count in step after a Get; clear it at 0.
+            if !self.mail_waiting.is_empty() {
+                self.mail_toast = waiting_notice(self.mail_waiting.len());
+                self.mail_toast_warn = false;
+            } else if is_waiting_notice(&self.mail_toast) {
+                self.mail_toast.clear();
+            }
         }
         if let Some(send) = self.mail_send.as_mut() {
             if !send.step.done {
@@ -5254,7 +5259,13 @@ fn waiting_notice(n: usize) -> String {
     } else {
         format!("{n} mails")
     };
-    format!("{what} waiting at the gateway. Click a line to Get it.")
+    format!("{what} {WAITING_TAIL}")
+}
+
+const WAITING_TAIL: &str = "waiting at the gateway. Click a line to Get it.";
+
+fn is_waiting_notice(toast: &str) -> bool {
+    toast.ends_with(WAITING_TAIL)
 }
 
 fn delivery_ticks(state: &str) -> Option<&'static str> {
@@ -5450,6 +5461,8 @@ mod tests {
             waiting_notice(3),
             "3 mails waiting at the gateway. Click a line to Get it."
         );
+        assert!(is_waiting_notice(&waiting_notice(2)));
+        assert!(!is_waiting_notice("No reply from the gateway."));
     }
 
     #[test]
