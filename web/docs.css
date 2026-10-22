@@ -298,6 +298,7 @@ svg.dgm.fit .sub { font-size: 11px; }
 }
 .page-panel .pair > figure.diagram,
 .page-panel .pair > .article-section { margin: 0; }
+.page-panel .pair > div > p + p { margin-top: 10px; }
 .page-panel .pair .cards {
   grid-template-columns: minmax(0, 1fr);
   margin-top: 0;
