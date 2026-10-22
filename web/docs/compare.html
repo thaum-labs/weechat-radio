@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc cmp-page">
   <div id="scan"></div>
@@ -61,7 +62,8 @@
         <p>Each score is 1 (poor) to 5 (strong) for that column only. SNR numbers for WSPR, FT8, JS8, Olivia, PSK31, RTTY, and APRS are typical published ham figures. modem73 has no side-by-side SNR table in this project. Rank WeeChat Radio HF by design (slower preset + retries), not by a claimed dB number.</p>
       </div>
 
-      <h2>Score colour</h2>
+      <section class="article-section" aria-labelledby="scoreH">
+      <h2 id="scoreH">Score colour</h2>
       <div class="cmp-legend">
         <ol class="cmp-scale" aria-label="Score from 1 poor red to 5 strong green">
           <li data-s="1"><b>1</b> poor</li>
@@ -75,9 +77,11 @@
           <li>Orange row = WeeChat Radio HF. Indigo name = handheld. Those are not scores.</li>
         </ul>
       </div>
+      </section>
 
-      <h2>Mode × trait</h2>
-      <p>Click a header to sort. Click again to reverse. Score columns start high-to-low. Mode and Job start A–Z.</p>
+      <section class="article-section" aria-labelledby="tableH">
+      <h2 id="tableH">Mode × trait</h2>
+      <p class="section-lead">Click a header to sort. Click again to reverse. Score columns start high-to-low. Mode and Job start A–Z.</p>
       <div class="table-wrap">
         <table id="cmp-table">
           <caption class="sr-only">Ham text-mode ratings. Click column headers to sort. Orange rows are WeeChat Radio HF presets. Score cells are coloured 1 red to 5 green.</caption>
@@ -159,9 +163,12 @@
         </table>
       </div>
 
-      <h2>What the columns mean</h2>
+      </section>
+
+      <section class="article-section" aria-labelledby="colsH">
+      <h2 id="colsH">What the columns mean</h2>
       <div class="table-wrap">
-        <table>
+        <table class="stack-table">
           <thead>
             <tr><th>Trait</th><th>5</th><th>1</th></tr>
           </thead>
@@ -205,17 +212,25 @@
         </table>
       </div>
 
-      <h2>How to read the WeeChat Radio rows</h2>
-      <p><strong>hf-weak / hf-poor</strong> — mid SNR (3), strong fading recovery and retries (5), usable speed (3). Start on <code>hf-poor</code>. Drop to <code>hf-weak</code> when they are faint. This is the usual noisy-HF chat setting.</p>
-      <p><strong>hf-deep</strong> — SNR 4, next to Olivia, below FT8/WSPR. Speed is 1. A short 1:1 line is about 2–5 seconds of PTT. The same line to <code>#bulletin</code> is about 10–15 seconds because HF groups send three Reed–Solomon pieces.</p>
-      <p><strong>vhf-fm / handheld</strong> — same air as APRS (low SNR/fade/QRM). Auto recover is 4 because of ACKs and retries. Use it on a quiet FM channel, not as an HF weak-signal mode.</p>
-      <p>WSPR, FT8, and FT4 are weak-signal benchmarks. They do not carry a typed chat line.</p>
+      </section>
 
-      <div class="note">
-        <h2>What actually helps in noise</h2>
-        <p>Helps a lot: coded waveforms (JS8, Olivia, MFSK-32R, RDM), retries across a fade, splitting a line so any 2 of 3 pieces rebuild it, waiting for a quiet channel.</p>
-        <p>Helps little: calling the payload “text” vs “binary.” CRC without FEC (APRS, AX.25, RTTY, PSK31) still loses the whole frame. A compact envelope only helps by spending less time on air.</p>
-      </div>
+      <section class="article-section" aria-labelledby="readH">
+      <h2 id="readH">How to read the WeeChat Radio rows</h2>
+      <ul class="cards">
+        <li><strong><code>hf-weak</code> / <code>hf-poor</code></strong><span>Mid SNR (3), strong fading recovery and retries (5), usable speed (3). Start on <code>hf-poor</code>. Drop to <code>hf-weak</code> when they are faint. This is the usual noisy-HF chat setting.</span></li>
+        <li><strong><code>hf-deep</code></strong><span>SNR 4, next to Olivia, below FT8/WSPR. Speed is 1. A short 1:1 line is about 2–5 seconds of PTT. The same line to <code>#bulletin</code> is about 10–15 seconds because HF groups send three Reed–Solomon pieces.</span></li>
+        <li><strong><code>vhf-fm</code> / handheld</strong><span>Same air as APRS (low SNR/fade/QRM). Auto recover is 4 because of ACKs and retries. Use it on a quiet FM channel, not as an HF weak-signal mode.</span></li>
+      </ul>
+      <p class="section-lead section-lead--after">WSPR, FT8, and FT4 are weak-signal benchmarks. They do not carry a typed chat line.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="noiseH">
+      <h2 id="noiseH">What actually helps in noise</h2>
+      <ul class="cards">
+        <li><strong>Helps a lot</strong><span>Coded waveforms (JS8, Olivia, MFSK-32R, RDM), retries across a fade, splitting a line so any 2 of 3 pieces rebuild it, waiting for a quiet channel.</span></li>
+        <li class="is-optional"><strong>Helps little</strong><span>Calling the payload “text” vs “binary.” CRC without FEC (APRS, AX.25, RTTY, PSK31) still loses the whole frame. A compact envelope only helps by spending less time on air.</span></li>
+      </ul>
+      </section>
 
       <p class="next">Operator steps when the path is faint: <a href="/docs/weak.html">weak signals</a>. How internet vs radio is allowed: <a href="/docs/modes.html">modes</a>. Same text offline: <code>wcr help compare</code>.</p>
     </main>
