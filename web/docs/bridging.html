@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=29" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -50,6 +51,303 @@
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> cross-frequency chat</h1>
       <p class="lead">A station talks on one dial at a time. Same-frequency chat is radio. Different-frequency chat uses a gateway and the hub. The program never changes your radio frequency by itself.</p>
 
+      <section class="article-section article-section--first" aria-labelledby="pathH">
+        <h2 id="pathH">Same dial or different dials</h2>
+        <p class="section-lead">A radio hears only the dial it is set to. Pick a case to watch where your message can go.</p>
+
+        <figure class="diagram live-dgm" data-live-dgm data-setup="same">
+          <div class="setup-switch" role="group" aria-label="Setup" data-setup-switch hidden>
+            <button type="button" data-setup-btn="same" aria-pressed="true">one dial</button>
+            <button type="button" data-setup-btn="apart" aria-pressed="false">two dials</button>
+            <button type="button" data-setup-btn="bridge" aria-pressed="false">two dials + hub</button>
+          </div>
+
+          <div class="live-dgm__body">
+            <div class="live-dgm__pic">
+              <div class="dgm-wrap">
+                <svg class="dgm" viewBox="0 72 440 212" role="img" aria-labelledby="brT brD">
+                  <title id="brT">A message on one dial, on two dials, and across two dials through the hub</title>
+                  <desc id="brD">On one dial, 144.950 in the 2m band, the other station hears you directly, or a third station on that dial relays the message with one hop fewer. On two different dials, 144.950 on 2m and 7.045 on 40m, nothing is heard. Across two dials, you transmit on 2m in radio-plus, gateway A on 2m sends the message to the hub, the hub hands it to gateway B on 40m because B has recently heard the other station, and gateway B transmits it on 7.045.</desc>
+
+                  <!-- dial lanes -->
+                  <g data-setups="same">
+                    <rect class="lane-bg" x="12" y="78" width="416" height="200" />
+                    <text x="220" y="268" text-anchor="middle">2m <tspan class="sub">· 144.950 · one dial, no hub</tspan></text>
+                  </g>
+                  <g data-setups="apart" class="is-off">
+                    <rect class="lane-bg" x="12" y="190" width="148" height="88" />
+                    <rect class="lane-bg" x="280" y="190" width="148" height="88" />
+                  </g>
+                  <g data-setups="bridge" class="is-off">
+                    <rect class="lane-bg" x="12" y="78" width="148" height="200" />
+                    <rect class="lane-bg" x="280" y="78" width="148" height="200" />
+                  </g>
+                  <g data-setups="apart bridge" class="is-off">
+                    <text x="86" y="268" text-anchor="middle">2m <tspan class="sub">· 144.950</tspan></text>
+                    <text x="354" y="268" text-anchor="middle">40m <tspan class="sub">· 7.045</tspan></text>
+                  </g>
+
+                  <!-- same dial: direct, or relayed by a third station -->
+                  <g data-setups="same">
+                    <g class="seg seg-rf" data-seg="direct"><path class="rf" d="M156 229 q6.4 -5 12.8 0 t12.8 0 t12.8 0 t12.8 0 t12.8 0 t12.8 0 t12.8 0 t12.8 0 t12.8 0 t12.8 0" /><path class="pkt" d="M156 229 q6.4 -5 12.8 0 t12.8 0 t12.8 0 t12.8 0 t12.8 0 t12.8 0 t12.8 0 t12.8 0 t12.8 0 t12.8 0" /></g>
+                    <text class="sub on-rf" x="220" y="252" text-anchor="middle">direct</text>
+                    <g class="seg seg-rf" data-seg="leg1"><path class="rf" d="M124 206 q0.9 -7.09 8 -6.33 t8 -6.33 t8 -6.33 t8 -6.33 t8 -6.33 t8 -6.33" /><path class="pkt" d="M124 206 q0.9 -7.09 8 -6.33 t8 -6.33 t8 -6.33 t8 -6.33 t8 -6.33 t8 -6.33" /></g>
+                    <g class="seg seg-rf" data-seg="leg2"><path class="rf" d="M268 168 q7.1 -0.75 8 6.33 t8 6.33 t8 6.33 t8 6.33 t8 6.33 t8 6.33" /><path class="pkt" d="M268 168 q7.1 -0.75 8 6.33 t8 6.33 t8 6.33 t8 6.33 t8 6.33 t8 6.33" /></g>
+                    <text class="sub on-rf" x="140" y="180" text-anchor="end">hops 3</text>
+                    <text class="sub on-rf" x="300" y="180">hops 2</text>
+                    <g data-node="relay">
+                      <rect class="box radio" x="146" y="124" width="148" height="44" />
+                      <text class="on-radio" x="220" y="142" text-anchor="middle">any station</text>
+                      <text class="sub" x="220" y="158" text-anchor="middle">same dial · relays</text>
+                    </g>
+                  </g>
+
+                  <!-- different dials: nothing is heard -->
+                  <g data-setups="apart" class="is-off">
+                    <g class="seg seg-rf" data-seg="lost"><path class="rf" d="M156 229 q5 -5 10 0 t10 0 t10 0 t10 0" /><path class="pkt" d="M156 229 q5 -5 10 0 t10 0 t10 0 t10 0" /></g>
+                    <line class="cross" x1="211" y1="220" x2="229" y2="238" />
+                    <line class="cross" x1="229" y1="220" x2="211" y2="238" />
+                    <path class="none" d="M240 229 H284" />
+                    <text class="sub" x="220" y="256" text-anchor="middle">no radio path</text>
+                  </g>
+
+                  <!-- through the hub: a gateway on each dial -->
+                  <g data-setups="bridge" class="is-off">
+                    <g data-node="hub">
+                      <rect class="box hub" x="24" y="14" width="392" height="46" />
+                      <text class="on-hub" x="220" y="33" text-anchor="middle">hub</text>
+                      <text class="sub" x="220" y="50" text-anchor="middle">picks the gateway that heard them</text>
+                    </g>
+                    <g class="seg seg-net" data-seg="net-a"><path class="net" d="M86 106 V60" /><path class="pkt" d="M86 106 V60" /></g>
+                    <g class="seg seg-net" data-seg="net-b"><path class="net" d="M354 60 V106" /><path class="pkt" d="M354 60 V106" /></g>
+                    <text class="sub" x="94" y="88">TLS</text>
+                    <text class="sub" x="362" y="88">TLS</text>
+                    <g data-node="gw-a">
+                      <rect class="box gw" x="24" y="106" width="124" height="44" />
+                      <text class="on-gw" x="86" y="124" text-anchor="middle">gateway A</text>
+                      <text class="sub" x="86" y="140" text-anchor="middle">internet-radio</text>
+                    </g>
+                    <g data-node="gw-b">
+                      <rect class="box gw" x="292" y="106" width="124" height="44" />
+                      <text class="on-gw" x="354" y="124" text-anchor="middle">gateway B</text>
+                      <text class="sub" x="354" y="140" text-anchor="middle">internet-radio</text>
+                    </g>
+                    <g class="seg seg-rf" data-seg="rf-a"><path class="rf" d="M86 206 q-5 -4.67 0 -9.33 t0 -9.33 t0 -9.33 t0 -9.33 t0 -9.33 t0 -9.33" /><path class="pkt" d="M86 206 q-5 -4.67 0 -9.33 t0 -9.33 t0 -9.33 t0 -9.33 t0 -9.33 t0 -9.33" /></g>
+                    <g class="seg seg-rf" data-seg="rf-b"><path class="rf" d="M354 150 q5 4.67 0 9.33 t0 9.33 t0 9.33 t0 9.33 t0 9.33 t0 9.33" /><path class="pkt" d="M354 150 q5 4.67 0 9.33 t0 9.33 t0 9.33 t0 9.33 t0 9.33 t0 9.33" /></g>
+                    <text class="sub on-rf" x="96" y="182">RF</text>
+                    <text class="sub on-rf" x="366" y="182">RF</text>
+                    <text class="scr ok" data-show="chk" x="342" y="168" text-anchor="end">rf_egress = true</text>
+                    <text class="scr ok" data-show="chk" x="342" y="182" text-anchor="end">them heard here</text>
+                    <text class="scr ok" data-show="chk" x="342" y="196" text-anchor="end">in last 10 min</text>
+                  </g>
+
+                  <!-- you and them: radio mode on one dial, radio-plus to cross -->
+                  <g data-setups="same apart">
+                    <g data-node="you">
+                      <rect class="box radio" x="24" y="206" width="124" height="44" />
+                      <text class="on-radio" x="86" y="224" text-anchor="middle">you</text>
+                      <text class="sub" x="86" y="240" text-anchor="middle">radio</text>
+                    </g>
+                    <g data-node="them">
+                      <rect class="box radio" x="292" y="206" width="124" height="44" />
+                      <text class="on-radio" x="354" y="224" text-anchor="middle">them</text>
+                      <text class="sub" x="354" y="240" text-anchor="middle">radio</text>
+                    </g>
+                  </g>
+                  <g data-setups="bridge" class="is-off">
+                    <g data-node="you">
+                      <rect class="box rplus" x="24" y="206" width="124" height="44" />
+                      <text class="on-rplus" x="86" y="224" text-anchor="middle">you</text>
+                      <text class="sub" x="86" y="240" text-anchor="middle">radio-plus</text>
+                    </g>
+                    <g data-node="them">
+                      <rect class="box rplus" x="292" y="206" width="124" height="44" />
+                      <text class="on-rplus" x="354" y="224" text-anchor="middle">them</text>
+                      <text class="sub" x="354" y="240" text-anchor="middle">radio-plus</text>
+                    </g>
+                  </g>
+                </svg>
+              </div>
+              <div class="live-status">
+                <p class="live-status__text" data-live-status aria-live="polite"></p>
+                <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
+              </div>
+            </div>
+
+            <div class="live-dgm__text">
+              <div class="setup-panel" data-setup-panel="same">
+                <h3>Same frequency</h3>
+                <p>Both stations set the same calling spot (for example UK 2m 144.950). No internet is required. Nearby stations hear you on the air. Others on that frequency can store-and-forward the message (TTL / hops left, default 3).</p>
+                <p class="setup-note">Direct radio. Tell the app your dial with <code>/radio freq 144.950</code> if you have no CAT.</p>
+              </div>
+              <div class="setup-panel" data-setup-panel="apart">
+                <h3>Different frequencies</h3>
+                <p>2m cannot hear 40m. There is no radio path between two different dials, however strong the signals are.</p>
+                <p class="setup-note">Changing band is your decision, not the program’s. If you both want RF only, agree on one dial.</p>
+              </div>
+              <div class="setup-panel" data-setup-panel="bridge">
+                <h3>Through two gateways and the hub</h3>
+                <p>A station in <code>internet-radio</code> mode is a <strong>gateway</strong>: it has a radio on one dial and a hub link. The hub copies the message from the gateway that heard it to the gateway that has recently heard the destination — or that <em>is</em> the destination.</p>
+                <p class="setup-note">The map ticker shows this as <code>2m → 40m</code>. Both gateways keep their own dial: nobody QSYs for you.</p>
+              </div>
+            </div>
+          </div>
+          <script type="application/json" data-live-steps>
+          {
+            "same": { "viewBox": "0 72 440 212", "steps": [
+              { "say": "You transmit on 144.950. A station in range hears you directly.", "segs": ["direct"], "on": ["you"], "ms": 1700 },
+              { "say": "Another station on that dial hears it too and keeps a copy.", "segs": ["leg1"], "on": ["you"] },
+              { "say": "It sends it on with hops left 2, so a station that cannot hear you still gets it.", "segs": ["leg2"], "on": ["relay"], "ms": 2000 }
+            ], "done": "One dial, no hub: they hear you directly, or a station on that dial relays it." },
+            "apart": { "viewBox": "0 182 440 102", "steps": [
+              { "say": "You transmit on 144.950 in the 2m band.", "segs": ["lost"], "on": ["you"] },
+              { "say": "The station on 7.045 in the 40m band hears nothing, however strong your signal.", "ms": 2000 }
+            ], "done": "There is no radio path between two dials. Someone has to bridge the two bands." },
+            "bridge": { "viewBox": "0 0 440 284", "steps": [
+              { "say": "You transmit on 2m in radio-plus. Gateway A is on the same dial and hears it.", "segs": ["rf-a"], "on": ["you"], "ms": 1700 },
+              { "say": "A radio-plus frame may go to the internet, so gateway A sends it to the hub.", "segs": ["net-a"], "on": ["gw-a"] },
+              { "say": "The hub picks the gateway that has recently heard them: gateway B on 40m.", "segs": ["net-b"], "on": ["hub"], "ms": 1700 },
+              { "say": "Gateway B checks that rf_egress is on and that they were heard on 40m in the last 10 minutes.", "on": ["gw-b"], "show": ["chk"], "ms": 2400 },
+              { "say": "Gateway B transmits it on 7.045, and neither gateway changes dial.", "segs": ["rf-b"], "on": ["gw-b"], "ms": 1800 }
+            ], "done": "2m to 40m through two gateways and the hub. The map ticker shows 2m → 40m." }
+          }
+          </script>
+        </figure>
+
+        <ul class="dgm-key">
+          <li><i class="k-radio"></i>radio (RF only)</li>
+          <li><i class="k-gw"></i>internet-radio (gateway)</li>
+          <li><i class="k-hub"></i>hub / internet</li>
+          <li><i class="k-rplus"></i>radio-plus</li>
+          <li><i class="k-rf"></i>on the air</li>
+          <li><i class="k-net"></i>over the internet (TLS)</li>
+          <li><i class="k-none"></i>no path</li>
+        </ul>
+      </section>
+
+      <section class="article-section" aria-labelledby="rplusH">
+        <h2 id="rplusH">Radio-plus (you stay offline)</h2>
+        <div class="pair">
+          <p><code>radio</code> and <code>radio-plus</code> both post map telemetry when <code>[telemetry] url</code> is set, and that post never contains message text. Neither mode sends chat to the hub or the LAN from this computer. The only difference is whether an internet-radio gateway that hears you may forward your messages (and email) to the internet.</p>
+          <figure class="diagram">
+            <div class="dgm-wrap">
+              <svg class="dgm fit" viewBox="0 0 440 246" role="img" aria-labelledby="d4t d4d">
+                <title id="d4t">Radio-plus reaches the internet through a gateway</title>
+                <desc id="d4d">Your radio-plus node transmits on RF only and never contacts the hub. A gateway that hears you passes the message to the hub, which delivers it to internet stations or to another band.</desc>
+                <defs>
+                  <marker id="mRfP" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
+                  </marker>
+                  <marker id="mNetP" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
+                  </marker>
+                </defs>
+                <text class="sub" x="220" y="22" text-anchor="middle">your node never talks to the hub</text>
+                <path class="none" d="M68 100 V40 H208" />
+                <path class="none" d="M232 40 H372 V100" />
+                <line class="cross" x1="211" y1="31" x2="229" y2="49" />
+                <line class="cross" x1="229" y1="31" x2="211" y2="49" />
+
+                <rect class="zone" x="4" y="84" width="140" height="88" />
+                <text class="sub" x="72" y="164" text-anchor="middle">no internet here</text>
+                <rect class="box rplus" x="12" y="100" width="112" height="44" />
+                <text class="on-rplus" x="68" y="118" text-anchor="middle">you</text>
+                <text class="sub" x="68" y="134" text-anchor="middle">radio-plus · 2m</text>
+
+                <path class="rf" marker-end="url(#mRfP)" d="M127 122 q4.33 -5 8.67 0 t8.67 0 t8.67 0 L161 122" />
+                <text class="sub on-orange" x="144" y="110" text-anchor="middle">RF</text>
+
+                <rect class="box gw" x="164" y="100" width="112" height="44" />
+                <text class="on-gw" x="220" y="118" text-anchor="middle">gateway</text>
+                <text class="sub" x="220" y="134" text-anchor="middle">hears you on 2m</text>
+
+                <line class="net" marker-end="url(#mNetP)" x1="278" y1="122" x2="313" y2="122" />
+                <text class="sub" x="296" y="112" text-anchor="middle">TLS</text>
+
+                <rect class="box hub" x="316" y="100" width="112" height="44" />
+                <text class="on-hub" x="372" y="127" text-anchor="middle">hub</text>
+
+                <line class="net" marker-end="url(#mNetP)" x1="352" y1="146" x2="268" y2="194" />
+                <line class="net" marker-end="url(#mNetP)" x1="384" y1="146" x2="376" y2="194" />
+                <rect class="box hub" x="196" y="196" width="110" height="44" />
+                <text class="on-hub" x="251" y="214" text-anchor="middle">internet</text>
+                <text class="sub" x="251" y="230" text-anchor="middle">station</text>
+                <rect class="box" x="318" y="196" width="110" height="44" />
+                <text x="373" y="214" text-anchor="middle">another</text>
+                <text class="sub" x="373" y="230" text-anchor="middle">band</text>
+              </svg>
+            </div>
+            <figcaption>Your node has no internet at all. The gateway is the only station on this path that talks to the hub.</figcaption>
+          </figure>
+        </div>
+        <p><code>radio-plus</code> never uploads chat from this computer. A nearby gateway that hears you on RF forwards that frame to the hub for any destination, including a direct message, a closed group, and <code>#bulletin</code>. <code>radio</code> mode says do not forward, so the same gateway keeps those frames on the radio. Your line shows <code>[gw]</code> when the gateway has accepted the frame onto the hub. <code>[rl]</code> only means you heard your own frame on RF again. The hub holds an offline station's direct messages for 10 minutes (32 per callsign) and delivers them on the next hello. It does not hold groups or <code>#bulletin</code>.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="gatesH">
+        <h2 id="gatesH">What a gateway will and will not put on the air</h2>
+        <div class="pair">
+          <div>
+            <p>Traffic arriving from the internet has to pass both gates before this node transmits. If either gate fails, the frame is delivered on the internet side only and nothing is keyed up.</p>
+            <p>Heard means on RF on this frequency, not a map pin or a LAN/hub sighting. A group flag alone does not key the radio; at least one listed member must have been heard here in the last ten minutes. <code>#bulletin</code> keys only if someone was heard on this dial over RF.</p>
+          </div>
+          <figure class="diagram">
+            <div class="dgm-wrap">
+              <svg class="dgm fit" viewBox="0 0 440 276" role="img" aria-labelledby="d5t d5d">
+                <title id="d5t">Two gates decide whether internet traffic goes on the air</title>
+                <desc id="d5d">A frame from the hub is transmitted only if this node is a gateway with rf_egress enabled and the destination was heard on this dial within the last ten minutes. Otherwise the node stays quiet.</desc>
+                <defs>
+                  <marker id="mNetG" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
+                  </marker>
+                  <marker id="mRfG" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
+                  </marker>
+                  <marker id="mDimG" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path class="mk-dim" d="M0 0 L6 3 L0 6 z" />
+                  </marker>
+                </defs>
+                <rect class="box" x="16" y="12" width="240" height="40" />
+                <text x="136" y="37" text-anchor="middle">hub gives this node a frame</text>
+                <line class="net" marker-end="url(#mNetG)" x1="136" y1="52" x2="136" y2="78" />
+
+                <rect class="box gate" x="16" y="80" width="240" height="44" />
+                <text class="on-gate" x="136" y="98" text-anchor="middle">gateway with</text>
+                <text class="sub" x="136" y="114" text-anchor="middle">rf_egress = true</text>
+                <line class="net" marker-end="url(#mNetG)" x1="136" y1="124" x2="136" y2="150" />
+                <text class="sub" x="144" y="141">yes</text>
+
+                <rect class="box gate" x="16" y="152" width="240" height="44" />
+                <text class="on-gate" x="136" y="170" text-anchor="middle">dest heard on this dial</text>
+                <text class="sub" x="136" y="186" text-anchor="middle">in the last 10 minutes</text>
+                <line class="rf" marker-end="url(#mRfG)" x1="136" y1="196" x2="136" y2="222" />
+                <text class="sub" x="144" y="213">yes</text>
+
+                <rect class="box gw" x="16" y="224" width="240" height="40" />
+                <text class="on-gw" x="136" y="249" text-anchor="middle">transmit on this dial</text>
+
+                <path class="none" marker-end="url(#mDimG)" d="M256 102 H293" />
+                <text class="sub" x="275" y="95" text-anchor="middle">no</text>
+                <path class="none" marker-end="url(#mDimG)" d="M256 174 H293" />
+                <text class="sub" x="275" y="167" text-anchor="middle">no</text>
+                <rect class="box off" x="296" y="80" width="128" height="116" />
+                <text class="on-off" x="360" y="132" text-anchor="middle">stay quiet</text>
+                <text class="sub" x="360" y="150" text-anchor="middle">nothing goes</text>
+                <text class="sub" x="360" y="164" text-anchor="middle">on the air</text>
+              </svg>
+            </div>
+            <figcaption>A group counts as heard if any member was heard on this dial. Guest names starting with <code>~</code> need <code>third_party = "allow"</code> as well.</figcaption>
+          </figure>
+        </div>
+        <ul>
+          <li>RF → internet: the frame has to say it may go to the internet. <code>radio</code> says do not forward, so a gateway leaves it on the radio. <code>radio-plus</code> may be forwarded. This computer does not upload chat in either mode.</li>
+          <li>Internet → RF: <code>[gateway] rf_egress = true</code> in <code>wcr.toml</code>. Guest names starting with <code>~</code> stay off RF unless <code>third_party = "allow"</code>.</li>
+          <li>Same LAN: nodes on your local network can pass frames without the public hub. The same gateway rules still apply.</li>
+        </ul>
+        <pre class="plain">[gateway]
+rf_egress = true          # put internet traffic on the air
+third_party = "deny"      # guest (~nick) traffic on RF</pre>
+      </section>
+
       <div class="note">
         <h2>Public bulletin and private groups</h2>
         <p>Cross-frequency chat works on the public <code>#bulletin</code> channel and on private groups. Both use an <code>internet-radio</code> gateway on each dial and the hub between them.</p>
@@ -62,262 +360,30 @@
         <p><strong>Hub routing today:</strong> the hub keeps a <code>serves</code> set per connected station. Your own callsign is always included. RF stations heard on your dial are added from the periodic <code>{&quot;heard&quot;:[...],&quot;freq_khz&quot;:…}</code> JSON your node sends after <code>hub_ok</code> (the WebSocket hello starts with an empty <code>heard</code> list). Private 1:1 and closed-group frames are delivered only to sessions whose <code>serves</code> contains the destination callsign. Internet-only stations with nobody heard on RF therefore rely on the public <code>#bulletin</code> path until a member appears in <code>heard</code> or you are the destination.</p>
       </div>
 
-      <ul class="dgm-key">
-        <li><i class="k-radio"></i>radio (RF only)</li>
-        <li><i class="k-gw"></i>internet-radio (gateway)</li>
-        <li><i class="k-hub"></i>hub / internet</li>
-        <li><i class="k-rplus"></i>radio-plus</li>
-        <li><i class="k-rf"></i>on the air</li>
-        <li><i class="k-net"></i>over the internet</li>
-        <li><i class="k-none"></i>no path</li>
-      </ul>
-
-      <h2>Same frequency</h2>
-      <p>Both stations set the same calling spot (for example UK 2m 144.950). No internet is required. Nearby stations hear you on the air. Others on that frequency can store-and-forward the message (TTL / hops left, default 3).</p>
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 230" role="img" aria-labelledby="d1t d1d">
-            <title id="d1t">Same-frequency chat on 144.950</title>
-            <desc id="d1d">Two stations on the same dial hear each other directly. A third station on that dial can relay the message, spending one of the three hops.</desc>
-            <defs>
-              <marker id="mrf1" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-            </defs>
-            <text class="tag" x="16" y="20">ONE DIAL · 2m 144.950 · NO HUB</text>
-            <line class="lane" x1="16" y1="150" x2="704" y2="150" />
-            <path class="rf" marker-end="url(#mrf1)" d="M99 122 C 99 52, 621 52, 621 118" />
-            <text class="sub" x="360" y="46" text-anchor="middle">direct — they hear you on the air</text>
-            <line class="rf" marker-end="url(#mrf1)" x1="176" y1="150" x2="283" y2="150" />
-            <text class="sub" x="229" y="142" text-anchor="middle">hops 3</text>
-            <line class="rf" marker-end="url(#mrf1)" x1="437" y1="150" x2="544" y2="150" />
-            <text class="sub" x="490" y="142" text-anchor="middle">hops 2</text>
-            <rect class="box radio" x="24" y="123" width="150" height="54" />
-            <text class="on-radio" x="99" y="145" text-anchor="middle">you</text>
-            <text class="sub" x="99" y="163" text-anchor="middle">M7TJF · radio</text>
-            <rect class="box radio" x="285" y="123" width="150" height="54" />
-            <text class="on-radio" x="360" y="145" text-anchor="middle">any station</text>
-            <text class="sub" x="360" y="163" text-anchor="middle">same dial · relays</text>
-            <rect class="box radio" x="546" y="123" width="150" height="54" />
-            <text class="on-radio" x="621" y="145" text-anchor="middle">them</text>
-            <text class="sub" x="621" y="163" text-anchor="middle">G4ABC · radio</text>
-            <text class="sub" x="16" y="210">the relay path is automatic when you cannot hear each other directly</text>
-          </svg>
-        </div>
-        <figcaption>Direct radio. Tell the app your dial with <code>/radio freq 144.950</code> if you have no CAT.</figcaption>
-      </figure>
-
-      <h2>Different frequencies</h2>
-      <p>2m cannot hear 40m. There is no radio path between two different dials, however strong the signals are.</p>
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 118" role="img" aria-labelledby="d2t d2d">
-            <title id="d2t">Two different dials have no radio path</title>
-            <desc id="d2d">A station on 144.950 in the 2m band cannot hear a station on 7.045 in the 40m band.</desc>
-            <text class="tag" x="16" y="20">DIFFERENT DIALS · NOTHING IS HEARD</text>
-            <path class="none" d="M212 67 H 336" />
-            <path class="none" d="M384 67 H 508" />
-            <line class="cross" x1="348" y1="55" x2="372" y2="79" />
-            <line class="cross" x1="372" y1="55" x2="348" y2="79" />
-            <rect class="box radio" x="24" y="40" width="188" height="54" />
-            <text class="on-radio" x="118" y="62" text-anchor="middle">you</text>
-            <text class="sub" x="118" y="80" text-anchor="middle">144.950 · 2m</text>
-            <rect class="box radio" x="508" y="40" width="188" height="54" />
-            <text class="on-radio" x="602" y="62" text-anchor="middle">them</text>
-            <text class="sub" x="602" y="80" text-anchor="middle">7.045 · 40m</text>
-            <text class="sub" x="360" y="106" text-anchor="middle">no direct path — someone has to bridge the two bands</text>
-          </svg>
-        </div>
-        <figcaption>Changing band is your decision, not the program's. If you both want RF only, agree on one dial.</figcaption>
-      </figure>
-
-      <p>A station in <code>internet-radio</code> mode is a <strong>gateway</strong>: it has a radio on one dial and a hub link. The hub copies the message from the gateway that heard it to the gateway that has recently heard the destination — or that <em>is</em> the destination.</p>
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 306" role="img" aria-labelledby="d3t d3d">
-            <title id="d3t">Bridging 2m to 40m through two gateways and the hub</title>
-            <desc id="d3d">You transmit on 2m. Gateway A hears you and sends the message to the hub over the internet. The hub picks gateway B, which is on 40m and has recently heard the destination. Gateway B transmits on 40m and the destination hears it.</desc>
-            <defs>
-              <marker id="mrf3" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-              <marker id="mnet3" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-            </defs>
-            <text class="tag" x="16" y="20">CROSS-FREQUENCY · 2m TO 40m</text>
-            <text class="tag" x="704" y="44" text-anchor="end">2m · 144.950</text>
-            <line class="lane" x1="16" y1="84" x2="480" y2="84" />
-            <line class="lane" x1="240" y1="244" x2="704" y2="244" />
-            <line class="rf" marker-end="url(#mrf3)" x1="176" y1="84" x2="288" y2="84" />
-            <text class="sub" x="232" y="76" text-anchor="middle">on the air</text>
-            <line class="net" marker-end="url(#mnet3)" x1="375" y1="112" x2="375" y2="136" />
-            <text class="sub" x="388" y="128">internet</text>
-            <line class="net" marker-end="url(#mnet3)" x1="375" y1="192" x2="375" y2="216" />
-            <text class="sub" x="388" y="208">internet</text>
-            <line class="rf" marker-end="url(#mrf3)" x1="462" y1="244" x2="544" y2="244" />
-            <text class="sub" x="503" y="236" text-anchor="middle">on the air</text>
-            <rect class="box radio" x="24" y="58" width="150" height="52" />
-            <text class="on-radio" x="99" y="80" text-anchor="middle">you</text>
-            <text class="sub" x="99" y="97" text-anchor="middle">144.950 · 2m</text>
-            <rect class="box gw" x="290" y="58" width="170" height="52" />
-            <text class="on-gw" x="375" y="80" text-anchor="middle">gateway A</text>
-            <text class="sub" x="375" y="97" text-anchor="middle">internet-radio · 2m</text>
-            <rect class="box hub" x="290" y="138" width="170" height="52" />
-            <text class="on-hub" x="375" y="160" text-anchor="middle">hub</text>
-            <text class="sub" x="375" y="177" text-anchor="middle">routes by band</text>
-            <text class="sub" x="476" y="158">picks the gateway</text>
-            <text class="sub" x="476" y="174">that heard them</text>
-            <rect class="box gw" x="290" y="218" width="170" height="52" />
-            <text class="on-gw" x="375" y="240" text-anchor="middle">gateway B</text>
-            <text class="sub" x="375" y="257" text-anchor="middle">internet-radio · 40m</text>
-            <text class="sub" x="16" y="238">each gateway stays</text>
-            <text class="sub" x="16" y="254">on its own dial</text>
-            <rect class="box radio" x="546" y="218" width="150" height="52" />
-            <text class="on-radio" x="621" y="240" text-anchor="middle">them</text>
-            <text class="sub" x="621" y="257" text-anchor="middle">7.045 · 40m</text>
-            <text class="tag" x="704" y="290" text-anchor="end">40m · 7.045</text>
-            <circle class="step" cx="24" cy="58" r="9" />
-            <text class="step-n" x="24" y="61.5" text-anchor="middle">1</text>
-            <circle class="step" cx="290" cy="58" r="9" />
-            <text class="step-n" x="290" y="61.5" text-anchor="middle">2</text>
-            <circle class="step" cx="290" cy="138" r="9" />
-            <text class="step-n" x="290" y="141.5" text-anchor="middle">3</text>
-            <circle class="step" cx="290" cy="218" r="9" />
-            <text class="step-n" x="290" y="221.5" text-anchor="middle">4</text>
-            <circle class="step" cx="546" cy="218" r="9" />
-            <text class="step-n" x="546" y="221.5" text-anchor="middle">5</text>
-          </svg>
-        </div>
-        <figcaption>The map ticker shows this as <code>2m → 40m</code>. Both gateways keep their own dial: nobody QSYs for you.</figcaption>
-      </figure>
-
-      <h2>Radio-plus (you stay offline)</h2>
-      <p><code>radio</code> and <code>radio-plus</code> both post map telemetry when <code>[telemetry] url</code> is set, and that post never contains message text. Neither mode sends chat to the hub or the LAN from this computer. The only difference is whether an internet-radio gateway that hears you may forward your messages (and email) to the internet.</p>
-      <p><code>radio-plus</code> never uploads chat from this computer. A nearby gateway that hears you on RF forwards that frame to the hub for any destination, including a direct message, a closed group, and <code>#bulletin</code>. <code>radio</code> mode says do not forward, so the same gateway keeps those frames on the radio. Your line shows <code>[gw]</code> when the gateway has accepted the frame onto the hub. <code>[rl]</code> only means you heard your own frame on RF again. The hub holds an offline station's direct messages for 10 minutes (32 per callsign) and delivers them on the next hello. It does not hold groups or <code>#bulletin</code>.</p>
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 200" role="img" aria-labelledby="d4t d4d">
-            <title id="d4t">Radio-plus reaches the internet through a gateway</title>
-            <desc id="d4d">Your radio-plus node transmits on RF only and never contacts the hub. A gateway that hears you passes the message to the hub, which delivers it to internet stations or to another band.</desc>
-            <defs>
-              <marker id="mrf4" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-              <marker id="mnet4" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-            </defs>
-            <text class="tag" x="16" y="18">RADIO-PLUS · RF OUT, NO UPLOAD</text>
-            <text class="sub" x="360" y="34" text-anchor="middle">your node never talks to the hub</text>
-            <path class="none" d="M121 98 V 52 H 336" />
-            <path class="none" d="M384 52 H 537 V 98" />
-            <line class="cross" x1="348" y1="40" x2="372" y2="64" />
-            <line class="cross" x1="372" y1="40" x2="348" y2="64" />
-            <rect class="zone" x="16" y="70" width="210" height="120" />
-            <text class="sub" x="121" y="182" text-anchor="middle">no internet here</text>
-            <line class="rf" marker-end="url(#mrf4)" x1="208" y1="124" x2="268" y2="124" />
-            <text class="sub" x="238" y="116" text-anchor="middle">RF</text>
-            <line class="net" marker-end="url(#mnet4)" x1="444" y1="124" x2="488" y2="124" />
-            <text class="sub" x="466" y="144" text-anchor="middle">internet</text>
-            <line class="net" marker-end="url(#mnet4)" x1="584" y1="116" x2="610" y2="92" />
-            <line class="net" marker-end="url(#mnet4)" x1="584" y1="132" x2="610" y2="154" />
-            <rect class="box rplus" x="36" y="98" width="170" height="52" />
-            <text class="on-rplus" x="121" y="120" text-anchor="middle">you</text>
-            <text class="sub" x="121" y="137" text-anchor="middle">radio-plus · 2m</text>
-            <rect class="box gw" x="272" y="98" width="170" height="52" />
-            <text class="on-gw" x="357" y="120" text-anchor="middle">gateway</text>
-            <text class="sub" x="357" y="137" text-anchor="middle">hears you on 2m</text>
-            <rect class="box hub" x="492" y="98" width="92" height="52" />
-            <text class="on-hub" x="538" y="129" text-anchor="middle">hub</text>
-            <rect class="box" x="612" y="62" width="96" height="44" />
-            <text x="660" y="82" text-anchor="middle">internet</text>
-            <text class="sub" x="660" y="98" text-anchor="middle">station</text>
-            <rect class="box" x="612" y="140" width="96" height="44" />
-            <text x="660" y="160" text-anchor="middle">another</text>
-            <text class="sub" x="660" y="176" text-anchor="middle">band</text>
-          </svg>
-        </div>
-        <figcaption>Your node has no internet at all. The gateway is the only station on this path that talks to the hub.</figcaption>
-      </figure>
-
-      <h2>What a gateway will and will not put on the air</h2>
-      <p>Traffic arriving from the internet has to pass both gates before this node transmits. If either gate fails, the frame is delivered on the internet side only and nothing is keyed up.</p>
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 216" role="img" aria-labelledby="d5t d5d">
-            <title id="d5t">Two gates decide whether internet traffic goes on the air</title>
-            <desc id="d5d">A frame from the hub is transmitted only if this node is a gateway with rf_egress enabled and the destination was heard on this dial within the last ten minutes. Otherwise the node stays quiet.</desc>
-            <defs>
-              <marker id="mnet5" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-              <marker id="mrf5" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-              <marker id="mdim5" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-dim" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-            </defs>
-            <text class="tag" x="16" y="20">INTERNET TO RF · BOTH GATES MUST PASS</text>
-            <line class="net" marker-end="url(#mnet5)" x1="158" y1="90" x2="192" y2="90" />
-            <line class="net" marker-end="url(#mnet5)" x1="340" y1="90" x2="374" y2="90" />
-            <text class="sub" x="357" y="82" text-anchor="middle">yes</text>
-            <line class="rf" marker-end="url(#mrf5)" x1="522" y1="90" x2="556" y2="90" />
-            <text class="sub" x="539" y="82" text-anchor="middle">yes</text>
-            <path class="none" marker-end="url(#mdim5)" d="M267 118 V 160" />
-            <text class="sub" x="275" y="142">no</text>
-            <path class="none" marker-end="url(#mdim5)" d="M449 118 V 160" />
-            <text class="sub" x="457" y="142">no</text>
-            <rect class="box" x="12" y="62" width="146" height="56" />
-            <text x="85" y="84" text-anchor="middle">hub gives this</text>
-            <text x="85" y="102" text-anchor="middle">node a frame</text>
-            <rect class="box gate" x="194" y="62" width="146" height="56" />
-            <text class="on-gate" x="267" y="84" text-anchor="middle">gateway with</text>
-            <text class="sub" x="267" y="102" text-anchor="middle">rf_egress = true</text>
-            <rect class="box gate" x="376" y="62" width="146" height="56" />
-            <text class="on-gate" x="449" y="84" text-anchor="middle">dest heard here</text>
-            <text class="sub" x="449" y="102" text-anchor="middle">in last 10 min</text>
-            <rect class="box gw" x="558" y="62" width="146" height="56" />
-            <text class="on-gw" x="631" y="96" text-anchor="middle">TX on this dial</text>
-            <rect class="box off" x="194" y="162" width="328" height="44" />
-            <text class="on-off" x="358" y="189" text-anchor="middle">stay quiet — nothing goes on the air</text>
-          </svg>
-        </div>
-        <figcaption>A group counts as heard if any member was heard on this dial. Guest names starting with <code>~</code> need <code>third_party = "allow"</code> as well.</figcaption>
-      </figure>
-      <p>Heard means on RF on this frequency, not a map pin or a LAN/hub sighting. A group flag alone does not key the radio; at least one listed member must have been heard here in the last ten minutes. <code>#bulletin</code> keys only if someone was heard on this dial over RF.</p>
-      <ul>
-        <li>RF → internet: the frame has to say it may go to the internet. <code>radio</code> says do not forward, so a gateway leaves it on the radio. <code>radio-plus</code> may be forwarded. This computer does not upload chat in either mode.</li>
-        <li>Internet → RF: <code>[gateway] rf_egress = true</code> in <code>wcr.toml</code>. Guest names starting with <code>~</code> stay off RF unless <code>third_party = "allow"</code>.</li>
-        <li>Same LAN: nodes on your local network can pass frames without the public hub. The same gateway rules still apply.</li>
-      </ul>
-      <pre class="plain">[gateway]
-rf_egress = true          # put internet traffic on the air
-third_party = "deny"      # guest (~nick) traffic on RF</pre>
-
       <div class="warn-box">
         <h2>You set the dial</h2>
         <p>FREQ in the GUI and <code>/radio qsy</code> are operator actions. The hub never retunes a radio. Pick spots from <a href="/docs/calling.html">calling frequencies</a> and check your band plan before you transmit.</p>
       </div>
 
-      <h2>How stations learn the band</h2>
-      <p>Beacons are <code>B|&lt;mode&gt;|&lt;khz&gt;</code>, for example <code>B|internet-radio|144950</code>. A frame heard on RF is tagged with the receiving station’s own dial. Hub sessions carry <code>freq_khz</code>. The live map has a BANDS panel; nicklists show <code>[2m]</code>, <code>[40m]</code>, <code>[inet]</code>.</p>
+      <section class="article-section" aria-labelledby="bandH">
+        <h2 id="bandH">How stations learn the band</h2>
+        <p>Beacons are <code>B|&lt;mode&gt;|&lt;khz&gt;</code>, for example <code>B|internet-radio|144950</code>. A frame heard on RF is tagged with the receiving station’s own dial. Hub sessions carry <code>freq_khz</code>. The live map has a BANDS panel; nicklists show <code>[2m]</code>, <code>[40m]</code>, <code>[inet]</code>.</p>
 
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>Path</th><th>Same frequency?</th><th>Who bridges</th></tr>
-          </thead>
-          <tbody>
-            <tr><td>Two radios, same calling spot</td><td>yes</td><td>nobody (RF hops if needed)</td></tr>
-            <tr><td>2m station ↔ 40m station</td><td>no</td><td>two <code>internet-radio</code> gateways + hub</td></tr>
-            <tr><td>RF station ↔ internet-only</td><td>—</td><td>one gateway on the RF station’s band</td></tr>
-            <tr><td><code>radio</code></td><td>RF chat from this computer</td><td>nobody. A gateway must leave it on the radio. Map data can still post.</td></tr>
-            <tr><td><code>radio-plus</code></td><td>RF chat from this computer</td><td>an internet-radio gateway that hears you. This computer still does not open the hub.</td></tr>
-          </tbody>
-        </table>
-      </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Path</th><th>Same frequency?</th><th>Who bridges</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Two radios, same calling spot</td><td>yes</td><td>nobody (RF hops if needed)</td></tr>
+              <tr><td>2m station ↔ 40m station</td><td>no</td><td>two <code>internet-radio</code> gateways + hub</td></tr>
+              <tr><td>RF station ↔ internet-only</td><td>—</td><td>one gateway on the RF station’s band</td></tr>
+              <tr><td><code>radio</code></td><td>RF chat from this computer</td><td>nobody. A gateway must leave it on the radio. Map data can still post.</td></tr>
+              <tr><td><code>radio-plus</code></td><td>RF chat from this computer</td><td>an internet-radio gateway that hears you. This computer still does not open the hub.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       <div class="note">
         <h2>Mixed PMR, CB, 2m, and internet</h2>
@@ -329,10 +395,11 @@ third_party = "deny"      # guest (~nick) traffic on RF</pre>
         <p>Nicklist tags match the bands: <code>[2m] G4ABC</code>, <code>[40m] M7TJF</code>, <code>[inet] ~ALICE</code>. The map ticker reads like <code>G4ABC 2m TX -&gt; #net -&gt; 40m, inet</code>. Your status bar shows your own frequency and band.</p>
       </div>
 
-      <p>Modes: <a href="/docs/modes.html">modes</a>. Suggested dials: <a href="/docs/calling.html">calling frequencies</a>. A same-dial relay when the group is spread out: <a href="/docs/hops.html">hops</a>. Same text offline: <code>wcr help bridging</code>.</p>
+      <p class="next">Modes: <a href="/docs/modes.html">modes</a>. Suggested dials: <a href="/docs/calling.html">calling frequencies</a>. A same-dial relay when the group is spread out: <a href="/docs/hops.html">hops</a>. Same text offline: <code>wcr help bridging</code>.</p>
     </main>
   </div>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=10"></script>
+  <script src="/live-dgm.js?v=1"></script>
 </body>
 </html>
