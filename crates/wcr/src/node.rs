@@ -4180,8 +4180,10 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             }
         }
         "freq" => {
-            if let Some(mhz) = sp.next() {
-                match crate::band::parse_mhz(mhz) {
+            // The unit may follow a space: `/freq 1296 MHz`.
+            let mhz = sp.collect::<Vec<_>>().join(" ");
+            if !mhz.is_empty() {
+                match crate::band::parse_mhz(&mhz) {
                     Some(khz) => set_manual_freq(rt, khz),
                     None => "usage: /radio freq <MHz or kHz>  (example: 144.950 or 14105)".into(),
                 }
@@ -4252,8 +4254,9 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             }
         }
         "qsy" => {
-            if let Some(mhz) = sp.next() {
-                let Some(khz) = crate::band::parse_mhz(mhz) else {
+            let mhz = sp.collect::<Vec<_>>().join(" ");
+            if !mhz.is_empty() {
+                let Some(khz) = crate::band::parse_mhz(&mhz) else {
                     return "usage: /radio qsy <MHz>".into();
                 };
                 let rig_on = cfg.lock().rig.enabled;
