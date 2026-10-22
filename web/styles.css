@@ -771,11 +771,75 @@ a.guide-card.featured-star h2 { color: var(--accent); }
   text-transform: uppercase;
   color: var(--dim);
 }
+.article-mixed .lead,
+.article-mixed .section-lead,
+.article-mixed .station-card__foot,
+.article-mixed .path-note,
+.article-mixed figcaption {
+  color: #c8c0d8;
+}
 .article-mixed .section-lead {
   margin: -4px 0 14px;
-  font-size: 13px;
-  color: var(--dim);
-  max-width: 52rem;
+  font-size: 14px;
+  line-height: 1.5;
+  max-width: 46rem;
+}
+.path-steps {
+  margin: 8px 0 18px;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+.path-steps li {
+  margin: 0;
+  padding: 10px 12px 10px 44px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.35);
+  position: relative;
+  counter-increment: pathstep;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.path-steps { counter-reset: pathstep; }
+.path-steps li::before {
+  content: counter(pathstep);
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  text-align: center;
+  line-height: 20px;
+  font-size: 12px;
+}
+.station-group-title {
+  margin: 18px 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #c8c0d8;
+  font-weight: 400;
+}
+.station-grid--solo {
+  grid-template-columns: minmax(240px, 360px);
+}
+.path-note {
+  margin: 0 0 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  background: #050509;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.mixed-chat-controls {
+  display: flex;
+  gap: 8px;
+}
+.docs-featured-grid a.guide-card {
+  min-height: 8.5rem;
 }
 .article-section {
   margin: 28px 0;
@@ -832,7 +896,7 @@ a.guide-card.featured-star h2 { color: var(--accent); }
 }
 .station-card__dl dt {
   margin: 0;
-  color: var(--dim);
+  color: #c8c0d8;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -1151,10 +1215,7 @@ svg.dgm .hop-run {
 }
 .mixed-chat-line.is-highlight {
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px rgba(125, 155, 255, 0.15);
-}
-.mixed-chat-line.is-dim {
-  opacity: 0.55;
+  box-shadow: 0 0 0 1px rgba(125, 155, 255, 0.25);
 }
 .mixed-chat-who {
   color: var(--accent);
