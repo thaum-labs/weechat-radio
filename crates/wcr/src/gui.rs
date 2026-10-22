@@ -1924,6 +1924,9 @@ impl eframe::App for GuiApp {
                                     preset_cmd = Some(format!("/preset {next}"));
                                 }
                             }
+                            if s.tnc.is_empty() && !s.modem73.is_empty() {
+                                kv(ui, "MODEM", &format!("modem73 v{}", s.modem73), DIM);
+                            }
                             audio_meter_row(
                                 ui,
                                 "IN",

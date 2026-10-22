@@ -61,6 +61,9 @@ pub struct StatusSnapshot {
     /// True while the KISS link to the radio is up.
     #[serde(default)]
     pub tnc_ok: bool,
+    /// Version of the managed modem73 binary, e.g. `2.4.2`. Empty when unknown.
+    #[serde(default)]
+    pub modem73: String,
     /// Dial frequency in kHz (0 = unknown).
     #[serde(default)]
     pub freq_khz: u32,
@@ -368,6 +371,7 @@ impl Default for StatusSnapshot {
             deferred: false,
             tnc: String::new(),
             tnc_ok: false,
+            modem73: String::new(),
             freq_khz: 0,
             band: String::new(),
             freq_source: "none".into(),
