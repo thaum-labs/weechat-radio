@@ -83,6 +83,15 @@ Icon symbols go once per page, right after `</header>`:
 </dl>
 ```
 
+**Long fixes** — when a fix holds paragraphs, a list or a command, use `dl.fix-list.fix-list--long` (symptom on top, fix at full width). Rows can carry an `id` for links; the targeted row gets an orange border.
+
+**Mark list** — short codes and what they mean:
+```html
+<dl class="mark-list"><div><dt><code>[ok]</code></dt><dd>delivered</dd></div></dl>
+```
+
+**Cards beside a diagram** — `<div class="pair"><ul class="cards">…</ul><figure class="diagram">…</figure></div>`; stacks on phones.
+
 **Flow** — two settings and the condition to move between them:
 ```html
 <div class="flow" aria-hidden="true">
@@ -108,7 +117,7 @@ Colours carry meaning; keep them consistent with the live map:
 
 Text: `.sub` for small labels, `.tag` only where an existing diagram already uses it. Sentence case; no all-caps labels.
 
-Size: draw for a phone. A `viewBox` about 420–440 wide with 11–12px text stays readable at 360px. Wide static diagrams may keep the shared 620px scroll width; live diagrams must fit (the kit removes the min-width inside `.live-dgm`).
+Size: draw for a phone. A `viewBox` about 420–440 wide with 11–12px text stays readable at 360px. Give such a static diagram `class="dgm fit"` so it drops the shared 620px scroll width. Wide static diagrams may keep it; live diagrams always fit (the kit removes the min-width inside `.live-dgm`).
 
 Every SVG has `role="img"`, a `<title>` and a `<desc>` that says in words what the picture shows.
 
