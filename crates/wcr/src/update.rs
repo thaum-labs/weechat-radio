@@ -46,6 +46,25 @@ async fn fetch_releases(client: &reqwest::Client) -> Result<Vec<Release>> {
     res.json().await.map_err(|e| Error::Net(e.to_string()))
 }
 
+#[derive(Deserialize)]
+struct Tag {
+    name: String,
+}
+
+async fn fetch_tag_names(client: &reqwest::Client) -> Result<Vec<String>> {
+    let url = format!("https://api.github.com/repos/{REPO}/tags?per_page=10");
+    let res = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| Error::Net(e.to_string()))?;
+    if !res.status().is_success() {
+        return Err(Error::Net(format!("GitHub tags HTTP {}", res.status())));
+    }
+    let tags: Vec<Tag> = res.json().await.map_err(|e| Error::Net(e.to_string()))?;
+    Ok(tags.into_iter().map(|t| t.name).collect())
+}
+
 fn github_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent("wcr")
@@ -76,10 +95,16 @@ fn is_newer_than_current(tag: &str, current: &str) -> bool {
 }
 
 fn highest_newer_tag(releases: &[Release], current: &str) -> Option<String> {
-    releases
+    let names: Vec<String> = releases.iter().map(|rel| rel.tag_name.clone()).collect();
+    highest_newer_name(&names, current)
+}
+
+/// Highest `vX.Y.Z` name newer than `current`, without the `v`.
+fn highest_newer_name(names: &[String], current: &str) -> Option<String> {
+    names
         .iter()
-        .filter_map(|rel| {
-            let tag = rel.tag_name.trim_start_matches('v');
+        .filter_map(|name| {
+            let tag = name.trim_start_matches('v');
             if is_newer_than_current(tag, current) {
                 parse_version(tag).map(|_| tag.to_string())
             } else {
@@ -188,8 +213,20 @@ pub async fn apply() -> Result<Applied> {
                 "a newer release is still publishing for this platform — try again in a few minutes, or install manually from https://github.com/{REPO}/releases"
             )));
         }
+        // The release page only appears once every platform is built (up to
+        // an hour after the tag), so say so instead of a flat "up to date".
+        let building = fetch_tag_names(&client)
+            .await
+            .ok()
+            .and_then(|tags| highest_newer_name(&tags, current));
+        let message = match building {
+            Some(tag) => format!(
+                "already up to date ({current}). v{tag} is still being built; try again later (it can take up to an hour)"
+            ),
+            None => format!("already up to date ({current})"),
+        };
         return Ok(Applied {
-            message: format!("already up to date ({current})"),
+            message,
             version: current.to_string(),
             restarted: false,
         });
@@ -635,6 +672,20 @@ mod tests {
             tag_name: tag.to_string(),
             assets,
         }
+    }
+
+    #[test]
+    fn a_tag_without_a_release_yet_is_named() {
+        // QA v0.1.111: "already up to date (0.1.110)" while 0.1.111 was building.
+        let names: Vec<String> = ["v0.1.111", "v0.1.110", "v0.1.109", "not-a-version"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            highest_newer_name(&names, "0.1.110").as_deref(),
+            Some("0.1.111")
+        );
+        assert_eq!(highest_newer_name(&names, "0.1.111"), None);
     }
 
     #[test]
