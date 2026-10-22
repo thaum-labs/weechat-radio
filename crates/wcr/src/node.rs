@@ -3691,6 +3691,19 @@ async fn apply_mode_change(rt: &Runtime, old: Mode, mode: Mode) -> String {
     }
 }
 
+/// Read the managed modem73's version once and log it, so `/status` and the
+/// GUI show which modem is in use after `wcr update`.
+fn note_modem73_version(rt: &Runtime, configured: &str) {
+    let binary = crate::modem::ensure::resolve_binary(configured);
+    match crate::modem::ensure::binary_version(&binary) {
+        Some(v) => {
+            tracing::info!("modem73 v{v} ({})", binary.display());
+            rt.snap.lock().modem73 = v;
+        }
+        None => tracing::info!("modem73 version unknown ({})", binary.display()),
+    }
+}
+
 async fn start_radio(rt: &Runtime) -> Result<()> {
     if rt.kiss().is_some() {
         return Ok(());
@@ -3743,6 +3756,9 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
                     tracing::warn!("{e}");
                 }
             }
+        }
+        if cfg.modem.manage && rt.snap.lock().modem73.is_empty() {
+            note_modem73_version(rt, &cfg.modem.binary);
         }
         let connected = if let Some(pair) = already {
             Ok(pair)
@@ -4030,10 +4046,12 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                 }
             }
             let s = snap.lock().clone();
-            let tnc = if s.tnc.is_empty() {
-                String::new()
-            } else {
+            let tnc = if !s.tnc.is_empty() {
                 format!(" | tnc {}", s.tnc)
+            } else if !s.modem73.is_empty() {
+                format!(" | modem73 v{}", s.modem73)
+            } else {
+                String::new()
             };
             let now = crate::status::unix_now_f64();
             format!(
@@ -4165,7 +4183,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             if let Some(mhz) = sp.next() {
                 match crate::band::parse_mhz(mhz) {
                     Some(khz) => set_manual_freq(rt, khz),
-                    None => "usage: /radio freq <MHz>  (example: 144.950)".into(),
+                    None => "usage: /radio freq <MHz or kHz>  (example: 144.950 or 14105)".into(),
                 }
             } else {
                 let s = snap.lock();
