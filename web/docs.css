@@ -12,7 +12,8 @@
      6. Fitting              svg.dgm.fit, .pair (cards beside a diagram), table.stack-table
      7. Live diagram         .live-dgm figure, .setup-switch, .live-status, .setup-panel
      8. Diagram glyphs       laptop, handheld radio, base station, house
-     9. Packets              .seg + .pkt animation, .btn-replay */
+     9. Packets              .seg + .pkt animation, .btn-replay
+    10. App comparison       #apps-table (docs/apps.html) */
 
 .page-panel {
   --body: #c8c0d8;
@@ -573,3 +574,24 @@ svg.dgm .seg-sound .pkt {
   border-color: var(--orange);
   color: var(--orange);
 }
+
+/* --- 10. app comparison (docs/apps.html) -------------------------------- */
+/* Wide feature table; it scrolls sideways inside .table-wrap on phones. */
+
+.page-panel #apps-table {
+  min-width: 980px;
+  line-height: 1.3;
+}
+.page-panel #apps-table th,
+.page-panel #apps-table td {
+  vertical-align: top;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(125, 155, 255, 0.12);
+}
+.page-panel #apps-table tbody th {
+  color: var(--fg);
+  white-space: nowrap;
+}
+.page-panel #apps-table tr.cmp-wcr th { color: var(--orange); }
+/* Let the panel shrink to the screen; the wide table scrolls in its own box. */
+body.cmp-page .page-panel { min-width: 0; }
