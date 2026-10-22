@@ -79,6 +79,19 @@
   color: var(--fg);
   font-weight: 400;
 }
+/* compact cards: icon on the left, for a column of choices beside a diagram */
+.page-panel .cards--compact { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.page-panel .cards--compact > li {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  column-gap: 12px;
+  row-gap: 2px;
+  padding: 10px 12px;
+}
+.page-panel .cards--compact > li > .card-ico {
+  grid-row: span 2;
+  margin: 0;
+}
 .card-ico {
   width: 26px;
   height: 26px;
