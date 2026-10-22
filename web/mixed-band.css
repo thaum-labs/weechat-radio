@@ -137,34 +137,10 @@ svg.mb-bands .is-live .box.gw { fill: rgba(57, 255, 20, 0.11); }
 svg.mb-bands .is-live .box.hub,
 svg.mb-bands .is-live .box.internet { fill: rgba(0, 229, 255, 0.1); }
 
-/* Packet: one short dash run along the path. --len is set by the script;
-   --leg delays later hops so the packet goes RF first, then TLS. */
-svg.mb-bands .pkt {
-  fill: none;
-  stroke-width: 4.5;
-  stroke-linecap: round;
-  stroke-dasharray: 12 2000;
-  stroke-dashoffset: 14;
-  opacity: 0;
-}
-svg.mb-bands .seg-rf .pkt {
-  stroke: #ffd6c4;
-  filter: drop-shadow(0 0 4px var(--orange));
-}
-svg.mb-bands .seg-net .pkt {
-  stroke: #ccfaff;
-  filter: drop-shadow(0 0 4px var(--mode-internet));
-}
+/* Packets use the shared svg.dgm .pkt rules in styles.css. The receipt line
+   (hub → radio) runs every hop backwards. */
 @media (prefers-reduced-motion: no-preference) {
-  svg.mb-bands .seg.is-live .pkt {
-    opacity: 1;
-    animation: mb-packet 0.9s ease-in-out calc(var(--leg, 0) * 0.9s) both;
-  }
   .mb-live.is-down svg.mb-bands .seg.is-live .pkt { animation-direction: reverse; }
-}
-@keyframes mb-packet {
-  from { stroke-dashoffset: 14; }
-  to { stroke-dashoffset: calc(-1px * var(--len, 200)); }
 }
 
 /* #field buffer, styled after a WeeChat window */
@@ -275,20 +251,6 @@ svg.mb-bands .seg-net .pkt {
 .mb-line__path i.k-net { border-top-color: var(--mode-internet); }
 @media (prefers-reduced-motion: reduce) {
   .article-mixed .mb-line { transition: none; transform: none; }
-}
-
-.btn-replay {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 5px 11px;
-  border: 1px solid var(--accent);
-  background: #0a0a12;
-  color: var(--accent);
-  cursor: pointer;
-}
-.btn-replay:hover {
-  border-color: var(--orange);
-  color: var(--orange);
 }
 
 .mb-key { margin-bottom: 4px; }
