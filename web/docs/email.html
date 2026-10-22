@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=25" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -51,162 +52,251 @@
       <p class="lead">A second tab next to live chat, with the same station panel. In <code>wcr gui</code> from <code>v0.1.74</code>. Email does not use the live-chat transmit queue.</p>
 
       <div class="ok">
-        <h2>in the app</h2>
+        <h2>In the app</h2>
         <p>Open <code>wcr gui</code>. The <strong>email</strong> tab sits next to live chat, and the address is <code>callsign@mail.weechatradio.com</code>.</p>
       </div>
 
-      <h2>What it is for</h2>
-      <p>Someone on the internet — a club secretary, an event organiser, anyone with normal email — can mail your <strong>callsign</strong>. You read and send that mail from the desktop app. On the hill you use radio. At home you use the hub. You do not create a Gmail account for WeeChat Radio, and you do not log the app into Gmail.</p>
-      <p>Your on-air identity stays your callsign. Your internet From address is <code>callsign@mail.weechatradio.com</code>. Replies stay on that address so they come back to the hub, then to you.</p>
+      <section class="article-section article-section--first" aria-labelledby="forH">
+        <h2 id="forH">What it is for</h2>
+        <p>Someone on the internet — a club secretary, an event organiser, anyone with normal email — can mail your <strong>callsign</strong>. You read and send that mail from the desktop app. On the hill you use radio. At home you use the hub. You do not create a Gmail account for WeeChat Radio, and you do not log the app into Gmail.</p>
+        <p>Your on-air identity stays your callsign. Your internet From address is <code>callsign@mail.weechatradio.com</code>. Replies stay on that address so they come back to the hub, then to you.</p>
+      </section>
 
-      <h2>The Email tab</h2>
-      <p>In <code>wcr gui</code> only (not the TUI or WeeChat). The station panel stays: mode, frequency, preset. The centre pane switches from live chat to email: inbox, outbox, sent, drafts, compose.</p>
-      <p>New mail puts a badge on <strong>email</strong> in the top bar. The tray icon can ping when you are not looking at Email. Guest names that start with <code>~</code> do not get an address; Email is hidden for them. In Setup, click <strong>live chat</strong> or <strong>email</strong> to leave setup. The logo does the same.</p>
+      <section class="article-section" aria-labelledby="tabH">
+        <h2 id="tabH">The Email tab</h2>
+        <p>In <code>wcr gui</code> only (not the TUI or WeeChat). The station panel stays: mode, frequency, preset. The centre pane switches from live chat to email: inbox, outbox, sent, drafts, compose.</p>
+        <p>New mail puts a badge on <strong>email</strong> in the top bar. The tray icon can ping when you are not looking at Email. Guest names that start with <code>~</code> do not get an address; Email is hidden for them. In Setup, click <strong>live chat</strong> or <strong>email</strong> to leave setup. The logo does the same.</p>
+      </section>
 
-      <h2>On the live map</h2>
-      <p>Email shows as <strong>traffic</strong>, not a fifth operating mode. Your pin keeps its normal mode colour, with an <strong>e</strong> beside that same logo while mail is recent. The mode list uses the logo in orange plus that e. When mail went through another station's gateway, an orange arc links you and that gateway. The map ticker shows <code>MAIL M7TJF -&gt; G0ABC</code> (callsigns only — never the internet address). Hub-only send still marks your pin when mail leaves or arrives.</p>
-      <p>Rewinding the map uses the mode and the lines from that time, not whatever the station is doing now. Pin colours for that rewind start once the hub has been recording them; lines come from the traffic already stored.</p>
+      <section class="article-section" aria-labelledby="mapH">
+        <h2 id="mapH">On the live map</h2>
+        <p>Email shows as <strong>traffic</strong>, not a fifth operating mode. Your pin keeps its normal mode colour, with an <strong>e</strong> beside that same logo while mail is recent. The mode list uses the logo in orange plus that e. When mail went through another station's gateway, an orange arc links you and that gateway. The map ticker shows <code>MAIL M7TJF -&gt; G0ABC</code> (callsigns only — never the internet address). Hub-only send still marks your pin when mail leaves or arrives.</p>
+        <p>Rewinding the map uses the mode and the lines from that time, not whatever the station is doing now. Pin colours for that rewind start once the hub has been recording them; lines come from the traffic already stored.</p>
+      </section>
 
-      <h2>Your address</h2>
-      <p>A licensed callsign is <code>M7TJF@mail.weechatradio.com</code> (your callsign). There is no domain box. Tell that address to people on the internet once.</p>
-      <p>Compose <strong>To:</strong> is an internet mailbox only, such as <code>alex@example.com</code>. Mail to another ham is still live chat. In Setup, <strong>Mail gateway</strong> is the <code>internet-radio</code> callsign on your dial. Radio+ without that callsign stays grey and the tooltip says to set it.</p>
+      <section class="article-section" aria-labelledby="addrH">
+        <h2 id="addrH">Your address</h2>
+        <p>A licensed callsign is <code>M7TJF@mail.weechatradio.com</code> (your callsign). There is no domain box. Tell that address to people on the internet once.</p>
+        <p>Compose <strong>To:</strong> is an internet mailbox only, such as <code>alex@example.com</code>. Mail to another ham is still live chat. In Setup, <strong>Mail gateway</strong> is the <code>internet-radio</code> callsign on your dial. Radio+ without that callsign stays grey and the tooltip says to set it.</p>
+      </section>
 
-      <h2>Send</h2>
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 200" role="img" aria-labelledby="e1t e1d">
-            <title id="e1t">Sending mail from the hill</title>
-            <desc id="e1d">You confirm the radio send. The envelope goes over RF to a gateway, then the hub, then internet mail. The contact sees mail from your callsign at mail.weechatradio.com.</desc>
-            <defs>
-              <marker id="mrfE" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-              <marker id="mnetE" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-            </defs>
-            <text class="tag" x="16" y="20">SEND · RADIO-PLUS · AFTER YOU CONFIRM</text>
-            <line class="rf" marker-end="url(#mrfE)" x1="154" y1="96" x2="186" y2="96" />
-            <line class="net" marker-end="url(#mnetE)" x1="348" y1="96" x2="380" y2="96" />
-            <line class="net" marker-end="url(#mnetE)" x1="542" y1="96" x2="574" y2="96" />
-            <rect class="box rplus" x="16" y="70" width="136" height="54" />
-            <text class="on-rplus" x="84" y="92" text-anchor="middle">you</text>
-            <text class="sub" x="84" y="110" text-anchor="middle">Email tab · RF</text>
-            <rect class="box gw" x="188" y="70" width="158" height="54" />
-            <text class="on-gw" x="267" y="92" text-anchor="middle">gateway</text>
-            <text class="sub" x="267" y="110" text-anchor="middle">internet-radio</text>
-            <rect class="box hub" x="382" y="70" width="158" height="54" />
-            <text class="on-hub" x="461" y="92" text-anchor="middle">hub</text>
-            <text class="sub" x="461" y="110" text-anchor="middle">sends the mail</text>
-            <rect class="box orange" x="576" y="70" width="128" height="54" />
-            <text class="on-orange" x="640" y="92" text-anchor="middle">contact</text>
-            <text class="sub" x="640" y="110" text-anchor="middle">their inbox</text>
-            <text class="sub" x="16" y="164">From: M7TJF@mail.weechatradio.com · To: alex@example.com · Reply stays on the WCR address</text>
-            <text class="sub" x="16" y="184">in internet mode the radio hop is skipped; the hub still sends</text>
-          </svg>
-        </div>
-        <figcaption>The radio carries a compact mail object addressed to the network, not the contact's name on the air. The internet To: lives inside the object.</figcaption>
-      </figure>
-      <p>Send never keys immediately. A confirm lists the destination, size, mode, frequency, preset, and a rough airtime. Internet and internet-radio say the message goes via the hub and does not use the radio. To, subject, and body stay on the form until the message is actually Sent.</p>
-      <p>Pure <code>radio</code> cannot reach the hub. The tab stays grey. The tooltip says to use <strong>Internet</strong>, <strong>Internet+Radio</strong>, or <strong>Radio+</strong> with a gateway. Denying third-party chat relay does not stop a gateway from posting mail.</p>
-      <p>On HF and VOX the mail speed starts at the preset's robust rung and only gets slower. It does not move onto QPSK or OFDM. Chat is paused for the burst, and a chat frame already on its way to the modem goes first. Then the modem is put back, including carrier sense.</p>
+      <section class="article-section" aria-labelledby="pathH">
+        <h2 id="pathH">How mail travels</h2>
+        <p class="section-lead">On <code>radio-plus</code>, mail goes over the air to your Mail gateway, and that station uses the hub. Watch a mail go out to Alex and the reply come back.</p>
 
-      <h2>When it says Sent</h2>
-      <ul>
-        <li><strong>Hub</strong> (internet, internet-radio): Sent after the hub says Resend accepted the message. A rejection is Failed.</li>
-        <li><strong>Radio-plus, every PTT:</strong> keying the burst is Outbox <code>[tx]</code>. A chunk the gateway has is <code>[gw]</code>. Sent is only the gateway's acceptance, after Resend accepted it. Until then the line stays in the outbox. A retry that has heard nothing back, with more than four chunks still missing, keys only the first chunk so the gateway can answer.</li>
-      </ul>
-      <p>A toast timer does not mark Sent.</p>
+        <figure class="diagram live-dgm" data-live-dgm data-setup="out">
+          <div class="setup-switch" role="group" aria-label="Direction" data-setup-switch hidden>
+            <button type="button" data-setup-btn="out" aria-pressed="true">sending</button>
+            <button type="button" data-setup-btn="in" aria-pressed="false">receiving</button>
+          </div>
 
-      <h2>Receive — pull, not push</h2>
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 200" role="img" aria-labelledby="e2t e2d">
-            <title id="e2t">Inbound mail waits at the hub</title>
-            <desc id="e2d">The contact replies to the callsign address. The hub stores the mail. It does not key a radio by itself. You sync on internet or tap Check mail on radio-plus.</desc>
-            <defs>
-              <marker id="mnetE2" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-              <marker id="mrfE2" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-            </defs>
-            <text class="tag" x="16" y="20">INBOUND · WAITS AT THE HUB</text>
-            <line class="net" marker-end="url(#mnetE2)" x1="146" y1="96" x2="186" y2="96" />
-            <path class="none" d="M348 96 H 380" />
-            <line class="cross" x1="355" y1="88" x2="373" y2="104" />
-            <line class="cross" x1="373" y1="88" x2="355" y2="104" />
-            <line class="rf" marker-end="url(#mrfE2)" x1="542" y1="96" x2="574" y2="96" />
-            <rect class="box orange" x="16" y="70" width="128" height="54" />
-            <text class="on-orange" x="80" y="92" text-anchor="middle">contact</text>
-            <text class="sub" x="80" y="110" text-anchor="middle">hits Reply</text>
-            <rect class="box hub" x="188" y="70" width="158" height="54" />
-            <text class="on-hub" x="267" y="92" text-anchor="middle">hub</text>
-            <text class="sub" x="267" y="110" text-anchor="middle">stores the mail</text>
-            <rect class="box gw" x="382" y="70" width="158" height="54" />
-            <text class="on-gw" x="461" y="92" text-anchor="middle">gateway</text>
-            <text class="sub" x="461" y="110" text-anchor="middle">quiet until you ask</text>
-            <rect class="box rplus" x="576" y="70" width="128" height="54" />
-            <text class="on-rplus" x="640" y="92" text-anchor="middle">you</text>
-            <text class="sub" x="640" y="110" text-anchor="middle">Check mail</text>
-            <text class="sub" x="16" y="164">internet / internet-radio: the Email tab syncs; no RF</text>
-            <text class="sub" x="16" y="184">radio-plus: Check mail, then Get, and you confirm the airtime</text>
-          </svg>
-        </div>
-        <figcaption>A stranger mailing your callsign cannot dump a long message onto HF by itself.</figcaption>
-      </figure>
-      <p>On radio-plus, Check mail asks the gateway for a short list (from, subject, size). You fetch a message and confirm the radio step. Nothing arrives on the radio until you ask.</p>
+          <div class="live-dgm__body">
+            <div class="live-dgm__pic">
+              <div class="dgm-wrap">
+                <svg class="dgm" viewBox="0 0 440 334" role="img" aria-labelledby="emT emD">
+                  <title id="emT">Mail between a radio-plus station and the internet</title>
+                  <desc id="emD">M7TJF in radio-plus mode keys mail on 144.950 to G0ABC, its internet-radio mail gateway. G0ABC posts it to the hub, the hub hands it to Resend, and Resend sends it to alex@example.com. The outbox shows tx, then Sent once G0ABC reports that Resend accepted it. A reply waits at the hub. G0ABC stays quiet until M7TJF taps Check mail, then fetches the list and the mail from the hub and keys them back.</desc>
 
-      <h2>Modes</h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>Mode</th><th>Send to the internet</th><th>Read inbound mail</th></tr>
-          </thead>
-          <tbody>
-            <tr><td><code>internet</code></td><td>hub only. Confirm says there is no radio.</td><td>Email tab syncs; badge and tray</td></tr>
-            <tr><td><code>internet-radio</code></td><td>this station is the gateway. Its own mail uses the hub when the hub is up.</td><td>sync over the internet. It also accepts radio-plus mail and posts that.</td></tr>
-            <tr><td><code>radio</code></td><td>grey. Use Internet, Internet+Radio, or Radio+ with a gateway.</td><td>no path to the hub</td></tr>
-            <tr><td><code>radio-plus</code></td><td>always RF to the Mail gateway callsign, then that station posts to the hub</td><td>Check mail over RF. Confirm every time.</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p>Frequency and preset stay station-wide, same as chat. A 4 KB mail on <code>hf-deep</code> takes a long time on the air. The confirm exists so you see that before you key.</p>
+                  <!-- email service, top left -->
+                  <g data-node="resend">
+                    <rect class="box accent" x="16" y="16" width="156" height="46" />
+                    <path class="wire" d="M26 28 H48 V48 H26 Z M26 28 L37 38 L48 28" />
+                    <text class="on-accent" x="58" y="36">Resend</text>
+                    <text class="sub" x="58" y="52">email service</text>
+                  </g>
 
-      <h2>Optional copy to your own mailbox</h2>
-      <p>Off by default. In Email settings you can ask the hub to also copy mail to a personal address (for example your usual inbox on a phone).</p>
-      <ul>
-        <li>The hub emails a confirm code to that address. The toggle stays pending until you enter the code. Your station and the hub both have to accept it, so confirm while the hub is up.</li>
-        <li>When it is on: mail you send can be BCC'd there; mail that arrives at the hub is copied there. Their Reply still waits at the hub. Copy-to does not steal the Reply off the radio path.</li>
-        <li>The copy follows your callsign. On <code>radio-plus</code> the hub adds it when the gateway posts your mail, so the gateway operator's own copy-to is never used on your message.</li>
-        <li>Do not auto-forward that mailbox back to <code>callsign@mail.weechatradio.com</code> or you will loop.</li>
-        <li>The personal address never goes over RF.</li>
-      </ul>
+                  <!-- hub, top right -->
+                  <g data-node="hub">
+                    <rect class="box hub" x="250" y="16" width="174" height="46" />
+                    <text class="on-hub" x="337" y="35" text-anchor="middle">hub</text>
+                    <text class="sub" data-setups="out" x="337" y="52" text-anchor="middle">sends the mail</text>
+                    <text class="sub is-off" data-setups="in" x="337" y="52" text-anchor="middle">stores the mail</text>
+                  </g>
 
-      <h2>Limits</h2>
-      <ul>
-        <li>Plain text only, about 4 KB. No attachments.</li>
-        <li>Desktop GUI only.</li>
-        <li>Not a Gmail or Outlook client. The app never stores a mailbox password.</li>
-        <li>Not Winlink.</li>
-        <li>No encryption on the air. Mail on RF is as readable as chat. You are the control operator for third-party traffic to a non-ham.</li>
-      </ul>
+                  <!-- paths: drawn the way sent mail travels; receiving runs some backwards -->
+                  <g class="seg seg-net" data-seg="hub-mail"><path class="net" d="M250 39 H174" /><path class="pkt" d="M250 39 H174" /></g>
+                  <g class="seg seg-net" data-seg="gw-hub"><path class="net" d="M415 192 V64" /><path class="pkt" d="M415 192 V64" /></g>
+                  <text class="sub" x="409" y="112" text-anchor="end">HTTPS</text>
+                  <g class="seg seg-rf" data-seg="rf"><path class="rf" d="M104 153 q5.38 -5 10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81" /><path class="pkt" d="M104 153 q5.38 -5 10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81 t10.77 -0.81" /></g>
+                  <text class="sub on-rf" x="262" y="128" text-anchor="middle">144.950</text>
 
-      <h2>A Saturday on the hill</h2>
-      <p>You are M7TJF. Mode <code>radio-plus</code>, 144.950, preset <code>vhf-fm</code>. The club box G0ABC is <code>internet-radio</code> on the same dial. The club secretary is <code>alex@example.com</code>.</p>
-      <ol class="steps">
-        <li>Email tab, To <code>alex@example.com</code>, Send, confirm the radio warning. The club box and hub send the mail.</li>
-        <li>Alex sees From <code>M7TJF@mail.weechatradio.com</code>.</li>
-        <li>They hit Reply. The hub stores it. The club radio stays quiet until someone asks.</li>
-        <li>You tap Check mail, confirm, open the reply, confirm the airtime. The body comes over 144.950.</li>
-        <li>If copy-to is on, step 3 also left a copy in your personal inbox. That copy does not use the radio.</li>
-      </ol>
+                  <!-- mail gateway at the club -->
+                  <g data-node="gw">
+                    <path class="house" d="M280 200 L355 160 L430 200 V280 H280 Z" />
+                    <path class="mast" d="M390 178 V130 M382 138 H398 M384 148 H396" />
+                    <rect class="box gw" x="300" y="234" width="70" height="34" rx="3" />
+                    <circle class="led" cx="310" cy="244" r="3.5" />
+                    <path class="grille" d="M324 244 H362 M324 251 H362 M324 258 H362" />
+                    <path class="mast" d="M370 242 H390 V178" />
+                    <text class="on-gw" x="336" y="214" text-anchor="middle">G0ABC</text>
+                    <text class="sub" x="336" y="228" text-anchor="middle">mail gateway</text>
+                  </g>
+                  <text class="sub" x="355" y="298" text-anchor="middle">internet-radio · 144.950</text>
+                  <text class="sub" x="355" y="312" text-anchor="middle">named in Mail gateway</text>
+
+                  <!-- you, out on the hill -->
+                  <g data-node="you">
+                    <line class="antenna" x1="100" y1="190" x2="100" y2="156" />
+                    <circle class="antenna-tip" cx="100" cy="154" r="2.5" />
+                    <rect class="box rplus" x="60" y="190" width="48" height="88" rx="5" />
+                    <circle class="led" cx="96" cy="202" r="3.5" />
+                    <path class="grille" d="M70 238 H98 M70 245 H98 M70 252 H98" />
+                  </g>
+                  <text class="on-rplus" x="84" y="296" text-anchor="middle">M7TJF</text>
+                  <text class="sub" x="84" y="310" text-anchor="middle">radio-plus · Email tab</text>
+
+                  <!-- sending -->
+                  <g data-setups="out">
+                    <text class="sub" x="16" y="82">To: alex@example.com</text>
+                    <text class="scr" data-show="o-from" x="16" y="100">From: M7TJF@mail.weechatradio.com</text>
+                    <text class="sub" x="16" y="116">reply stays on the WCR address</text>
+                    <text class="sub" x="124" y="208">outbox</text>
+                    <text class="scr" data-show="o-tx" x="124" y="226">[tx]</text>
+                    <text class="scr ok" data-show="o-sent" x="162" y="226">Sent</text>
+                  </g>
+
+                  <!-- receiving -->
+                  <g data-setups="in" class="is-off">
+                    <text class="sub" x="16" y="82">alex@example.com hits Reply</text>
+                    <text class="scr" data-show="i-reply" x="16" y="100">To: M7TJF@mail.weechatradio.com</text>
+                    <text class="sub" x="124" y="208">inbox</text>
+                    <text class="scr ok" data-show="i-in" x="124" y="226">alex@example.com</text>
+                    <text class="sub" x="355" y="326" text-anchor="middle">quiet until you ask</text>
+                  </g>
+                </svg>
+              </div>
+              <div class="live-status">
+                <p class="live-status__text" data-live-status aria-live="polite"></p>
+                <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
+              </div>
+            </div>
+
+            <div class="live-dgm__text">
+              <div class="setup-panel" data-setup-panel="out">
+                <h3>Sending mail from the hill</h3>
+                <p>The radio carries a compact mail object addressed to the network, not the contact's name on the air. The internet To: lives inside the object.</p>
+                <p class="setup-note">In internet mode the radio hop is skipped; the hub still sends.</p>
+              </div>
+              <div class="setup-panel" data-setup-panel="in">
+                <h3>Inbound mail waits at the hub</h3>
+                <p>A stranger mailing your callsign cannot dump a long message onto HF by itself.</p>
+                <p class="setup-note">internet / internet-radio: the Email tab syncs; no RF.<br />radio-plus: Check mail, then Get, and you confirm the airtime.</p>
+              </div>
+            </div>
+          </div>
+          <script type="application/json" data-live-steps>
+          {
+            "out": { "viewBox": "0 0 440 334", "steps": [
+              { "say": "After you confirm, M7TJF keys the mail to G0ABC as one burst, and the outbox shows [tx].", "segs": ["rf"], "on": ["you"], "show": ["o-tx"], "ms": 2000 },
+              { "say": "With every chunk in, G0ABC posts the mail to the hub.", "segs": ["gw-hub"], "on": ["gw"] },
+              { "say": "The hub hands it to Resend, which accepts it and sends it to alex@example.com.", "segs": ["hub-mail"], "on": ["resend"], "show": ["o-from"], "ms": 1700 },
+              { "say": "G0ABC keys a CompleteAck back, and only then does the outbox say Sent.", "segs": ["<gw-hub", "<rf"], "chain": true, "on": ["gw"], "show": ["o-sent"], "ms": 2600 }
+            ] },
+            "in": { "viewBox": "0 0 440 334", "done": "Nothing arrives on the radio until you ask.", "steps": [
+              { "say": "Alex hits Reply, and Resend passes the mail to the hub.", "segs": ["<hub-mail"], "on": ["resend"], "show": ["i-reply"] },
+              { "say": "The hub stores the mail and keys no radio, so G0ABC stays quiet.", "on": ["hub"], "ms": 1800 },
+              { "say": "Later you tap Check mail, and M7TJF asks G0ABC for the list.", "segs": ["rf"], "on": ["you"], "ms": 2000 },
+              { "say": "G0ABC pulls your headers from the hub and keys back a short list: from, subject, size.", "segs": ["gw-hub", "<gw-hub", "<rf"], "chain": true, "on": ["gw"], "ms": 3000 },
+              { "say": "You open the waiting line, confirm the airtime, and Get asks G0ABC for that mail.", "segs": ["rf"], "on": ["you"], "ms": 2000 },
+              { "say": "G0ABC fetches the mail from the hub and keys it to you, and it lands in the Inbox.", "segs": ["gw-hub", "<gw-hub", "<rf"], "chain": true, "on": ["gw"], "show": ["i-in"], "ms": 3200 }
+            ] }
+          }
+          </script>
+        </figure>
+      </section>
+
+      <section class="article-section" aria-labelledby="sendH">
+        <h2 id="sendH">Send</h2>
+        <p>Send never keys immediately. A confirm lists the destination, size, mode, frequency, preset, and a rough airtime. Internet and internet-radio say the message goes via the hub and does not use the radio. To, subject, and body stay on the form until the message is actually Sent.</p>
+        <p>Pure <code>radio</code> cannot reach the hub. The tab stays grey. The tooltip says to use <strong>Internet</strong>, <strong>Internet+Radio</strong>, or <strong>Radio+</strong> with a gateway. Denying third-party chat relay does not stop a gateway from posting mail.</p>
+        <p>On HF and VOX the mail speed starts at the preset's robust rung and only gets slower. It does not move onto QPSK or OFDM. Chat is paused for the burst, and a chat frame already on its way to the modem goes first. Then the modem is put back, including carrier sense.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="sentH">
+        <h2 id="sentH">When it says Sent</h2>
+        <p><strong>Hub</strong> (internet, internet-radio): Sent after the hub says Resend accepted the message. A rejection is Failed.</p>
+        <p><strong>Radio-plus, every PTT:</strong></p>
+        <dl class="mark-list">
+          <div><dt><code>[tx]</code></dt><dd>Keying the burst is Outbox <code>[tx]</code>.</dd></div>
+          <div><dt><code>[gw]</code></dt><dd>A chunk the gateway has is <code>[gw]</code>.</dd></div>
+          <div><dt>Sent</dt><dd>Sent is only the gateway's acceptance, after Resend accepted it. Until then the line stays in the outbox.</dd></div>
+        </dl>
+        <p>A retry that has heard nothing back, with more than four chunks still missing, keys only the first chunk so the gateway can answer.</p>
+        <p>A toast timer does not mark Sent.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="recvH">
+        <h2 id="recvH">Receive — pull, not push</h2>
+        <p>On radio-plus, Check mail asks the gateway for a short list (from, subject, size). You fetch a message and confirm the radio step. Nothing arrives on the radio until you ask.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="modesH">
+        <h2 id="modesH">Modes</h2>
+        <p class="section-lead">What each mode can do with mail. Colours match the live map.</p>
+        <dl class="who-list">
+          <div class="mode-internet"><dt><code>internet</code></dt><dd>Send to the internet: hub only. Confirm says there is no radio.<br />Read inbound mail: Email tab syncs; badge and tray</dd></div>
+          <div class="mode-internet-radio"><dt><code>internet-radio</code></dt><dd>Send to the internet: this station is the gateway. Its own mail uses the hub when the hub is up.<br />Read inbound mail: sync over the internet. It also accepts radio-plus mail and posts that.</dd></div>
+          <div class="mode-radio"><dt><code>radio</code></dt><dd>Send to the internet: grey. Use Internet, Internet+Radio, or Radio+ with a gateway.<br />Read inbound mail: no path to the hub</dd></div>
+          <div class="mode-radio-plus"><dt><code>radio-plus</code></dt><dd>Send to the internet: always RF to the Mail gateway callsign, then that station posts to the hub<br />Read inbound mail: Check mail over RF. Confirm every time.</dd></div>
+        </dl>
+        <p>Frequency and preset stay station-wide, same as chat. A 4 KB mail on <code>hf-deep</code> takes a long time on the air. The confirm exists so you see that before you key.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="copyH">
+        <h2 id="copyH">Optional copy to your own mailbox</h2>
+        <p>Off by default. In Email settings you can ask the hub to also copy mail to a personal address (for example your usual inbox on a phone).</p>
+        <ul>
+          <li>The hub emails a confirm code to that address. The toggle stays pending until you enter the code. Your station and the hub both have to accept it, so confirm while the hub is up.</li>
+          <li>When it is on: mail you send can be BCC'd there; mail that arrives at the hub is copied there. Their Reply still waits at the hub. Copy-to does not steal the Reply off the radio path.</li>
+          <li>The copy follows your callsign. On <code>radio-plus</code> the hub adds it when the gateway posts your mail, so the gateway operator's own copy-to is never used on your message.</li>
+          <li>Do not auto-forward that mailbox back to <code>callsign@mail.weechatradio.com</code> or you will loop.</li>
+          <li>The personal address never goes over RF.</li>
+        </ul>
+      </section>
+
+      <section class="article-section" aria-labelledby="limitsH">
+        <h2 id="limitsH">Limits</h2>
+        <ul>
+          <li>Plain text only, about 4 KB. No attachments.</li>
+          <li>Desktop GUI only.</li>
+          <li>Not a Gmail or Outlook client. The app never stores a mailbox password.</li>
+          <li>Not Winlink.</li>
+          <li>No encryption on the air. Mail on RF is as readable as chat. You are the control operator for third-party traffic to a non-ham.</li>
+        </ul>
+      </section>
+
+      <section class="article-section" aria-labelledby="hillH">
+        <h2 id="hillH">A Saturday on the hill</h2>
+        <p>You are M7TJF. Mode <code>radio-plus</code>, 144.950, preset <code>vhf-fm</code>. The club box G0ABC is <code>internet-radio</code> on the same dial. The club secretary is <code>alex@example.com</code>.</p>
+        <ol class="steps">
+          <li>
+            <strong class="step-title">Send the mail</strong>
+            <p>Email tab, To <code>alex@example.com</code>, Send, confirm the radio warning. The club box and hub send the mail.</p>
+          </li>
+          <li>
+            <strong class="step-title">Reach Alex</strong>
+            <p>Alex sees From <code>M7TJF@mail.weechatradio.com</code>.</p>
+          </li>
+          <li>
+            <strong class="step-title">Wait at the hub</strong>
+            <p>They hit Reply. The hub stores it. The club radio stays quiet until someone asks.</p>
+          </li>
+          <li>
+            <strong class="step-title">Fetch the reply</strong>
+            <p>You tap Check mail, confirm, open the reply, confirm the airtime. The body comes over 144.950.</p>
+          </li>
+          <li>
+            <strong class="step-title">Check your own inbox</strong>
+            <p>If copy-to is on, step 3 also left a copy in your personal inbox. That copy does not use the radio.</p>
+          </li>
+        </ol>
+      </section>
 
       <p class="next">Modes: <a href="/docs/modes.html">modes</a>. How a gateway reaches another band: <a href="/docs/bridging.html">cross-frequency chat</a>. Live chat today: <a href="/guides/start.html">5-minute start</a>.</p>
     </main>
   </div>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=10"></script>
+  <script src="/live-dgm.js?v=1"></script>
 </body>
 </html>
