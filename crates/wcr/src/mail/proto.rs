@@ -61,6 +61,10 @@ pub struct MailMeta {
     /// True when the sender is waiting for `CompleteAck`. Radio-plus always sets this.
     #[serde(default, alias = "a")]
     pub ack: bool,
+    /// Unix seconds the mail reached the hub, on fetched inbound mail. Older
+    /// stations ignore it.
+    #[serde(default, alias = "w")]
+    pub ts: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -245,6 +249,9 @@ fn meta_json(meta: &MailMeta) -> String {
     }
     if meta.ack {
         m.insert("a".into(), serde_json::Value::Bool(true));
+    }
+    if meta.ts > 0 {
+        m.insert("w".into(), serde_json::Value::from(meta.ts));
     }
     if !meta.ids.is_empty() {
         m.insert(

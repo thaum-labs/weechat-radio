@@ -19,7 +19,7 @@ use crate::status::SharedStatus;
 pub use air::{confirm_air_line, AirtimeMail};
 pub use gateway::{local_send_path as gateway_path, state_mark, SendPath};
 pub use lease::RadioPorts;
-pub use progress::{delivery_word, send_step, SendStep, SendView};
+pub use progress::{delivery_word, get_step, send_step, SendStep, SendView};
 
 pub fn airtime_parts(mail: &AirtimeMail<'_>, preset: Preset, turnaround_ms: u32) -> (f64, usize) {
     air::mail_airtime_secs(preset, mail, turnaround_ms)
@@ -29,7 +29,7 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-pub use store::{MailRow, WaitHeader};
+pub use store::{GetProgress, MailRow, WaitHeader};
 use tokio::sync::{broadcast, mpsc};
 
 pub use api::{router, MailSlot};
@@ -112,6 +112,10 @@ pub enum MailCmd {
         ids: Vec<String>,
     },
     CheckQuiet {
+        gen: u64,
+    },
+    /// A Radio+ Get has heard nothing from the gateway for a while.
+    GetQuiet {
         gen: u64,
     },
     Inbound {
@@ -260,6 +264,7 @@ impl MailHandle {
             "unread": unread,
             "waiting": waiting,
             "notice": self.store.notice(),
+            "get": self.store.get_progress(),
             "gateway": cfg.mail.gateway,
             "block": email_block_reason(&cfg.callsign, cfg.mode, &cfg.mail.gateway, snap.hub_ok, true),
         })
@@ -328,6 +333,13 @@ impl MailHandle {
     }
 
     pub async fn check_get(&self, ids: Vec<String>) -> Result<()> {
+        // Set before the reply, so the Get window never reads the last Get's end.
+        if self.cfg.lock().mode == crate::modes::Mode::RadioPlus {
+            self.store.set_get_progress(GetProgress {
+                state: "asking".into(),
+                ..GetProgress::default()
+            });
+        }
         let _ = self.cmd.send(MailCmd::CheckGet { ids }).await;
         Ok(())
     }

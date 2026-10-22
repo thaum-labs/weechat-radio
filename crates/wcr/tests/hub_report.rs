@@ -113,6 +113,7 @@ async fn a_tower_places_the_mobile_it_heard() {
         ts: now(),
         snr: Some(-3.0),
         freq_khz: 144950,
+        mode: "radio-plus".into(),
     }];
     let body = serde_json::to_vec(&report).unwrap();
     let sig = keys.sign_bytes(&body);
@@ -133,7 +134,7 @@ async fn a_tower_places_the_mobile_it_heard() {
         .expect("the mobile has a pin");
     assert_eq!(mobile["grid"], "IO91VL45");
     assert_eq!(mobile["settings"]["via"], "G4ABC");
-    assert_eq!(mobile["mode"], "radio");
+    assert_eq!(mobile["mode"], "radio-plus");
     let lat = mobile["lat"].as_f64().unwrap();
     assert!((51.0..52.0).contains(&lat), "lat {lat}");
 }

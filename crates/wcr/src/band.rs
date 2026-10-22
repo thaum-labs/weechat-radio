@@ -132,6 +132,16 @@ pub fn beacon_grid(body: &[u8]) -> Option<String> {
     crate::grid::position(parts.nth(2)?)
 }
 
+/// The mode named in a beacon (`B|radio-plus|7074|…`).
+pub fn beacon_mode(body: &[u8]) -> Option<crate::modes::Mode> {
+    let text = std::str::from_utf8(body).ok()?.trim();
+    let mut parts = text.split('|');
+    if !parts.next()?.eq_ignore_ascii_case("B") {
+        return None;
+    }
+    parts.next()?.parse().ok()
+}
+
 /// The beacon body. `grid` is left off when empty.
 pub fn beacon_body(mode: &str, khz: u32, grid: &str) -> String {
     match crate::grid::position(grid) {
@@ -370,6 +380,18 @@ pub fn calling_freqs_unique() -> Vec<CallingFreq> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn beacon_names_its_mode() {
+        use crate::modes::Mode;
+        assert_eq!(
+            beacon_mode(b"B|radio-plus|7074|IO91WM12"),
+            Some(Mode::RadioPlus)
+        );
+        assert_eq!(beacon_mode(b"B|radio|144950"), Some(Mode::Radio));
+        assert_eq!(beacon_mode(b"B|nonsense|7074"), None);
+        assert_eq!(beacon_mode(b"hello"), None);
+    }
 
     #[test]
     fn amateur_edges() {
