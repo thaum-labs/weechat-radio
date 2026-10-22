@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -44,84 +45,211 @@
       <div class="sub" id="clock-local">LCL --:--</div>
     </div>
   </header>
+
+  <!-- Line icons for the cards. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-radio" viewBox="0 0 24 24"><rect x="7" y="8" width="10" height="14" rx="1.5" /><path d="M15 8 V2 M10 15 H14 M10 18 H14" /></symbol>
+    <symbol id="ico-laptop" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="11" /><path d="M2 19 H22" /></symbol>
+    <symbol id="ico-app" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" /><path d="M7 10 L10 12.5 L7 15 M12 15 H17" /></symbol>
+  </svg>
+
   <div class="page-wrap">
     <main class="page-panel">
       <p class="crumb"><a href="/guides.html">guides</a> / <a href="/guides/radio.html">radio</a> / vr-n76</p>
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> VR-N76 / UV-PRO over Bluetooth</h1>
       <p class="lead">No cable. The radio has its own packet TNC; the app talks to it over Bluetooth. About three minutes.</p>
 
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 186" role="img" aria-labelledby="n1t n1d">
-            <title id="n1t">Radio with a built-in TNC over Bluetooth</title>
-            <desc id="n1d">The radio's own KISS TNC talks to the computer over a Bluetooth serial link. No sound card and no modem73 are involved.</desc>
-            <defs>
-              <marker id="maccN" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-            </defs>
-            <text class="tag" x="16" y="20">NO CABLE, NO SOUND CARD</text>
-            <line class="bt" marker-start="url(#maccN)" marker-end="url(#maccN)" x1="232" y1="88" x2="270" y2="88" />
-            <line class="bt" marker-start="url(#maccN)" marker-end="url(#maccN)" x1="456" y1="88" x2="494" y2="88" />
-            <rect class="box orange" x="16" y="62" width="214" height="54" />
-            <text class="on-orange" x="123" y="84" text-anchor="middle">VR-N76</text>
-            <text class="sub" x="123" y="102" text-anchor="middle">built-in KISS TNC</text>
-            <rect class="box" x="272" y="62" width="182" height="54" />
-            <text x="363" y="84" text-anchor="middle">Bluetooth</text>
-            <text class="sub" x="363" y="102" text-anchor="middle">SPP / RFCOMM</text>
-            <rect class="box accent" x="496" y="62" width="208" height="54" />
-            <text class="on-accent" x="600" y="84" text-anchor="middle">this computer</text>
-            <text class="sub" x="600" y="102" text-anchor="middle">wcr only</text>
-            <text class="sub" x="360" y="146" text-anchor="middle">the radio makes the 1200 bd packet itself · afsk-1200 preset</text>
-            <text class="sub" x="360" y="166" text-anchor="middle">also: BTECH UV-PRO, Radioddity GA-5WB, VR-N7500</text>
-          </svg>
+      <section class="article-section article-section--first" aria-labelledby="needH">
+        <h2 id="needH">What you need</h2>
+        <div class="pair">
+          <ul class="cards">
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-radio" /></svg>
+              <strong>A Vero VR-N76, BTECH UV-PRO, Radioddity GA-5WB or VR-N7500</strong>
+              <span>Firmware <strong>0.7.11+</strong> (update in the HT app if the KISS menu is missing).</span>
+            </li>
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-laptop" /></svg>
+              <strong>A computer with Bluetooth</strong>
+            </li>
+            <li>
+              <svg class="card-ico" aria-hidden="true"><use href="#ico-app" /></svg>
+              <strong>WeeChat Radio 0.1.9 or newer</strong>
+            </li>
+          </ul>
+        <figure class="diagram live-dgm live-dgm--wide" data-live-dgm>
+          <div class="live-dgm__body">
+            <div class="live-dgm__pic">
+              <div class="dgm-wrap">
+                <svg class="dgm" viewBox="0 0 440 286" role="img" aria-labelledby="vrT vrD">
+                <title id="vrT">Radio with a built-in TNC over Bluetooth</title>
+                <desc id="vrD">This computer talks to the radio's own KISS TNC over Bluetooth, with no cable, no sound card and no modem73. The radio makes the 1200 bd packet itself and sends it on the air to another station on the same frequency. The receipt comes back to the radio and over Bluetooth to the computer.</desc>
+                <g data-node="other">
+                  <rect class="box orange" x="318" y="12" width="112" height="40" />
+                  <text class="on-orange" x="374" y="29" text-anchor="middle">other station</text>
+                  <text class="sub" x="374" y="44" text-anchor="middle">same frequency</text>
+                </g>
+                <g class="seg seg-rf" data-seg="rf"><path class="rf" d="M374 128 q5 -6 0 -12 t0 -12 t0 -12 t0 -12 t0 -12 t0 -12" /><path class="pkt" d="M374 128 q5 -6 0 -12 t0 -12 t0 -12 t0 -12 t0 -12 t0 -12" /></g>
+                <text class="sub on-rf" x="364" y="96" text-anchor="end">on the air</text>
+                <g data-node="pc">
+                  <rect class="box accent" x="24" y="26" width="140" height="84" />
+                  <path class="laptop-base" d="M12 110 H176 L184 120 H4 Z" />
+                  <text class="sub" x="34" y="43">this computer</text>
+                  <text class="scr" data-show="me-hi" x="34" y="70">&lt;G4ABC&gt; hi</text>
+                  <text class="scr ok" data-show="me-ok" x="110" y="70">[ok]</text>
+                  <text class="scr-input" x="34" y="98">&gt; _</text>
+                </g>
+                <g class="seg seg-sound" data-seg="bt"><path class="wire bt" d="M94 120 V214 H334" /><path class="pkt" d="M94 120 V214 H334" /></g>
+                <text class="on-accent" x="214" y="206" text-anchor="middle">Bluetooth</text>
+                <text class="sub" x="214" y="232" text-anchor="middle">no cable, no sound card</text>
+                <text class="sub" x="16" y="276">the radio makes the 1200 bd packet itself</text>
+                <g data-node="radio">
+                  <line class="antenna" x1="374" y1="170" x2="374" y2="136" />
+                  <circle class="antenna-tip" cx="374" cy="134" r="2.5" />
+                  <rect class="box orange" x="334" y="170" width="48" height="88" rx="5" />
+                  <circle class="led" cx="370" cy="182" r="3.5" />
+                  <path class="grille" d="M344 218 H372 M344 225 H372 M344 232 H372 M344 239 H372" />
+                  <text class="on-orange" x="358" y="276" text-anchor="middle">VR-N76</text>
+                </g>
+                </svg>
+              </div>
+              <div class="live-status">
+                <p class="live-status__text" data-live-status aria-live="polite"></p>
+                <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
+              </div>
+            </div>
+          </div>
+          <figcaption>The radio turns chat into 1200 bd packet itself. No sound card, no modem73.</figcaption>
+          <script type="application/json" data-live-steps>
+          {
+            "main": {
+              "steps": [
+                {
+                  "say": "The computer sends “hi” to the radio over Bluetooth, as data rather than sound.",
+                  "segs": [
+                    "bt"
+                  ],
+                  "show": [
+                    "me-hi"
+                  ]
+                },
+                {
+                  "say": "The radio’s own TNC makes the packet and transmits, and its light comes on.",
+                  "segs": [
+                    "rf"
+                  ],
+                  "on": [
+                    "radio"
+                  ],
+                  "ms": 2000
+                },
+                {
+                  "say": "The other station hears it and sends a receipt back.",
+                  "segs": [
+                    "<rf"
+                  ],
+                  "on": [
+                    "other"
+                  ],
+                  "ms": 1700
+                },
+                {
+                  "say": "The radio decodes the receipt and passes it back over Bluetooth.",
+                  "segs": [
+                    "<bt"
+                  ]
+                },
+                {
+                  "say": "Your line shows [ok]: it was delivered.",
+                  "show": [
+                    "me-ok"
+                  ]
+                }
+              ]
+            }
+          }
+          </script>
+        </figure>
         </div>
-        <figcaption>The radio turns chat into 1200 bd packet itself. No sound card, no modem73.</figcaption>
-      </figure>
+      </section>
 
-      <div class="need">
-        <h2>What you need</h2>
-        <ul>
-          <li>A Vero VR-N76, BTECH UV-PRO, Radioddity GA-5WB or VR-N7500, firmware <strong>0.7.11+</strong> (update in the HT app if the KISS menu is missing)</li>
-          <li>A computer with Bluetooth</li>
-          <li>WeeChat Radio 0.1.9 or newer</li>
-        </ul>
-      </div>
+      <section class="article-section" aria-labelledby="radioH">
+        <h2 id="radioH">On the radio (once)</h2>
+        <ol class="steps">
+          <li>
+            <strong class="step-title">Enable the KISS TNC</strong>
+            <p><strong>Menu → General Settings → KISS TNC → Enable.</strong></p>
+          </li>
+          <li>
+            <strong class="step-title">Turn off Digital Mode</strong>
+            <p><strong>General Settings → Digital Mode → off.</strong> The radio’s own APRS logic otherwise fights the KISS stream.</p>
+          </li>
+          <li>
+            <strong class="step-title">Pick a frequency</strong>
+            <p>Pick a simplex FM frequency for packet, low power. Leave the APRS frequency alone.</p>
+          </li>
+          <li>
+            <strong class="step-title">Open pairing</strong>
+            <p><strong>Menu → Pairing.</strong> Close the HT phone app — the radio takes one Bluetooth client at a time.</p>
+          </li>
+        </ol>
+      </section>
 
-      <h2>On the radio (once)</h2>
-      <ol class="steps">
-        <li><p><strong>Menu → General Settings → KISS TNC → Enable.</strong></p></li>
-        <li><p><strong>General Settings → Digital Mode → off.</strong> The radio’s own APRS logic otherwise fights the KISS stream.</p></li>
-        <li><p>Pick a simplex FM frequency for packet, low power. Leave the APRS frequency alone.</p></li>
-        <li><p><strong>Menu → Pairing.</strong> Close the HT phone app — the radio takes one Bluetooth client at a time.</p></li>
-      </ol>
-
-      <h2>In the app</h2>
-      <ol class="steps">
-        <li><p>Choose <strong>VR-N76 / UV-PRO (Bluetooth)</strong> in setup (toolbar → <code>setup</code> if you are already configured).</p></li>
-        <li><p>Press <strong>Find radio</strong>. The app finds a paired radio or scans for ~8 s and pairs it for you (PIN <code>0000</code> is answered automatically).</p></li>
-        <li><p>Press <strong>Save and start</strong>. The station panel shows <strong>RADIO · VR-N76 linked</strong> in green and the radio shows its Bluetooth-data icon next to the power level.</p></li>
-      </ol>
-      <p>Terminal: <code>wcr tnc find</code> does the same. <code>wcr tnc scan --inquiry</code> lists what the computer sees. <code>wcr tnc test --tx</code> sends one identified test frame and prints anything heard.</p>
+      <section class="article-section" aria-labelledby="appH">
+        <h2 id="appH">In the app</h2>
+        <ol class="steps">
+          <li>
+            <strong class="step-title">Choose the radio</strong>
+            <p>Choose <strong>VR-N76 / UV-PRO (Bluetooth)</strong> in setup (toolbar → <code>setup</code> if you are already configured).</p>
+          </li>
+          <li>
+            <strong class="step-title">Find the radio</strong>
+            <p>Press <strong>Find radio</strong>. The app finds a paired radio or scans for ~8 s and pairs it for you (PIN <code>0000</code> is answered automatically).</p>
+          </li>
+          <li>
+            <strong class="step-title">Save and start</strong>
+            <p>Press <strong>Save and start</strong>. The station panel shows <strong>RADIO · VR-N76 linked</strong> in green and the radio shows its Bluetooth-data icon next to the power level.</p>
+          </li>
+        </ol>
+        <p>Terminal: <code>wcr tnc find</code> does the same. <code>wcr tnc scan --inquiry</code> lists what the computer sees. <code>wcr tnc test --tx</code> sends one identified test frame and prints anything heard.</p>
+      </section>
 
       <div class="ok">
         <h2>How you know it worked</h2>
         <p><strong>RADIO</strong> reads <code>VR-N76 linked</code>. Send a line in <code>#bulletin</code>: the radio’s TX light comes on for about two seconds. Other packet stations see you as <code>M7TJF&gt;WCR UI</code>, a plain AX.25 frame with your callsign.</p>
       </div>
 
-      <h2>Quirks of the built-in TNC</h2>
-      <ul>
-        <li><strong>One frame per PTT.</strong> The radio unkeys between frames, so the app paces them (<code>frame_gap_ms</code>). Long messages take a little longer than on a sound-card modem.</li>
-        <li><strong>TXDELAY 600 ms.</strong> Lower clips the start of a frame; this is the default.</li>
-        <li><strong>Keep frames short.</strong> Under ~200 bytes; the app fragments longer lines.</li>
-        <li><strong>Linux:</strong> pair with <code>bluetoothctl</code> (pair + trust), then set <code>tnc.bt_addr</code>. If the desktop grabs the radio as a headset, add <code>[General] Disable=Headset</code> to <code>/etc/bluetooth/input.conf</code>.</li>
-        <li><strong>macOS:</strong> use <em>KISS TNC on a serial port</em> with <code>/dev/cu.VR-N76</code>.</li>
-      </ul>
+      <section class="article-section" aria-labelledby="quirksH">
+        <h2 id="quirksH">Quirks of the built-in TNC</h2>
+        <ul class="cards">
+            <li>
+              <strong>One frame per PTT</strong>
+              <span>The radio unkeys between frames, so the app paces them (<code>frame_gap_ms</code>). Long messages take a little longer than on a sound-card modem.</span>
+            </li>
+            <li>
+              <strong>TXDELAY 600 ms</strong>
+              <span>Lower clips the start of a frame; this is the default.</span>
+            </li>
+            <li>
+              <strong>Keep frames short</strong>
+              <span>Under ~200 bytes; the app fragments longer lines.</span>
+            </li>
+            <li>
+              <strong>Linux</strong>
+              <span>Pair with <code>bluetoothctl</code> (pair + trust), then set <code>tnc.bt_addr</code>. If the desktop grabs the radio as a headset, add <code>[General] Disable=Headset</code> to <code>/etc/bluetooth/input.conf</code>.</span>
+            </li>
+            <li>
+              <strong>macOS</strong>
+              <span>Use <em>KISS TNC on a serial port</em> with <code>/dev/cu.VR-N76</code>.</span>
+            </li>
+        </ul>
+      </section>
 
       <p class="next">Other paths: <a href="/guides/handheld.html">handheld + Digirig</a> · <a href="/guides/vox.html">VOX cable</a> · <a href="/guides/hf.html">HF + CAT</a>. Frequencies: <a href="/docs/calling.html">calling</a>.</p>
     </main>
   </div>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=10"></script>
+  <script src="/live-dgm.js?v=1"></script>
 </body>
 </html>
