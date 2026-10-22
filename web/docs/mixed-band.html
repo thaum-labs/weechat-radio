@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>One group: PMR, CB, 2m, and internet — WeeChat Radio</title>
+  <meta name="description" content="How a mixed UK field team shares one closed group across PMR446, CB, 2m amateur, and internet-only stations — settings, paths, and a worked chat thread." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="WeeChat Radio" />
+  <meta property="og:title" content="One group: PMR, CB, 2m, and internet — WeeChat Radio" />
+  <meta property="og:description" content="Settings per station, RF vs hub (TLS) paths, and a worked #field thread for licence-free and licensed radios together." />
+  <meta property="og:url" content="https://weechatradio.com/docs/mixed-band.html" />
+  <meta property="og:image" content="https://weechatradio.com/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="WeeChat Radio. Live messaging chat powered by radio." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://weechatradio.com/og.png" />
+  <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=31" />
+</head>
+<body class="page-doc page-article-mixed">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/map.html">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html" aria-current="page">docs</a>
+      <a href="/why.html">why</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel article-mixed">
+      <p class="crumb"><a href="/docs.html">docs</a> / <a href="/docs/bridging.html">bridging</a> / mixed band</p>
+      <p class="article-kicker"><span class="article-star" aria-hidden="true">★</span> Featured guide</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> one group across PMR, CB, 2m, and internet</h1>
+      <p class="lead">One closed group, <code>#field</code> (<code>/join #field</code>). A PMR446 handheld, a CB set, a licensed 2m radio, and a laptop with no radio all read the same thread.</p>
+      <ol class="path-steps">
+        <li><strong>Each person stays on one dial.</strong> PMR, CB, and 2m cannot hear each other on the air.</li>
+        <li><strong>A gateway on that dial</strong> (<code>internet-radio</code>) carries <code>radio-plus</code> lines to the hub.</li>
+        <li><strong>The hub uses TLS</strong> (<code>wss://hub.weechatradio.com/ws</code>) and hands the line to the gateway on the other dial.</li>
+      </ol>
+
+      <ul class="dgm-key article-path-key">
+        <li><i class="k-rf"></i>RF — modem on the dial you set (not TLS)</li>
+        <li><i class="k-net"></i>Hub — <code>wss://hub.weechatradio.com/ws</code> (TLS)</li>
+        <li><i class="k-gw"></i>Gateway — <code>internet-radio</code> on one dial</li>
+        <li><i class="k-rplus"></i>Radio-plus — RF out; gateway may upload</li>
+        <li><i class="k-hub"></i>Internet — hub only, no RF</li>
+      </ul>
+
+      <section class="article-section" aria-labelledby="whoH">
+        <h2 id="whoH">Who is in <code>#field</code></h2>
+        <p class="section-lead">Settings match today’s setup and <code>/radio</code> commands. Colour on the left matches the live map: cyan internet, magenta radio-plus, green gateway.</p>
+
+        <h3 class="station-group-title">No radio</h3>
+        <div class="station-grid station-grid--solo">
+          <article class="station-card mode-internet">
+            <header class="station-card__head">
+              <h3>~sarah</h3>
+              <span class="station-card__badge">Internet</span>
+            </header>
+            <dl class="station-card__dl">
+              <div><dt>Mode</dt><dd><code>internet</code></dd></div>
+              <div><dt>Callsign</dt><dd><code>~sarah</code></dd></div>
+              <div><dt>Dial</dt><dd>—</dd></div>
+              <div><dt>Hub</dt><dd>on</dd></div>
+            </dl>
+            <p class="station-card__foot">No radio hardware. Chat and receipts on the hub only.</p>
+          </article>
+        </div>
+
+        <h3 class="station-group-title">On a radio — <code>radio-plus</code>, hub off</h3>
+        <div class="station-grid">
+          <article class="station-card mode-rplus">
+            <header class="station-card__head">
+              <h3>~pmr1</h3>
+              <span class="station-card__badge">PMR446</span>
+            </header>
+            <dl class="station-card__dl">
+              <div><dt>Mode</dt><dd><code>radio-plus</code></dd></div>
+              <div><dt>Dial</dt><dd>446.006 MHz FM</dd></div>
+              <div><dt>Preset</dt><dd><code>vhf-fm</code></dd></div>
+              <div><dt>PTT</dt><dd>VOX</dd></div>
+              <div><dt>Hub</dt><dd>off</dd></div>
+            </dl>
+            <p class="station-card__foot"><code>/radio freq 446.006</code>. Gateway M0PMR uploads when it hears you.</p>
+          </article>
+          <article class="station-card mode-rplus">
+            <header class="station-card__head">
+              <h3>~cb19</h3>
+              <span class="station-card__badge">UK CB</span>
+            </header>
+            <dl class="station-card__dl">
+              <div><dt>Mode</dt><dd><code>radio-plus</code></dd></div>
+              <div><dt>Dial</dt><dd>CEPT ch 19 · 27.185 MHz FM</dd></div>
+              <div><dt>Preset</dt><dd><code>vhf-fm</code></dd></div>
+              <div><dt>PTT</dt><dd>VOX</dd></div>
+              <div><dt>Hub</dt><dd>off</dd></div>
+            </dl>
+            <p class="station-card__foot">UK CB FM row in <a href="/docs/calling.html">calling frequencies</a>. Gateway M0CB.</p>
+          </article>
+          <article class="station-card mode-rplus">
+            <header class="station-card__head">
+              <h3>G4ABC</h3>
+              <span class="station-card__badge">2m</span>
+            </header>
+            <dl class="station-card__dl">
+              <div><dt>Mode</dt><dd><code>radio-plus</code></dd></div>
+              <div><dt>Dial</dt><dd>144.950 MHz FM</dd></div>
+              <div><dt>Preset</dt><dd><code>vhf-fm</code></dd></div>
+              <div><dt>PTT</dt><dd>CAT or VOX</dd></div>
+              <div><dt>Hub</dt><dd>off</dd></div>
+            </dl>
+            <p class="station-card__foot">Licensed callsign. UK/EU 2m calling spot.</p>
+          </article>
+        </div>
+
+        <h3 class="station-group-title">Gateways — one dial each, <code>internet-radio</code></h3>
+        <div class="station-grid">
+          <article class="station-card mode-gw">
+            <header class="station-card__head">
+              <h3>M0PMR</h3>
+              <span class="station-card__badge">Gateway</span>
+            </header>
+            <dl class="station-card__dl">
+              <div><dt>Mode</dt><dd><code>internet-radio</code></dd></div>
+              <div><dt>Dial</dt><dd>446.006 MHz</dd></div>
+              <div><dt>Preset</dt><dd><code>vhf-fm</code></dd></div>
+              <div><dt>Hub</dt><dd>on</dd></div>
+              <div><dt>Gateway</dt><dd><code>rf_egress = true</code></dd></div>
+            </dl>
+            <p class="station-card__foot">Keys PMR traffic from the hub when heard rules pass.</p>
+          </article>
+          <article class="station-card mode-gw">
+            <header class="station-card__head">
+              <h3>M0CB</h3>
+              <span class="station-card__badge">Gateway</span>
+            </header>
+            <dl class="station-card__dl">
+              <div><dt>Mode</dt><dd><code>internet-radio</code></dd></div>
+              <div><dt>Dial</dt><dd>27.185 MHz</dd></div>
+              <div><dt>Preset</dt><dd><code>vhf-fm</code></dd></div>
+              <div><dt>Hub</dt><dd>on</dd></div>
+              <div><dt>Gateway</dt><dd><code>rf_egress = true</code></dd></div>
+            </dl>
+            <p class="station-card__foot">CB band bridge. Set <code>third_party = "allow"</code> so <code>~</code> guests can be keyed on RF.</p>
+          </article>
+          <article class="station-card mode-gw">
+            <header class="station-card__head">
+              <h3>M0GWY</h3>
+              <span class="station-card__badge">Gateway</span>
+            </header>
+            <dl class="station-card__dl">
+              <div><dt>Mode</dt><dd><code>internet-radio</code></dd></div>
+              <div><dt>Dial</dt><dd>144.950 MHz</dd></div>
+              <div><dt>Preset</dt><dd><code>vhf-fm</code></dd></div>
+              <div><dt>Hub</dt><dd>on</dd></div>
+              <div><dt>Gateway</dt><dd><code>rf_egress = true</code></dd></div>
+            </dl>
+            <p class="station-card__foot">Optional <code>/tower on</code> for a map pin with frequency.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="article-section" aria-labelledby="topoH">
+        <h2 id="topoH">How the bands connect</h2>
+        <p class="section-lead">Each row is one dial. Orange is on the air. Cyan is the hub over TLS. The three radio rows do not connect to each other.</p>
+        <figure class="diagram diagram-wide">
+          <div class="dgm-wrap">
+            <svg class="dgm" viewBox="0 0 760 380" role="img" aria-labelledby="mbTopoT mbTopoD">
+              <title id="mbTopoT">Three gateways and one hub for closed group #field</title>
+              <desc id="mbTopoD">~sarah talks only to the hub. ~pmr1, ~cb19, and G4ABC each reach their own internet-radio gateway on RF. Those gateways reach the hub over TLS. There is no radio path between the three dials.</desc>
+              <defs>
+                <marker id="mbrf" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
+                </marker>
+                <marker id="mbnet" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path class="mk-net" d="M0 0 L6 3 L0 6 z" />
+                </marker>
+              </defs>
+              <text class="tag" x="16" y="22">#field · EACH ROW IS ONE DIAL</text>
+
+              <rect class="box hub" x="580" y="44" width="164" height="316" />
+              <text class="on-hub" x="662" y="190" text-anchor="middle">hub</text>
+              <text class="sub" x="662" y="210" text-anchor="middle">TLS · wss</text>
+              <text class="sub" x="662" y="228" text-anchor="middle">routes #field</text>
+
+              <text class="tag" x="16" y="52">internet</text>
+              <rect class="box" x="16" y="60" width="148" height="48" />
+              <text x="90" y="80" text-anchor="middle">~sarah</text>
+              <text class="sub" x="90" y="96" text-anchor="middle">no radio</text>
+              <line class="net" marker-end="url(#mbnet)" x1="164" y1="84" x2="580" y2="84" />
+              <text class="sub" x="370" y="76" text-anchor="middle">TLS only</text>
+
+              <text class="tag" x="16" y="132">PMR446 · 446.006</text>
+              <rect class="box rplus" x="16" y="140" width="148" height="48" />
+              <text class="on-rplus" x="90" y="160" text-anchor="middle">~pmr1</text>
+              <text class="sub" x="90" y="176" text-anchor="middle">radio-plus</text>
+              <line class="rf" marker-end="url(#mbrf)" x1="164" y1="164" x2="236" y2="164" />
+              <text class="sub" x="200" y="156" text-anchor="middle">RF</text>
+              <rect class="box gw" x="236" y="140" width="128" height="48" />
+              <text class="on-gw" x="300" y="160" text-anchor="middle">M0PMR</text>
+              <text class="sub" x="300" y="176" text-anchor="middle">gateway</text>
+              <line class="net" marker-end="url(#mbnet)" x1="364" y1="164" x2="580" y2="140" />
+              <text class="sub" x="470" y="140" text-anchor="middle">TLS</text>
+
+              <text class="tag" x="16" y="212">UK CB · 27.185</text>
+              <rect class="box rplus" x="16" y="220" width="148" height="48" />
+              <text class="on-rplus" x="90" y="240" text-anchor="middle">~cb19</text>
+              <text class="sub" x="90" y="256" text-anchor="middle">radio-plus</text>
+              <line class="rf" marker-end="url(#mbrf)" x1="164" y1="244" x2="236" y2="244" />
+              <text class="sub" x="200" y="236" text-anchor="middle">RF</text>
+              <rect class="box gw" x="236" y="220" width="128" height="48" />
+              <text class="on-gw" x="300" y="240" text-anchor="middle">M0CB</text>
+              <text class="sub" x="300" y="256" text-anchor="middle">gateway</text>
+              <line class="net" marker-end="url(#mbnet)" x1="364" y1="244" x2="580" y2="200" />
+              <text class="sub" x="480" y="214" text-anchor="middle">TLS</text>
+
+              <text class="tag" x="16" y="292">2m · 144.950</text>
+              <rect class="box rplus" x="16" y="300" width="148" height="48" />
+              <text class="on-rplus" x="90" y="320" text-anchor="middle">G4ABC</text>
+              <text class="sub" x="90" y="336" text-anchor="middle">radio-plus</text>
+              <line class="rf" marker-end="url(#mbrf)" x1="164" y1="324" x2="236" y2="324" />
+              <text class="sub" x="200" y="316" text-anchor="middle">RF</text>
+              <rect class="box gw" x="236" y="300" width="128" height="48" />
+              <text class="on-gw" x="300" y="320" text-anchor="middle">M0GWY</text>
+              <text class="sub" x="300" y="336" text-anchor="middle">gateway</text>
+              <line class="net" marker-end="url(#mbnet)" x1="364" y1="324" x2="580" y2="260" />
+              <text class="sub" x="480" y="300" text-anchor="middle">TLS</text>
+            </svg>
+          </div>
+          <figcaption>The hub never changes your frequency. Cross-band rules: <a href="/docs/bridging.html">cross-frequency chat</a>.</figcaption>
+        </figure>
+        <p class="path-note">A gateway keys a hub line onto its dial only when <code>rf_egress = true</code> and the destination was heard on that dial in the last 10 minutes. Guest names (<code>~</code>) also need <code>third_party = "allow"</code> (default is <code>deny</code>).</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="threadH">
+        <h2 id="threadH">Watch the <code>#field</code> thread</h2>
+        <p class="section-lead">Lines stay on screen as they arrive. The highlighted row is the one just sent.</p>
+        <figure class="diagram mixed-chat-wrap">
+          <div class="mixed-chat" data-mixed-chat aria-labelledby="mixedChatTitle mixedChatDesc">
+            <div class="mixed-chat-toolbar">
+              <p class="tag mixed-chat-heading" id="mixedChatTitle">Example thread</p>
+              <div class="mixed-chat-controls">
+                <button type="button" class="btn-replay" data-mixed-play aria-pressed="true">Pause</button>
+                <button type="button" class="btn-replay" data-mixed-replay>Replay</button>
+              </div>
+            </div>
+            <p class="mixed-chat-status" data-mixed-status aria-live="polite"></p>
+            <p class="sr-only" id="mixedChatDesc">Step through an example group chat. Each line lists its RF and hub path.</p>
+            <ol class="mixed-chat-lines">
+              <li class="mixed-chat-line">
+                <span class="mixed-chat-who">~pmr1</span>
+                <span class="mixed-chat-text">Car park set.</span>
+                <span class="mixed-chat-path"><i class="k-rf" title="RF"></i><span>446 MHz</span> <span class="path-arrow">→</span> <i class="k-net" title="Hub TLS"></i><span>hub</span></span>
+              </li>
+              <li class="mixed-chat-line">
+                <span class="mixed-chat-who">~sarah</span>
+                <span class="mixed-chat-text">Copy, raining here.</span>
+                <span class="mixed-chat-path"><i class="k-net" title="Hub TLS"></i><span>hub only (TLS)</span></span>
+              </li>
+              <li class="mixed-chat-line">
+                <span class="mixed-chat-who">G4ABC</span>
+                <span class="mixed-chat-text">Convoy moving.</span>
+                <span class="mixed-chat-path"><i class="k-rf"></i><span>144.950</span> <span class="path-arrow">→</span> <i class="k-net"></i><span>hub</span></span>
+              </li>
+              <li class="mixed-chat-line">
+                <span class="mixed-chat-who">~cb19</span>
+                <span class="mixed-chat-text">Roger.</span>
+                <span class="mixed-chat-path"><i class="k-rf"></i><span>27.185</span> <span class="path-arrow">→</span> <i class="k-net"></i><span>hub</span></span>
+              </li>
+              <li class="mixed-chat-line">
+                <span class="mixed-chat-who">M0GWY → G4ABC</span>
+                <span class="mixed-chat-text">[ok] on 2m</span>
+                <span class="mixed-chat-path"><i class="k-net"></i><span>hub</span> <span class="path-arrow">→</span> <i class="k-rf"></i><span>144.950 egress</span></span>
+              </li>
+            </ol>
+          </div>
+          <figcaption>Pause holds the thread. Replay starts again from the first line. Reduced motion shows every line at once and does not autoplay.</figcaption>
+        </figure>
+      </section>
+
+      <div class="warn-box">
+        <h2>What the app does not do</h2>
+        <ul>
+          <li>PMR, CB, and 2m cannot hear each other on RF — only gateway + hub + gateway.</li>
+          <li>The program never retunes your radio across bands. Pick spots from the calling list and obey your band plan.</li>
+          <li><code>radio-plus</code> never opens the hub from your PC; a gateway uploads when it hears you.</li>
+        </ul>
+      </div>
+
+      <p class="next">Modes: <a href="/docs/modes.html">modes</a>. General bridging: <a href="/docs/bridging.html">cross-frequency chat</a>. Offline: <code>wcr help mixed-band</code>.</p>
+    </main>
+  </div>
+  <script src="/copy.js?v=1"></script>
+  <script src="/shell.js?v=10"></script>
+  <script src="/mixed-band-anim.js?v=2"></script>
+</body>
+</html>
