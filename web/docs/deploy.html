@@ -25,7 +25,6 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="/styles.css?v=34" />
   <link rel="stylesheet" href="/docs.css?v=1" />
-  <link rel="stylesheet" href="/ref-pages.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -47,12 +46,12 @@
     </div>
   </header>
   <div class="page-wrap">
-    <main class="page-panel page-ref">
+    <main class="page-panel">
       <p class="crumb"><a href="/docs.html">docs</a> / deploy</p>
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> deploy the hub</h1>
       <p class="lead">For people running the public server. Most users never need this page.</p>
 
-      <div class="ref-pair">
+      <div class="pair">
         <section class="article-section article-section--first" aria-labelledby="needH">
           <h2 id="needH">What you need</h2>
           <ul class="cards">
@@ -65,7 +64,7 @@
 
         <figure class="diagram">
           <div class="dgm-wrap">
-            <svg class="dgm" viewBox="0 0 440 304" role="img" aria-labelledby="dp1t dp1d">
+            <svg class="dgm fit" viewBox="0 0 440 304" role="img" aria-labelledby="dp1t dp1d">
               <title id="dp1t">One droplet serving the site and the hub</title>
               <desc id="dp1d">Traffic arrives on port 443. Caddy terminates HTTPS and serves the static site for weechatradio.com, and proxies hub.weechatradio.com to the wcr hub container.</desc>
               <defs>
