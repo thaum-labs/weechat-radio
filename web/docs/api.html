@@ -25,7 +25,6 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="/styles.css?v=34" />
   <link rel="stylesheet" href="/docs.css?v=1" />
-  <link rel="stylesheet" href="/ref-pages.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -47,12 +46,12 @@
     </div>
   </header>
   <div class="page-wrap">
-    <main class="page-panel page-ref">
+    <main class="page-panel">
       <p class="crumb"><a href="/docs.html">docs</a> / api</p>
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> public API</h1>
       <p class="lead">The live map reads this API. You can skip this page unless you are building something that talks to the hub.</p>
 
-      <div class="ref-pair">
+      <div class="pair">
         <ul class="cards">
           <li><strong>Base</strong><span><code>https://hub.weechatradio.com</code></span></li>
           <li><strong>OpenAPI</strong><span><a href="/docs/openapi.yaml">openapi.yaml</a> (machine-readable hub contract).</span></li>
@@ -61,7 +60,7 @@
 
         <figure class="diagram">
           <div class="dgm-wrap">
-            <svg class="dgm" viewBox="0 0 440 262" role="img" aria-labelledby="a1t a1d">
+            <svg class="dgm fit" viewBox="0 0 440 262" role="img" aria-labelledby="a1t a1d">
               <title id="a1t">How station reports reach the map</title>
               <desc id="a1d">Your station signs a report and posts it to the hub API, which serves it to the public map and the live WebSocket feed. Message text is never part of a report.</desc>
               <defs>
@@ -143,7 +142,7 @@
         <h2 id="readH">Read</h2>
         <p class="section-lead">Plain GET requests. No key needed.</p>
         <div class="table-wrap">
-          <table class="ref-table">
+          <table class="stack-table">
             <thead>
               <tr><th>Path</th><th>What you get</th></tr>
             </thead>

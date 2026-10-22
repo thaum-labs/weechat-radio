@@ -7,11 +7,12 @@
      1. Article basics       .lead tone, .article-section, .section-lead, .article-kicker
      2. Cards                .cards > li (+ .card-ico, .is-optional)
      3. Steps                .steps .step-title
-     4. Fix list             .fix-list (symptom / fix rows), .fix-also, .who-list (station rows)
+     4. Lists                .fix-list (+ --long), .fix-also, .who-list (station rows), .mark-list
      5. Flow                 .flow (A → B chips with a short condition between)
-     6. Live diagram         .live-dgm figure, .setup-switch, .live-status, .setup-panel
-     7. Diagram glyphs       laptop, handheld radio, base station, house
-     8. Packets              .seg + .pkt animation, .btn-replay */
+     6. Fitting              svg.dgm.fit, .pair (cards beside a diagram), table.stack-table
+     7. Live diagram         .live-dgm figure, .setup-switch, .live-status, .setup-panel
+     8. Diagram glyphs       laptop, handheld radio, base station, house
+     9. Packets              .seg + .pkt animation, .btn-replay */
 
 .page-panel {
   --body: #c8c0d8;
@@ -150,6 +151,71 @@
 .who-list .mode-radio { --who: var(--mode-radio); }
 .who-list .mode-radio-plus { --who: var(--mode-radio-plus); }
 
+/* long fixes (paragraphs, lists, commands): symptom on top, fix at full width */
+.fix-list--long > div {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  padding: 14px 16px;
+}
+.page-panel .fix-list--long dt { font-size: 14px; }
+.page-panel .fix-list--long dd > p,
+.page-panel .fix-list--long dd li {
+  font-size: 14px;
+  line-height: 1.6;
+}
+.fix-list--long dd > * + * { margin-top: 8px; }
+.fix-list--long dd > :first-child { margin-top: 0; }
+.fix-list--long dd > :last-child,
+.fix-list--long dd .pre-wrap:last-child { margin-bottom: 0; }
+.fix-list--long dd ul,
+.fix-list--long dd ol {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+.fix-list--long dd li + li { margin-top: 4px; }
+.fix-list--long pre {
+  padding-right: 64px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.fix-list > div[id] { scroll-margin-top: 72px; }
+.fix-list > div:target { border-color: var(--orange); }
+@media (max-width: 960px) {
+  .fix-list--long pre { padding-right: 14px; }
+  .page-panel .fix-list--long dt,
+  .page-panel .fix-list--long dd > p,
+  .page-panel .fix-list--long dd li {
+    font-size: 15px;
+    line-height: 1.55;
+  }
+}
+
+/* mark list: a short code in a narrow column, its meaning beside it ([ok] → delivered) */
+.page-panel .mark-list {
+  display: grid;
+  margin: 8px 0 12px;
+}
+.mark-list > div {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(125, 155, 255, 0.12);
+}
+.mark-list > div:last-child { border-bottom: 0; }
+.mark-list dt,
+.mark-list dd {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--fg);
+}
+@media (max-width: 960px) {
+  .mark-list dt,
+  .mark-list dd { font-size: 16px; }
+  .mark-list > div { grid-template-columns: 4rem minmax(0, 1fr); gap: 10px; }
+}
+
 /* --- 5. flow ------------------------------------------------------------ */
 
 .flow {
@@ -200,7 +266,53 @@
   .flow-step__arrow { transform: rotate(90deg); }
 }
 
-/* --- 6. live diagram ---------------------------------------------------- */
+/* --- 6. diagrams that fit a phone, and cards beside a diagram ----------- */
+
+/* A static diagram drawn ~420–440 wide: add "fit" to the svg to skip the shared 620px scroll width. */
+svg.dgm.fit { min-width: 0; }
+svg.dgm.fit .sub { font-size: 11px; }
+
+/* .pair: a column of cards (or text) beside a diagram; stacks on phones. */
+.page-panel .pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 440px);
+  gap: 18px;
+  align-items: start;
+  margin-top: 10px;
+}
+.page-panel .pair > figure.diagram,
+.page-panel .pair > .article-section { margin: 0; }
+.page-panel .pair .cards {
+  grid-template-columns: minmax(0, 1fr);
+  margin-top: 0;
+}
+@media (max-width: 760px) {
+  .page-panel .pair { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* A reference table whose rows stack on phones (cell above cell). */
+@media (max-width: 600px) {
+  .stack-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+  .stack-table tr {
+    display: block;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(125, 155, 255, 0.12);
+  }
+  .stack-table td {
+    display: block;
+    padding: 2px 4px;
+    border: 0;
+  }
+  .stack-table td:first-child code { white-space: nowrap; }
+}
+
+/* --- 7. live diagram ---------------------------------------------------- */
 /* <figure class="diagram live-dgm" data-live-dgm data-setup="…"> … see live-dgm.js */
 
 .page-panel .live-dgm { margin: 0; }
@@ -308,7 +420,7 @@ svg.dgm .is-on .box.gw { fill: rgba(57, 255, 20, 0.11); }
 svg.dgm .is-on .box.hub { fill: rgba(0, 229, 255, 0.1); }
 svg.dgm .is-on .box.rplus { fill: rgba(255, 77, 255, 0.14); }
 
-/* --- 7. diagram glyphs -------------------------------------------------- */
+/* --- 8. diagram glyphs -------------------------------------------------- */
 /* Snippets live in docs/KIT.md. */
 
 /* laptop: <rect class="box accent"> screen + <path class="laptop-base"> */
@@ -375,7 +487,7 @@ svg.dgm .lane-bg {
   stroke-dasharray: 3 5;
 }
 
-/* --- 8. packets --------------------------------------------------------- */
+/* --- 9. packets --------------------------------------------------------- */
 /* Animated packet on a diagram path.
    Markup: <g class="seg seg-rf|seg-net|seg-sound"><path …/><path class="pkt" …/></g>.
    Page script sets --len (path length) on each .pkt and adds .is-live to the
