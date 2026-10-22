@@ -190,6 +190,11 @@ impl Preset {
     /// built-in mic). This is modem73's own default.
     pub const VOX_CSMA_THRESHOLD_DB: i16 = -30;
 
+    /// ROBUST (RDM) presets. These get modem73's extra receive retry.
+    pub fn is_robust(self) -> bool {
+        matches!(self, Self::HfPoor | Self::HfWeak | Self::VoxSafe)
+    }
+
     /// Slow MFSK/RDM is quieter than the default -30 dB CSMA gate, so the
     /// modem keys over an inbound frame after the lead tone. MFSK sync is
     /// not used as DCD.
