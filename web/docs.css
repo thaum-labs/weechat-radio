@@ -43,6 +43,7 @@
   line-height: 1.55;
   color: var(--body);
 }
+.page-panel .section-lead--after { margin: 12px 0 0; }
 .page-panel .article-kicker {
   margin: 0 0 6px;
   font-size: 12px;
