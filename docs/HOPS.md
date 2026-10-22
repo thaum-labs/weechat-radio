@@ -30,6 +30,8 @@ On 20m a station often hears others hundreds of kilometres away, and sometimes w
 
 Lisbon does not hear Munich (~2,000 km) or Bucharest (~3,000 km). Barcelona does not hear Bucharest (~2,000 km).
 
+Lisbon sends a direct message to Bucharest.
+
 1. Lisbon transmits with 3 hops left.
 2. Barcelona hears it and sends it on with 2 hops left.
 3. Munich hears Barcelona and sends it on with 1 hop left.
