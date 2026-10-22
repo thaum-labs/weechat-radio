@@ -70,6 +70,8 @@ Icon symbols go once per page, right after `</header>`:
 </svg>
 ```
 
+**Compact cards** — `ul.cards.cards--compact` puts the icon on the left and stacks the cards in one column: use it for a short list of choices beside a diagram.
+
 **Step titles** — two to four words, verb first:
 ```html
 <ol class="steps">
