@@ -117,7 +117,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - run: cargo build --release --target ${{ matrix.target }} -p wcr
       - name: bundle modem73 linux
         if: runner.os == 'Linux' && matrix.modem_deb != ''
         env:
@@ -154,6 +153,36 @@ jobs:
           tar -czf "${{ matrix.modem_asset }}" -C dist modem73 libs
           cp third_party/modem73/NOTICE dist/MODEM73-NOTICE
           if [ -f /tmp/m73/out/modem73/LICENSE ]; then cp /tmp/m73/out/modem73/LICENSE dist/MODEM73-LICENSE; fi
+      - name: bundle modem73 windows
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir dist
+          gh release download --repo RFnexus/modem73-win --pattern "modem73_*_win64.zip" --dir m73
+          Expand-Archive -Path (Get-ChildItem m73\modem73_*_win64.zip).FullName -DestinationPath m73\out -Force
+          if (-not (Test-Path m73\out\modem73.exe)) { throw "modem73.exe missing from upstream zip" }
+          Copy-Item m73\out\modem73.exe dist\modem73.exe
+          Copy-Item m73\out\modem73.exe ${{ matrix.modem_asset }}
+          if (Test-Path m73\out\LICENSE) { Copy-Item m73\out\LICENSE dist\MODEM73-LICENSE }
+          Copy-Item third_party\modem73\NOTICE dist\MODEM73-NOTICE
+      # The fallback download in this wcr build (crates/wcr/src/modem/ensure.rs)
+      # fetches modem73 from this release's own tag and checks it against the
+      # hash of the exact asset bundled here.
+      - name: pin modem73 hash into wcr
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASSET="${{ matrix.modem_asset }}"
+          test -s "$ASSET"
+          if command -v sha256sum >/dev/null; then
+            SUM="$(sha256sum "$ASSET" | awk '{print $1}')"
+          else
+            SUM="$(shasum -a 256 "$ASSET" | awk '{print $1}')"
+          fi
+          echo "$ASSET sha256 $SUM"
+          echo "WCR_MODEM73_SHA256=$SUM" >> "$GITHUB_ENV"
+      - run: cargo build --release --target ${{ matrix.target }} -p wcr
       - name: quickstart pdf
         if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
@@ -174,19 +203,6 @@ jobs:
       - name: asset checksum
         if: runner.os != 'Windows'
         run: sha256sum "${{ matrix.asset }}" | awk '{print $1}' > "${{ matrix.asset }}.sha256"
-      - name: bundle modem73 windows
-        if: runner.os == 'Windows'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir dist
-          gh release download --repo RFnexus/modem73-win --pattern "modem73_*_win64.zip" --dir m73
-          Expand-Archive -Path (Get-ChildItem m73\modem73_*_win64.zip).FullName -DestinationPath m73\out -Force
-          if (-not (Test-Path m73\out\modem73.exe)) { throw "modem73.exe missing from upstream zip" }
-          Copy-Item m73\out\modem73.exe dist\modem73.exe
-          Copy-Item m73\out\modem73.exe ${{ matrix.modem_asset }}
-          if (Test-Path m73\out\LICENSE) { Copy-Item m73\out\LICENSE dist\MODEM73-LICENSE }
-          Copy-Item third_party\modem73\NOTICE dist\MODEM73-NOTICE
       - name: pack windows
         if: runner.os == 'Windows'
         run: |
