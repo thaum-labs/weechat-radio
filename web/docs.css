@@ -24,6 +24,14 @@
 .page-panel .lead { color: var(--body); }
 .page-panel .article-section { margin: 44px 0; }
 .page-panel .article-section--first { margin-top: 24px; }
+/* breathing room between blocks that follow each other inside a section */
+.page-panel .article-section > p + p,
+.page-panel .article-section > p + .table-wrap,
+.page-panel .article-section > .table-wrap + p { margin-top: 10px; }
+.page-panel .article-section > .live-dgm,
+.page-panel .article-section > .pair { margin: 14px 0 18px; }
+.page-panel .article-section > ol:not(.steps) { padding-left: 24px; }
+.page-panel .article-section > ol:not(.steps) > li + li { margin-top: 4px; }
 .page-panel .article-section > h2 {
   margin: 0 0 6px;
   font-size: 16px;
@@ -225,6 +233,11 @@
   gap: 12px;
   margin: 10px 0 14px;
 }
+/* three chips: A → B → C */
+.flow--ladder {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+}
+.flow--ladder .flow-step { max-width: 9rem; }
 .flow-chip {
   display: flex;
   flex-direction: column;
@@ -262,7 +275,9 @@
 }
 .flow-step__back { color: var(--orange); }
 @media (max-width: 600px) {
-  .flow { grid-template-columns: minmax(0, 1fr); }
+  .flow,
+  .flow--ladder { grid-template-columns: minmax(0, 1fr); }
+  .flow--ladder .flow-step { max-width: none; }
   .flow-step__arrow { transform: rotate(90deg); }
 }
 
