@@ -2,7 +2,13 @@ On the web: https://weechatradio.com/docs/mixed-band.html
 
 # One group across PMR, CB, 2m, and internet
 
-A closed group `#field` (`/join #field`) can include licence-free handhelds, licensed VHF, and an internet-only member. Each band is its own dial. There is no RF path between PMR446 (446.006 MHz), UK CB (27.185 MHz FM), and 2m (144.950 MHz), so cross-band chat always goes **gateway → hub (TLS) → gateway → RF** on the destination band. The program never retunes your radio across bands; stay within your licence or licence-free rules on the dial you set.
+A closed group `#field` (`/join #field`) can include licence-free handhelds, licensed VHF, and an internet-only member.
+
+1. Each person stays on one dial. There is no RF path between PMR446 (446.006 MHz), UK CB (27.185 MHz FM), and 2m (144.950 MHz).
+2. A gateway on that dial (`internet-radio`) carries `radio-plus` lines to the hub.
+3. The hub uses TLS (`wss://hub.weechatradio.com/ws`) and hands the line to the gateway on the other dial, which keys RF only when `rf_egress = true` and the destination was heard on that dial in the last 10 minutes. Guest names need `third_party = "allow"`.
+
+The program never retunes your radio across bands; stay within your licence or licence-free rules on the dial you set.
 
 Cross-frequency rules: `wcr help bridging`. Suggested spots: `wcr help calling`.
 
