@@ -103,6 +103,9 @@ pub struct GetProgress {
     /// "", "asking", "receiving", "fetched", or "failed".
     pub state: String,
     pub subject: String,
+    /// The waiting mail id the Get asked for, so the log names one id.
+    #[serde(default)]
+    pub asked: String,
     pub got: u16,
     pub total: u16,
     /// Why it failed.
