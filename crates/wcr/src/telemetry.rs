@@ -289,7 +289,7 @@ impl TelemetryDb {
         let settings = serde_json::json!({ "via": via }).to_string();
         conn.execute(
             "INSERT INTO nodes(callsign, grid, lat, lon, mode, ptt, preset, snr, ber, queue, hub_ok, last_seen, settings, freq_khz, band)
-             VALUES(?1,?2,?3,?4,'radio','','',?5,0,0,0,?6,?7,?8,?9)
+             VALUES(?1,?2,?3,?4,?10,'','',?5,0,0,0,?6,?7,?8,?9)
              ON CONFLICT(callsign) DO UPDATE SET
                 grid=excluded.grid, lat=excluded.lat, lon=excluded.lon, mode=excluded.mode,
                 ptt=excluded.ptt, preset=excluded.preset, snr=excluded.snr, ber=excluded.ber,
@@ -305,11 +305,12 @@ impl TelemetryDb {
                 settings,
                 h.freq_khz as i64,
                 band,
+                h.map_mode(),
             ],
         )?;
         conn.execute(
             "INSERT INTO node_seen(ts, callsign, mode, grid, lat, lon, band, freq_khz, ptt, preset, snr, tower)
-             VALUES(?1,?2,'radio',?3,?4,?5,?6,?7,'','',?8,0)",
+             VALUES(?1,?2,?9,?3,?4,?5,?6,?7,'','',?8,0)",
             params![
                 h.ts as i64,
                 call,
@@ -319,6 +320,7 @@ impl TelemetryDb {
                 band,
                 h.freq_khz as i64,
                 h.snr.unwrap_or(0.0),
+                h.map_mode(),
             ],
         )?;
         Ok(true)
@@ -622,6 +624,20 @@ pub struct HeardGrid {
     pub snr: Option<f32>,
     #[serde(default)]
     pub freq_khz: u32,
+    /// The mode the heard station runs. Empty from older stations: "radio".
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub mode: String,
+}
+
+impl HeardGrid {
+    /// The mode the hub shows for this station: what the hearer saw, or
+    /// "radio" when it did not say.
+    pub fn map_mode(&self) -> &'static str {
+        self.mode
+            .parse::<crate::modes::Mode>()
+            .map(|m| m.as_str())
+            .unwrap_or("radio")
+    }
 }
 
 /// A station that reported itself this recently keeps its own position;
@@ -640,6 +656,7 @@ pub fn heard_grids(heard: &[crate::status::HeardBrief]) -> Vec<HeardGrid> {
             ts: h.last_heard as u64,
             snr: h.snr,
             freq_khz: h.freq_khz,
+            mode: h.mode.clone(),
         })
         .collect()
 }
@@ -771,7 +788,7 @@ pub async fn ingest_report(
             let _ = st.live.send(serde_json::json!({
                 "type": "node",
                 "callsign": h.callsign.to_ascii_uppercase(),
-                "mode": "radio",
+                "mode": h.map_mode(),
                 "grid": h.grid,
                 "via": call,
             }));
@@ -1050,7 +1067,25 @@ mod tests {
             ts,
             snr: None,
             freq_khz: 144_950,
+            mode: String::new(),
         }
+    }
+
+    #[test]
+    fn a_heard_station_keeps_the_mode_its_hearer_saw() {
+        let db = TelemetryDb::open_memory().unwrap();
+        let t = now();
+        let mut plus = heard("Q0RFA/M", "IO91WM12", t);
+        plus.mode = "radio-plus".into();
+        assert!(db.upsert_heard("Q0RFB", &plus, t).unwrap());
+        assert!(db
+            .upsert_heard("Q0RFB", &heard("Q0RFC", "IO91", t), t)
+            .unwrap());
+        let nodes = db.nodes();
+        let m = nodes.iter().find(|n| n["callsign"] == "Q0RFA/M").unwrap();
+        assert_eq!(m["mode"], "radio-plus");
+        let c = nodes.iter().find(|n| n["callsign"] == "Q0RFC").unwrap();
+        assert_eq!(c["mode"], "radio");
     }
 
     #[test]

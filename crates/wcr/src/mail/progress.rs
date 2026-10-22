@@ -93,6 +93,43 @@ pub struct SendStep {
     pub ok: bool,
 }
 
+/// The Radio+ Get window: asking, chunks received H of T, fetched, or why
+/// it stopped. The caller keeps the bar from going back.
+pub fn get_step(p: &super::GetProgress) -> SendStep {
+    let step = |fraction: f32, label: String, done: bool, ok: bool| SendStep {
+        fraction,
+        label,
+        done,
+        ok,
+    };
+    match p.state.as_str() {
+        "asking" => step(0.1, "Asking the gateway…".into(), false, false),
+        "receiving" => {
+            let part = if p.total == 0 {
+                0.0
+            } else {
+                p.got as f32 / p.total as f32
+            };
+            step(
+                0.1 + 0.85 * part,
+                format!("Chunks received {} of {}", p.got, p.total),
+                false,
+                false,
+            )
+        }
+        "fetched" => step(1.0, "Fetched. It is in your Inbox.".into(), true, true),
+        "failed" => {
+            let why = if p.detail.is_empty() {
+                "No reply from the gateway."
+            } else {
+                p.detail.as_str()
+            };
+            step(1.0, why.to_string(), true, false)
+        }
+        _ => step(0.0, "Asking the gateway…".into(), false, false),
+    }
+}
+
 pub fn send_step(v: &SendView<'_>) -> SendStep {
     let step = |fraction: f32, label: String, done: bool, ok: bool| SendStep {
         fraction,
@@ -173,6 +210,31 @@ fn got_count(got: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn get_window_walks_asking_chunks_fetched() {
+        let mut p = super::super::GetProgress {
+            state: "asking".into(),
+            ..Default::default()
+        };
+        let a = get_step(&p);
+        assert_eq!(a.label, "Asking the gateway…");
+        assert!(!a.done);
+        p.state = "receiving".into();
+        p.got = 3;
+        p.total = 6;
+        let r = get_step(&p);
+        assert_eq!(r.label, "Chunks received 3 of 6");
+        assert!(r.fraction > a.fraction && !r.done);
+        p.state = "fetched".into();
+        let f = get_step(&p);
+        assert!(f.done && f.ok);
+        p.state = "failed".into();
+        p.detail = String::new();
+        let x = get_step(&p);
+        assert!(x.done && !x.ok);
+        assert_eq!(x.label, "No reply from the gateway.");
+    }
 
     fn view<'a>(state: &'a str, got: &'a str, delivery: &'a str) -> SendView<'a> {
         SendView {

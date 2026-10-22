@@ -11,6 +11,8 @@ pub const PUBLIC_TELEMETRY: &str = "https://hub.weechatradio.com/api/v1/report";
 /// Live map (site homepage is separate at weechatradio.com).
 pub const PUBLIC_MAP: &str = "https://weechatradio.com/map.html";
 
+static ACTIVE_PATH: parking_lot::Mutex<Option<PathBuf>> = parking_lot::Mutex::new(None);
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -561,6 +563,20 @@ impl Config {
 
     pub fn default_path() -> PathBuf {
         default_config_dir().join("wcr.toml")
+    }
+
+    /// Remember the file this process loaded (`wcr -c FILE node`), so
+    /// settings changed by commands are saved back to it.
+    pub fn set_active_path(path: &Path) {
+        *ACTIVE_PATH.lock() = Some(path.to_path_buf());
+    }
+
+    /// The file commands save to: the one loaded with `-c`, else the default.
+    pub fn active_path() -> PathBuf {
+        ACTIVE_PATH
+            .lock()
+            .clone()
+            .unwrap_or_else(Self::default_path)
     }
 
     pub fn key_path() -> PathBuf {

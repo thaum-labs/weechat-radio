@@ -154,6 +154,9 @@ pub struct HeardBrief {
     /// The grid this station last sent over the air, if any.
     #[serde(default)]
     pub grid: String,
+    /// The mode it runs, when it sent a grid (`radio`, `radio-plus`, …).
+    #[serde(default)]
+    pub mode: String,
 }
 
 impl HeardBrief {
