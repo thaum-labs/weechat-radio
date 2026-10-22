@@ -87,6 +87,66 @@ Beacons carry `B|<mode>|<khz>` so peers and the map know your dial. Tell the app
 
 LAN: nodes on the same local network can also pass frames without the public hub. Gateway rules still apply.
 
+Mixed band example (UK)
+
+A closed group `#field` (`/join #field`) lets PMR446, CB, 2m amateur, and internet-only stations share one thread. Each band needs its own dial. There is no RF path between PMR446 (446.006 MHz), UK CB (27.185 MHz FM), and 2m (144.950 MHz), so cross-band chat always goes hub ↔ gateway ↔ RF on the destination band. The program never retunes your radio across bands for you, and you must stay within your licence (or licence-free rules) on the dial you set.
+
+Who runs what (settings match setup and `/radio` commands today):
+
+| Station | Mode | Callsign | Dial / channel | Modem preset | PTT | Hub from this PC | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| ~sarah | internet | `~sarah` | — | — | — | on (default) | `/join #field`. No radio hardware. |
+| ~pmr1 | radio-plus | `~pmr1` | PMR446 446.006 MHz FM | `vhf-fm` | VOX | off | Handheld + audio cable; `/radio freq 446.006`. |
+| ~cb19 | radio-plus | `~cb19` | UK CB CEPT ch 19 · 27.185 MHz FM | `vhf-fm` | VOX | off | Same preset as calling list for UK CB FM. |
+| G4ABC | radio-plus | `G4ABC` | 2m 144.950 MHz FM | `vhf-fm` | CAT or VOX | off | UK/EU 2m calling spot from `wcr help calling`. |
+| M0PMR | internet-radio | `M0PMR` | 446.006 MHz | `vhf-fm` | CAT or VOX | on | Gateway on PMR dial; `[gateway] rf_egress = true`. |
+| M0CB | internet-radio | `M0CB` | 27.185 MHz | `vhf-fm` | CAT or VOX | on | Gateway on CB dial; `rf_egress = true`. |
+| M0GWY | internet-radio | `M0GWY` | 144.950 MHz | `vhf-fm` | CAT or VOX | on | Gateway on 2m; `rf_egress = true`; optional `/tower on` for map pin. |
+
+Guest names (`~…`) on RF need `[gateway] third_party = "allow"` on every gateway that should key their traffic onto the air. Default is `deny`.
+
+What is encrypted: RF is modem audio and v2 frames on the air (not TLS). The public hub link is `wss://hub.weechatradio.com/ws` (TLS). LAN peers can exchange frames without the hub; gateway rules still apply.
+
+Topology (static — animated version on the website):
+
+```mermaid
+flowchart TB
+  subgraph pmr [PMR446 446.006]
+    pmrU[~pmr1 radio-plus]
+    gwP[M0PMR internet-radio]
+    pmrU -->|RF modem| gwP
+  end
+  subgraph cb [CB 27.185 FM]
+    cbU[~cb19 radio-plus]
+    gwC[M0CB internet-radio]
+    cbU -->|RF modem| gwC
+  end
+  subgraph twom [2m 144.950]
+    ham[G4ABC radio-plus]
+    gw2[M0GWY internet-radio]
+    ham -->|RF modem| gw2
+  end
+  inet[~sarah internet]
+  hub[(hub TLS)]
+  gwP -->|wss| hub
+  gwC -->|wss| hub
+  gw2 -->|wss| hub
+  inet <-->|wss| hub
+  hub -->|wss then RF if heard| gwP
+  hub -->|wss then RF if heard| gwC
+  hub -->|wss then RF if heard| gw2
+```
+
+Example `#field` thread (paths only):
+
+1. `~pmr1`: “Car park set.” — RF on 446 MHz → M0PMR uploads (radio-plus) → hub (TLS) → ~sarah on hub; M0CB / M0GWY receive on hub and key onto CB / 2m only if `~cb19` / `G4ABC` were heard on that dial in the last 10 minutes (`rf_egress` and heard gate).
+2. `~sarah`: “Copy, raining here.” — hub (TLS) to all connected `#field` members; gateways may RF-egress to bands where a member was heard.
+3. `G4ABC`: “Convoy moving.” — RF on 144.950 → M0GWY → hub → internet and other gateways.
+4. `~cb19`: “Roger.” — RF on 27.185 → M0CB → hub → others.
+5. `M0GWY` keys an ACK back to `G4ABC` on 2m when the receipt returns on hub (same heard / `rf_egress` rules).
+
+A PMR handheld cannot relay onto 2m or CB in the app: different dials, no cross-band RF. CB cannot “skip” to PMR without a gateway on each band and the hub between them.
+
 Offline direct messages
 
 The hub keeps a direct message for a station that is not connected, for 10 minutes, up to 32 messages per callsign. The oldest is dropped when that fills. It is delivered when that station next says hello. Closed groups and `#bulletin` are not held: someone has to be connected to receive them. The hub does not key a radio. A station that is only on the air still depends on the RF retry while both ends can hear the path.
