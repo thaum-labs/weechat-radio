@@ -2516,14 +2516,21 @@ impl eframe::App for GuiApp {
                                         .id_salt("slash_palette")
                                         .max_height((height - 28.0).max(8.0))
                                         .show(ui, |ui| {
+                                            // One line per command. A narrow window cuts
+                                            // the hint short (hover shows it) instead of
+                                            // wrapping it under the names (QA v0.1.111).
+                                            ui.style_mut().wrap_mode =
+                                                Some(egui::TextWrapMode::Truncate);
                                             for (i, s) in suggestions.iter().enumerate() {
                                                 let selected = i == self.palette_i;
                                                 let row = format!("{:<22}  {}", s.label, s.hint);
                                                 let color = if selected { ORANGE } else { PURPLE };
-                                                let resp = ui.selectable_label(
-                                                    selected,
-                                                    RichText::new(row).color(color).monospace(),
-                                                );
+                                                let resp = ui
+                                                    .selectable_label(
+                                                        selected,
+                                                        RichText::new(row).color(color).monospace(),
+                                                    )
+                                                    .on_hover_text(&s.hint);
                                                 if resp.clicked() {
                                                     pick = Some(s.clone());
                                                 }
@@ -3843,7 +3850,7 @@ impl GuiApp {
             }
         }
         if self.mail_toast == "Checking…" && !self.mail_waiting.is_empty() {
-            self.mail_toast.clear();
+            self.mail_toast = waiting_notice(self.mail_waiting.len());
             self.mail_toast_warn = false;
         }
         if let Some(send) = self.mail_send.as_mut() {
@@ -5240,6 +5247,16 @@ fn ticks_delivery(ticks: &str) -> Option<crate::store::Delivery> {
     None
 }
 
+/// Mail tab notice after Check mail finds headers waiting at the gateway.
+fn waiting_notice(n: usize) -> String {
+    let what = if n == 1 {
+        "1 mail".to_string()
+    } else {
+        format!("{n} mails")
+    };
+    format!("{what} waiting at the gateway. Click a line to Get it.")
+}
+
 fn delivery_ticks(state: &str) -> Option<&'static str> {
     let d = crate::store::Delivery::parse(state);
     match state {
@@ -5425,6 +5442,14 @@ mod tests {
         assert_eq!(delivery_ticks("delivered"), Some("[ok]"));
         assert_eq!(delivery_ticks("all"), Some("[all]"));
         assert_eq!(delivery_ticks("waiting"), Some("waiting on acks"));
+        assert_eq!(
+            waiting_notice(1),
+            "1 mail waiting at the gateway. Click a line to Get it."
+        );
+        assert_eq!(
+            waiting_notice(3),
+            "3 mails waiting at the gateway. Click a line to Get it."
+        );
     }
 
     #[test]

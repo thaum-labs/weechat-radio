@@ -244,6 +244,14 @@ fn version_in(bytes: &[u8]) -> Option<String> {
     None
 }
 
+/// modem73 2.4.2 added `--robust-enhanced-retry`. Older builds refuse
+/// unknown options and exit, so only newer ones get it.
+pub fn has_robust_retry(version: &str) -> bool {
+    let core = version.split(['-', '+']).next().unwrap_or("");
+    let parts: Vec<u32> = core.split('.').filter_map(|p| p.parse().ok()).collect();
+    parts.len() == 3 && parts.as_slice() >= [2, 4, 2].as_slice()
+}
+
 /// `2.4.2`, `2.4.3-rc1`: three dotted numbers, an optional short suffix.
 fn looks_like_version(text: &str) -> bool {
     if text.len() > 24 {
@@ -477,6 +485,17 @@ fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
 mod tests {
     use super::resolve_binary;
     use std::path::Path;
+
+    #[test]
+    fn robust_retry_only_from_modem73_2_4_2() {
+        use super::has_robust_retry;
+        assert!(has_robust_retry("2.4.2"));
+        assert!(has_robust_retry("2.4.10"));
+        assert!(has_robust_retry("3.0.0-rc1"));
+        assert!(!has_robust_retry("2.4.1"));
+        assert!(!has_robust_retry("2.3.9"));
+        assert!(!has_robust_retry(""));
+    }
 
     #[test]
     fn keeps_absolute_paths() {
