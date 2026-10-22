@@ -5,7 +5,7 @@ use super::gateway::{self, SendPath};
 use super::hub;
 use super::lease::{self, RadioPorts};
 use super::proto::{self, Incoming, MailMeta, MailOp, MailWire};
-use super::store::{MailRow, MailStore, WaitHeader};
+use super::store::{GetProgress, MailRow, MailStore, WaitHeader};
 use super::MailCmd;
 use crate::config::Config;
 use crate::error::{Error, Result};
@@ -172,6 +172,7 @@ struct TxCtx {
     waits: Mutex<HashMap<String, u64>>,
     checks: Mutex<u64>,
     quiet: Mutex<u64>,
+    gets: Mutex<u64>,
 }
 
 struct Assembler {
@@ -263,6 +264,7 @@ pub(super) fn spawn(
         waits: Mutex::new(HashMap::new()),
         checks: Mutex::new(0),
         quiet: Mutex::new(0),
+        gets: Mutex::new(0),
     };
     tokio::spawn(run(rx, ctx));
 }
@@ -315,11 +317,36 @@ async fn dispatch(ctx: &TxCtx, asm: &mut Assembler, cmd: MailCmd) {
             }
         }
         MailCmd::CheckGet { ids } => {
+            let rf = ctx.cfg.lock().mode == Mode::RadioPlus;
+            if rf {
+                let subject = ids
+                    .first()
+                    .and_then(|id| ctx.store.waiting().ok()?.into_iter().find(|w| &w.id == id))
+                    .map(|w| w.subject)
+                    .unwrap_or_default();
+                ctx.store.set_get_progress(GetProgress {
+                    state: "asking".into(),
+                    subject,
+                    ..GetProgress::default()
+                });
+                tracing::info!("mail get asked {} via the gateway", ids.join(","));
+                arm_get_quiet(ctx);
+            }
             let meta = MailMeta {
                 ids,
                 ..MailMeta::default()
             };
-            let _ = send_control(ctx, MailOp::GetReq, meta, "").await;
+            if let Err(e) = send_control(ctx, MailOp::GetReq, meta, "").await {
+                if rf {
+                    fail_get(ctx, &e.to_string());
+                }
+            }
+        }
+        MailCmd::GetQuiet { gen } => {
+            if *ctx.gets.lock() != gen || !ctx.store.get_progress().active() {
+                return;
+            }
+            fail_get(ctx, "No reply from the gateway.");
         }
         MailCmd::Inbound {
             incoming,
@@ -336,6 +363,32 @@ async fn dispatch(ctx: &TxCtx, asm: &mut Assembler, cmd: MailCmd) {
         MailCmd::TxStuck { id, gen } => on_tx_stuck(ctx, &id, gen),
         MailCmd::Quiet { gen } => on_quiet(ctx, asm, gen).await,
     }
+}
+
+/// A Get gives up after this long with nothing heard from the gateway. The
+/// answer to a Get takes about a minute on RDM-600S, so the timer restarts
+/// on every chunk.
+const GET_SILENT: Duration = Duration::from_secs(90);
+
+fn arm_get_quiet(ctx: &TxCtx) {
+    let gen = {
+        let mut n = ctx.gets.lock();
+        *n = n.wrapping_add(1);
+        *n
+    };
+    let tx = ctx.cmd_tx.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(GET_SILENT).await;
+        let _ = tx.send(MailCmd::GetQuiet { gen }).await;
+    });
+}
+
+fn fail_get(ctx: &TxCtx, why: &str) {
+    let mut p = ctx.store.get_progress();
+    p.state = "failed".into();
+    p.detail = why.to_string();
+    ctx.store.set_get_progress(p);
+    tracing::info!("mail get failed: {why}");
 }
 
 async fn send_one(ctx: &TxCtx, id: &str) -> Result<()> {
@@ -887,7 +940,27 @@ async fn on_incoming(ctx: &TxCtx, asm: &mut Assembler, incoming: Incoming, durin
             return;
         }
     }
-    match absorb(asm, wire) {
+    let get_chunk = !gateway_reply
+        && matches!(wire.op, MailOp::Data | MailOp::VoxData)
+        && ctx.store.get_progress().active();
+    let chunk_key = format!("{:?}:{}", wire.op, wire.mail_id);
+    let chunk_total = wire.count;
+    let absorbed = absorb(asm, wire);
+    if get_chunk && proto::chunk_acceptable(0, chunk_total) {
+        let got = match &absorbed {
+            Absorb::Ready(..) => chunk_total,
+            _ => asm
+                .buckets
+                .get(&chunk_key)
+                .map(|b| b.len() as u16)
+                .unwrap_or(0),
+        };
+        if ctx.store.note_get_chunks(got, chunk_total) {
+            tracing::info!("mail get chunk {got}/{chunk_total}");
+        }
+        arm_get_quiet(ctx);
+    }
+    match absorbed {
         Absorb::Rejected {
             mail_id,
             idx,
@@ -1376,8 +1449,8 @@ async fn deliver(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Resul
         to_addr: meta.to,
         subject: meta.subject,
         body,
-        ts: chrono::Utc::now().timestamp(),
-        state: "sent".into(),
+        ts: arrived_at(meta.ts),
+        state: INBOX_STATE.into(),
         unread: true,
         ack: meta.ack,
         retries: 0,
@@ -1389,6 +1462,13 @@ async fn deliver(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Resul
     ctx.store.insert(&row)?;
     // The mail fetched by Get is in, so its waiting header goes.
     let _ = ctx.store.clear_waiting_for(&row.from_addr, &row.subject);
+    let mut get = ctx.store.get_progress();
+    if get.active() {
+        get.state = "fetched".into();
+        get.got = get.total;
+        ctx.store.set_get_progress(get);
+        tracing::info!("mail fetched {} from {}", row.id, row.from_addr);
+    }
     let us = cfg.callsign.to_ascii_uppercase();
     if let Some(from_cs) = proto::callsign_from_wcr(&row.from_addr) {
         note_mail(ctx, &from_cs, &us);
@@ -1462,12 +1542,25 @@ async fn answer_get(ctx: &TxCtx, req: &MailMeta, auth: &str) -> Result<()> {
             subject,
             dest: who.clone(),
             ack: false,
+            ts: msg.get("ts").and_then(|x| x.as_i64()).unwrap_or(0),
             ..MailMeta::default()
         };
         let id = proto::compute_mail_id(&meta.from, &meta.to, &meta.subject, &body, false);
         reply_chunks(ctx, MailOp::Data, &id, &meta, &body).await?;
     }
     Ok(())
+}
+
+/// State of fetched inbound mail. Not "sent": that painted [ok] in the Inbox.
+const INBOX_STATE: &str = "received";
+
+/// The Inbox time: when the mail reached the hub, or now from an older hub.
+fn arrived_at(hub_ts: i64) -> i64 {
+    if hub_ts > 0 {
+        hub_ts
+    } else {
+        chrono::Utc::now().timestamp()
+    }
 }
 
 fn requester(req: &MailMeta) -> String {
@@ -1578,8 +1671,8 @@ async fn sync_hub(ctx: &TxCtx) -> Result<()> {
             to_addr: to.into(),
             subject: subject.into(),
             body: body.into(),
-            ts: chrono::Utc::now().timestamp(),
-            state: "sent".into(),
+            ts: arrived_at(msg.get("ts").and_then(|x| x.as_i64()).unwrap_or(0)),
+            state: INBOX_STATE.into(),
             unread: true,
             ack: false,
             retries: 0,

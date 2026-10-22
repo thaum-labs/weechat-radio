@@ -23,6 +23,8 @@ async fn main() {
 async fn real_main() -> Result<()> {
     let cli = Cli::parse();
     let cfg_path = cli.config.clone().unwrap_or_else(Config::default_path);
+    // Commands that change a setting save it to this file, not the default.
+    Config::set_active_path(&cfg_path);
     match cli.cmd {
         Command::Setup => {
             wcr::setup::run_wizard()?;

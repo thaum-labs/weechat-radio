@@ -226,14 +226,14 @@ const COMMANDS: &[Cmd] = &[
     Cmd {
         name: "report",
         usage: "/report CALL | /report auto on|off",
-        summary: "Ask a station for a signal report",
+        summary: "Signal report: how well CALL hears you (not weather)",
         args: &[],
         send_bare: false,
     },
     Cmd {
         name: "wx",
         usage: "/wx [CALL]",
-        summary: "Weather for your grid; send it to CALL",
+        summary: "Weather for your grid (not a signal report); CALL gets it privately",
         args: &[],
         send_bare: true,
     },
