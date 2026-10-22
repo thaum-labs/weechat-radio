@@ -23,7 +23,8 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=23" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -44,6 +45,15 @@
       <div class="sub" id="clock-local">LCL --:--</div>
     </div>
   </header>
+
+  <!-- Line icons for the cards. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="ico-cable" viewBox="0 0 24 24"><path d="M3 12 H9 M15 12 H21 M9 9 H15 V15 H9 Z" /></symbol>
+    <symbol id="ico-sound" viewBox="0 0 24 24"><path d="M4 9 H8 L13 5 V19 L8 15 H4 Z M16.5 9 C18 10.5 18 13.5 16.5 15 M19 6.5 C22 9.5 22 14.5 19 17.5" /></symbol>
+    <symbol id="ico-rig" viewBox="0 0 24 24"><rect x="2" y="10" width="20" height="10" rx="1" /><circle cx="7.5" cy="15" r="2.5" /><path d="M13 13.5 H19 M13 16.5 H19 M18 10 V3" /></symbol>
+    <symbol id="ico-bt" viewBox="0 0 24 24"><path d="M7 7.5 L17 16.5 L12 21 V3 L17 7.5 L7 16.5" /></symbol>
+  </svg>
+
   <div class="page-wrap">
     <main class="page-panel">
       <p class="crumb"><a href="/guides.html">guides</a> / radio</p>
@@ -55,74 +65,353 @@
         <p>Stay inside your licence. Suggested frequencies are only suggestions — check your band plan before you transmit. See <a href="/docs/calling.html">calling frequencies</a>.</p>
       </div>
 
-      <figure class="diagram">
-        <div class="dgm-wrap">
-          <svg class="dgm" viewBox="0 0 720 180" role="img" aria-labelledby="r1t r1d">
-            <title id="r1t">How a radio joins the station</title>
-            <desc id="r1d">Audio passes both ways between the radio and the computer through a cable. The computer runs wcr and modem73, and something has to key the radio: VOX, a USB serial line, or CAT.</desc>
-            <defs>
-              <marker id="mrfR" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path class="mk-rf" d="M0 0 L6 3 L0 6 z" />
-              </marker>
-            </defs>
-            <text class="tag" x="16" y="20">AUDIO GOES BOTH WAYS</text>
-            <line class="rf" marker-start="url(#mrfR)" marker-end="url(#mrfR)" x1="220" y1="90" x2="256" y2="90" />
-            <line class="rf" marker-start="url(#mrfR)" marker-end="url(#mrfR)" x1="444" y1="90" x2="480" y2="90" />
-            <rect class="box orange" x="16" y="64" width="202" height="54" />
-            <text class="on-orange" x="117" y="86" text-anchor="middle">radio</text>
-            <text class="sub" x="117" y="104" text-anchor="middle">your transmitter</text>
-            <rect class="box" x="258" y="64" width="184" height="54" />
-            <text x="350" y="86" text-anchor="middle">cable</text>
-            <text class="sub" x="350" y="104" text-anchor="middle">sound in and out</text>
-            <rect class="box accent" x="482" y="64" width="222" height="54" />
-            <text class="on-accent" x="593" y="86" text-anchor="middle">this computer</text>
-            <text class="sub" x="593" y="104" text-anchor="middle">wcr + modem73</text>
-            <text class="sub" x="350" y="144" text-anchor="middle">something also has to key the radio: VOX, USB serial, or CAT</text>
-          </svg>
-        </div>
-        <figcaption>The computer turns chat into audio. The radio sends that audio over the air.</figcaption>
-      </figure>
+      <section class="article-section" aria-labelledby="pathsH">
+        <h2 id="pathsH">Four paths</h2>
+        <p class="section-lead">Each path differs in what presses the radio’s transmit button. Pick one to watch a line go out and its receipt come back.</p>
 
-      <h2>Four paths</h2>
-      <div class="guide-grid">
-        <a class="guide-card" href="/guides/vr-n76.html" id="vr-n76">
-          <h2>D · VR-N76 / UV-PRO over Bluetooth</h2>
-          <p>Radios with a built-in packet TNC. No cable, no sound card: the app pairs and connects for you.</p>
-          <span class="tag">path D →</span>
-        </a>
-        <a class="guide-card" href="/guides/handheld.html" id="handheld">
-          <h2>A · Handheld + Digirig</h2>
-          <p>Walkie-talkie (Baofeng and friends) plus a USB Digirig or AIOC cable.</p>
-          <span class="tag">path A →</span>
-        </a>
-        <a class="guide-card" href="/guides/vox.html" id="vox">
-          <h2>B · Any radio with VOX</h2>
-          <p>Headphone cable. The radio transmits when it hears data tones.</p>
-          <span class="tag">path B →</span>
-        </a>
-        <a class="guide-card" href="/guides/hf.html" id="hf">
-          <h2>C · HF rig with CAT</h2>
-          <p>HF radio with USB. The computer can press PTT and change frequency.</p>
-          <span class="tag">path C →</span>
-        </a>
-      </div>
+        <figure class="diagram live-dgm" data-live-dgm data-setup="bt">
+          <div class="setup-switch" role="group" aria-label="Path" data-setup-switch hidden>
+            <button type="button" data-setup-btn="bt" aria-pressed="true">D Bluetooth</button>
+            <button type="button" data-setup-btn="digirig" aria-pressed="false">A Digirig</button>
+            <button type="button" data-setup-btn="vox" aria-pressed="false">B VOX</button>
+            <button type="button" data-setup-btn="cat" aria-pressed="false">C CAT</button>
+          </div>
+          <div class="live-dgm__body">
+            <div class="live-dgm__pic">
+              <div class="dgm-wrap">
+                <svg class="dgm" viewBox="0 0 440 286" role="img" aria-labelledby="rpT rpD">
+                <title id="rpT">How a radio joins the station</title>
+                <desc id="rpD">This computer and a radio, with another station on the same frequency. Path A: one USB cable to a Digirig, then one audio/PTT cable into a handheld; the Digirig presses transmit. Path B: two audio leads, and the radio keys itself on the sound (VOX). Path C: a sound-card lead and a CAT lead through Hamlib's rigctld into an HF radio; the computer presses transmit. Path D: Bluetooth to a VR-N76, which makes the packet itself with no sound card. In every path the receipt comes back the same way.</desc>
+                <defs>
+                  <marker id="mRadioLead" viewBox="0 0 6 6" refX="6" refY="3" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path class="mk-accent" d="M0 0 L6 3 L0 6 z" />
+                  </marker>
+                </defs>
+                <g data-node="other">
+                  <rect class="box orange" x="318" y="12" width="112" height="40" />
+                  <text class="on-orange" x="374" y="29" text-anchor="middle">other station</text>
+                  <text class="sub" x="374" y="44" text-anchor="middle">same frequency</text>
+                </g>
+                <g class="seg seg-rf" data-seg="rf"><path class="rf" d="M374 128 q5 -6 0 -12 t0 -12 t0 -12 t0 -12 t0 -12 t0 -12" /><path class="pkt" d="M374 128 q5 -6 0 -12 t0 -12 t0 -12 t0 -12 t0 -12 t0 -12" /></g>
+                <text class="sub on-rf" x="364" y="96" text-anchor="end">on the air</text>
+                <g data-node="pc">
+                  <rect class="box accent" x="24" y="26" width="140" height="84" />
+                  <path class="laptop-base" d="M12 110 H176 L184 120 H4 Z" />
+                  <text class="sub" x="34" y="43">this computer</text>
+                  <text class="scr" data-show="me-hi" x="34" y="70">&lt;G4ABC&gt; hi</text>
+                  <text class="scr ok" data-show="me-ok" x="110" y="70">[ok]</text>
+                  <text class="scr-input" x="34" y="98">&gt; _</text>
+                </g>
+                <g data-setups="digirig vox bt">
+                <g data-node="radio">
+                  <line class="antenna" x1="374" y1="170" x2="374" y2="136" />
+                  <circle class="antenna-tip" cx="374" cy="134" r="2.5" />
+                  <rect class="box orange" x="334" y="170" width="48" height="88" rx="5" />
+                  <circle class="led" cx="370" cy="182" r="3.5" />
+                  <path class="grille" d="M344 218 H372 M344 225 H372 M344 232 H372 M344 239 H372" />
+                </g>
+                </g>
+                <g data-setups="cat" class="is-off">
+                <g data-node="rig">
+                  <path class="mast" d="M374 194 V134 M366 142 H382 M368 152 H380" />
+                  <rect class="box orange" x="300" y="194" width="120" height="46" rx="3" />
+                  <circle class="led" cx="406" cy="205" r="3.5" />
+                  <circle class="grille" cx="320" cy="222" r="7" />
+                  <path class="grille" d="M338 214 H396 M338 221 H396 M338 228 H396" />
+                  <text class="on-orange" x="360" y="258" text-anchor="middle">HF radio</text>
+                </g>
+                </g>
+                <g data-setups="digirig" class="is-off">
+                <g class="seg seg-sound" data-seg="usb"><path class="wire" d="M94 120 V214 H168" /><path class="pkt" d="M94 120 V214 H168" /></g>
+                <g class="seg seg-sound" data-seg="jack"><path class="wire" d="M252 214 H334" /><path class="pkt" d="M252 214 H334" /></g>
+                <g data-node="digirig">
+                  <rect class="box accent" x="168" y="196" width="84" height="36" />
+                  <text class="on-accent" x="210" y="212" text-anchor="middle">Digirig</text>
+                  <text class="sub" x="210" y="226" text-anchor="middle">or AIOC</text>
+                </g>
+                <text class="sub" x="100" y="170">USB</text>
+                <text class="sub" x="293" y="206" text-anchor="middle">audio/PTT</text>
+                <text class="sub" x="16" y="276">the Digirig presses transmit for you</text>
+                <text class="on-orange" x="358" y="276" text-anchor="middle">handheld</text>
+                </g>
+                <g data-setups="vox" class="is-off">
+                <g class="seg seg-sound" data-seg="v-out"><path class="wire" marker-end="url(#mRadioLead)" d="M110 120 V206 H334" /><path class="pkt" d="M110 120 V206 H334" /></g>
+                <g class="seg seg-sound" data-seg="v-in"><path class="wire" marker-end="url(#mRadioLead)" d="M334 222 H94 V120" /><path class="pkt" d="M334 222 H94 V120" /></g>
+                <text class="sub" x="222" y="200" text-anchor="middle">computer headphones → radio mic</text>
+                <text class="sub" x="214" y="238" text-anchor="middle">radio speaker → computer mic</text>
+                <text class="sub" x="16" y="276">VOX: the radio keys itself on the sound</text>
+                <text class="on-orange" x="358" y="276" text-anchor="middle">radio</text>
+                </g>
+                <g data-setups="cat" class="is-off">
+                <g class="seg seg-sound" data-seg="snd"><path class="wire" d="M110 120 V206 H300" /><path class="pkt" d="M110 120 V206 H300" /></g>
+                <g class="seg seg-sound" data-seg="cat"><path class="wire" d="M94 120 V228 H300" /><path class="pkt" d="M94 120 V228 H300" /></g>
+                <text class="sub" x="205" y="200" text-anchor="middle">sound card</text>
+                <text class="sub" x="197" y="244" text-anchor="middle">CAT · Hamlib rigctld</text>
+                <text class="sub" x="16" y="276">the computer presses transmit over CAT</text>
+                </g>
+                <g data-setups="bt">
+                <g class="seg seg-sound" data-seg="bt"><path class="wire bt" d="M94 120 V214 H334" /><path class="pkt" d="M94 120 V214 H334" /></g>
+                <text class="on-accent" x="214" y="206" text-anchor="middle">Bluetooth</text>
+                <text class="sub" x="214" y="232" text-anchor="middle">no cable, no sound card</text>
+                <text class="sub" x="16" y="276">the radio makes the 1200 bd packet itself</text>
+                <text class="on-orange" x="358" y="276" text-anchor="middle">VR-N76</text>
+                </g>
+                </svg>
+              </div>
+              <div class="live-status">
+                <p class="live-status__text" data-live-status aria-live="polite"></p>
+                <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
+              </div>
+            </div>
+            <div class="live-dgm__text">
+              <ul class="cards">
+                <li id="vr-n76">
+                  <svg class="card-ico" aria-hidden="true"><use href="#ico-bt" /></svg>
+                  <strong>D · VR-N76 / UV-PRO over Bluetooth</strong>
+                  <span>Radios with a built-in packet TNC. No cable, no sound card: the app pairs and connects for you. <a href="/guides/vr-n76.html">path&nbsp;D&nbsp;→</a></span>
+                </li>
+                <li id="handheld">
+                  <svg class="card-ico" aria-hidden="true"><use href="#ico-cable" /></svg>
+                  <strong>A · Handheld + Digirig</strong>
+                  <span>Walkie-talkie (Baofeng and friends) plus a USB Digirig or AIOC cable. <a href="/guides/handheld.html">path&nbsp;A&nbsp;→</a></span>
+                </li>
+                <li id="vox">
+                  <svg class="card-ico" aria-hidden="true"><use href="#ico-sound" /></svg>
+                  <strong>B · Any radio with VOX</strong>
+                  <span>Headphone cable. The radio transmits when it hears data tones. <a href="/guides/vox.html">path&nbsp;B&nbsp;→</a></span>
+                </li>
+                <li id="hf">
+                  <svg class="card-ico" aria-hidden="true"><use href="#ico-rig" /></svg>
+                  <strong>C · HF rig with CAT</strong>
+                  <span>HF radio with USB. The computer can press PTT and change frequency. <a href="/guides/hf.html">path&nbsp;C&nbsp;→</a></span>
+                </li>
+              </ul>
+            </div>
+          </div>
+          <figcaption>The computer turns chat into audio. The radio sends that audio over the air.</figcaption>
+          <script type="application/json" data-live-steps>
+          {
+            "bt": {
+              "steps": [
+                {
+                  "say": "The computer sends “hi” to the radio over Bluetooth, as data rather than sound.",
+                  "segs": [
+                    "bt"
+                  ],
+                  "show": [
+                    "me-hi"
+                  ]
+                },
+                {
+                  "say": "The radio’s own TNC makes the packet and transmits, and its light comes on.",
+                  "segs": [
+                    "rf"
+                  ],
+                  "on": [
+                    "radio"
+                  ],
+                  "ms": 2000
+                },
+                {
+                  "say": "The other station hears it and sends a receipt back.",
+                  "segs": [
+                    "<rf"
+                  ],
+                  "on": [
+                    "other"
+                  ],
+                  "ms": 1700
+                },
+                {
+                  "say": "The radio decodes the receipt and passes it back over Bluetooth.",
+                  "segs": [
+                    "<bt"
+                  ]
+                },
+                {
+                  "say": "Your line shows [ok]: it was delivered.",
+                  "show": [
+                    "me-ok"
+                  ]
+                }
+              ]
+            },
+            "digirig": {
+              "steps": [
+                {
+                  "say": "The computer plays “hi” as sound into the Digirig over USB.",
+                  "segs": [
+                    "usb"
+                  ],
+                  "show": [
+                    "me-hi"
+                  ]
+                },
+                {
+                  "say": "The Digirig presses the radio’s transmit button and feeds the sound into its jack.",
+                  "segs": [
+                    "jack"
+                  ],
+                  "on": [
+                    "digirig"
+                  ]
+                },
+                {
+                  "say": "The radio transmits and its light comes on.",
+                  "segs": [
+                    "rf"
+                  ],
+                  "on": [
+                    "radio"
+                  ],
+                  "ms": 1700
+                },
+                {
+                  "say": "The other station hears it and sends a receipt back.",
+                  "segs": [
+                    "<rf"
+                  ],
+                  "on": [
+                    "other"
+                  ],
+                  "ms": 1700
+                },
+                {
+                  "say": "Your radio plays the receipt through the Digirig into the computer.",
+                  "segs": [
+                    "<jack",
+                    "<usb"
+                  ],
+                  "chain": true,
+                  "ms": 2100
+                },
+                {
+                  "say": "Your line shows [ok]: it was delivered.",
+                  "show": [
+                    "me-ok"
+                  ]
+                }
+              ]
+            },
+            "vox": {
+              "steps": [
+                {
+                  "say": "The computer plays a 900 ms lead, then “hi”, into the radio’s microphone.",
+                  "segs": [
+                    "v-out"
+                  ],
+                  "show": [
+                    "me-hi"
+                  ],
+                  "ms": 1700
+                },
+                {
+                  "say": "The radio hears the sound, keys itself and transmits, and its light comes on.",
+                  "segs": [
+                    "rf"
+                  ],
+                  "on": [
+                    "radio"
+                  ],
+                  "ms": 1900
+                },
+                {
+                  "say": "The other station hears it and sends a receipt back.",
+                  "segs": [
+                    "<rf"
+                  ],
+                  "on": [
+                    "other"
+                  ],
+                  "ms": 1700
+                },
+                {
+                  "say": "The radio speaker plays the receipt into the computer’s microphone.",
+                  "segs": [
+                    "v-in"
+                  ]
+                },
+                {
+                  "say": "Your line shows [ok]; it takes a little longer because of VOX delay.",
+                  "show": [
+                    "me-ok"
+                  ]
+                }
+              ]
+            },
+            "cat": {
+              "steps": [
+                {
+                  "say": "The computer presses transmit over CAT and plays “hi” through the sound card.",
+                  "segs": [
+                    "cat",
+                    "snd"
+                  ],
+                  "show": [
+                    "me-hi"
+                  ],
+                  "ms": 1700
+                },
+                {
+                  "say": "The radio transmits and its light comes on.",
+                  "segs": [
+                    "rf"
+                  ],
+                  "on": [
+                    "rig"
+                  ],
+                  "ms": 1700
+                },
+                {
+                  "say": "The other station hears it and sends a receipt back.",
+                  "segs": [
+                    "<rf"
+                  ],
+                  "on": [
+                    "other"
+                  ],
+                  "ms": 1700
+                },
+                {
+                  "say": "The radio’s sound comes back through the sound card.",
+                  "segs": [
+                    "<snd"
+                  ]
+                },
+                {
+                  "say": "Your line shows [ok]: it was delivered.",
+                  "show": [
+                    "me-ok"
+                  ]
+                }
+              ]
+            }
+          }
+          </script>
+        </figure>
+      </section>
 
-      <h2>Audio: low / hot / good</h2>
-      <p>The status bar reads the receive level from modem73 (the sound program sitting next to <code>wcr</code>).</p>
-      <ul>
-        <li><strong>low</strong> — turn radio volume up, or raise the computer input.</li>
-        <li><strong>hot</strong> — turn it down. Distortion kills data.</li>
-        <li><strong>good</strong> — leave it.</li>
-      </ul>
+      <section class="article-section" aria-labelledby="audioH">
+        <h2 id="audioH">Audio: low / hot / good</h2>
+        <p>The status bar reads the receive level from modem73 (the sound program sitting next to <code>wcr</code>).</p>
+        <dl class="mark-list">
+          <div><dt><code>low</code></dt><dd>turn radio volume up, or raise the computer input.</dd></div>
+          <div><dt><code>hot</code></dt><dd>turn it down. Distortion kills data.</dd></div>
+          <div><dt><code>good</code></dt><dd>leave it.</dd></div>
+        </dl>
+      </section>
 
-      <h2>When the path is weak</h2>
-      <p>If the other station is faint, or HF is fading, do not turn the audio up into <strong>hot</strong>. Pick a slower preset and let the program retry. Guide: <a href="/docs/weak.html">weak signals</a>.</p>
-      <p><code>hf-poor</code> is the usual HF calling preset. <code>hf-weak</code> and <code>hf-deep</code> are slower. The status bar <strong>TX</strong> and <strong>RETRY</strong> fields show when the program has stepped down on its own.</p>
+      <section class="article-section" aria-labelledby="weakH">
+        <h2 id="weakH">When the path is weak</h2>
+        <p>If the other station is faint, or HF is fading, do not turn the audio up into <strong>hot</strong>. Pick a slower preset and let the program retry. Guide: <a href="/docs/weak.html">weak signals</a>.</p>
+        <p><code>hf-poor</code> is the usual HF calling preset. <code>hf-weak</code> and <code>hf-deep</code> are slower. The status bar <strong>TX</strong> and <strong>RETRY</strong> fields show when the program has stepped down on its own.</p>
+      </section>
 
       <p class="next">No radio yet? The <a href="/guides/start.html">5-minute start</a> works on internet only.</p>
     </main>
   </div>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=10"></script>
+  <script src="/live-dgm.js?v=1"></script>
 </body>
 </html>
