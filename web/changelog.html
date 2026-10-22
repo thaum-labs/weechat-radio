@@ -50,6 +50,21 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v0.1.110</p>
+          <p>Thu, 22 Oct 2026</p>
+        </h3>
+        <pre>Email on Radio+: Get now opens a progress window (asking the gateway, chunks received, fetched) and says "No reply from the gateway." if nothing comes back. Fetched mail no longer shows [ok] in the Inbox, and its time is when the mail arrived, not when you fetched it.
+
+Desktop app: Stop stops the station and keeps the window open, also on Windows. The / command list sits on a solid panel above the typing line, so every row is readable.
+
+Chat: a /report request heard on the radio is answered on the radio, not through the hub first. /report and /wx say the answer is private and lives in the CALL tab, and the help tells the two apart (signal report versus weather). Bare /report mentions /report auto on|off.
+
+Gateways: a private line addressed to the gateway itself is no longer passed to the hub. On the map, a station placed "via" a tower now shows its real mode, such as Radio+.
+
+Settings: with wcr -c FILE, settings changed by commands (/freq, /snr, /report auto and the rest) are saved to FILE, not the default wcr.toml.</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>v0.1.109</p>
           <p>Wed, 21 Oct 2026</p>
         </h3>

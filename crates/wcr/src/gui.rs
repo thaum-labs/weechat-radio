@@ -575,6 +575,13 @@ struct MailSend {
     step: crate::mail::SendStep,
 }
 
+/// A Radio+ Get under way: the gateway sends the mail back in chunks.
+struct MailGet {
+    from: String,
+    subject: String,
+    step: crate::mail::SendStep,
+}
+
 /// The station stopped answering about a send for this long.
 const MAIL_SEND_SILENT: Duration = Duration::from_secs(30);
 
@@ -664,6 +671,7 @@ struct GuiApp {
     mail_open: Option<crate::mail::MailRow>,
     mail_rows: Vec<crate::mail::MailRow>,
     mail_waiting: Vec<crate::mail::WaitHeader>,
+    mail_get: Option<MailGet>,
     mail_confirm: Option<MailConfirm>,
     mail_unread: u64,
     mail_gateway: String,
@@ -774,6 +782,7 @@ impl GuiApp {
             mail_open: None,
             mail_rows: Vec::new(),
             mail_waiting: Vec::new(),
+            mail_get: None,
             mail_confirm: None,
             mail_unread: 0,
             mail_gateway: form.mail_gateway,
@@ -2066,6 +2075,7 @@ impl eframe::App for GuiApp {
             });
 
         self.paint_mail_send(ctx);
+        self.paint_mail_get(ctx);
         if self.confirm_radio {
             egui::Window::new("Switch to radio?")
                 .collapsible(false)
@@ -2346,6 +2356,8 @@ impl eframe::App for GuiApp {
                 }
                 ui.add_space(6.0);
                 let active = self.active_channel.clone();
+                let panel_top = ui.max_rect().top();
+                let mut input_rect: Option<egui::Rect> = None;
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
@@ -2363,6 +2375,7 @@ impl eframe::App for GuiApp {
                         if enter {
                             resp.request_focus();
                         }
+                        input_rect = Some(resp.rect);
                         if ui
                             .add(
                                 egui::Button::new(RichText::new("send").color(ACCENT).monospace())
@@ -2376,31 +2389,6 @@ impl eframe::App for GuiApp {
                             resp.request_focus();
                         }
                     });
-                    if !suggestions.is_empty() {
-                        ui.label(
-                            RichText::new("tab complete  ·  ↑↓ pick  ·  enter run")
-                                .color(DIM)
-                                .small()
-                                .monospace(),
-                        );
-                        egui::ScrollArea::vertical()
-                            .id_salt("slash_palette")
-                            .max_height(palette_h.max(8.0))
-                            .show(ui, |ui| {
-                                for (i, s) in suggestions.iter().enumerate() {
-                                    let selected = i == self.palette_i;
-                                    let row = format!("{:<22}  {}", s.label, s.hint);
-                                    let color = if selected { ORANGE } else { PURPLE };
-                                    let resp = ui.selectable_label(
-                                        selected,
-                                        RichText::new(row).color(color).monospace(),
-                                    );
-                                    if resp.clicked() {
-                                        self.apply_suggestion(s, true);
-                                    }
-                                }
-                            });
-                    }
                     ui.add_space(4.0);
                     ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                         egui::ScrollArea::vertical()
@@ -2488,6 +2476,54 @@ impl eframe::App for GuiApp {
                             });
                     });
                 });
+                // The command list sits on an opaque panel right above the
+                // input, drawn over the chat. Inline in the layout, the chat
+                // painted through it (QA v0.1.109: /snr /wx /report unreadable).
+                if let (Some(input), false) = (input_rect, suggestions.is_empty()) {
+                    let room = (input.top() - panel_top - 8.0).max(28.0);
+                    let height = palette_h.min(room);
+                    let width = input.width().max(320.0);
+                    let mut pick = None;
+                    egui::Area::new(egui::Id::new("slash_palette_popup"))
+                        .order(egui::Order::Foreground)
+                        .fixed_pos(egui::pos2(input.left(), input.top() - height - 4.0))
+                        .show(ui.ctx(), |ui| {
+                            egui::Frame::none()
+                                .fill(SHELL)
+                                .stroke(hairline(ACCENT))
+                                .inner_margin(egui::Margin::same(6.0))
+                                .show(ui, |ui| {
+                                    ui.set_width(width);
+                                    ui.set_max_height(height);
+                                    ui.label(
+                                        RichText::new("tab complete  ·  ↑↓ pick  ·  enter run")
+                                            .color(DIM)
+                                            .small()
+                                            .monospace(),
+                                    );
+                                    egui::ScrollArea::vertical()
+                                        .id_salt("slash_palette")
+                                        .max_height((height - 28.0).max(8.0))
+                                        .show(ui, |ui| {
+                                            for (i, s) in suggestions.iter().enumerate() {
+                                                let selected = i == self.palette_i;
+                                                let row = format!("{:<22}  {}", s.label, s.hint);
+                                                let color = if selected { ORANGE } else { PURPLE };
+                                                let resp = ui.selectable_label(
+                                                    selected,
+                                                    RichText::new(row).color(color).monospace(),
+                                                );
+                                                if resp.clicked() {
+                                                    pick = Some(s.clone());
+                                                }
+                                            }
+                                        });
+                                });
+                        });
+                    if let Some(s) = pick {
+                        self.apply_suggestion(&s, true);
+                    }
+                }
             });
         self.sync_tray();
         paint_scan(ctx);
@@ -3568,14 +3604,15 @@ fn kill_pid_tree(pid: u32) {
     }
 }
 
+/// Ends the station's `wcr node` and modem73, never this window. Started as
+/// `wcr gui`, the window is itself a wcr process: killing every wcr by name
+/// made Stop close the app like Quit (QA v0.1.109, Windows).
 fn kill_sidecars() {
     #[cfg(windows)]
     {
-        for name in ["wcr.exe", "modem73.exe"] {
-            let mut cmd = Command::new(system32("taskkill.exe"));
-            cmd.args(["/F", "/T", "/IM", name]);
-            run_hidden(&mut cmd);
-        }
+        let mut cmd = Command::new(system32("taskkill.exe"));
+        cmd.args(["/F", "/T", "/IM", "modem73.exe"]);
+        run_hidden(&mut cmd);
         let our = std::process::id();
         let mut ps = Command::new(system32("WindowsPowerShell\\v1.0\\powershell.exe"));
         ps.args([
@@ -3592,8 +3629,14 @@ fn kill_sidecars() {
     }
     #[cfg(not(windows))]
     {
-        for name in ["wcr", "modem73"] {
-            let _ = Command::new("pkill").args(["-x", name]).status();
+        let _ = Command::new("pkill").args(["-x", "modem73"]).status();
+        let our = std::process::id().to_string();
+        if let Ok(out) = Command::new("pgrep").args(["-x", "wcr"]).output() {
+            for pid in String::from_utf8_lossy(&out.stdout).split_whitespace() {
+                if pid != our {
+                    let _ = Command::new("kill").args(["-TERM", pid]).status();
+                }
+            }
         }
     }
 }
@@ -3741,6 +3784,16 @@ impl GuiApp {
             return;
         };
         let unread = tab.get("unread").and_then(|v| v.as_u64()).unwrap_or(0);
+        if let Some(get) = self.mail_get.as_mut().filter(|g| !g.step.done) {
+            if let Some(p) = tab
+                .get("get")
+                .and_then(|v| serde_json::from_value::<crate::mail::GetProgress>(v.clone()).ok())
+            {
+                let next = crate::mail::get_step(&p);
+                let fraction = next.fraction.max(get.step.fraction);
+                get.step = crate::mail::SendStep { fraction, ..next };
+            }
+        }
         let notice = tab.get("notice").and_then(|v| v.as_str()).unwrap_or("");
         if !notice.is_empty() && notice != self.mail_notice {
             self.mail_notice = notice.to_string();
@@ -3916,6 +3969,60 @@ impl GuiApp {
         });
         if close {
             self.mail_send = None;
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(250));
+        }
+    }
+
+    /// The Radio+ Get window. It does not block the app: a Get only listens.
+    fn paint_mail_get(&mut self, ctx: &egui::Context) {
+        let Some(get) = self.mail_get.as_ref() else {
+            return;
+        };
+        let step = get.step.clone();
+        let mut close = false;
+        egui::Window::new(if step.done {
+            if step.ok {
+                "Fetched"
+            } else {
+                "Not fetched"
+            }
+        } else {
+            "Getting email"
+        })
+        .id(egui::Id::new("mail_get_window"))
+        .order(egui::Order::Foreground)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .frame(chrome(TOPBAR))
+        .show(ctx, |ui| {
+            ui.set_min_width(420.0);
+            ui.label(
+                RichText::new(format!("{}  {}", get.from, get.subject))
+                    .color(ACCENT)
+                    .monospace(),
+            );
+            ui.add_space(6.0);
+            let color = if step.done && !step.ok { ORANGE } else { GREEN };
+            ui.add(
+                egui::ProgressBar::new(step.fraction)
+                    .desired_width(420.0)
+                    .fill(color)
+                    .show_percentage(),
+            );
+            ui.add_space(4.0);
+            ui.label(RichText::new(&step.label).color(FG).monospace());
+            ui.add_space(8.0);
+            if ui
+                .add(hair_btn(if step.done { "OK" } else { "Hide" }, ORANGE))
+                .clicked()
+            {
+                close = true;
+            }
+        });
+        if close {
+            self.mail_get = None;
         } else {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
@@ -4269,11 +4376,22 @@ impl GuiApp {
                 let cancel = ui.add(hair_btn("Cancel", PURPLE));
                 if send.clicked() {
                     if confirm.kind == "get" {
-                        let _ = mail_http(
+                        let asked = mail_http(
                             "POST",
                             "/mail/get",
                             Some(&serde_json::json!({ "ids": confirm.ids }).to_string()),
                         );
+                        // Over the internet a Get takes a second; Radio+ gets a window.
+                        if asked.is_some() && mode == Mode::RadioPlus {
+                            self.mail_get = Some(MailGet {
+                                from: confirm.to.clone(),
+                                subject: confirm.subject.clone(),
+                                step: crate::mail::get_step(&crate::mail::GetProgress {
+                                    state: "asking".into(),
+                                    ..Default::default()
+                                }),
+                            });
+                        }
                     } else {
                         self.mail_hold = true;
                         if let Some(v) = mail_http(
