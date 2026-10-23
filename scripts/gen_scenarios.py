@@ -325,7 +325,7 @@ steps["hops"] = {"viewBox": "0 0 440 266", "viewBoxWide": "0 0 800 270", "steps"
 ], "done": "G4ABC and G4MNO never hear each other, yet they hold a conversation through two relays on one dial."}
 
 # 5. Email over radio ---------------------------------------------------------
-EMAIL_INBOX = [("e-inbox", "inbox: 1 waiting"), ("e-ch1", "getting: 1 of 2"), ("e-ch2", "getting: 2 of 2"),
+EMAIL_INBOX = [("e-inbox", "inbox: 1 waiting"), ("e-ch1", "getting: 2 of 4"), ("e-ch2", "getting: 4 of 4"),
                ("e-got", "inbox: Re: Meeting point")]
 groups.append(group("email", "\n".join([
     '<g data-node="e-mail">',
@@ -456,8 +456,14 @@ def app_window(setup, me, mode, dial, side, lines, stations=(),
 
 
 # --- Email window: the app's Email tab for the email setup ---
-MAIL_OUT = "Meet at the car park at 4?"
-MAIL_IN = "Car park at 4 works. I will bring the map and a flask. If it rains, the cafe instead. Alex"
+MAIL_OUT = ("Hi Alex,\n\n"
+            "We’re on the summit now and will start down within the hour. Shall we meet at the "
+            "car park by the visitor centre at 4? If we’re running late I’ll send word over the radio.\n\n"
+            "Thanks,\nG4ABC")
+MAIL_IN = ("Hi,\n\n"
+           "The car park at 4 works for me. I’ll bring the map and a flask of tea. The forecast says "
+           "rain after 5, so if it turns early, let’s meet in the café by the entrance instead.\n\n"
+           "Safe walk down,\nAlex")
 
 
 def mail_window():
@@ -508,28 +514,28 @@ def mail_window():
         + out_row("e-tx", "[tx]")
         + out_row("e-gw", "[gw]", "  at gateway")
         + out_row("e-sent", '<span class="tick-ok">[ok]</span>', "  with Resend")
-        + f'<p data-show="e-inbox"><span class="app-mail__dim">waiting</span>  alex@example.com  Re: Meeting point  {len(MAIL_IN)} B</p>'
+        + f'<p data-show="e-inbox"><span class="app-mail__dim">waiting</span>  alex@example.com  Re: Meeting point  {len(MAIL_IN.encode())} B</p>'
         + f'<p data-show="e-got">{in_row}</p>'
         + f'<p data-show="e-open" class="is-cur">{in_row}</p></div>',
         '                  <div class="app-mail__open">'
         '<div data-show="e-open"><span class="app-mail__acc">19:48:10  alex@example.com → G4ABC@mail.weechatradio.com</span>'
-        f'<span class="app-mail__acc">Re: Meeting point</span><span>{MAIL_IN}</span></div></div>',
+        f'<span class="app-mail__acc">Re: Meeting point</span><span class="app-mail__text">{MAIL_IN}</span></div></div>',
         '                  <div class="app-mail__compose slot">'
         f'<div data-show="e-compose">{compose("alex@example.com", "Meeting point", MAIL_OUT)}</div>'
         f'<div data-show="e-sent">{compose("", "", "")}</div></div>',
         '                  <div class="app-mail__dlg slot">'
         '<div data-show="e-dlg-send"><b>Send on the radio?</b><span>To  alex@example.com</span><span>Subject  Meeting point</span>'
-        f'<span class="app-mail__dim">{len(MAIL_OUT)} / 4096 B</span><span>radio-plus  vhf-fm  144.950</span>'
-        '<span>About 4.2 s on the air (1 burst @ vhf-fm). Not Sent until the gateway accepts it.</span>'
+        f'<span class="app-mail__dim">{len(MAIL_OUT.encode())} / 4096 B</span><span>radio-plus  vhf-fm  144.950</span>'
+        '<span>About 14 s on the air (2 bursts @ vhf-fm). Not Sent until the gateway accepts it.</span>'
         + buttons("Send", "Cancel") + '</div>'
         '<div data-show="e-tx"></div>'
         '<div data-show="e-dlg-get"><b>Get mail?</b><span class="app-mail__acc">alex@example.com  Re: Meeting point</span>'
-        f'<span class="app-mail__dim">{len(MAIL_IN)} / 4096 B</span><span>radio-plus  vhf-fm  144.950</span>'
-        '<span>About 9 s on the air (2 bursts @ vhf-fm).</span>'
+        f'<span class="app-mail__dim">{len(MAIL_IN.encode())} / 4096 B</span><span>radio-plus  vhf-fm  144.950</span>'
+        '<span>About 22 s on the air (4 bursts @ vhf-fm).</span>'
         + buttons("Get", "Cancel") + '</div>'
         f'<div data-show="e-dlg-ask">{progress(10, "Asking the gateway…")}</div>'
-        f'<div data-show="e-ch1">{progress(52, "Chunks received 1 of 2")}</div>'
-        f'<div data-show="e-ch2">{progress(95, "Chunks received 2 of 2")}</div>'
+        f'<div data-show="e-ch1">{progress(52, "Chunks received 2 of 4")}</div>'
+        f'<div data-show="e-ch2">{progress(95, "Chunks received 4 of 4")}</div>'
         f'<div data-show="e-got">{progress(100, "Fetched. It is in your Inbox.", title="Fetched", done=True)}</div>'
         '<div data-show="e-open"></div></div>',
         '                </div>',
