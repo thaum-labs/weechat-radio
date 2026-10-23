@@ -225,6 +225,27 @@ When the picture needs more room than the column beside its text allows (`docs/s
 - Draw the diagram twice inside the one `.dgm-wrap`: `<svg class="dgm" data-layout="wide">` about 800 wide for desktop, and `<svg class="dgm" data-layout="narrow">` about 440 wide for phones. `docs.css` shows one by screen width (761px and up is wide). Give each setup a `"viewBoxWide"` beside its `"viewBox"`.
 - Both drawings use the same `data-seg`, `data-node` and `data-show` ids, and each path is drawn in the same direction in both, so one list of steps drives both.
 
+### App window (the chat as the diagram plays)
+
+Under the status line, `div.app-win` draws the chat (or Email) part of the app for one station, one per setup:
+
+```html
+<div class="app-win mode-radio-plus" data-setups="home">        <!-- add is-off for setups other than the default -->
+  <p class="app-win__bar"><span class="app-win__dot"></span><b>G4ABC · radio-plus · 144.950</b><span>WeeChat Radio</span></p>
+  <div class="app-win__body">
+    <ul class="app-win__side"><li>#bulletin</li><li class="is-active">#walk</li><li class="app-win__label">stations</li><li>G4DEF [2m]</li></ul>
+    <ol class="app-win__lines">
+      <li data-show="ha-tx"><time>20:14:05</time> <span class="nick me">[G4ABC]</span> hi #walk
+        <span class="ticks"><span data-show="ha-tx">[tx]</span><span data-show="ha-gw">[gw]</span></span></li>
+      <li data-show="ha-re"><time>20:14:41</time> <span class="nick">[G4XYZ]</span> hello <span class="via via-rf">[rf]</span></li>
+    </ol>
+    <p class="app-win__input"><span class="app-win__sym">$</span><span class="app-win__field">message in this channel…</span><span class="app-win__send">send</span></p>
+  </div>
+</div>
+```
+
+Lines and marks use the same `data-show` names as the drawings, so a step that shows `ha-gw` on the diagram also moves the mark to `[gw]`. A `.ticks` row shows only its latest mark; `.tick-ok` colours `[ok]` green as the app does. Your own nick is `.nick.me` (orange), others `.nick`; `via-rf` / `via-inet` give `[rf]` / `[net]` their colours. On phones the side list hides.
+
 Keeping two drawings in step by hand is error-prone, so the scenarios page is built by `scripts/gen_scenarios.py` (run `python3 scripts/gen_scenarios.py` from the repo root). Edit the script, not the page.
 
 ## Checks before a page is done
