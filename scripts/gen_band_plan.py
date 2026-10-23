@@ -45,19 +45,46 @@ SECTIONS = [
     ("uhf", "UHF and up", "300 MHz and above. Short range, small antennas, and licence-free PMR446 and FRS.",
      ["70cm", "PMR446", "FRS", "23cm"]),
 ]
-LICENCE_FREE_NOTE = {
-    "CB": "Licence-free. The edges cover every regional CB plan the app knows (NZ 26 MHz, German extra channels, UK 27/81). Check your national CB plan.",
-    "MURS": "Licence-free in the US.",
-    "PMR446": "Licence-free in the UK and Europe.",
-    "FRS": "Licence-free in the US and Canada.",
+# Why each spot is where it is, from the published band plans (IARU Region 1, RSGB, ARRL)
+# and the CB rules for each country. Keep these in step with CALLING_FREQS.
+WHY = {
+    "160m": "Inside the narrow data segment at the bottom of the band, just below FT8 on 1.840. Data is USB here, though voice on this band is LSB.",
+    "80m": "In the data segment (3.570–3.600 in Region 1), a few kHz above FT8 on 3.573. Data is USB here, though voice on this band is LSB.",
+    "60m": "60m is a small shared allocation (5.3515–5.3665 worldwide) and 5.357 is where data gathers, FT8 included, so keep overs short. Channels and power limits differ a lot by country.",
+    "40m": "7.045 is in Region 1’s data segment (7.040–7.050). The Americas and Australia keep data higher (7.080–7.125 in the ARRL plan), so 7.090 there. Both stay clear of FT8 on 7.074. Data is USB, though voice on this band is LSB.",
+    "30m": "30m is for CW and data only. 10.140 is in the data segment (10.140–10.150), just above FT8 on 10.136.",
+    "20m": "14.070 is the traditional start of the data segment, home of PSK31, just below FT8 on 14.074.",
+    "17m": "In the data segment. 18.100 is also the FT8 dial, so expect busy neighbours.",
+    "15m": "21.070 is the PSK31 spot in the data segment, just below FT8 on 21.074.",
+    "12m": "24.920 is the PSK31 spot in the data segment, just above FT8 on 24.915.",
+    "CB": "Licence-free. Calling channels differ by country, so each country has its own picks. The full bar covers every regional plan the app knows: NZ 26 MHz, the German extra channels below channel 1, and the UK 27/81 band above.",
+    "10m": "28.120 is in the data area low in the band, clear of FT8 on 28.074. 29.250 is in the segment for data and unattended stations (29.200–29.300), for FM sets.",
+    "6m": "50.230 is USB data low in the band, away from MSK144 on 50.260 and FT8 on 50.313. 50.620 is in the digital communications segment (50.500–50.700 in the UK plan), for FM sets.",
+    "4m": "70.4875 is the UK 4m packet channel. 4m exists only in some countries, mostly in Europe.",
+    "2m": "144.950 is in Region 1’s digital communications segment, clear of APRS on 144.800. 145.010 is in the US packet segment (144.900–145.100). 145.530 is in the US miscellaneous and experimental segment, away from the 146.520 calling channel. 146.550 is an FM simplex pick for Australia. Keep chat off the APRS channels.",
+    "MURS": "Channel 1 of 5, which every MURS radio has. Licence-free in the US.",
+    "1.25m": "In the FM simplex range (223.400–223.520), below the 223.500 calling channel. US only.",
+    "70cm": "433.625 is the first of Region 1’s digital communications channels (433.625–433.775). 439.950 and 441.000 are FM picks for Australia and the US; 70cm use varies a lot, so check your local plan.",
+    "PMR446": "Channel 1, which every PMR446 radio has. Licence-free in the UK and Europe.",
+    "FRS": "Channel 1, which every FRS radio has. Licence-free in the US and Canada.",
+    "23cm": "Check this one: in the IARU Region 1 plan, 1296.800–1296.994 is for beacons only. In Region 1, pick an FM simplex channel from your national plan instead.",
 }
-BAND_NOTE = {
-    "160m": "Data is USB here, though voice on this band is LSB.",
-    "80m": "Data is USB here, though voice on this band is LSB.",
-    "40m": "Data is USB here, though voice on this band is LSB. The UK and Europe stop at 7.200.",
-    "60m": "Channels and power limits differ a lot by country.",
-    "2m": "Keep chat off the APRS channels.",
+WHY_REGION = {
+    "UK": "Channel 19 is the calling channel on both the CEPT band and the older UK 27/81 band. SSB sets use channel 15, away from it.",
+    "EU": "Channel 19 is the common FM calling and road channel. SSB sets use channel 15, away from it.",
+    "DE": "Germany has 80 channels. Channel 1 is a common FM calling channel for German speakers; channel 41 starts the extra channels below it.",
+    "US/CA": "Channel 19 is the road channel almost every AM set listens to. Sideband sets use 36 (USB) and 38 (LSB, the usual SSB calling channel).",
+    "AU": "Channels 11 (AM) and 16 (SSB) are the official calling channels. Channel 35 is where SSB DX contacts gather.",
+    "NZ": "Channel 11 AM and channel 35 SSB match Australia. NZ also has a 26 MHz band below the common channels, with its own channel 35.",
 }
+RULES = [
+    "Inside the data or digital part of each band plan, so long data bursts stay out of the voice and CW segments.",
+    "Next to the busy automated spots (FT8, JS8, APRS) where the plan allows, not on them. 60m and 17m are too small to avoid FT8.",
+    "One spot per band and region, so stations find each other without agreeing a frequency first.",
+    "On licence-free bands and CB, channel 1 or the national calling channel: every set can tune it, and people already listen there.",
+    "Mode follows the radio: USB data on HF and SSB CB, FM on VHF, UHF and FM CB sets, AM where typical CB sets are AM only.",
+]
+
 
 
 def mhz(khz):
@@ -76,48 +103,95 @@ def mode_cls(mode):
     return {"USB": "usb", "LSB": "usb", "FM": "fm", "AM": "am"}[mode]
 
 
+# CB: the common 40-channel block gets a close-up, and spots are grouped by country.
+ZOOM = {"CB": (26_965, 27_405, "ch 1–40", "Channels 1 to 40, used in most countries")}
+BY_REGION = {"CB": ["UK", "EU", "DE", "US/CA", "AU", "NZ"]}
+
+
+def ticks_html(spots, avoid, lo, hi, labels=False):
+    """Marks for one bar. A frequency used in two modes gets a mark per mode, so the
+    region filter shows the right colour."""
+    pos = lambda khz: (khz - lo) / (hi - lo) * 100
+    out, seen, freqs, last, lifted = [], set(), set(), -99.0, False
+    for s in spots:
+        key = (s["khz"], mode_cls(s["mode"]))
+        if key in seen or not lo <= s["khz"] <= hi:
+            continue
+        seen.add(key)
+        same = [x for x in spots if (x["khz"], mode_cls(x["mode"])) == key]
+        g = " ".join(sorted({g for x in same for g in REGION_GROUPS[x["region"]].split()}))
+        title = "; ".join(f'{mhz(x["khz"])} {x["mode"]} {x["region"]}' for x in same)
+        label = ""
+        if labels:
+            ch = next((m.group(1) for x in same for m in [re.search(r"(?:^|CEPT )ch (\d+)", x["note"])] if m), "")
+            if s["khz"] not in freqs:
+                # Lift a label that would touch the one before it.
+                lifted = pos(s["khz"]) - last < 6 and not lifted
+                last = pos(s["khz"])
+            label = f'<em{" class=\"bp-tick--hi\"" if lifted else ""}>{ch}</em>' if ch else ""
+        freqs.add(s["khz"])
+        out.append(f'<span class="bp-tick bp-{mode_cls(s["mode"])}" style="left:{pos(s["khz"]):.2f}%" '
+                   f'data-groups="{g}" title="{title}">{label}</span>')
+    for a in avoid:
+        out.append(f'<span class="bp-tick bp-avoid" style="left:{pos(a["khz"]):.2f}%" data-groups="{REGION_GROUPS[a["region"]]}" '
+                   f'title="{mhz(a["khz"])} {a["label"]} {a["region"]}: keep chat off"></span>')
+    return "".join(out), len(freqs)
+
+
+def chip(s, where=True):
+    note = f'<span class="bp-note">{s["note"]}</span>' if s["note"] else '<span class="bp-note"></span>'
+    region = f' <span class="bp-where">{s["region"]}</span>' if where else ""
+    return (f'<li class="bp-{mode_cls(s["mode"])}" data-groups="{REGION_GROUPS[s["region"]]}">'
+            f'<b>{mhz(s["khz"])}</b> <span class="bp-mode">{s["mode"]}</span> {note}{region} <code>{s["preset"]}</code></li>')
+
+
 def band_html(name):
     spots = [s for s in SPOTS if s["band"] == name]
     avoid = [a for a in AVOID if a["band"] == name]
     lo, hi = band_range(name, spots)
     groups = " ".join(sorted({g for s in spots for g in REGION_GROUPS[s["region"]].split()}))
-    pos = lambda khz: f"{(khz - lo) / (hi - lo) * 100:.2f}%"
+    ticks, count = ticks_html(spots, avoid, lo, hi)
 
-    ticks, seen = [], set()
-    for s in spots:
-        if s["khz"] in seen:
-            continue
-        seen.add(s["khz"])
-        same = [x for x in spots if x["khz"] == s["khz"]]
-        g = " ".join(sorted({g for x in same for g in REGION_GROUPS[x["region"]].split()}))
-        title = "; ".join(f'{mhz(x["khz"])} {x["mode"]} {x["region"]}' for x in same)
-        ticks.append(f'<span class="bp-tick bp-{mode_cls(s["mode"])}" style="left:{pos(s["khz"])}" data-groups="{g}" title="{title}"></span>')
-    for a in avoid:
-        ticks.append(f'<span class="bp-tick bp-avoid" style="left:{pos(a["khz"])}" data-groups="{REGION_GROUPS[a["region"]]}" '
-                     f'title="{mhz(a["khz"])} {a["label"]} {a["region"]}: keep chat off"></span>')
+    seg = edge_label = zoom = ""
+    if name in ZOOM:
+        zlo, zhi, short, long = ZOOM[name]
+        left, width = (zlo - lo) / (hi - lo) * 100, (zhi - zlo) / (hi - lo) * 100
+        seg = f'<span class="bp-seg" style="left:{left:.2f}%;width:{width:.2f}%"></span>'
+        edge_label = f'<span class="bp-seg-label" style="left:{left + width / 2:.2f}%">{short}</span>'
+        zticks, _ = ticks_html(spots, [], zlo, zhi, labels=True)
+        zoom = f'''
+            <p class="bp-zoom-title">Close up: {long.lower()}, {mhz(zlo)}–{mhz(zhi)} MHz</p>
+            <div class="bp-bar bp-bar--zoom" role="img" aria-label="{long}, {mhz(zlo)} to {mhz(zhi)} MHz, with channel numbers">
+              {zticks}
+            </div>
+            <p class="bp-edges" aria-hidden="true"><span>{mhz(zlo)}</span><span>{mhz(zhi)}</span></p>'''
 
-    chips = []
-    for s in spots:
-        note = f' <span class="bp-note">{s["note"]}</span>' if s["note"] else ""
-        chips.append(f'<li class="bp-{mode_cls(s["mode"])}" data-groups="{REGION_GROUPS[s["region"]]}">'
-                     f'<b>{mhz(s["khz"])}</b> {s["mode"]}{note} <span class="bp-where">{s["region"]}</span> '
-                     f'<code>{s["preset"]}</code></li>')
-    for a in avoid:
-        chips.append(f'<li class="bp-avoid" data-groups="{REGION_GROUPS[a["region"]]}"><b>{mhz(a["khz"])}</b> '
-                     f'{a["label"]} <span class="bp-where">{a["region"]}</span> <span class="bp-note">keep chat off</span></li>')
+    if name in BY_REGION:
+        order = BY_REGION[name]
+        assert {s["region"] for s in spots} <= set(order), "new CB region: add it to BY_REGION"
+        rows = "".join(
+            f'<div data-groups="{REGION_GROUPS[r]}"><span class="bp-where">{r}</span>'
+            f'<ul class="bp-spots">{"".join(chip(s, where=False) for s in spots if s["region"] == r)}</ul>'
+            f'<p class="bp-why bp-why--region">{WHY_REGION[r]}</p></div>'
+            for r in order if any(s["region"] == r for s in spots))
+        chips_html = f'<div class="bp-regions">{rows}</div>'
+    else:
+        chips = [chip(s) for s in spots] + [
+            f'<li class="bp-avoid" data-groups="{REGION_GROUPS[a["region"]]}"><b>{mhz(a["khz"])}</b> '
+            f'{a["label"]} <span class="bp-where">{a["region"]}</span> <span class="bp-note">keep chat off</span></li>'
+            for a in avoid]
+        chips_html = f'<ul class="bp-spots">{"".join(chips)}</ul>'
 
     kind = "free" if name in FREE else "ham"
-    note = LICENCE_FREE_NOTE.get(name) or BAND_NOTE.get(name, "")
-    note_html = f'\n            <p class="bp-band__note">{note}</p>' if note else ""
+    label = "" if name in BY_REGION else "<b>Why here</b> "
+    note_html = f'\n            <p class="bp-why">{label}{WHY[name]}</p>'
     return f'''          <div class="bp-band bp-band--{kind}" id="band-{name.lower().replace(".", "-")}" data-groups="{groups}">
             <p class="bp-band__name"><b>{name}</b><span>{mhz(lo)}–{mhz(hi)} MHz</span></p>
-            <div class="bp-bar" role="img" aria-label="{name}, {mhz(lo)} to {mhz(hi)} MHz, with {len(seen)} suggested spot{"s" if len(seen) != 1 else ""}">
-              {"".join(ticks)}
+            <div class="bp-bar" role="img" aria-label="{name}, {mhz(lo)} to {mhz(hi)} MHz, with {count} suggested spot{"s" if count != 1 else ""}">
+              {seg}{ticks}
             </div>
-            <p class="bp-edges" aria-hidden="true"><span>{mhz(lo)}</span><span>{mhz(hi)}</span></p>
-            <ul class="bp-spots">
-              {"".join(chips)}
-            </ul>{note_html}
+            <p class="bp-edges" aria-hidden="true"><span>{mhz(lo)}</span>{edge_label}<span>{mhz(hi)}</span></p>{zoom}
+            {chips_html}{note_html}
           </div>'''
 
 
@@ -134,6 +208,8 @@ def band_of(khz):
 for s in SPOTS + AVOID:
     s["band"] = band_of(s["khz"])
 listed = {b for _, _, _, bands in SECTIONS for b in bands}
+assert {s["band"] for s in SPOTS} <= set(WHY), "a band has no WHY entry"
+assert {s["region"] for s in SPOTS if s["band"] in BY_REGION} <= set(WHY_REGION), "a CB region has no WHY_REGION entry"
 assert {s["band"] for s in SPOTS} <= listed, "a spot sits in a band no section lists"
 
 sections_html = []
@@ -209,6 +285,14 @@ HTML = f'''<!doctype html>
         <p>You are the control operator. The edges here are the widest allocation the app knows, and your country may allow less. Verify the frequency, mode and power for your licence before you transmit.</p>
       </div>
 
+      <section class="article-section" aria-labelledby="whyH">
+        <h2 id="whyH">How the spots were picked</h2>
+        <ul class="bp-rules">
+          {"".join(f"<li>{r}</li>" for r in RULES)}
+        </ul>
+        <p class="bp-why">Each band below says why its spot sits where it does.</p>
+      </section>
+
       <div class="bp-key" aria-label="Key">
         <span class="bp-usb">USB or LSB data</span><span class="bp-fm">FM</span><span class="bp-am">AM</span><span class="bp-avoid">keep chat off</span>
         <span class="bp-band--free-key">licence-free band</span><span class="bp-key__plain">WW = worldwide</span>
@@ -256,6 +340,7 @@ md = ["# Band plan", "",
       "`scripts/gen_band_plan.py`; the same spots as [calling frequencies](CALLING.md) and `wcr help calling`.", "",
       "You are the control operator. The edges are the widest allocation the app knows; your country may allow less. "
       "Verify frequency, mode and power for your licence before you transmit.", ""]
+md += ["## How the spots were picked", ""] + [f"- {r}" for r in RULES] + [""]
 for sid, title, lead, bands in SECTIONS:
     md += [f"## {title}", "", lead, "", "| Band | Edges (MHz) | Spot | Mode | Where | Preset |", "|---|---|---|---|---|---|"]
     for b in bands:
@@ -269,6 +354,10 @@ for sid, title, lead, bands in SECTIONS:
         for a in AVOID:
             if a["band"] == b:
                 md.append(f'|  |  | {mhz(a["khz"])} | {a["label"]}: keep chat off | {a["region"]} |  |')
+    md.append("")
+    md += ["Why here:", ""] + [f"- **{b}**: {WHY[b]}" for b in bands if any(s["band"] == b for s in SPOTS)]
+    if any(b in BY_REGION for b in bands):
+        md += [f"  - {r}: {WHY_REGION[r]}" for r in BY_REGION["CB"]]
     md.append("")
 (ROOT / "docs/BAND-PLAN.md").write_text("\n".join(md))
 print("wrote web/docs/band-plan.html and docs/BAND-PLAN.md:", len(SPOTS), "spots")

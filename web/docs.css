@@ -932,7 +932,61 @@ body.cmp-page .page-panel { min-width: 0; }
 .bp-spots .bp-where { color: var(--purple); }
 .bp-spots .bp-note { color: var(--dim); }
 .bp-spots code { font-size: 11px; }
-.page-panel .bp-band__note { margin: 6px 0 0; font-size: 12px; color: var(--dim); }
+.page-panel .bp-why { margin: 6px 0 0; font-size: 12px; line-height: 1.6; color: var(--body); }
+.bp-why b { font-weight: 400; color: var(--mode-internet-radio); margin-right: 4px; }
+.page-panel .bp-why--region { grid-column: 2; margin: 0 0 6px; color: var(--dim); }
+.page-panel .bp-rules li { font-size: 13px; line-height: 1.6; margin: 0 0 4px; color: var(--body); }
+/* CB extras: the common block shaded on the full bar, a labelled close-up, spots by country. */
+.bp-seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(57, 255, 20, 0.16);
+  border-left: 1px solid rgba(57, 255, 20, 0.6);
+  border-right: 1px solid rgba(57, 255, 20, 0.6);
+}
+.page-panel .bp-edges { position: relative; }
+.bp-seg-label { position: absolute; transform: translateX(-50%); color: var(--mode-internet-radio); }
+.page-panel .bp-zoom-title { margin: 4px 0 26px; font-size: 12px; color: var(--dim); }
+.bp-tick em {
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: 50%;
+  transform: translateX(-50%);
+  font-style: normal;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--c);
+}
+.bp-tick em.bp-tick--hi { bottom: calc(100% + 15px); }
+.bp-tick[style^="left:0.00%"] em { left: 0; transform: none; }
+.bp-regions {
+  display: grid;
+  grid-template-columns: 3.5rem minmax(0, 1fr);
+  gap: 6px 10px;
+  align-items: start;
+}
+.bp-regions > div { display: contents; }
+/* CB pills line up in columns: frequency, mode, channel, preset. */
+.page-panel .bp-regions .bp-spots {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+@media (max-width: 700px) {
+  .page-panel .bp-regions .bp-spots { grid-template-columns: minmax(0, 1fr); }
+}
+.page-panel .bp-regions .bp-spots li {
+  display: grid;
+  grid-template-columns: 6ch 3ch 10ch auto;
+  column-gap: 1.2ch;
+  align-items: baseline;
+}
+.bp-regions .bp-spots code { justify-self: start; }
+.bp-regions > div > .bp-where { padding-top: 4px; font-size: 12px; color: var(--purple); }
 .bp-plan[data-bp-region="eu"] [data-groups]:not([data-groups~="eu"]),
 .bp-plan[data-bp-region="na"] [data-groups]:not([data-groups~="na"]),
 .bp-plan[data-bp-region="anz"] [data-groups]:not([data-groups~="anz"]) { display: none; }
+.bp-plan[data-bp-region="eu"] .bp-regions > [data-groups~="eu"],
+.bp-plan[data-bp-region="na"] .bp-regions > [data-groups~="na"],
+.bp-plan[data-bp-region="anz"] .bp-regions > [data-groups~="anz"] { display: contents; }
