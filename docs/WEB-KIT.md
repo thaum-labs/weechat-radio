@@ -15,12 +15,12 @@ How pages under `web/docs/` and `web/guides/` are built. Writing rules are in [S
 
 ```html
 <link rel="stylesheet" href="/styles.css?v=34" />
-<link rel="stylesheet" href="/docs.css?v=1" />
+<link rel="stylesheet" href="/docs.css?v=2" />
 <!-- optional: <link rel="stylesheet" href="/<page>.css?v=1" /> -->
 …
 <script src="/copy.js?v=1"></script>
 <script src="/shell.js?v=10"></script>
-<script src="/live-dgm.js?v=1"></script>   <!-- only if the page has a live diagram -->
+<script src="/live-dgm.js?v=2"></script>   <!-- only if the page has a live diagram -->
 ```
 
 Bump `?v=` when a file changes.
@@ -185,7 +185,7 @@ Use one when the page explains how a message travels. One per page is usually en
     <button type="button" data-setup-btn="cable" aria-pressed="true">radios + cable</button>
     <button type="button" data-setup-btn="noradio" aria-pressed="false">no radio</button>
   </div>
-  <div class="live-dgm__body">                     <!-- add live-dgm--wide on the figure to stack text under the picture -->
+  <div class="live-dgm__body">                     <!-- picture beside its text; see "Wide figure" below -->
     <div class="live-dgm__pic">
       <div class="dgm-wrap"><svg class="dgm" viewBox="0 0 440 322" role="img" aria-labelledby="…">…</svg></div>
       <div class="live-status">
@@ -214,6 +214,18 @@ Step fields: `say` (status line, one plain sentence), `segs` (segments to run, `
 Parts that only belong to some setups get `data-setups="a b"`; also give them `class="is-off"` when they are not in the default setup, so the page reads right without script. Several elements may share a `data-seg` id (e.g. a cable lead and an air lead); all of them run.
 
 The engine plays once when the diagram scrolls into view, and again on Replay or a setup change. Reduced motion and no-script show the finished state.
+
+### Wide figure (picture across the column)
+
+When the picture needs more room than the column beside its text allows (`docs/scenarios.html`):
+
+- Add `live-dgm--wide` to the figure: the picture spans the column and the setup's text goes under it.
+- Add `setup-switch--fill` to the picker: equal buttons across the full width, wrapping on phones.
+- In each setup panel, put the paragraphs and note in `<div class="setup-panel__main">` and the `dl.who-list` after it; on desktop the station list sits to the right of the text.
+- Draw the diagram twice inside the one `.dgm-wrap`: `<svg class="dgm" data-layout="wide">` about 800 wide for desktop, and `<svg class="dgm" data-layout="narrow">` about 440 wide for phones. `docs.css` shows one by screen width (761px and up is wide). Give each setup a `"viewBoxWide"` beside its `"viewBox"`.
+- Both drawings use the same `data-seg`, `data-node` and `data-show` ids, and each path is drawn in the same direction in both, so one list of steps drives both.
+
+Keeping two drawings in step by hand is error-prone, so the scenarios page is built by `scripts/gen_scenarios.py` (run `python3 scripts/gen_scenarios.py` from the repo root). Edit the script, not the page.
 
 ## Checks before a page is done
 
