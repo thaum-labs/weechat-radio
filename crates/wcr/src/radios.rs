@@ -31,6 +31,8 @@ pub struct Radio {
     pub audio_hints: &'static [&'static str],
     /// What to set on the radio itself, one line.
     pub radio_side: &'static str,
+    /// The interface cable to buy, with its link; empty when none is needed.
+    pub cable: &'static str,
     pub preset: Preset,
     /// First dial frequency for setup to suggest (CAT radios report their own).
     pub dial_khz: u32,
@@ -48,6 +50,7 @@ pub const RADIOS: &[Radio] = &[
         port_hints: &[],
         audio_hints: &[],
         radio_side: "General Settings → KISS TNC → Enable, Digital Mode off, then Menu → Pairing.",
+        cable: "",
         preset: Preset::Afsk1200,
         dial_khz: 144950,
     },
@@ -59,6 +62,7 @@ pub const RADIOS: &[Radio] = &[
         port_hints: &[],
         audio_hints: &[],
         radio_side: "Turn KISS TNC on in the radio menu, then put it in Bluetooth pairing mode.",
+        cable: "",
         preset: Preset::Afsk1200,
         dial_khz: 144950,
     },
@@ -71,20 +75,22 @@ pub const RADIOS: &[Radio] = &[
         port_hints: &[],
         audio_hints: &["usb audio codec"],
         radio_side: "USB-C to the computer. Radio in USB (upper sideband), CI-V 19200 baud.",
+        cable: "",
         // ROBUST RDM-600S: the most forgiving on a fading HF path.
         preset: Preset::HfPoor,
         dial_khz: 7045,
     },
     Radio {
-        name: "Xiegu G90 (Digirig or DE-19 + sound card)",
+        name: "Xiegu G90 (DE-19 or Digirig)",
         link: Link::Cat {
             hamlib_model: HAMLIB_G90,
             baud: 19200,
         },
-        port_hints: &["digirig", "cp210"],
+        // DE-19: CH340 serial; Digirig: CP210x.
+        port_hints: &["ch340", "ch341", "digirig", "cp210"],
         audio_hints: &["usb pnp sound", "usb audio device"],
-        radio_side:
-            "CAT cable to the interface, audio to the sound card. Radio in USB, CI-V 19200 baud.",
+        radio_side: "DE-19 (one USB cable) or both Digirig cables. Radio in USB, CI-V 19200 baud.",
+        cable: "Xiegu DE-19, or the Digirig Xiegu G90 Cables Set: https://digirig.net/product/xiegu-g90-cables/",
         // ROBUST RDM-600S: the most forgiving on a fading HF path.
         preset: Preset::HfPoor,
         dial_khz: 7045,
@@ -98,6 +104,7 @@ pub const RADIOS: &[Radio] = &[
         port_hints: &["enhanced"],
         audio_hints: &["usb audio codec"],
         radio_side: "USB to the computer. Radio in USB, CAT RATE 38400 (the factory default).",
+        cable: "",
         // ROBUST RDM-600S: the most forgiving on a fading HF path.
         preset: Preset::HfPoor,
         dial_khz: 7045,
@@ -107,7 +114,8 @@ pub const RADIOS: &[Radio] = &[
         link: Link::Digirig,
         port_hints: &["digirig", "cp210"],
         audio_hints: &["usb pnp sound", "usb audio device"],
-        radio_side: "Digirig to the mic socket (PTT pin 2, mic pin 3). Radio in USB on 10 m.",
+        radio_side: "Digirig cable in the mic socket. Radio in USB on 10 m.",
+        cable: "Digirig AnyTone AT-778UV cable: https://digirig.net/product/anytone-at-778uv-cable/",
         preset: Preset::HfPoor,
         dial_khz: 28120,
     },
@@ -116,7 +124,8 @@ pub const RADIOS: &[Radio] = &[
         link: Link::Digirig,
         port_hints: &["digirig", "cp210"],
         audio_hints: &["usb pnp sound", "usb audio device"],
-        radio_side: "Digirig with the AnyTone AT-778UV cable in the mic socket. Radio on FM.",
+        radio_side: "Digirig cable in the mic socket. Radio on FM.",
+        cable: "Digirig AnyTone AT-778UV cable: https://digirig.net/product/anytone-at-778uv-cable/",
         preset: Preset::VhfFm,
         dial_khz: 144950,
     },
@@ -126,6 +135,7 @@ pub const RADIOS: &[Radio] = &[
         port_hints: &[],
         audio_hints: &[],
         radio_side: "Turn VOX on and set its delay long. Audio cable to the mic and speaker jacks.",
+        cable: "",
         preset: Preset::VoxSafe,
         dial_khz: 144950,
     },
@@ -258,6 +268,20 @@ mod tests {
         assert_eq!(cfg.modem.ptt, "vox");
         assert_eq!(cfg.modem.preset, "vox-safe");
         assert_eq!(radio("IC-980 Pro").setup_path(), 2);
+    }
+
+    #[test]
+    fn digirig_radios_name_their_cable() {
+        for r in RADIOS.iter().filter(|r| r.port_hints.contains(&"digirig")) {
+            assert!(
+                r.cable.contains("https://digirig.net/product/"),
+                "{}",
+                r.name
+            );
+        }
+        assert!(radio("Retevis RT95")
+            .cable
+            .contains("anytone-at-778uv-cable"));
     }
 
     #[test]

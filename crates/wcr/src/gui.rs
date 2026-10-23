@@ -1787,6 +1787,32 @@ impl eframe::App for GuiApp {
                                     .font(FontId::monospace(11.0)),
                             );
                         });
+                        if !r.cable.is_empty() {
+                            ui.horizontal(|ui| {
+                                ui.add_space(20.0);
+                                ui.label(
+                                    RichText::new("Cable:")
+                                        .color(DIM)
+                                        .font(FontId::monospace(11.0)),
+                                );
+                                // "Name: https://…" opens in the browser.
+                                match r.cable.split_once(": https://") {
+                                    Some((name, rest)) => {
+                                        ui.hyperlink_to(
+                                            RichText::new(name).font(FontId::monospace(11.0)),
+                                            format!("https://{rest}"),
+                                        );
+                                    }
+                                    None => {
+                                        ui.label(
+                                            RichText::new(r.cable)
+                                                .color(DIM)
+                                                .font(FontId::monospace(11.0)),
+                                        );
+                                    }
+                                }
+                            });
+                        }
                     }
                     if self.path == SUPPORTED_CAT {
                         ui.horizontal(|ui| {
