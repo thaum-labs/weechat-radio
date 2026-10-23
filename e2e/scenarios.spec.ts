@@ -69,3 +69,28 @@ test("reduced motion: the app window shows the finished chat with the last mark"
   await expect(page.locator('.app-win[data-setups="home"] .app-win__lines > li')).toHaveCount(4);
   await ctx.close();
 });
+
+test("email: the Email tab plays send, check, get, and opens the reply", async ({ page }) => {
+  await page.goto(PAGE);
+  await page.locator("[data-live-dgm] .dgm-wrap").scrollIntoViewIfNeeded();
+  await page.getByRole("button", { name: "email", exact: true }).click();
+  const tab = page.locator(".app-win--mail");
+  await expect(tab.getByText("Send on the radio?")).toBeVisible();
+  await expect(tab.getByText("with Resend")).toBeVisible({ timeout: 15_000 });
+  await expect(tab.getByText("Get mail?")).toBeVisible({ timeout: 15_000 });
+  await expect(tab.getByText("Chunks received 1 of 2")).toBeVisible({ timeout: 10_000 });
+  await expect(tab.getByText("Fetched. It is in your Inbox.")).toBeVisible({ timeout: 10_000 });
+  await expect(tab.getByText(/I will bring the map/)).toBeVisible({ timeout: 8_000 });
+  await expect(tab.locator(".app-mail__dlg > div:visible")).toHaveCount(0);
+});
+
+test("reduced motion: the Email tab shows the opened reply and no dialog", async ({ browser }) => {
+  const ctx = await browser.newContext({ reducedMotion: "reduce" });
+  const page = await ctx.newPage();
+  await page.goto(PAGE);
+  await page.getByRole("button", { name: "email", exact: true }).click();
+  const tab = page.locator(".app-win--mail");
+  await expect(tab.getByText(/I will bring the map/)).toBeVisible();
+  await expect(tab.locator(".app-mail__dlg > div:visible")).toHaveCount(0);
+  await ctx.close();
+});

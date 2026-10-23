@@ -325,7 +325,8 @@ steps["hops"] = {"viewBox": "0 0 440 266", "viewBoxWide": "0 0 800 270", "steps"
 ], "done": "G4ABC and G4MNO never hear each other, yet they hold a conversation through two relays on one dial."}
 
 # 5. Email over radio ---------------------------------------------------------
-EMAIL_INBOX = [("e-inbox", "inbox: 1 waiting"), ("e-got", "inbox: Re: Meeting point")]
+EMAIL_INBOX = [("e-inbox", "inbox: 1 waiting"), ("e-ch1", "getting: 1 of 2"), ("e-ch2", "getting: 2 of 2"),
+               ("e-got", "inbox: Re: Meeting point")]
 groups.append(group("email", "\n".join([
     '<g data-node="e-mail">',
     '  <rect class="box accent" x="20" y="26" width="140" height="44" />',
@@ -375,24 +376,33 @@ wide_groups.append(group("email", "\n".join([
     '<text class="sub" x="345" y="276" text-anchor="middle">named in [mail] gateway</text>',
 ]), DEFAULT))
 steps["email"] = {"viewBox": "0 0 440 356", "viewBoxWide": "0 64 800 256", "steps": [
-    {"say": "G4ABC writes to alex@example.com and keys the mail as a burst on 144.950. The outbox shows [tx].",
+    {"say": "G4ABC writes to alex@example.com and presses Send. A confirm shows the size and airtime first.",
+     "on": ["e-a"], "show": ["e-compose", "e-dlg-send"], "ms": 2800},
+    {"say": "G4ABC confirms. The mail goes out as a burst on 144.950, and the Outbox shows [tx].",
      "segs": ["e-a-gw"], "on": ["e-a"], "show": ["e-tx"], "ms": 2000},
-    {"say": "The gateway has every chunk and acks on the air. The outbox shows [gw].",
+    {"say": "The gateway has every chunk and acks on the air. The Outbox shows [gw].",
      "segs": ["<e-a-gw"], "on": ["e-gw"], "show": ["e-gw"], "ms": 1900},
     {"say": "The gateway posts the mail to the hub.", "segs": ["e-gw-hub"], "on": ["e-gw"], "ms": 1300},
     {"say": "The hub hands it to Resend, the email service, which accepts it.",
      "segs": ["e-hub-mail"], "on": ["e-mail"], "show": ["e-acc"], "ms": 1600},
-    {"say": "The gateway keys a CompleteAck. Only now does G4ABC’s mail show Sent.",
-     "segs": ["<e-gw-hub", "<e-a-gw"], "chain": True, "on": ["e-gw"], "show": ["e-sent"], "ms": 2400},
+    {"say": "The gateway keys a CompleteAck. Only now is the mail Sent, and the form clears.",
+     "segs": ["<e-gw-hub", "<e-a-gw"], "chain": True, "on": ["e-gw"], "show": ["e-sent"], "ms": 2600},
     {"say": "Alex replies. Resend passes it to the hub, which keeps it. Nothing goes on the air unasked.",
-     "segs": ["<e-hub-mail"], "on": ["e-mail"], "show": ["e-re"], "ms": 2200},
-    {"say": "Later, G4ABC presses Check mail.", "segs": ["e-a-gw"], "on": ["e-a"], "ms": 1600},
-    {"say": "The gateway pulls G4ABC’s inbox list from the hub and keys it back: one waiting mail.",
+     "segs": ["<e-hub-mail"], "on": ["e-mail"], "show": ["e-re"], "ms": 2400},
+    {"say": "Later, G4ABC presses Check mail.", "segs": ["e-a-gw"], "on": ["e-a"], "show": ["e-check"], "ms": 1700},
+    {"say": "The gateway pulls G4ABC’s list from the hub and keys it back: one mail waiting, headers only.",
      "segs": ["e-gw-hub", "<e-gw-hub", "<e-a-gw"], "chain": True, "on": ["e-gw"], "show": ["e-inbox"], "ms": 3000},
-    {"say": "G4ABC opens the waiting line, confirms the airtime and presses Get.",
-     "segs": ["e-a-gw"], "on": ["e-a"], "ms": 1700},
-    {"say": "The gateway fetches the mail from the hub and keys it. It lands in G4ABC’s Inbox.",
-     "segs": ["e-gw-hub", "<e-gw-hub", "<e-a-gw"], "chain": True, "on": ["e-gw"], "show": ["e-got"], "ms": 3200},
+    {"say": "G4ABC clicks the waiting line. Get mail? shows the size and airtime.",
+     "on": ["e-a"], "show": ["e-dlg-get"], "ms": 2600},
+    {"say": "G4ABC presses Get, and the request goes on the air.",
+     "segs": ["e-a-gw"], "on": ["e-a"], "show": ["e-dlg-ask"], "ms": 1800},
+    {"say": "The gateway fetches the mail from the hub.",
+     "segs": ["e-gw-hub", "<e-gw-hub"], "chain": True, "on": ["e-gw"], "ms": 2000},
+    {"say": "It keys the mail back in chunks.", "segs": ["<e-a-gw"], "on": ["e-gw"], "show": ["e-ch1"], "ms": 1700},
+    {"say": "The last chunk lands.", "segs": ["<e-a-gw"], "on": ["e-gw"], "show": ["e-ch2"], "ms": 1500},
+    {"say": "Fetched. The mail is in G4ABC’s Inbox.", "on": ["e-a"], "show": ["e-got"], "ms": 2000},
+    {"say": "G4ABC presses OK and opens it. The reply reads in full, with no internet on this computer.",
+     "on": ["e-a"], "show": ["e-open"], "ms": 3400},
 ], "done": "Mail goes out and comes back through the gateway named in [mail] gateway. Radio-plus never opens the hub itself."}
 
 
@@ -445,6 +455,88 @@ def app_window(setup, me, mode, dial, side, lines, stations=(),
 
 
 
+# --- Email window: the app's Email tab for the email setup ---
+MAIL_OUT = "Meet at the car park at 4?"
+MAIL_IN = "Car park at 4 works. I will bring the map and a flask. If it rains, the cafe instead. Alex"
+
+
+def mail_window():
+    """The Email tab: folder tabs, a notice, the mail list, an opened mail, compose, and dialogs.
+    Each part is a .slot, so it shows the latest state the steps have reached."""
+    def tabs(on, waiting):
+        names = "".join(f'<span class="app-mail__tab{" is-cur" if n == on else ""}">{n}</span>'
+                        for n in ("Inbox", "Outbox", "Sent", "Drafts"))
+        return (f'{names}<span class="app-mail__dim">waiting {waiting}</span>'
+                '<span class="app-win__send app-win__send--alt">Check mail</span>')
+
+    def buttons(*names):
+        btns = "".join(f'<span class="app-win__send{" app-win__send--alt" if i == 0 else ""}">{n}</span>'
+                       for i, n in enumerate(names))
+        return f'<span class="app-mail__btns">{btns}</span>'
+
+    def progress(pct, label, title="Getting email", done=False):
+        return (f'<b>{title}</b><span class="app-mail__acc">alex@example.com  Re: Meeting point</span>'
+                f'<span class="app-mail__bar"><i style="width:{pct}%"></i><em>{pct}%</em></span>'
+                f'<span>{label}</span>' + buttons("OK" if done else "Hide"))
+
+    def compose(to, subject, body):
+        return (f'<span class="app-mail__lbl">To</span><span class="app-mail__field">{to}&nbsp;</span>'
+                f'<span class="app-mail__lbl">Subject</span><span class="app-mail__field">{subject}&nbsp;</span>'
+                f'<span class="app-mail__field app-mail__body">{body}&nbsp;</span>' + buttons("Send"))
+
+    def out_row(show, mark, tail=""):
+        return f'<p data-show="{show}">19:20:05  {mark}  alex@example.com  Meeting point{tail}</p>'
+
+    in_row = "19:48:10        alex@example.com  Re: Meeting point"
+    off = "" if DEFAULT == "email" else " is-off"
+    return "\n".join([
+        f'              <div class="app-win app-win--mail mode-radio-plus{off}" data-setups="email">',
+        '                <p class="app-win__bar"><span class="app-win__dot" aria-hidden="true"></span>'
+        '<b>G4ABC · radio-plus · 144.950</b><span>WeeChat Radio</span></p>',
+        '                <div class="app-mail" role="group" aria-label="G4ABC’s Email tab">',
+        '                  <p class="app-mail__head"><b>EMAIL</b>  G4ABC@mail.weechatradio.com</p>',
+        '                  <p class="app-mail__tabs slot">'
+        f'<span data-show="e-compose">{tabs("Outbox", 0)}</span>'
+        f'<span data-show="e-sent">{tabs("Sent", 0)}</span>'
+        f'<span data-show="e-inbox">{tabs("Inbox", 1)}</span>'
+        f'<span data-show="e-got">{tabs("Inbox", 0)}</span></p>',
+        '                  <p class="app-mail__toast slot">'
+        '<span data-show="e-check">Checking…</span>'
+        '<span data-show="e-inbox">1 mail waiting at the gateway. Click a line to Get it.</span>'
+        '<span data-show="e-got"></span></p>',
+        '                  <div class="app-mail__rows slot">'
+        + out_row("e-tx", "[tx]")
+        + out_row("e-gw", "[gw]", "  at gateway")
+        + out_row("e-sent", '<span class="tick-ok">[ok]</span>', "  with Resend")
+        + f'<p data-show="e-inbox"><span class="app-mail__dim">waiting</span>  alex@example.com  Re: Meeting point  {len(MAIL_IN)} B</p>'
+        + f'<p data-show="e-got">{in_row}</p>'
+        + f'<p data-show="e-open" class="is-cur">{in_row}</p></div>',
+        '                  <div class="app-mail__open">'
+        '<div data-show="e-open"><span class="app-mail__acc">19:48:10  alex@example.com → G4ABC@mail.weechatradio.com</span>'
+        f'<span class="app-mail__acc">Re: Meeting point</span><span>{MAIL_IN}</span></div></div>',
+        '                  <div class="app-mail__compose slot">'
+        f'<div data-show="e-compose">{compose("alex@example.com", "Meeting point", MAIL_OUT)}</div>'
+        f'<div data-show="e-sent">{compose("", "", "")}</div></div>',
+        '                  <div class="app-mail__dlg slot">'
+        '<div data-show="e-dlg-send"><b>Send on the radio?</b><span>To  alex@example.com</span><span>Subject  Meeting point</span>'
+        f'<span class="app-mail__dim">{len(MAIL_OUT)} / 4096 B</span><span>radio-plus  vhf-fm  144.950</span>'
+        '<span>About 4.2 s on the air (1 burst @ vhf-fm). Not Sent until the gateway accepts it.</span>'
+        + buttons("Send", "Cancel") + '</div>'
+        '<div data-show="e-tx"></div>'
+        '<div data-show="e-dlg-get"><b>Get mail?</b><span class="app-mail__acc">alex@example.com  Re: Meeting point</span>'
+        f'<span class="app-mail__dim">{len(MAIL_IN)} / 4096 B</span><span>radio-plus  vhf-fm  144.950</span>'
+        '<span>About 9 s on the air (2 bursts @ vhf-fm).</span>'
+        + buttons("Get", "Cancel") + '</div>'
+        f'<div data-show="e-dlg-ask">{progress(10, "Asking the gateway…")}</div>'
+        f'<div data-show="e-ch1">{progress(52, "Chunks received 1 of 2")}</div>'
+        f'<div data-show="e-ch2">{progress(95, "Chunks received 2 of 2")}</div>'
+        f'<div data-show="e-got">{progress(100, "Fetched. It is in your Inbox.", title="Fetched", done=True)}</div>'
+        '<div data-show="e-open"></div></div>',
+        '                </div>',
+        '              </div>',
+    ])
+
+
 app_windows = "\n".join([
     app_window("home", "G4ABC", "radio-plus", "144.950",
                [("#bulletin", False), ("#walk", True)], [
@@ -477,16 +569,7 @@ app_windows = "\n".join([
                              ticks=[("m1", "[tx]"), ("m1rl", "[rl]"), ("m1ok", "[rl] [ok]")]),
                    chat_line("m2", "12:01:20", "G4MNO", "copy, via two relays", via="rf"),
                ], stations=["G4DEF [2m]"]),
-    app_window("email", "G4ABC", "radio-plus", "144.950",
-               [("Inbox", False), ("Outbox", False), ("Sent", False)], [
-                   '<li data-show="e-tx"><time>19:20:05</time> <span class="ticks">'
-                   '<span data-show="e-tx">[tx]</span><span data-show="e-gw">[gw]</span>'
-                   '<span data-show="e-sent" class="tick-ok">[ok]</span></span>  <span class="mail-dir">to</span> alex@example.com  Meeting point'
-                   '<span class="ticks"> <span data-show="e-gw">at gateway</span><span data-show="e-sent"></span></span></li>',
-                   '<li data-show="e-inbox"><span class="slot">'
-                   '<span data-show="e-inbox"><span class="mail-waiting">waiting</span>  <span class="mail-dir">from</span> alex@example.com  Re: Meeting point  612 B</span>'
-                   '<span data-show="e-got"><time>19:48:10</time>  <span class="mail-dir">from</span> alex@example.com  Re: Meeting point</span></span></li>',
-               ], buttons='<span class="app-win__send app-win__send--alt">Check mail</span>'),
+    mail_window(),
 ])
 
 
