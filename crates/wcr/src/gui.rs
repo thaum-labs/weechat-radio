@@ -2006,13 +2006,9 @@ impl eframe::App for GuiApp {
                                 hold_color,
                                 "Next store-and-forward relay or your own unacked retry. The ring empties as the hold timer runs out.",
                             );
-                            kv(
-                                ui,
-                                "HUB",
-                                if s.hub_ok { "UP" } else { "DOWN" },
-                                if s.hub_ok { GREEN } else { ORANGE },
-                            );
-                            if !s.hub_ok && !s.hub_banner.is_empty() {
+                            let (hub_text, hub_color) = hub_row(s.mode, s.hub_ok);
+                            kv(ui, "HUB", hub_text, hub_color);
+                            if s.mode.uses_internet() && !s.hub_ok && !s.hub_banner.is_empty() {
                                 ui.label(
                                     RichText::new(&s.hub_banner)
                                         .color(ORANGE)
@@ -5410,6 +5406,18 @@ fn parse_invite(line: &str) -> Option<(String, String)> {
     crate::slash::parse_irc_invite(line)
 }
 
+/// HUB row text and colour. Radio and radio-plus never open the hub, so
+/// they show a neutral OFF instead of an orange DOWN.
+fn hub_row(mode: Mode, hub_ok: bool) -> (&'static str, Color32) {
+    if !mode.uses_internet() {
+        ("OFF", DIM)
+    } else if hub_ok {
+        ("UP", GREEN)
+    } else {
+        ("DOWN", ORANGE)
+    }
+}
+
 fn channel_security(
     channel: &str,
     mode: Option<Mode>,
@@ -5441,6 +5449,15 @@ fn channel_security(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hub_row_is_off_for_modes_that_never_use_the_hub() {
+        assert_eq!(hub_row(Mode::Radio, false), ("OFF", DIM));
+        assert_eq!(hub_row(Mode::RadioPlus, false), ("OFF", DIM));
+        assert_eq!(hub_row(Mode::Internet, false), ("DOWN", ORANGE));
+        assert_eq!(hub_row(Mode::InternetRadio, false), ("DOWN", ORANGE));
+        assert_eq!(hub_row(Mode::InternetRadio, true), ("UP", GREEN));
+    }
 
     #[test]
     fn parse_tagmsg_delivery() {
