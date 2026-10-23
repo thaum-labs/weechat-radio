@@ -11,7 +11,7 @@ use crate::ui_style;
 use dialoguer::{Confirm, Input, Select};
 use std::io::Write;
 
-/// Setup path for a supported CAT radio (the numbers below are the "Other" setups).
+/// Setup path for a supported CAT radio ([`Radio::setup_path`]).
 const SUPPORTED_CAT: usize = 6;
 
 pub fn run_wizard() -> Result<Config> {
@@ -113,8 +113,7 @@ pub fn run_wizard() -> Result<Config> {
     let radio = picked.checked_sub(1).and_then(|i| RADIOS.get(i));
     let path = match radio {
         _ if picked == 0 => 0,
-        Some(r) if r.is_cat() => SUPPORTED_CAT,
-        Some(_) => 4,
+        Some(r) => r.setup_path(),
         None => {
             let others = [
                 (1, "Handheld + Digirig (VHF/UHF FM)"),
@@ -225,6 +224,11 @@ pub fn run_wizard() -> Result<Config> {
         }
         _ => {}
     }
+    if let (Some(r), 1 | 2) = (radio, path) {
+        // Digirig or VOX radio: the generic path above, with this radio's preset.
+        r.apply(&mut cfg);
+        println!("  On the radio: {}", r.radio_side);
+    }
 
     if path != 0 && !cfg.modem.uses_tnc() {
         let presets: Vec<&str> = Preset::all().iter().map(|p| p.as_str()).collect();
@@ -236,23 +240,27 @@ pub fn run_wizard() -> Result<Config> {
             ))
             .items(&presets)
             .default(match path {
+                _ if radio.is_some() => preset_index(&cfg.modem.preset),
                 1 => 0,
                 2 => 4,
                 3 => 1,
-                SUPPORTED_CAT => preset_index(&cfg.modem.preset),
                 _ => 0,
             })
             .interact()?;
         cfg.modem.preset = Preset::all()[idx].as_str().into();
-        let hf = matches!(path, 3 | SUPPORTED_CAT);
-        let default_mhz = if hf { "7.045" } else { "144.950" };
+        let cat = matches!(path, 3 | SUPPORTED_CAT);
+        let default_mhz = match radio {
+            Some(r) => format!("{:.3}", r.dial_khz as f64 / 1000.0),
+            None if cat => "7.045".into(),
+            None => "144.950".into(),
+        };
         let freq: String = Input::with_theme(&theme)
-            .with_prompt(if hf {
+            .with_prompt(if cat {
                 "Frequency on the dial (MHz) — CAT will override when the rig is connected"
             } else {
                 "Frequency your radio is on (MHz)"
             })
-            .default(default_mhz.into())
+            .default(default_mhz)
             .interact_text()?;
         if let Some(khz) = crate::band::parse_mhz(&freq) {
             cfg.rf.frequency_khz = khz;

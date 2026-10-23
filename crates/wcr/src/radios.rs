@@ -14,6 +14,10 @@ pub enum Link {
     /// modem73 plays the tones through the radio's sound card and keys the
     /// radio over CAT with its built-in Hamlib. No rigctld to install or start.
     Cat { hamlib_model: u32, baud: u32 },
+    /// No CAT: a Digirig plays the tones and keys the radio on RTS.
+    Digirig,
+    /// No CAT and no data port: an audio cable, and the radio's VOX keys it.
+    Vox,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +31,9 @@ pub struct Radio {
     pub audio_hints: &'static [&'static str],
     /// What to set on the radio itself, one line.
     pub radio_side: &'static str,
+    pub preset: Preset,
+    /// First dial frequency for setup to suggest (CAT radios report their own).
+    pub dial_khz: u32,
 }
 
 /// Hamlib model numbers (`rigctl -l`).
@@ -41,6 +48,8 @@ pub const RADIOS: &[Radio] = &[
         port_hints: &[],
         audio_hints: &[],
         radio_side: "General Settings → KISS TNC → Enable, Digital Mode off, then Menu → Pairing.",
+        preset: Preset::Afsk1200,
+        dial_khz: 144950,
     },
     Radio {
         name: "VR-N7600 (Bluetooth)",
@@ -50,6 +59,8 @@ pub const RADIOS: &[Radio] = &[
         port_hints: &[],
         audio_hints: &[],
         radio_side: "Turn KISS TNC on in the radio menu, then put it in Bluetooth pairing mode.",
+        preset: Preset::Afsk1200,
+        dial_khz: 144950,
     },
     Radio {
         name: "Xiegu X6100 (USB cable)",
@@ -60,6 +71,9 @@ pub const RADIOS: &[Radio] = &[
         port_hints: &[],
         audio_hints: &["usb audio codec"],
         radio_side: "USB-C to the computer. Radio in USB (upper sideband), CI-V 19200 baud.",
+        // ROBUST RDM-600S: the most forgiving on a fading HF path.
+        preset: Preset::HfPoor,
+        dial_khz: 7045,
     },
     Radio {
         name: "Xiegu G90 (Digirig or DE-19 + sound card)",
@@ -71,6 +85,9 @@ pub const RADIOS: &[Radio] = &[
         audio_hints: &["usb pnp sound", "usb audio device"],
         radio_side:
             "CAT cable to the interface, audio to the sound card. Radio in USB, CI-V 19200 baud.",
+        // ROBUST RDM-600S: the most forgiving on a fading HF path.
+        preset: Preset::HfPoor,
+        dial_khz: 7045,
     },
     Radio {
         name: "Yaesu FT-710 (USB cable)",
@@ -81,35 +98,84 @@ pub const RADIOS: &[Radio] = &[
         port_hints: &["enhanced"],
         audio_hints: &["usb audio codec"],
         radio_side: "USB to the computer. Radio in USB, CAT RATE 38400 (the factory default).",
+        // ROBUST RDM-600S: the most forgiving on a fading HF path.
+        preset: Preset::HfPoor,
+        dial_khz: 7045,
+    },
+    Radio {
+        name: "AnyTone AT-5555N (Digirig, 10 m)",
+        link: Link::Digirig,
+        port_hints: &["digirig", "cp210"],
+        audio_hints: &["usb pnp sound", "usb audio device"],
+        radio_side: "Digirig to the mic socket (PTT pin 2, mic pin 3). Radio in USB on 10 m.",
+        preset: Preset::HfPoor,
+        dial_khz: 28120,
+    },
+    Radio {
+        name: "Retevis RT95 (Digirig)",
+        link: Link::Digirig,
+        port_hints: &["digirig", "cp210"],
+        audio_hints: &["usb pnp sound", "usb audio device"],
+        radio_side: "Digirig with the AnyTone AT-778UV cable in the mic socket. Radio on FM.",
+        preset: Preset::VhfFm,
+        dial_khz: 144950,
+    },
+    Radio {
+        name: "IC-980 Pro (audio cable, VOX)",
+        link: Link::Vox,
+        port_hints: &[],
+        audio_hints: &[],
+        radio_side: "Turn VOX on and set its delay long. Audio cable to the mic and speaker jacks.",
+        preset: Preset::VoxSafe,
+        dial_khz: 144950,
     },
 ];
 
 impl Radio {
-    pub fn is_cat(&self) -> bool {
-        matches!(self.link, Link::Cat { .. })
+    /// The setup path this radio uses (see `setup.rs`): 1 Digirig, 2 VOX,
+    /// 4 Bluetooth TNC, 6 CAT.
+    pub fn setup_path(&self) -> usize {
+        match self.link {
+            Link::Digirig => 1,
+            Link::Vox => 2,
+            Link::BluetoothTnc { .. } => 4,
+            Link::Cat { .. } => 6,
+        }
     }
 
     /// Fills in everything this radio needs. The port and sound cards come
     /// from the operator (or [`Radio::pick_port`] / [`Radio::pick_audio`]).
     pub fn apply(&self, cfg: &mut Config) {
         cfg.mode = Mode::InternetRadio;
+        cfg.modem.radio = self.name.into();
+        cfg.modem.preset = self.preset.as_str().into();
         match self.link {
             Link::BluetoothTnc { bt_name } => {
                 cfg.modem.backend = "bluetooth".into();
                 cfg.modem.manage = false;
                 cfg.modem.ptt = "tnc".into();
-                cfg.modem.preset = Preset::Afsk1200.as_str().into();
                 cfg.tnc.bt_name = bt_name.into();
             }
             Link::Cat { hamlib_model, baud } => {
                 cfg.modem.backend = "modem73".into();
                 cfg.modem.manage = true;
                 cfg.modem.ptt = "hamlib".into();
-                // ROBUST RDM-600S: the most forgiving on a fading HF path.
-                cfg.modem.preset = Preset::HfPoor.as_str().into();
                 cfg.modem.hamlib_model = hamlib_model;
                 cfg.modem.hamlib_baud = baud;
                 cfg.rig.enabled = true;
+            }
+            Link::Digirig => {
+                cfg.modem.backend = "modem73".into();
+                cfg.modem.manage = true;
+                cfg.modem.ptt = "digirig".into();
+                cfg.modem.com_line = "rts".into();
+            }
+            Link::Vox => {
+                cfg.modem.backend = "modem73".into();
+                cfg.modem.manage = true;
+                cfg.modem.ptt = "vox".into();
+                cfg.modem.vox_lead_ms = Preset::VOX_SAFE_LEAD_MS;
+                cfg.modem.vox_tail_ms = Preset::VOX_SAFE_TAIL_MS;
             }
         }
     }
@@ -141,29 +207,7 @@ pub fn from_config(cfg: &Config) -> Option<&'static Radio> {
     if cfg.mode == Mode::Internet {
         return None;
     }
-    if cfg.modem.ptt == "hamlib" {
-        return RADIOS.iter().find(|r| {
-            matches!(r.link, Link::Cat { hamlib_model, .. } if hamlib_model == cfg.modem.hamlib_model)
-        });
-    }
-    if cfg.modem.is_bluetooth() {
-        let name = crate::tnc::norm_name(&cfg.tnc.bt_name);
-        // Longest name first, so VR-N7600 is not taken for VR-N76.
-        let mut bt: Vec<_> = RADIOS
-            .iter()
-            .filter_map(|r| match r.link {
-                Link::BluetoothTnc { bt_name } => Some((r, crate::tnc::norm_name(bt_name))),
-                _ => None,
-            })
-            .collect();
-        bt.sort_by_key(|(_, n)| std::cmp::Reverse(n.len()));
-        return bt
-            .into_iter()
-            .find(|(_, n)| name.contains(n.as_str()))
-            .map(|(r, _)| r)
-            .or_else(|| RADIOS.first());
-    }
-    None
+    RADIOS.iter().find(|r| r.name == cfg.modem.radio)
 }
 
 #[cfg(test)]
@@ -197,8 +241,23 @@ mod tests {
         assert_eq!(cfg.modem.ptt, "tnc");
         assert_eq!(cfg.tnc.bt_name, "VR-N7600");
         assert_eq!(from_config(&cfg), Some(radio("VR-N7600")));
-        cfg.tnc.bt_name = "UV-PRO".into();
-        assert_eq!(from_config(&cfg), Some(radio("VR-N76 ")));
+    }
+
+    #[test]
+    fn radios_without_cat_use_digirig_or_vox() {
+        let mut cfg = Config::default();
+        radio("Retevis RT95").apply(&mut cfg);
+        assert_eq!(cfg.modem.ptt, "digirig");
+        assert_eq!(cfg.modem.com_line, "rts");
+        assert_eq!(cfg.modem.preset, "vhf-fm");
+        radio("AnyTone AT-5555N").apply(&mut cfg);
+        assert_eq!(cfg.modem.preset, "hf-poor");
+        assert_eq!(from_config(&cfg), Some(radio("AnyTone AT-5555N")));
+        let mut cfg = Config::default();
+        radio("IC-980 Pro").apply(&mut cfg);
+        assert_eq!(cfg.modem.ptt, "vox");
+        assert_eq!(cfg.modem.preset, "vox-safe");
+        assert_eq!(radio("IC-980 Pro").setup_path(), 2);
     }
 
     #[test]
