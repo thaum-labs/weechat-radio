@@ -92,6 +92,10 @@ const PTT_ARGS: &[Arg] = &[
         hint: "Hamlib rigctld CAT PTT",
     },
     Arg {
+        value: "hamlib",
+        hint: "CAT PTT straight to the radio (supported radios)",
+    },
+    Arg {
         value: "none",
         hint: "Do not key a radio",
     },

@@ -6,9 +6,13 @@ use crate::error::Result;
 use crate::modes::Mode;
 use crate::presets::Preset;
 use crate::proto::Callsign;
+use crate::radios::{Radio, RADIOS};
 use crate::ui_style;
 use dialoguer::{Confirm, Input, Select};
 use std::io::Write;
+
+/// Setup path for a supported CAT radio (the numbers below are the "Other" setups).
+const SUPPORTED_CAT: usize = 6;
 
 pub fn run_wizard() -> Result<Config> {
     if !console::Term::stdout().is_term() {
@@ -93,23 +97,43 @@ pub fn run_wizard() -> Result<Config> {
         }
     };
 
-    let paths = [
-        "Internet only (no radio yet)",
-        "Handheld + Digirig (VHF/UHF FM)",
-        "Any radio with a plain audio cable (VOX)",
-        "HF rig with CAT (rigctl)",
-        "VR-N76 / UV-PRO / GA-5WB over Bluetooth (built-in KISS TNC)",
-        "KISS TNC on a serial port (Mobilinkd, rfcomm0, Bluetooth COM)",
-    ];
-    let path = Select::with_theme(&theme)
+    // Supported radios first: picking one fills in everything but the port.
+    let mut paths: Vec<String> = vec!["Internet only (no radio yet)".into()];
+    paths.extend(RADIOS.iter().map(|r| r.name.to_string()));
+    paths.push("Other setup (Digirig, VOX cable, any CAT rig, KISS TNC)".into());
+    let picked = Select::with_theme(&theme)
         .with_prompt(ui_style::step(
             3,
             total_steps,
-            "How will you get on the air?",
+            "Which radio? (pick Other for VOX, Digirig and the rest)",
         ))
         .items(&paths)
         .default(0)
         .interact()?;
+    let radio = picked.checked_sub(1).and_then(|i| RADIOS.get(i));
+    let path = match radio {
+        _ if picked == 0 => 0,
+        Some(r) if r.is_cat() => SUPPORTED_CAT,
+        Some(_) => 4,
+        None => {
+            let others = [
+                (1, "Handheld + Digirig (VHF/UHF FM)"),
+                (2, "Any radio with a plain audio cable (VOX)"),
+                (3, "HF rig with CAT through rigctld (any Hamlib radio)"),
+                (
+                    5,
+                    "KISS TNC on a serial port (Mobilinkd, rfcomm0, Bluetooth COM)",
+                ),
+            ];
+            let labels: Vec<&str> = others.iter().map(|(_, l)| *l).collect();
+            let i = Select::with_theme(&theme)
+                .with_prompt("How will you get on the air?")
+                .items(&labels)
+                .default(0)
+                .interact()?;
+            others[i].0
+        }
+    };
 
     let mut cfg = Config::default();
     cfg.callsign = call.trim().to_ascii_uppercase();
@@ -150,7 +174,9 @@ pub fn run_wizard() -> Result<Config> {
             cfg.mode = Mode::InternetRadio;
             cfg.modem.ptt = "digirig".into();
             cfg.modem.preset = Preset::VhfFm.as_str().into();
-            cfg.modem.com_port = pick_serial_port(&theme, "Digirig serial port", true)?;
+            let ports = crate::discover::serial_ports();
+            let digirig = crate::discover::find_digirig(&ports);
+            cfg.modem.com_port = pick_serial_port(&theme, "Digirig serial port", digirig)?;
             cfg.modem.com_line = "rts".into();
             println!("  Digirig: PTT on RTS. Plug the audio jacks into the radio as in the guide.");
         }
@@ -173,17 +199,21 @@ pub fn run_wizard() -> Result<Config> {
             println!("  If that fails, you can switch PTT to VOX later with /radio ptt vox");
         }
         4 => {
-            cfg.mode = Mode::InternetRadio;
-            cfg.modem.backend = "bluetooth".into();
-            cfg.modem.manage = false;
-            cfg.modem.ptt = "tnc".into();
-            cfg.modem.preset = Preset::Afsk1200.as_str().into();
-            println!("  On the radio: General Settings → KISS TNC → Enable, Digital Mode off,");
-            println!(
-                "  then Menu → Pairing. Close the HT phone app (one Bluetooth client at a time)."
-            );
+            let radio = radio.unwrap_or(&RADIOS[0]);
+            radio.apply(&mut cfg);
+            println!("  On the radio: {}", radio.radio_side);
+            println!("  Close the radio's phone app (one Bluetooth client at a time).");
             let _ = std::io::stdout().flush();
             bluetooth_pick(&theme, &mut cfg)?;
+        }
+        SUPPORTED_CAT => {
+            let radio = radio.expect("supported CAT radio");
+            radio.apply(&mut cfg);
+            println!("  On the radio: {}", radio.radio_side);
+            println!("  wcr keys the radio and reads the dial over CAT. Nothing else to install.");
+            let ports = crate::discover::serial_ports();
+            let guess = radio.pick_port(&ports);
+            cfg.modem.hamlib_device = pick_serial_port(&theme, "Radio CAT port", guess)?;
         }
         5 => {
             cfg.mode = Mode::InternetRadio;
@@ -191,7 +221,7 @@ pub fn run_wizard() -> Result<Config> {
             cfg.modem.manage = false;
             cfg.modem.ptt = "tnc".into();
             cfg.modem.preset = Preset::Afsk1200.as_str().into();
-            cfg.tnc.serial = pick_serial_port(&theme, "TNC serial port", false)?;
+            cfg.tnc.serial = pick_serial_port(&theme, "TNC serial port", None)?;
         }
         _ => {}
     }
@@ -209,13 +239,15 @@ pub fn run_wizard() -> Result<Config> {
                 1 => 0,
                 2 => 4,
                 3 => 1,
+                SUPPORTED_CAT => preset_index(&cfg.modem.preset),
                 _ => 0,
             })
             .interact()?;
         cfg.modem.preset = Preset::all()[idx].as_str().into();
-        let default_mhz = if path == 3 { "7.045" } else { "144.950" };
+        let hf = matches!(path, 3 | SUPPORTED_CAT);
+        let default_mhz = if hf { "7.045" } else { "144.950" };
         let freq: String = Input::with_theme(&theme)
-            .with_prompt(if path == 3 {
+            .with_prompt(if hf {
                 "Frequency on the dial (MHz) — CAT will override when the rig is connected"
             } else {
                 "Frequency your radio is on (MHz)"
@@ -238,6 +270,7 @@ pub fn run_wizard() -> Result<Config> {
             total_steps,
             "Audio in (decode — radio speaker / interface capture)",
             crate::discover::list_audio_inputs(),
+            radio,
         )?;
         cfg.modem.audio_output = pick_audio_device(
             &theme,
@@ -245,6 +278,7 @@ pub fn run_wizard() -> Result<Config> {
             total_steps,
             "Audio out (transmit — radio mic / interface playback)",
             crate::discover::list_audio_outputs(),
+            radio,
         )?;
         if !cfg.modem.audio_input.is_empty() || !cfg.modem.audio_output.is_empty() {
             println!(
@@ -328,7 +362,7 @@ fn read_callsign_uppercase(theme: &dyn dialoguer::theme::Theme, prompt: String) 
 fn pick_serial_port(
     theme: &dyn dialoguer::theme::Theme,
     prompt: &str,
-    prefer_digirig: bool,
+    guess: Option<String>,
 ) -> Result<String> {
     let ports = crate::discover::serial_ports();
     if ports.is_empty() {
@@ -339,17 +373,14 @@ fn pick_serial_port(
     }
     let mut items: Vec<String> = ports.iter().map(|p| p.label.clone()).collect();
     items.push("(type a port manually)".into());
-    let default = if prefer_digirig {
-        crate::discover::find_digirig(&ports).and_then(|name| {
+    let default = guess
+        .and_then(|name| {
             ports
                 .iter()
                 .position(|p| p.name.eq_ignore_ascii_case(&name))
         })
-    } else {
-        None
-    }
-    .unwrap_or(0)
-    .min(items.len().saturating_sub(1));
+        .unwrap_or(0)
+        .min(items.len().saturating_sub(1));
     let idx = Select::with_theme(theme)
         .with_prompt(prompt)
         .items(&items)
@@ -371,6 +402,7 @@ fn pick_audio_device(
     total_steps: u8,
     prompt: &str,
     devs: Vec<String>,
+    radio: Option<&Radio>,
 ) -> Result<String> {
     if devs.is_empty() {
         let audio: String = Input::with_theme(theme)
@@ -383,12 +415,16 @@ fn pick_audio_device(
             .interact_text()?;
         return Ok(audio.trim().to_string());
     }
+    let guess = radio.and_then(|r| r.pick_audio(&devs));
     let mut items = vec!["(system default)".to_string()];
     items.extend(devs);
+    let default = guess
+        .and_then(|g| items.iter().position(|d| *d == g))
+        .unwrap_or(0);
     let idx = Select::with_theme(theme)
         .with_prompt(ui_style::step(step, total_steps, prompt))
         .items(&items)
-        .default(0)
+        .default(default)
         .interact()?;
     if idx == 0 {
         Ok(String::new())
@@ -440,7 +476,7 @@ fn bluetooth_pick(theme: &dyn dialoguer::theme::Theme, cfg: &mut Config) -> Resu
         ui_style::dim().apply_to("Looking for a paired radio, then scanning for ~8 s…")
     );
     let _ = std::io::stdout().flush();
-    let outcome = bluetooth::find_radio("");
+    let outcome = bluetooth::find_radio(&cfg.tnc.bt_name.clone());
     let dev = match outcome {
         FindOutcome::Ready(d) => {
             println!("  Found {} (paired).", d.label());
@@ -492,13 +528,20 @@ fn bluetooth_pick(theme: &dyn dialoguer::theme::Theme, cfg: &mut Config) -> Resu
             }
             let name: String = Input::with_theme(theme)
                 .with_prompt("Radio Bluetooth name")
-                .default("VR-N76".into())
+                .default(cfg.tnc.bt_name.clone())
                 .interact_text()?;
             cfg.tnc.bt_name = name.trim().to_string();
         }
     }
     println!("  The node connects to the radio itself; no COM port needed.");
     Ok(())
+}
+
+fn preset_index(preset: &str) -> usize {
+    Preset::all()
+        .iter()
+        .position(|p| p.as_str() == preset)
+        .unwrap_or(0)
 }
 
 pub fn calling_card() -> String {

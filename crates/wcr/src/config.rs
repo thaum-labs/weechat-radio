@@ -107,7 +107,7 @@ pub struct ModemConfig {
     pub control_port: u16,
     pub manage: bool,
     pub binary: String,
-    /// vox | digirig | cm108 | rigctl | tnc | none
+    /// vox | digirig | cm108 | rigctl | hamlib | tnc | none
     pub ptt: String,
     pub preset: String,
     pub com_port: String,
@@ -116,6 +116,13 @@ pub struct ModemConfig {
     pub vox_tail_ms: u32,
     pub cm108_gpio: u8,
     pub rigctl: String,
+    /// `ptt = "hamlib"`: modem73 talks CAT to the radio itself (no rigctld).
+    /// Hamlib model number (`rigctl -l`), e.g. 3087 for the Xiegu X6100.
+    pub hamlib_model: u32,
+    /// CAT serial port (`COM5`, `/dev/ttyUSB0`).
+    pub hamlib_device: String,
+    /// CAT baud rate; 0 = the radio's Hamlib default.
+    pub hamlib_baud: u32,
     /// Optional capture device name for modem73 (empty = system default).
     pub audio_input: String,
     /// Optional playback device name for modem73 (empty = system default).
@@ -139,6 +146,9 @@ impl Default for ModemConfig {
             vox_tail_ms: 300,
             cm108_gpio: 3,
             rigctl: "127.0.0.1:4532".into(),
+            hamlib_model: 0,
+            hamlib_device: String::new(),
+            hamlib_baud: 0,
             audio_input: String::new(),
             audio_output: String::new(),
         }

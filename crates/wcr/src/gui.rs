@@ -6,6 +6,7 @@ use crate::error::{Error, Result};
 use crate::modes::Mode;
 use crate::presets::Preset;
 use crate::proto::Callsign;
+use crate::radios::RADIOS;
 use crate::status::StatusSnapshot;
 use eframe::egui::{self, Color32, FontId, IconData, RichText, Stroke, ViewportCommand};
 use std::collections::HashMap;
@@ -605,6 +606,10 @@ struct GuiApp {
     grid_overwrite: bool,
     grid_rx: Option<Receiver<Option<crate::grid::DetectedGrid>>>,
     path: usize,
+    /// Supported radio picked in setup (index into [`RADIOS`]).
+    radio: Option<usize>,
+    /// CAT serial port for a supported CAT radio.
+    cat_port: String,
     com_port: String,
     /// Bluetooth radio chosen in setup (VR-N76 / UV-PRO / GA-5WB).
     bt_found: Option<crate::tnc::BtDevice>,
@@ -723,6 +728,8 @@ impl GuiApp {
                 None
             },
             path: form.path,
+            radio: form.radio,
+            cat_port: form.cat_port,
             com_port: form.com_port,
             bt_found,
             bt_note: String::new(),
@@ -859,6 +866,18 @@ impl GuiApp {
                 cfg.modem.rigctl = self.rigctl.trim().to_string();
                 cfg.rig.enabled = true;
             }
+            SUPPORTED_CAT => {
+                let Some(r) = self.radio.map(|i| &RADIOS[i]) else {
+                    self.error = "pick a radio".into();
+                    return;
+                };
+                if self.cat_port.trim().is_empty() {
+                    self.error = "pick the radio's CAT port (COM5 or /dev/ttyUSB0)".into();
+                    return;
+                }
+                r.apply(&mut cfg);
+                cfg.modem.hamlib_device = self.cat_port.trim().to_string();
+            }
             4 => {
                 cfg.mode = Mode::InternetRadio;
                 cfg.modem.backend = "bluetooth".into();
@@ -899,7 +918,7 @@ impl GuiApp {
             cfg.modem.backend = "modem73".into();
             cfg.modem.manage = true;
         }
-        if matches!(self.path, 1 | 2 | 3) {
+        if matches!(self.path, 1 | 2 | 3 | SUPPORTED_CAT) {
             cfg.modem.audio_input = self.audio_input.trim().to_string();
             cfg.modem.audio_output = self.audio_output.trim().to_string();
         }
@@ -907,7 +926,11 @@ impl GuiApp {
         cfg.ui.theme = "tron".into();
         // The dial is set from FREQ on the main page; setup only seeds a first one.
         if self.path != 0 && cfg.rf.frequency_khz == 0 {
-            cfg.rf.frequency_khz = if self.path == 3 { 7045 } else { 144950 };
+            cfg.rf.frequency_khz = if matches!(self.path, 3 | SUPPORTED_CAT) {
+                7045
+            } else {
+                144950
+            };
         }
         if let Err(e) = config::ensure_dirs() {
             self.error = e.to_string();
@@ -1713,17 +1736,64 @@ impl eframe::App for GuiApp {
                         ui.add_space(20.0);
                         ui.label(RichText::new("How you get on the air").color(DIM));
                     });
+                    ui.horizontal(|ui| {
+                        ui.add_space(20.0);
+                        if ui.radio(self.path == 0, "Internet only").clicked() {
+                            self.path = 0;
+                            self.radio = None;
+                        }
+                    });
+                    setup_group_label(ui, "Supported radios");
+                    for (i, r) in RADIOS.iter().enumerate() {
+                        let mut clicked = false;
+                        ui.horizontal(|ui| {
+                            ui.add_space(20.0);
+                            clicked = ui.radio(self.radio == Some(i), r.name).clicked();
+                        });
+                        if clicked {
+                            self.choose_radio(i);
+                        }
+                    }
+                    setup_group_label(ui, "Other setups");
                     for (id, label) in [
-                        (0, "Internet only"),
-                        (4, "VR-N76 / UV-PRO (Bluetooth)"),
                         (1, "Handheld + Digirig"),
                         (2, "Audio cable (VOX)"),
-                        (3, "HF rig (CAT)"),
+                        (3, "HF rig through rigctld (any Hamlib radio)"),
                         (5, "KISS TNC on a serial port"),
                     ] {
                         ui.horizontal(|ui| {
                             ui.add_space(20.0);
-                            ui.radio_value(&mut self.path, id, label);
+                            if ui
+                                .radio(self.radio.is_none() && self.path == id, label)
+                                .clicked()
+                            {
+                                self.path = id;
+                                self.radio = None;
+                            }
+                        });
+                    }
+                    if let Some(r) = self.radio.map(|i| &RADIOS[i]) {
+                        ui.horizontal(|ui| {
+                            ui.add_space(20.0);
+                            ui.label(
+                                RichText::new(format!("On the radio: {}", r.radio_side))
+                                    .color(DIM)
+                                    .font(FontId::monospace(11.0)),
+                            );
+                        });
+                    }
+                    if self.path == SUPPORTED_CAT {
+                        ui.horizontal(|ui| {
+                            ui.add_space(20.0);
+                            ui.label(RichText::new("CAT    ").color(DIM));
+                            if let Some(ports) = self.hw.as_ref().map(|h| h.ports.as_slice()) {
+                                port_combo_ui(ui, ports, &mut self.cat_port, "cat_port");
+                            }
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.cat_port)
+                                    .desired_width(120.0)
+                                    .hint_text("COM5"),
+                            );
                         });
                     }
                     if self.path == 1 {
@@ -1790,7 +1860,7 @@ impl eframe::App for GuiApp {
                             );
                         });
                     }
-                    if matches!(self.path, 1 | 2 | 3) {
+                    if matches!(self.path, 1 | 2 | 3 | SUPPORTED_CAT) {
                         let (ins, outs) = self
                             .hw
                             .as_ref()
@@ -2743,6 +2813,14 @@ fn audio_meter_row(ui: &mut egui::Ui, k: &str, db: f32, live: bool, tip: &str) {
         egui::Sense::hover(),
     );
     hover_tip(&resp, tip);
+}
+
+fn setup_group_label(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.add_space(20.0);
+        ui.label(RichText::new(text).color(DIM).font(FontId::monospace(11.0)));
+    });
 }
 
 fn audio_device_row(
@@ -4499,6 +4577,8 @@ struct Form {
     callsign: String,
     grid: String,
     path: usize,
+    radio: Option<usize>,
+    cat_port: String,
     com_port: String,
     bt_name: String,
     bt_addr: String,
@@ -4512,8 +4592,12 @@ struct Form {
 
 fn load_form() -> Form {
     if let Ok(cfg) = Config::load(&Config::default_path()) {
+        let radio =
+            crate::radios::from_config(&cfg).and_then(|r| RADIOS.iter().position(|x| x == r));
         let path = if cfg.mode == Mode::Internet {
             0
+        } else if radio.is_some_and(|i| RADIOS[i].is_cat()) {
+            SUPPORTED_CAT
         } else if cfg.modem.is_bluetooth() {
             4
         } else if cfg.modem.uses_tnc() {
@@ -4530,6 +4614,8 @@ fn load_form() -> Form {
             callsign: cfg.callsign,
             grid: cfg.grid,
             path,
+            radio,
+            cat_port: cfg.modem.hamlib_device,
             com_port: cfg.modem.com_port,
             bt_name: cfg.tnc.bt_name,
             bt_addr: cfg.tnc.bt_addr,
@@ -4572,7 +4658,58 @@ impl GuiApp {
             }
         }
         self.hw = Some(probe);
+        if self.path == SUPPORTED_CAT {
+            self.guess_radio_hardware();
+        }
         self.hw_rx = None;
+    }
+}
+
+/// Setup path for a supported CAT radio; 0 to 5 are the "Other" setups.
+const SUPPORTED_CAT: usize = 6;
+
+impl GuiApp {
+    /// Pick a supported radio: set the path and fill what the probe can find.
+    fn choose_radio(&mut self, i: usize) {
+        let r = &RADIOS[i];
+        self.radio = Some(i);
+        match r.link {
+            crate::radios::Link::BluetoothTnc { bt_name } => {
+                self.path = 4;
+                if self.bt_name != bt_name {
+                    self.bt_name = bt_name.into();
+                    self.bt_found = None;
+                    self.bt_note.clear();
+                }
+            }
+            crate::radios::Link::Cat { .. } => {
+                self.path = SUPPORTED_CAT;
+                self.guess_radio_hardware();
+            }
+        }
+    }
+
+    /// Fill the CAT port and sound cards from the radio's hints, if still empty.
+    fn guess_radio_hardware(&mut self) {
+        let (Some(i), Some(hw)) = (self.radio, &self.hw) else {
+            return;
+        };
+        let r = &RADIOS[i];
+        if self.cat_port.is_empty() {
+            if let Some(p) = r.pick_port(&hw.ports) {
+                self.cat_port = p;
+            }
+        }
+        if self.audio_input.is_empty() {
+            if let Some(d) = r.pick_audio(&hw.audio_in) {
+                self.audio_input = d;
+            }
+        }
+        if self.audio_output.is_empty() {
+            if let Some(d) = r.pick_audio(&hw.audio_out) {
+                self.audio_output = d;
+            }
+        }
     }
 }
 
