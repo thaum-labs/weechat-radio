@@ -652,7 +652,8 @@ svg.dgm .is-on .box.rplus { fill: rgba(255, 77, 255, 0.14); }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.app-mail__body { grid-column: 1 / -1; min-height: 2.6em; white-space: normal; }
+.app-mail__body { grid-column: 1 / -1; min-height: 6em; white-space: pre-wrap; }
+.app-mail__text { margin-top: 4px; white-space: pre-wrap; color: var(--fg); }
 .app-mail__btns { display: flex; gap: 8px; margin-top: 6px; }
 .app-mail__compose .app-mail__btns { grid-column: 1 / -1; margin-top: 0; }
 .app-mail__dlg > div {
