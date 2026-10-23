@@ -6,6 +6,7 @@ const PAGES = [
   "/docs.html",
   "/guides.html",
   "/docs/api.html",
+  "/docs/band-plan.html",
   "/docs/apps.html",
   "/docs/bridging.html",
   "/docs/calling.html",
