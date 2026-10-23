@@ -528,6 +528,59 @@
                 <p class="live-status__text" data-live-status aria-live="polite"></p>
                 <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
               </div>
+              <div class="app-win mode-radio-plus" data-setups="home">
+                <p class="app-win__bar"><span class="app-win__dot" aria-hidden="true"></span><b>G4ABC · radio-plus · 144.950</b><span>WeeChat Radio</span></p>
+                <div class="app-win__body">
+                  <ul class="app-win__side" aria-hidden="true"><li>#bulletin</li><li class="is-active">#walk</li><li class="app-win__label">stations</li><li>G4DEF [2m]</li><li>M0GWY [2m]</li></ul>
+                  <ol class="app-win__lines" aria-label="G4ABC’s chat">
+                    <li data-show="ha-tx"><time>20:14:05</time> <span class="nick me">[G4ABC]</span> hi #walk <span class="ticks"><span data-show="ha-tx">[tx]</span><span data-show="ha-gw">[gw]</span></span></li>
+                    <li data-show="ha-re"><time>20:14:41</time> <span class="nick">[G4XYZ]</span> hello <span class="via via-rf">[rf]</span></li>
+                  </ol>
+                  <p class="app-win__input" aria-hidden="true"><span class="app-win__sym">$</span><span class="app-win__field">message in this channel, or /join /invite /part</span><span class="app-win__send">send</span></p>
+                </div>
+              </div>
+              <div class="app-win mode-radio is-off" data-setups="hf">
+                <p class="app-win__bar"><span class="app-win__dot" aria-hidden="true"></span><b>G4ABC · radio · 14.070</b><span>WeeChat Radio</span></p>
+                <div class="app-win__body">
+                  <ul class="app-win__side" aria-hidden="true"><li>#bulletin</li><li class="is-active">EA4XYZ</li><li class="app-win__label">stations</li><li>EA4XYZ [20m]</li></ul>
+                  <ol class="app-win__lines" aria-label="G4ABC’s chat">
+                    <li data-show="hfa-tx"><time>09:02:11</time> <span class="nick me">[G4ABC]</span> hi <span class="ticks"><span data-show="hfa-tx">[tx]</span><span data-show="hfa-ok" class="tick-ok">[ok]</span></span></li>
+                  </ol>
+                  <p class="app-win__input" aria-hidden="true"><span class="app-win__sym">$</span><span class="app-win__field">message in this channel, or /join /invite /part</span><span class="app-win__send">send</span></p>
+                </div>
+              </div>
+              <div class="app-win mode-internet is-off" data-setups="guest">
+                <p class="app-win__bar"><span class="app-win__dot" aria-hidden="true"></span><b>~sam · internet</b><span>WeeChat Radio</span></p>
+                <div class="app-win__body">
+                  <ul class="app-win__side" aria-hidden="true"><li>#bulletin</li><li class="is-active">G4ABC</li></ul>
+                  <ol class="app-win__lines" aria-label="~sam’s chat">
+                    <li data-show="gs-out"><time>18:30:02</time> <span class="nick me">[~sam]</span> hi G4ABC</li>
+                    <li data-show="gs-re"><time>18:30:40</time> <span class="nick">[G4ABC]</span> hi ~sam <span class="via via-inet">[net]</span></li>
+                  </ol>
+                  <p class="app-win__input" aria-hidden="true"><span class="app-win__sym">$</span><span class="app-win__field">message in this channel, or /join /invite /part</span><span class="app-win__send">send</span></p>
+                </div>
+              </div>
+              <div class="app-win mode-radio is-off" data-setups="hops">
+                <p class="app-win__bar"><span class="app-win__dot" aria-hidden="true"></span><b>G4ABC · radio · 144.950</b><span>WeeChat Radio</span></p>
+                <div class="app-win__body">
+                  <ul class="app-win__side" aria-hidden="true"><li>#bulletin</li><li class="is-active">G4MNO</li><li class="app-win__label">stations</li><li>G4DEF [2m]</li></ul>
+                  <ol class="app-win__lines" aria-label="G4ABC’s chat">
+                    <li data-show="hp-a3"><time>12:00:03</time> <span class="nick me">[G4ABC]</span> hi G4MNO <span class="ticks"><span data-show="hp-a3">[tx]</span><span data-show="hp-b2">[rl]</span><span data-show="hp-aok">[rl] [ok]</span></span></li>
+                  </ol>
+                  <p class="app-win__input" aria-hidden="true"><span class="app-win__sym">$</span><span class="app-win__field">message in this channel, or /join /invite /part</span><span class="app-win__send">send</span></p>
+                </div>
+              </div>
+              <div class="app-win mode-radio-plus is-off" data-setups="email">
+                <p class="app-win__bar"><span class="app-win__dot" aria-hidden="true"></span><b>G4ABC · radio-plus · 144.950</b><span>WeeChat Radio</span></p>
+                <div class="app-win__body">
+                  <ul class="app-win__side" aria-hidden="true"><li>Inbox</li><li class="is-active">Outbox</li><li>Sent</li></ul>
+                  <ol class="app-win__lines" aria-label="G4ABC’s chat">
+                    <li data-show="e-tx"><time>19:20:05</time> <span class="ticks"><span data-show="e-tx">[tx]</span><span data-show="e-gw">[gw]</span><span data-show="e-sent" class="tick-ok">[ok]</span></span>  alex@example.com  Meeting point<span class="ticks"> <span data-show="e-gw">at gateway</span><span data-show="e-sent"></span></span></li>
+                    <li data-show="e-inbox"><span class="mail-waiting">waiting</span>  alex@example.com  Re: Meeting point  612 B</li>
+                  </ol>
+                  <p class="app-win__input" aria-hidden="true"><span class="app-win__send app-win__send--alt">Check mail</span></p>
+                </div>
+              </div>
             </div>
             <div class="live-dgm__text">
               <div class="setup-panel" data-setup-panel="home">
@@ -602,6 +655,9 @@
     ],
     "on": [
      "home-a"
+    ],
+    "show": [
+     "ha-tx"
     ],
     "ms": 1800
    },
@@ -679,6 +735,9 @@
     ],
     "on": [
      "hf-a"
+    ],
+    "show": [
+     "hfa-tx"
     ],
     "ms": 1900
    },

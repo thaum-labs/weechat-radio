@@ -123,7 +123,7 @@ body = "\n".join([
 groups.append(group("home", body, DEFAULT))
 steps["home"] = {"viewBox": "0 0 440 362", "steps": [
     {"say": "G4ABC says hi to #walk. Its computer keys the radio on 144.950 and does not open the hub.",
-     "segs": ["home-rf-a", "home-rf-ab"], "on": ["home-a"], "ms": 1800},
+     "segs": ["home-rf-a", "home-rf-ab"], "on": ["home-a"], "show": ["ha-tx"], "ms": 1800},
     {"say": "G4DEF hears it on the air and shows the line.", "show": ["hb-hi"], "ms": 1200},
     {"say": "The gateway at home hears a radio-plus line and sends it to the hub. G4ABC’s line shows [gw].",
      "segs": ["home-gw-hub"], "on": ["home-gw"], "show": ["ha-gw"], "ms": 1800},
@@ -151,7 +151,7 @@ body = "\n".join([
 groups.append(group("hf", body, DEFAULT))
 steps["hf"] = {"viewBox": "0 0 440 262", "steps": [
     {"say": "G4ABC keys a line on 14.070. In radio mode it stays on the air: nothing goes to the hub.",
-     "segs": ["hf-rf"], "on": ["hf-a"], "ms": 1900},
+     "segs": ["hf-rf"], "on": ["hf-a"], "show": ["hfa-tx"], "ms": 1900},
     {"say": "EA4XYZ decodes it and shows the line.", "show": ["hfb-hi"], "ms": 1300},
     {"say": "EA4XYZ sends its receipt back on the same frequency.", "segs": ["<hf-rf"], "on": ["hf-b"], "ms": 1900},
     {"say": "G4ABC shows [ok]. A gateway that heard it would leave it on the air.", "show": ["hfa-ok"]},
@@ -399,6 +399,86 @@ wide_groups.append(group("email", "\n".join([
 ]), DEFAULT))
 steps["email"]["viewBoxWide"] = "0 64 800 256"
 
+
+# --- App window: the chat (or Email) part of the app, filled in as the steps play ---
+# Lines and marks carry the same data-show names as the drawings, so the steps that
+# light the diagram also add lines here. A row of marks shows only the latest one.
+MODE_CLASS = {"internet": "mode-internet", "internet-radio": "mode-internet-radio",
+              "radio": "mode-radio", "radio-plus": "mode-radio-plus"}
+
+
+def chat_line(show, time, nick, text, me=False, via="", ticks=()):
+    via_html = ""
+    if via:
+        label = "net" if via == "inet" else via
+        via_html = f' <span class="via via-{via}">[{label}]</span>'
+    tick_html = ""
+    if ticks:
+        spans = "".join(
+            f'<span data-show="{name}"' + (' class="tick-ok"' if mark == "[ok]" else "") + f">{mark}</span>"
+            for name, mark in ticks)
+        tick_html = f' <span class="ticks">{spans}</span>'
+    nick_cls = "nick me" if me else "nick"
+    return (f'<li data-show="{show}"><time>{time}</time> <span class="{nick_cls}">[{nick}]</span> '
+            f"{text}{via_html}{tick_html}</li>")
+
+
+def app_window(setup, me, mode, dial, side, lines, stations=(),
+               hint="message in this channel, or /join /invite /part", buttons=None):
+    off = "" if setup == DEFAULT else " is-off"
+    who = f"{me} · {mode}" + (f" · {dial}" if dial else "")
+    side_items = "".join(("<li class=\"is-active\">" if active else "<li>") + f"{name}</li>"
+                         for name, active in side)
+    if stations:
+        side_items += '<li class="app-win__label">stations</li>' + "".join(f"<li>{st}</li>" for st in stations)
+    body = "\n".join(f"                    {line}" for line in lines)
+    return "\n".join([
+        f'              <div class="app-win {MODE_CLASS[mode]}{off}" data-setups="{setup}">',
+        f'                <p class="app-win__bar"><span class="app-win__dot" aria-hidden="true"></span><b>{who}</b><span>WeeChat Radio</span></p>',
+        '                <div class="app-win__body">',
+        f'                  <ul class="app-win__side" aria-hidden="true">{side_items}</ul>',
+        f'                  <ol class="app-win__lines" aria-label="{me}’s chat">',
+        body,
+        '                  </ol>',
+        (f'                  <p class="app-win__input" aria-hidden="true">{buttons}</p>' if buttons else
+         f'                  <p class="app-win__input" aria-hidden="true"><span class="app-win__sym">$</span><span class="app-win__field">{hint}</span><span class="app-win__send">send</span></p>'),
+        '                </div>',
+        '              </div>',
+    ])
+
+
+app_windows = "\n".join([
+    app_window("home", "G4ABC", "radio-plus", "144.950",
+               [("#bulletin", False), ("#walk", True)], [
+                   chat_line("ha-tx", "20:14:05", "G4ABC", "hi #walk", me=True,
+                             ticks=[("ha-tx", "[tx]"), ("ha-gw", "[gw]")]),
+                   chat_line("ha-re", "20:14:41", "G4XYZ", "hello", via="rf"),
+               ], stations=["G4DEF [2m]", "M0GWY [2m]"]),
+    app_window("hf", "G4ABC", "radio", "14.070",
+               [("#bulletin", False), ("EA4XYZ", True)], [
+                   chat_line("hfa-tx", "09:02:11", "G4ABC", "hi", me=True,
+                             ticks=[("hfa-tx", "[tx]"), ("hfa-ok", "[ok]")]),
+               ], stations=["EA4XYZ [20m]"]),
+    app_window("guest", "~sam", "internet", "",
+               [("#bulletin", False), ("G4ABC", True)], [
+                   chat_line("gs-out", "18:30:02", "~sam", "hi G4ABC", me=True),
+                   chat_line("gs-re", "18:30:40", "G4ABC", "hi ~sam", via="inet"),
+               ]),
+    app_window("hops", "G4ABC", "radio", "144.950",
+               [("#bulletin", False), ("G4MNO", True)], [
+                   chat_line("hp-a3", "12:00:03", "G4ABC", "hi G4MNO", me=True,
+                             ticks=[("hp-a3", "[tx]"), ("hp-b2", "[rl]"), ("hp-aok", "[rl] [ok]")]),
+               ], stations=["G4DEF [2m]"]),
+    app_window("email", "G4ABC", "radio-plus", "144.950",
+               [("Inbox", False), ("Outbox", True), ("Sent", False)], [
+                   '<li data-show="e-tx"><time>19:20:05</time> <span class="ticks">'
+                   '<span data-show="e-tx">[tx]</span><span data-show="e-gw">[gw]</span>'
+                   '<span data-show="e-sent" class="tick-ok">[ok]</span></span>  alex@example.com  Meeting point'
+                   '<span class="ticks"> <span data-show="e-gw">at gateway</span><span data-show="e-sent"></span></span></li>',
+                   '<li data-show="e-inbox"><span class="mail-waiting">waiting</span>  alex@example.com  Re: Meeting point  612 B</li>',
+               ], buttons='<span class="app-win__send app-win__send--alt">Check mail</span>'),
+])
+
 svg_body = "\n".join(groups)
 svg_body_wide = "\n".join(wide_groups)
 steps_json = json.dumps(steps, ensure_ascii=False, indent=1)
@@ -544,6 +624,7 @@ HTML = f"""<!doctype html>
                 <p class="live-status__text" data-live-status aria-live="polite"></p>
                 <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
               </div>
+{app_windows}
             </div>
             <div class="live-dgm__text">{PANELS}
             </div>

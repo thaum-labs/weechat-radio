@@ -25,6 +25,9 @@
  * after another instead of together), on (nodes lit for this step), show (lines that appear and
  * stay), ms (step length, default 1500).
  *
+ * Elements outside the svg take part too: an HTML line with data-show appears when a step
+ * shows it, and a block with data-setups is shown only for those setups (see .app-win).
+ *
  * Two drawings of one diagram: give each svg data-layout="wide" or "narrow" (docs.css shows one
  * by screen width) and each setup a "viewBoxWide" next to "viewBox". Both drawings use the same
  * ids, so the steps light both and the visible one is what the reader sees.
@@ -59,7 +62,9 @@
     let timers = [];
     let seen = false;
 
-    const all = (sel) => svgs.flatMap((svg) => Array.from(svg.querySelectorAll(sel)));
+    // Lines, nodes and setup-only parts may sit in the drawings or elsewhere in the figure
+    // (an app window, for example), so look across the whole figure.
+    const all = (sel) => Array.from(fig.querySelectorAll(sel));
 
     // Packet animation needs each path's length (see .pkt in docs.css). A drawing hidden
     // for this screen width may not report one yet, so measure again when a step runs.
