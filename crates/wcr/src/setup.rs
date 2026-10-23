@@ -201,6 +201,9 @@ pub fn run_wizard() -> Result<Config> {
             let radio = radio.unwrap_or(&RADIOS[0]);
             radio.apply(&mut cfg);
             println!("  On the radio: {}", radio.radio_side);
+            if !radio.cable.is_empty() {
+                println!("  Cable: {}", radio.cable);
+            }
             println!("  Close the radio's phone app (one Bluetooth client at a time).");
             let _ = std::io::stdout().flush();
             bluetooth_pick(&theme, &mut cfg)?;
@@ -209,6 +212,9 @@ pub fn run_wizard() -> Result<Config> {
             let radio = radio.expect("supported CAT radio");
             radio.apply(&mut cfg);
             println!("  On the radio: {}", radio.radio_side);
+            if !radio.cable.is_empty() {
+                println!("  Cable: {}", radio.cable);
+            }
             println!("  wcr keys the radio and reads the dial over CAT. Nothing else to install.");
             let ports = crate::discover::serial_ports();
             let guess = radio.pick_port(&ports);
@@ -228,6 +234,9 @@ pub fn run_wizard() -> Result<Config> {
         // Digirig or VOX radio: the generic path above, with this radio's preset.
         r.apply(&mut cfg);
         println!("  On the radio: {}", r.radio_side);
+        if !r.cable.is_empty() {
+            println!("  Cable: {}", r.cable);
+        }
     }
 
     if path != 0 && !cfg.modem.uses_tnc() {
