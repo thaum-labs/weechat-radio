@@ -2,7 +2,9 @@ name: release
 on:
   push:
     tags: ["v*"]
-  # Release button. Give a version like v0.1.111. If the tag does not exist
+  # Release button. Give a version like v0.1.111, or v1.0.0-rc1 for a
+  # release candidate (published as a GitHub pre-release, install manifests
+  # left on the last final release). If the tag does not exist
   # yet, it is created on main (the version must match Cargo.toml), then the
   # release is built and published. If the tag already exists, the assets are
   # rebuilt and uploaded again (repair).
@@ -32,7 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${RELEASE_TAG}"
-          case "$TAG" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "tag must look like v0.1.111"; exit 1 ;; esac
+          case "$TAG" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "tag must look like v0.1.111 or v1.0.0-rc1"; exit 1 ;; esac
           git fetch --tags --force
           if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
             echo "$TAG already exists, rebuilding its assets"
@@ -59,7 +61,8 @@ jobs:
             echo "Release $TAG already exists"
             exit 0
           fi
-          PREV="$(git tag --list 'v*' --sort=-v:refname | awk -v t="$TAG" '$0==t {getline; print; exit}')"
+          # versionsort.suffix sorts v1.0.0-rc1 before v1.0.0.
+          PREV="$(git -c versionsort.suffix=-rc tag --list 'v*' --sort=-v:refname | awk -v t="$TAG" '$0==t {getline; print; exit}')"
           {
             git log -1 --format='%s.' "$TAG"
             echo
@@ -74,7 +77,9 @@ jobs:
             fi
           } > release-notes.md
           cat release-notes.md
-          gh release create "$TAG" --repo "${GITHUB_REPOSITORY}" --verify-tag --draft --title "$TAG" --notes-file release-notes.md
+          PRE=""
+          case "$TAG" in *-rc*) PRE="--prerelease" ;; esac
+          gh release create "$TAG" --repo "${GITHUB_REPOSITORY}" --verify-tag --draft $PRE --title "$TAG" --notes-file release-notes.md
   build:
     needs: notes
     strategy:
@@ -291,6 +296,8 @@ jobs:
           test "$COUNT" -ge 15
   sync_install_manifests:
     needs: [build, publish]
+    # Homebrew, Scoop and winget stay on the last final release during RCs.
+    if: ${{ !contains(github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name, '-rc') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
