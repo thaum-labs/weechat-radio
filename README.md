@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.89-DEA584?logo=rust&logoColor=white" alt="Rust 1.89" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="Apache-2.0" /></a>
-  <img src="https://img.shields.io/badge/version-0.1.114-7d9bff" alt="Version 0.1.114" />
+  <img src="https://img.shields.io/badge/version-1.0.0--rc1-7d9bff" alt="Version 1.0.0-rc1" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6" alt="Windows, macOS and Linux" />
   <br/>
   <a href="https://weechat.org/"><img src="https://img.shields.io/badge/WeeChat-IRC-00A7E0" alt="WeeChat" /></a>
@@ -71,6 +71,8 @@ wcr gui
 ```
 
 `wcr update` downloads a newer release, checks its SHA256, and replaces the binary. On Linux and macOS it restarts a station installed with `wcr service install`. A station you started by hand (`wcr gui`, `wcr tui`, or `wcr node`) keeps the old code until you stop it and start it again. On Windows, restart that station yourself, including a service.
+
+Release candidates (like `v1.0.0-rc1`) are GitHub pre-releases. `wcr update` skips them unless you run `wcr update --rc`. Once a station runs a release candidate, plain `wcr update` takes the next candidate or the final release.
 
 How you know it worked: the status bar shows your callsign. Send a line in `#bulletin`. Marks on your own lines:
 

@@ -30,7 +30,22 @@ pub fn current_version() -> &'static str {
 pub async fn latest() -> Result<Option<ReleaseInfo>> {
     let client = github_client()?;
     let releases = fetch_releases(&client).await?;
-    Ok(best_downloadable(&releases, current_version()))
+    let current = current_version();
+    Ok(best_downloadable(
+        &releases,
+        current,
+        takes_rc(false, current),
+    ))
+}
+
+/// Release candidates (`v1.0.0-rc1`) are offered only with `wcr update --rc`
+/// or to a station that already runs one.
+fn takes_rc(asked: bool, current: &str) -> bool {
+    asked || is_rc(current)
+}
+
+fn is_rc(tag: &str) -> bool {
+    tag.contains("-rc")
 }
 
 async fn fetch_releases(client: &reqwest::Client) -> Result<Vec<Release>> {
@@ -72,15 +87,22 @@ fn github_client() -> Result<reqwest::Client> {
         .map_err(|e| Error::Net(e.to_string()))
 }
 
-fn parse_version(tag: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = tag.trim_start_matches('v').split('.');
+/// `vX.Y.Z` or `vX.Y.Z-rcN`. The last number orders release candidates
+/// before their final release: 1.0.0-rc1 < 1.0.0-rc2 < 1.0.0.
+fn parse_version(tag: &str) -> Option<(u64, u64, u64, u64)> {
+    let tag = tag.trim_start_matches('v');
+    let (base, rc) = match tag.split_once("-rc") {
+        Some((base, n)) => (base, n.parse().ok()?),
+        None => (tag, u64::MAX),
+    };
+    let mut parts = base.split('.');
     let major = parts.next()?.parse().ok()?;
     let minor = parts.next()?.parse().ok()?;
     let patch = parts.next()?.parse().ok()?;
     if parts.next().is_some() {
         return None;
     }
-    Some((major, minor, patch))
+    Some((major, minor, patch, rc))
 }
 
 fn version_cmp(a: &str, b: &str) -> Ordering {
@@ -90,22 +112,23 @@ fn version_cmp(a: &str, b: &str) -> Ordering {
     }
 }
 
-fn is_newer_than_current(tag: &str, current: &str) -> bool {
-    version_cmp(tag, current) == Ordering::Greater
+/// Newer than `current`, and not a release candidate unless `rc` allows it.
+fn is_offered(tag: &str, current: &str, rc: bool) -> bool {
+    version_cmp(tag, current) == Ordering::Greater && (rc || !is_rc(tag))
 }
 
-fn highest_newer_tag(releases: &[Release], current: &str) -> Option<String> {
+fn highest_newer_tag(releases: &[Release], current: &str, rc: bool) -> Option<String> {
     let names: Vec<String> = releases.iter().map(|rel| rel.tag_name.clone()).collect();
-    highest_newer_name(&names, current)
+    highest_newer_name(&names, current, rc)
 }
 
-/// Highest `vX.Y.Z` name newer than `current`, without the `v`.
-fn highest_newer_name(names: &[String], current: &str) -> Option<String> {
+/// Highest version name offered over `current`, without the `v`.
+fn highest_newer_name(names: &[String], current: &str, rc: bool) -> Option<String> {
     names
         .iter()
         .filter_map(|name| {
             let tag = name.trim_start_matches('v');
-            if is_newer_than_current(tag, current) {
+            if is_offered(tag, current, rc) {
                 parse_version(tag).map(|_| tag.to_string())
             } else {
                 None
@@ -115,10 +138,11 @@ fn highest_newer_name(names: &[String], current: &str) -> Option<String> {
 }
 
 /// Newest release newer than `current` that ships a binary for this OS/arch.
-fn best_downloadable(releases: &[Release], current: &str) -> Option<ReleaseInfo> {
+fn best_downloadable(releases: &[Release], current: &str, rc: bool) -> Option<ReleaseInfo> {
     best_downloadable_for(
         releases,
         current,
+        rc,
         std::env::consts::OS,
         std::env::consts::ARCH,
     )
@@ -127,6 +151,7 @@ fn best_downloadable(releases: &[Release], current: &str) -> Option<ReleaseInfo>
 fn best_downloadable_for(
     releases: &[Release],
     current: &str,
+    rc: bool,
     os: &str,
     arch: &str,
 ) -> Option<ReleaseInfo> {
@@ -134,7 +159,7 @@ fn best_downloadable_for(
         .iter()
         .filter_map(|rel| {
             let tag = rel.tag_name.trim_start_matches('v');
-            if !is_newer_than_current(tag, current) {
+            if !is_offered(tag, current, rc) {
                 return None;
             }
             let asset = pick_asset_for(&rel.assets, os, arch)?;
@@ -203,12 +228,14 @@ pub struct Applied {
     pub restarted: bool,
 }
 
-pub async fn apply() -> Result<Applied> {
+/// `rc`: the user asked for release candidates too (`wcr update --rc`).
+pub async fn apply(rc: bool) -> Result<Applied> {
     let client = github_client()?;
     let releases = fetch_releases(&client).await?;
     let current = current_version();
-    let Some(info) = best_downloadable(&releases, current) else {
-        if highest_newer_tag(&releases, current).is_some() {
+    let rc = takes_rc(rc, current);
+    let Some(info) = best_downloadable(&releases, current, rc) else {
+        if highest_newer_tag(&releases, current, rc).is_some() {
             return Err(Error::Msg(format!(
                 "a newer release is still publishing for this platform — try again in a few minutes, or install manually from https://github.com/{REPO}/releases"
             )));
@@ -218,12 +245,17 @@ pub async fn apply() -> Result<Applied> {
         let building = fetch_tag_names(&client)
             .await
             .ok()
-            .and_then(|tags| highest_newer_name(&tags, current));
+            .and_then(|tags| highest_newer_name(&tags, current, rc));
         let message = match building {
             Some(tag) => format!(
                 "already up to date ({current}). v{tag} is still being built; try again later (it can take up to an hour)"
             ),
-            None => format!("already up to date ({current})"),
+            None => match highest_newer_tag(&releases, current, true) {
+                Some(tag) if !rc => format!(
+                    "already up to date ({current}). Release candidate v{tag} is out: run wcr update --rc to try it"
+                ),
+                _ => format!("already up to date ({current})"),
+            },
         };
         return Ok(Applied {
             message,
@@ -776,10 +808,10 @@ mod tests {
             .map(|s| s.to_string())
             .collect();
         assert_eq!(
-            highest_newer_name(&names, "0.1.110").as_deref(),
+            highest_newer_name(&names, "0.1.110", false).as_deref(),
             Some("0.1.111")
         );
-        assert_eq!(highest_newer_name(&names, "0.1.111"), None);
+        assert_eq!(highest_newer_name(&names, "0.1.111", false), None);
     }
 
     #[test]
@@ -794,10 +826,39 @@ mod tests {
                 ],
             ),
         ];
-        let info = best_downloadable_for(&releases, "0.1.0", "windows", "x86_64")
+        let info = best_downloadable_for(&releases, "0.1.0", false, "windows", "x86_64")
             .expect("should find 0.1.15");
         assert_eq!(info.version, "0.1.15");
         assert_eq!(info.name.as_deref(), Some("wcr-windows-x86_64.zip"));
+    }
+
+    #[test]
+    fn release_candidates_sort_before_their_final_release() {
+        assert!(parse_version("v1.0.0-rc1") > parse_version("v0.1.114"));
+        assert!(parse_version("v1.0.0-rc2") > parse_version("v1.0.0-rc1"));
+        assert!(parse_version("v1.0.0") > parse_version("v1.0.0-rc2"));
+        assert_eq!(parse_version("v1.0.0-beta"), None);
+    }
+
+    #[test]
+    fn a_release_candidate_is_offered_only_when_asked_or_already_on_one() {
+        let win = || vec![asset("wcr-windows-x86_64.zip")];
+        let releases = vec![release("v1.0.0-rc1", win()), release("v0.1.114", win())];
+        let plain = best_downloadable_for(&releases, "0.1.113", false, "windows", "x86_64");
+        assert_eq!(plain.unwrap().version, "0.1.114");
+        let asked = takes_rc(true, "0.1.114");
+        let info = best_downloadable_for(&releases, "0.1.114", asked, "windows", "x86_64");
+        assert_eq!(info.unwrap().version, "1.0.0-rc1");
+        assert!(best_downloadable_for(&releases, "0.1.114", false, "windows", "x86_64").is_none());
+        // A station on an RC moves on to the next RC and the final release.
+        let later = vec![
+            release("v1.0.0", win()),
+            release("v1.0.0-rc2", win()),
+            release("v1.0.0-rc1", win()),
+        ];
+        let rc = takes_rc(false, "1.0.0-rc1");
+        let info = best_downloadable_for(&later, "1.0.0-rc1", rc, "windows", "x86_64");
+        assert_eq!(info.unwrap().version, "1.0.0");
     }
 
     #[test]
@@ -816,10 +877,10 @@ mod tests {
             release("v0.1.16", vec![asset("wcr-macos-aarch64.tar.gz")]),
             release("v0.1.15", vec![asset("wcr-windows-x86_64.zip")]),
         ];
-        let info = best_downloadable_for(&releases, "0.1.15", "windows", "x86_64");
+        let info = best_downloadable_for(&releases, "0.1.15", false, "windows", "x86_64");
         assert!(info.is_none());
         assert_eq!(
-            highest_newer_tag(&releases, "0.1.15").as_deref(),
+            highest_newer_tag(&releases, "0.1.15", false).as_deref(),
             Some("0.1.16")
         );
     }
