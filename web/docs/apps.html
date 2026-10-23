@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Compare apps — WeeChat Radio</title>
+  <meta name="description" content="WeeChat Radio next to Winlink Express, Pat, JS8Call, VarAC, Fldigi, FreeDATA and Meshtastic: chat, email, relays, no-internet use and ease of use." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="WeeChat Radio" />
+  <meta property="og:title" content="Compare apps — WeeChat Radio" />
+  <meta property="og:description" content="WeeChat Radio next to Winlink Express, Pat, JS8Call, VarAC, Fldigi, FreeDATA and Meshtastic: chat, email, relays, no-internet use and ease of use." />
+  <meta property="og:url" content="https://weechatradio.com/docs/apps.html" />
+  <meta property="og:image" content="https://weechatradio.com/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="WeeChat Radio. Live messaging chat powered by radio." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://weechatradio.com/og.png" />
+  <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=2" />
+</head>
+<body class="page-doc cmp-page">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/map.html">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/why.html">why</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/docs.html">docs</a> / compare apps</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> compare apps</h1>
+      <p class="lead">WeeChat Radio next to the other ham radio apps people use for text and email. One row per app, one column per feature, and ease of use at the end.</p>
+
+      <div class="warn-box">
+        <h2>Our reading, not a lab test</h2>
+        <p>These are our own ratings, from each app’s documentation and from using them, as of October 2026. Apps change. If a row is wrong, tell us on <a href="https://github.com/thaum-labs/weechat-radio/issues">GitHub</a> and we will fix it.</p>
+      </div>
+
+      <section class="article-section" aria-labelledby="tableH">
+      <h2 id="tableH">Feature by feature</h2>
+      <div class="cmp-legend">
+        <ol class="cmp-scale" aria-label="Cell colour: green yes, amber partly, red no">
+          <li data-s="5">yes</li>
+          <li data-s="4">yes, with limits</li>
+          <li data-s="3">partly</li>
+          <li data-s="1">no</li>
+        </ol>
+        <ul class="cmp-legend-notes">
+          <li>Ease of use: green easy, amber moderate, red hard. Reasons are under the table.</li>
+          <li>On a phone, slide the table sideways.</li>
+        </ul>
+      </div>
+      <div class="table-wrap">
+        <table id="apps-table">
+          <caption class="sr-only">Ham radio text and email apps compared by feature. The orange row is WeeChat Radio.</caption>
+          <thead>
+            <tr>
+              <th scope="col">App</th>
+              <th scope="col">Runs on</th>
+              <th scope="col">Bands</th>
+              <th scope="col">Live chat</th>
+              <th scope="col">Internet email</th>
+              <th scope="col">Relays / mesh</th>
+              <th scope="col">No internet</th>
+              <th scope="col">Join with no radio</th>
+              <th scope="col">Open source</th>
+              <th scope="col">Cost</th>
+              <th scope="col">Ease of use</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="cmp-wcr">
+              <th scope="row"><span class="cmp-tag">wcr</span> WeeChat Radio</th>
+              <td>Windows, macOS, Linux</td>
+              <td>HF, VHF, UHF, handhelds via VOX</td>
+              <td data-s="5">Yes, rooms and 1:1</td>
+              <td data-s="5">Yes, your callsign@ address</td>
+              <td data-s="5">Yes, hops and gateways</td>
+              <td data-s="5">Yes, store-and-forward</td>
+              <td data-s="5">Yes, internet mode</td>
+              <td data-s="5">Yes, Apache-2.0</td>
+              <td>Free</td>
+              <td data-s="5">Easy</td>
+            </tr>
+            <tr>
+              <th scope="row">Winlink Express</th>
+              <td>Windows</td>
+              <td>HF, VHF</td>
+              <td data-s="1">No, messages only</td>
+              <td data-s="5">Yes, its main job</td>
+              <td data-s="3">Via RMS gateways</td>
+              <td data-s="3">Peer-to-peer and radio-only hubs</td>
+              <td data-s="3">Telnet, still needs a callsign</td>
+              <td data-s="1">No</td>
+              <td>Free; VARA full speed is paid</td>
+              <td data-s="3">Moderate</td>
+            </tr>
+            <tr>
+              <th scope="row">Pat</th>
+              <td>Windows, macOS, Linux, Pi</td>
+              <td>HF, VHF</td>
+              <td data-s="1">No, messages only</td>
+              <td data-s="5">Yes, via Winlink</td>
+              <td data-s="3">Via RMS gateways</td>
+              <td data-s="3">Peer-to-peer and radio-only hubs</td>
+              <td data-s="3">Telnet, still needs a callsign</td>
+              <td data-s="5">Yes, MIT</td>
+              <td>Free; VARA full speed is paid</td>
+              <td data-s="3">Moderate</td>
+            </tr>
+            <tr>
+              <th scope="row">JS8Call</th>
+              <td>Windows, macOS, Linux, Pi</td>
+              <td>HF</td>
+              <td data-s="4">Yes, slow</td>
+              <td data-s="3">Short notes via APRS</td>
+              <td data-s="5">Yes, relay and inboxes</td>
+              <td data-s="5">Yes</td>
+              <td data-s="1">No</td>
+              <td data-s="5">Yes, GPL</td>
+              <td>Free</td>
+              <td data-s="3">Moderate</td>
+            </tr>
+            <tr>
+              <th scope="row">VarAC</th>
+              <td>Windows</td>
+              <td>HF, VHF</td>
+              <td data-s="5">Yes, 1:1 and broadcasts</td>
+              <td data-s="1">No</td>
+              <td data-s="3">VMail through a relay station</td>
+              <td data-s="5">Yes</td>
+              <td data-s="1">No</td>
+              <td data-s="1">No</td>
+              <td>Free; VARA full speed is paid</td>
+              <td data-s="3">Moderate</td>
+            </tr>
+            <tr>
+              <th scope="row">Fldigi + FLmsg</th>
+              <td>Windows, macOS, Linux</td>
+              <td>HF, VHF</td>
+              <td data-s="3">Live typing, no rooms</td>
+              <td data-s="1">No</td>
+              <td data-s="1">No</td>
+              <td data-s="5">Yes</td>
+              <td data-s="1">No</td>
+              <td data-s="5">Yes, GPL</td>
+              <td>Free</td>
+              <td data-s="1">Hard</td>
+            </tr>
+            <tr>
+              <th scope="row">FreeDATA</th>
+              <td>Windows, macOS, Linux</td>
+              <td>HF</td>
+              <td data-s="4">Yes, 1:1 messages</td>
+              <td data-s="1">No</td>
+              <td data-s="1">No</td>
+              <td data-s="5">Yes</td>
+              <td data-s="1">No</td>
+              <td data-s="5">Yes, GPL</td>
+              <td>Free</td>
+              <td data-s="3">Moderate</td>
+            </tr>
+            <tr>
+              <th scope="row">Meshtastic</th>
+              <td>Android, iOS, browser</td>
+              <td>LoRa (licence-free), a few km per hop</td>
+              <td data-s="5">Yes, channels and 1:1</td>
+              <td data-s="1">No</td>
+              <td data-s="5">Yes, mesh up to 7 hops</td>
+              <td data-s="5">Yes</td>
+              <td data-s="3">Through an MQTT bridge</td>
+              <td data-s="5">Yes, GPL</td>
+              <td>About $30 for a LoRa node</td>
+              <td data-s="5">Easy</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      </section>
+
+      <section class="article-section" aria-labelledby="easeH">
+      <h2 id="easeH">Ease of use, and when to pick each</h2>
+      <p class="section-lead">Ease of use means getting from download to your first message, then using the app day to day.</p>
+      <ul class="cards">
+        <li><strong>WeeChat Radio: easy</strong><span>One install command, a seven-step setup, then a chat window. No radio needed to start. Early software, so expect changes. Pick it for live group chat over radio, internet or both, with email beside it.</span></li>
+        <li><strong>Winlink Express: moderate</strong><span>The standard for ham email and emergency forms, with a big gateway network. Many menus, a separate VARA or ARDOP install, and Windows only. Pick it when your group or served agency uses Winlink.</span></li>
+        <li><strong>Pat: moderate</strong><span>Winlink in a browser window, on any computer. Setup means editing a config file and installing a modem yourself. Pick it for Winlink on Linux, macOS or a Raspberry Pi.</span></li>
+        <li><strong>JS8Call: moderate</strong><span>Familiar if you know FT8, and it gets through very weak HF paths. Messages are slow, and relays and inboxes use typed commands. Pick it for keyboard chat when the band is barely open.</span></li>
+        <li><strong>VarAC: moderate</strong><span>A friendly chat screen, but it needs VARA set up first and runs on Windows only. Pick it for fast one-to-one HF chat with VARA users.</span></li>
+        <li><strong>Fldigi + FLmsg: hard</strong><span>Dozens of modes, a waterfall to tune by hand, and lots of settings. Very flexible once learned. Pick it for emergency forms (NBEMS) and classic digital modes.</span></li>
+        <li><strong>FreeDATA: moderate</strong><span>A modern window and open source, but still in development and needs rig and audio setup. Pick it for open source HF messages and file transfer.</span></li>
+        <li><strong>Meshtastic: easy</strong><span>Pair a small LoRa node with your phone and chat. It is not a ham mode and covers kilometres, not continents. Pick it for local text when there is no phone signal.</span></li>
+      </ul>
+      </section>
+
+      <p class="next">How the radio side compares in noise: <a href="/docs/compare.html">compare modes</a>. What each WeeChat Radio mode does: <a href="/docs/modes.html">modes</a>. Email in the app: <a href="/docs/email.html">email</a>.</p>
+    </main>
+  </div>
+  <script src="/copy.js?v=1"></script>
+  <script src="/shell.js?v=10"></script>
+</body>
+</html>
