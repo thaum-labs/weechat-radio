@@ -214,7 +214,7 @@ HTML = f'''<!doctype html>
         <span class="bp-band--free-key">licence-free band</span><span class="bp-key__plain">WW = worldwide</span>
       </div>
 
-      <div class="setup-switch bp-switch" role="group" aria-label="Show spots for" hidden>{buttons}</div>
+      <div class="setup-switch setup-switch--fill bp-switch" role="group" aria-label="Show spots for" hidden>{buttons}</div>
       <div class="bp-plan" data-bp-region="all">
 {chr(10).join(sections_html)}
       </div>
