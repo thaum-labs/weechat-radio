@@ -88,9 +88,9 @@ async fn real_main() -> Result<()> {
                 ServiceAction::Status => println!("{}", wcr::service::status()?),
             }
         }
-        Command::Update => {
+        Command::Update { rc } => {
             wcr::ui_style::panel("WEECHAT RADIO", "UPDATE");
-            let applied = wcr::update::apply().await?;
+            let applied = wcr::update::apply(rc).await?;
             println!("{}", applied.message);
             if !applied.restarted {
                 if let Ok(cfg) = load_cfg(&cfg_path) {
