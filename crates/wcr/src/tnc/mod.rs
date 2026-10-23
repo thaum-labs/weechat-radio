@@ -24,7 +24,9 @@ pub use bluetooth::{BtDevice, FindOutcome};
 pub use link::start_link;
 
 /// Bluetooth names used by the Benshi-platform radios with a KISS TNC.
-pub const KNOWN_RADIOS: &[&str] = &["VR-N76", "UV-PRO", "GA-5WB", "VR-N7500", "GMRS-PRO"];
+pub const KNOWN_RADIOS: &[&str] = &[
+    "VR-N76", "UV-PRO", "GA-5WB", "VR-N7500", "VR-N7600", "GMRS-PRO",
+];
 
 /// Normalise a Bluetooth name for matching: uppercase, no spaces/dashes/underscores.
 pub fn norm_name(s: &str) -> String {

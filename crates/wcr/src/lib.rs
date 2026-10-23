@@ -24,6 +24,7 @@ pub mod net;
 pub mod node;
 pub mod presets;
 pub mod proto;
+pub mod radios;
 pub mod rate_limit;
 pub mod relay;
 pub mod service;

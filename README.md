@@ -151,13 +151,14 @@ You need a valid licence, a radio, and audio into the PC. [modem73](https://gith
 
 | Path | What you need |
 |------|----------------|
+| Supported radio | Pick it by name in setup: VR-N76 / UV-PRO / GA-5WB, VR-N7600 (Bluetooth), Xiegu X6100, Xiegu G90, Yaesu FT-710 (CAT). Setup fills in the rest; you confirm the port and sound card. CAT radios need no Hamlib install: modem73 talks to the radio itself |
 | VR-N76 / UV-PRO (Bluetooth) | Vero VR-N76, BTECH UV-PRO or Radioddity GA-5WB — built-in KISS TNC, no cable; the app pairs and connects (`wcr tnc find`) |
 | KISS TNC on a serial port | Mobilinkd, `/dev/rfcomm0`, or any KISS TNC on a COM port |
 | Handheld + Digirig | VHF/UHF HT and a [Digirig](https://digirig.net/) (or AIOC) USB cable |
 | VOX cable | Any radio that keys on VOX, plus a 3.5 mm audio cable |
 | HF + CAT | HF rig with `rigctl` (Hamlib) for PTT and frequency |
 
-Run `wcr setup` and pick the path that matches your station. Suggested calling frequencies: [calling](https://weechatradio.com/docs/calling.html). You are the control operator — check your band plan before you transmit.
+Run `wcr setup` and pick your radio, or "Other setup" for the paths above. Suggested calling frequencies: [calling](https://weechatradio.com/docs/calling.html). You are the control operator — check your band plan before you transmit.
 
 ---
 
