@@ -42,6 +42,13 @@ pub struct Radio {
 const HAMLIB_X6100: u32 = 3087;
 const HAMLIB_G90: u32 = 3088;
 const HAMLIB_FT710: u32 = 1049;
+const HAMLIB_X6200: u32 = 3091;
+const HAMLIB_X5105: u32 = 3089;
+const HAMLIB_QDX: u32 = 2052;
+const HAMLIB_TRUSDX: u32 = 2055;
+
+const G90_CABLE: &str =
+    "Xiegu DE-19, or the Digirig Xiegu G90 Cables Set: https://digirig.net/product/xiegu-g90-cables/";
 
 pub const RADIOS: &[Radio] = &[
     Radio {
@@ -90,8 +97,48 @@ pub const RADIOS: &[Radio] = &[
         port_hints: &["ch340", "ch341", "digirig", "cp210"],
         audio_hints: &["usb pnp sound", "usb audio device"],
         radio_side: "DE-19 (one USB cable) or both Digirig cables. Radio in USB, CI-V 19200 baud.",
-        cable: "Xiegu DE-19, or the Digirig Xiegu G90 Cables Set: https://digirig.net/product/xiegu-g90-cables/",
+        cable: G90_CABLE,
         // ROBUST RDM-600S: the most forgiving on a fading HF path.
+        preset: Preset::HfPoor,
+        dial_khz: 7045,
+    },
+    Radio {
+        name: "Xiegu X6200 (USB cable)",
+        link: Link::Cat {
+            hamlib_model: HAMLIB_X6200,
+            baud: 19200,
+        },
+        port_hints: &[],
+        audio_hints: &["usb audio codec"],
+        radio_side: "USB-C to the computer. Radio in USB (upper sideband), CI-V 19200 baud.",
+        cable: "",
+        preset: Preset::HfPoor,
+        dial_khz: 7045,
+    },
+    Radio {
+        name: "Xiegu G106 (DE-19 or Digirig)",
+        // The G106 answers the G90's CI-V commands.
+        link: Link::Cat {
+            hamlib_model: HAMLIB_G90,
+            baud: 19200,
+        },
+        port_hints: &["ch340", "ch341", "digirig", "cp210"],
+        audio_hints: &["usb pnp sound", "usb audio device"],
+        radio_side: "DE-19 (one USB cable) or both Digirig cables. Radio in USB, CI-V 19200 baud.",
+        cable: G90_CABLE,
+        preset: Preset::HfPoor,
+        dial_khz: 7045,
+    },
+    Radio {
+        name: "Xiegu X5105 (DE-19 or Digirig)",
+        link: Link::Cat {
+            hamlib_model: HAMLIB_X5105,
+            baud: 19200,
+        },
+        port_hints: &["ch340", "ch341", "digirig", "cp210"],
+        audio_hints: &["usb pnp sound", "usb audio device"],
+        radio_side: "DE-19 (one USB cable) or both Digirig cables. Radio in USB, CI-V 19200 baud.",
+        cable: G90_CABLE,
         preset: Preset::HfPoor,
         dial_khz: 7045,
     },
@@ -110,12 +157,41 @@ pub const RADIOS: &[Radio] = &[
         dial_khz: 7045,
     },
     Radio {
+        name: "QRP Labs QDX (USB cable)",
+        link: Link::Cat {
+            hamlib_model: HAMLIB_QDX,
+            baud: 9600,
+        },
+        port_hints: &["qdx"],
+        audio_hints: &["qdx"],
+        radio_side: "USB to the computer: the QDX has its own sound card and CAT port.",
+        cable: "",
+        // The QDX sends one tone at a time: only MFSK gets through it.
+        preset: Preset::HfDeep,
+        dial_khz: 7045,
+    },
+    Radio {
+        name: "uSDX / (tr)uSDX (CAT + sound card)",
+        link: Link::Cat {
+            hamlib_model: HAMLIB_TRUSDX,
+            baud: 38400,
+        },
+        port_hints: &["ch340", "ch341"],
+        audio_hints: &["usb pnp sound", "usb audio device"],
+        radio_side: "USB for CAT (38400 baud), a USB sound card or Digirig on the audio jacks.",
+        cable: "",
+        // The uSDX sends one tone at a time well; MFSK is the safe choice.
+        preset: Preset::HfDeep,
+        dial_khz: 7045,
+    },
+    Radio {
         name: "AnyTone AT-5555N (Digirig, 10 m)",
         link: Link::Digirig,
         port_hints: &["digirig", "cp210"],
         audio_hints: &["usb pnp sound", "usb audio device"],
         radio_side: "Digirig cable in the mic socket. Radio in USB on 10 m.",
-        cable: "Digirig AnyTone AT-778UV cable: https://digirig.net/product/anytone-at-778uv-cable/",
+        cable:
+            "Digirig AnyTone AT-778UV cable: https://digirig.net/product/anytone-at-778uv-cable/",
         preset: Preset::HfPoor,
         dial_khz: 28120,
     },
@@ -125,7 +201,8 @@ pub const RADIOS: &[Radio] = &[
         port_hints: &["digirig", "cp210"],
         audio_hints: &["usb pnp sound", "usb audio device"],
         radio_side: "Digirig cable in the mic socket. Radio on FM.",
-        cable: "Digirig AnyTone AT-778UV cable: https://digirig.net/product/anytone-at-778uv-cable/",
+        cable:
+            "Digirig AnyTone AT-778UV cable: https://digirig.net/product/anytone-at-778uv-cable/",
         preset: Preset::VhfFm,
         dial_khz: 144950,
     },
@@ -282,6 +359,16 @@ mod tests {
         assert!(radio("Retevis RT95")
             .cable
             .contains("anytone-at-778uv-cable"));
+    }
+
+    #[test]
+    fn single_tone_radios_use_mfsk() {
+        for name in ["QRP Labs QDX", "uSDX"] {
+            let mut cfg = Config::default();
+            radio(name).apply(&mut cfg);
+            assert_eq!(cfg.modem.preset, "hf-deep", "{name}");
+            assert_eq!(cfg.modem.ptt, "hamlib", "{name}");
+        }
     }
 
     #[test]
