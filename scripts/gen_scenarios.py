@@ -89,230 +89,110 @@ def group(name, body, default):
     return f'<g data-setups="{name}"{cls}>\n{body}\n</g>'
 
 
+def slot(items, x, y, cls="scr", anchor="middle"):
+    """Several lines in one place; docs.css shows only the latest one shown."""
+    texts = "".join(f'<text class="{c or cls}" data-show="{show}" x="{x}" y="{y}" text-anchor="{anchor}">{text}</text>'
+                    for show, text, c in [(i + (None,))[:3] for i in items])
+    return f'<g class="slot">{texts}</g>'
+
+
+def laptop_slot(x, y, node, title, items, w=140, h=70):
+    """Laptop whose screen shows the latest line."""
+    return "\n".join([
+        f'<g data-node="{node}">',
+        f'  <rect class="box accent" x="{x}" y="{y}" width="{w}" height="{h}" />',
+        f'  <path class="laptop-base" d="M{x - 12} {y + h} H{x + w + 12} L{x + w + 20} {y + h + 10} H{x - 20} Z" />',
+        f'  <text class="sub" x="{x + 10}" y="{y + 17}">{title}</text>',
+        "  " + slot(items, x + 10, y + 42, anchor="start"),
+        f'  <text class="scr-input" x="{x + 10}" y="{y + 62}">&gt; _</text>',
+        "</g>",
+    ])
+
+
 DEFAULT = "home"
-groups = []
+groups, wide_groups = [], []
 steps = {}
 
-# 1. Walkie-talkies calling a home gateway -----------------------------------
-A_TIP, B_TIP, MAST = (70, 114), (160, 174), (390, 130)
-body = "\n".join([
-    '<rect class="lane-bg" x="10" y="92" width="232" height="266" />',
-    '<text class="sub" x="20" y="108">out walking · 144.950 FM</text>',
-    laptop(20, 14, "home-x", "G4XYZ · internet", [
-        ("hx-hi", "scr", "&lt;G4ABC&gt; hi #walk"),
-        ("hx-re", "scr", "&lt;G4XYZ&gt; hello"),
-    ]),
+# Shared wide layout: radios on the left, the home gateway, the hub, the internet end.
+W_HOUSE = (270, 120)
+W_MAST = (W_HOUSE[0] + 110, W_HOUSE[1] - 30)
+W_HUB = dict(x=480, y=158, w=130, h=44)
+GW_TO_HUB, HUB_TO_GW = "M420 180 H480", "M480 180 H420"
+HUB_TO_END, END_TO_HUB = "M610 180 H640", "M640 180 H610"
+TLS_GW = '<text class="sub" x="450" y="172" text-anchor="middle">TLS</text>'
+TLS_END = '<text class="sub" x="625" y="172" text-anchor="middle">TLS</text>'
+W_TIP = (110, 114)                          # handheld(70, 150) antenna tip
+MAST = (390, 130)                           # narrow house(280, 160) mast top
+N_TIP = (100, 154)                          # narrow handheld(60, 190) antenna tip
+
+# 1. Home gateway: one walker with a handheld, a base station at home ----------
+HOME_X = [("x1", "at the trailhead"), ("x2", "windy up there?"),
+          ("x3", "a bit. back by 4"), ("x4", "kettle on at 4")]
+groups.append(group("home", "\n".join([
+    laptop_slot(20, 14, "home-x", "G4XYZ · #walk", HOME_X),
     hub(),
     seg("home-hub-x", "net", "M250 48 H162"),
     '<text class="sub" x="206" y="42" text-anchor="middle">TLS</text>',
     house(280, 160, "home-gw", "M0GWY", "home gateway"),
     seg("home-gw-hub", "net", "M415 192 V72"),
     '<text class="sub" x="409" y="104" text-anchor="end">TLS</text>',
-    seg("home-rf-a", "rf", wave(A_TIP[0] + 4, A_TIP[1] - 1, MAST[0] - 4, MAST[1] + 1)),
-    seg("home-rf-b", "rf", wave(B_TIP[0] + 4, B_TIP[1] - 1, MAST[0] - 4, MAST[1] + 2)),
-    seg("home-rf-ab", "rf", wave(A_TIP[0] + 2, A_TIP[1] + 4, B_TIP[0] - 2, B_TIP[1] - 4, amp=4, half=9)),
-    handheld(30, 150, "home-a", "G4ABC", "on-rplus", "radio-plus"),
-    handheld(120, 210, "home-b", "G4DEF", "on-rplus", "radio-plus"),
-    '<text class="scr ok" data-show="ha-gw" x="16" y="288">[gw]</text>',
-    '<text class="scr" data-show="ha-re" x="52" y="288">“hello”</text>',
-    '<text class="scr" data-show="hb-hi" x="112" y="348">“hi”</text>',
-    '<text class="scr" data-show="hb-re" x="146" y="348">“hello”</text>',
+    '<rect class="lane-bg" x="10" y="116" width="200" height="214" />',
+    '<text class="sub" x="20" y="134">out walking · 144.950 FM</text>',
+    seg("home-rf-a", "rf", wave(N_TIP[0] + 4, N_TIP[1] - 1, MAST[0] - 4, MAST[1] + 1)),
+    handheld(60, 190, "home-a", "G4ABC", "on-rplus", "radio-plus"),
     '<text class="sub" x="355" y="298" text-anchor="middle">internet-radio · 144.950</text>',
     '<text class="sub" x="355" y="312" text-anchor="middle">rf_egress = true</text>',
-])
-groups.append(group("home", body, DEFAULT))
-steps["home"] = {"viewBox": "0 0 440 362", "steps": [
-    {"say": "G4ABC says hi to #walk. Its computer keys the radio on 144.950 and does not open the hub.",
-     "segs": ["home-rf-a", "home-rf-ab"], "on": ["home-a"], "show": ["ha-tx"], "ms": 1800},
-    {"say": "G4DEF hears it on the air and shows the line.", "show": ["hb-hi"], "ms": 1200},
-    {"say": "The gateway at home hears a radio-plus line and sends it to the hub. G4ABC’s line shows [gw].",
-     "segs": ["home-gw-hub"], "on": ["home-gw"], "show": ["ha-gw"], "ms": 1800},
-    {"say": "The hub delivers it to G4XYZ, who has no radio.", "segs": ["home-hub-x"], "show": ["hx-hi"]},
-    {"say": "G4XYZ replies to #walk through the hub.", "segs": ["<home-hub-x"], "show": ["hx-re"]},
-    {"say": "The hub hands the reply to the gateway, which heard #walk members on this dial in the last 10 minutes.",
-     "segs": ["<home-gw-hub"], "ms": 1900},
-    {"say": "With rf_egress = true, the gateway keys the reply on 144.950. Both walkers read it.",
-     "segs": ["<home-rf-a", "<home-rf-b"], "on": ["home-gw"], "show": ["ha-re", "hb-re"], "ms": 2000},
-], "done": "Everyone on the dial, and G4XYZ on the internet, reads the same #walk thread."}
+]), DEFAULT))
+wide_groups.append(group("home", "\n".join([
+    '<rect class="lane-bg" x="16" y="60" width="200" height="230" />',
+    '<text class="sub" x="26" y="78">out walking · 144.950 FM</text>',
+    house(*W_HOUSE, "home-gw", "M0GWY", "home gateway"),
+    hub(**W_HUB),
+    seg("home-gw-hub", "net", GW_TO_HUB),
+    seg("home-hub-x", "net", HUB_TO_END),
+    TLS_GW, TLS_END,
+    laptop_slot(640, 145, "home-x", "G4XYZ · #walk", HOME_X, w=130),
+    seg("home-rf-a", "rf", wave(W_TIP[0] + 4, W_TIP[1] - 1, W_MAST[0] - 4, W_MAST[1] + 1)),
+    handheld(70, 150, "home-a", "G4ABC", "on-rplus", "radio-plus"),
+    '<text class="sub" x="345" y="262" text-anchor="middle">internet-radio · 144.950</text>',
+    '<text class="sub" x="345" y="276" text-anchor="middle">rf_egress = true</text>',
+]), DEFAULT))
+steps["home"] = {"viewBox": "0 0 440 340", "viewBoxWide": "0 52 800 248", "steps": [
+    {"say": "G4ABC writes to #walk. Its computer keys the handheld on 144.950 and does not open the hub.",
+     "segs": ["home-rf-a"], "on": ["home-a"], "show": ["h1"], "ms": 1900},
+    {"say": "The home gateway hears a radio-plus line and sends it to the hub. G4ABC’s line shows [gw].",
+     "segs": ["home-gw-hub"], "on": ["home-gw"], "show": ["h1gw"], "ms": 1900},
+    {"say": "The hub delivers it to G4XYZ, who has no radio.",
+     "segs": ["home-hub-x"], "on": ["home-x"], "show": ["x1"], "ms": 1500},
+    {"say": "G4XYZ replies through the hub.",
+     "segs": ["<home-hub-x"], "on": ["home-x"], "show": ["x2"], "ms": 1400},
+    {"say": "The hub hands it to the gateway, which heard a #walk member on 144.950 in the last 10 minutes.",
+     "segs": ["<home-gw-hub"], "on": ["home-gw"], "ms": 2000},
+    {"say": "With rf_egress = true, the gateway keys it on 144.950, and G4ABC reads it.",
+     "segs": ["<home-rf-a"], "on": ["home-gw"], "show": ["h2"], "ms": 1900},
+    {"say": "G4ABC answers on the air.", "segs": ["home-rf-a"], "on": ["home-a"], "show": ["h3"], "ms": 1400},
+    {"say": "Same path as before: the gateway uploads it and the hub delivers it.",
+     "segs": ["home-gw-hub", "home-hub-x"], "chain": True, "on": ["home-gw"], "show": ["h3gw", "x3"], "ms": 2000},
+    {"say": "G4XYZ’s reply goes to the hub…", "segs": ["<home-hub-x"], "on": ["home-x"], "show": ["x4"], "ms": 1300},
+    {"say": "…to the gateway, and onto the air for G4ABC.",
+     "segs": ["<home-gw-hub", "<home-rf-a"], "chain": True, "on": ["home-gw"], "ms": 2000},
+    {"say": "G4ABC reads it.", "show": ["h4"], "on": ["home-a"], "ms": 1200},
+], "done": "One walker with a handheld and one person at a laptop share the #walk thread through a home gateway."}
 
 # 2. HF to HF, no internet ----------------------------------------------------
-body = "\n".join([
+HF_B = [("b1", "&lt;G4ABC&gt; good evening"), ("b2", "&lt;EA4XYZ&gt; hola, copy fine"),
+        ("b3", "&lt;G4ABC&gt; 73, same time tmrw?"), ("b4", "&lt;EA4XYZ&gt; si, 73")]
+groups.append(group("hf", "\n".join([
     '<text class="sub on-rf" x="255" y="34" text-anchor="middle">14.070 USB · 20m</text>',
     seg("hf-rf", "rf", wave(134, 58, 376, 58, amp=6, half=11)),
     house(20, 88, "hf-a", "G4ABC", "radio", body="radio", text_cls="on-radio"),
     house(270, 88, "hf-b", "EA4XYZ", "radio", body="radio", text_cls="on-radio"),
     '<text class="sub" x="95" y="228" text-anchor="middle">preset hf-poor</text>',
     '<text class="sub" x="345" y="228" text-anchor="middle">preset hf-poor</text>',
-    '<text class="scr ok" data-show="hfa-ok" x="95" y="248" text-anchor="middle">&lt;G4ABC&gt; hi [ok]</text>',
-    '<text class="scr" data-show="hfb-hi" x="345" y="248" text-anchor="middle">&lt;G4ABC&gt; hi</text>',
+    slot(HF_B, 345, 250),
     '<text class="sub" x="220" y="186" text-anchor="middle">no hub</text>',
     '<text class="sub" x="220" y="200" text-anchor="middle">no gateway</text>',
-])
-groups.append(group("hf", body, DEFAULT))
-steps["hf"] = {"viewBox": "0 0 440 262", "steps": [
-    {"say": "G4ABC keys a line on 14.070. In radio mode it stays on the air: nothing goes to the hub.",
-     "segs": ["hf-rf"], "on": ["hf-a"], "show": ["hfa-tx"], "ms": 1900},
-    {"say": "EA4XYZ decodes it and shows the line.", "show": ["hfb-hi"], "ms": 1300},
-    {"say": "EA4XYZ sends its receipt back on the same frequency.", "segs": ["<hf-rf"], "on": ["hf-b"], "ms": 1900},
-    {"say": "G4ABC shows [ok]. A gateway that heard it would leave it on the air.", "show": ["hfa-ok"]},
-], "done": "Two stations, one frequency, no internet anywhere. G4ABC shows [ok]."}
-
-# 3. Internet guest via a gateway ---------------------------------------------
-G_TIP = (100, 154)
-body = "\n".join([
-    laptop(20, 14, "g-sam", "~sam · internet", [
-        ("gs-out", "scr", "&lt;~sam&gt; hi G4ABC"),
-        ("gs-re", "scr", "&lt;G4ABC&gt; hi ~sam"),
-    ]),
-    hub(sub="picks the gateway"),
-    seg("g-sam-hub", "net", "M162 48 H250"),
-    '<text class="sub" x="206" y="42" text-anchor="middle">TLS</text>',
-    house(280, 160, "g-gw", "M0GWY", "home gateway"),
-    seg("g-hub-gw", "net", "M415 72 V192"),
-    '<text class="sub" x="409" y="104" text-anchor="end">TLS</text>',
-    seg("g-gw-a", "rf", wave(MAST[0] - 4, MAST[1] + 1, G_TIP[0] + 4, G_TIP[1] - 1)),
-    '<text class="sub on-rf" x="236" y="128" text-anchor="middle">144.950</text>',
-    handheld(60, 190, "g-a", "G4ABC", "on-rplus", "radio-plus"),
-    '<text class="scr" data-show="ga-hi" x="84" y="330" text-anchor="middle">&lt;~sam&gt; hi G4ABC</text>',
-    '<text class="scr ok" data-show="g-chk" x="355" y="298" text-anchor="middle">rf_egress = true</text>',
-    '<text class="scr ok" data-show="g-chk" x="355" y="314" text-anchor="middle">G4ABC heard here</text>',
-    '<text class="scr ok" data-show="g-chk" x="355" y="330" text-anchor="middle">third_party = "allow"</text>',
-])
-groups.append(group("guest", body, DEFAULT))
-steps["guest"] = {"viewBox": "0 0 440 342", "steps": [
-    {"say": "~sam has no radio and no callsign. They message G4ABC through the hub.",
-     "segs": ["g-sam-hub"], "show": ["gs-out"]},
-    {"say": "The hub picks the gateway that has heard G4ABC: M0GWY at home.", "segs": ["g-hub-gw"]},
-    {"say": "M0GWY checks: rf_egress is on, G4ABC was heard on this dial in the last 10 minutes, and guests are allowed.",
-     "on": ["g-gw"], "show": ["g-chk"], "ms": 2400},
-    {"say": "All three pass, so M0GWY keys the line on 144.950. G4ABC reads it.",
-     "segs": ["g-gw-a"], "on": ["g-gw"], "show": ["ga-hi"], "ms": 1900},
-    {"say": "G4ABC replies on the air in radio-plus.", "segs": ["<g-gw-a"], "on": ["g-a"], "ms": 1900},
-    {"say": "The gateway hears a radio-plus line and sends it to the hub.", "segs": ["<g-hub-gw"]},
-    {"say": "The hub delivers the reply to ~sam.", "segs": ["<g-sam-hub"], "show": ["gs-re"]},
-], "done": "~sam and G4ABC chat through the gateway. With third_party = \"deny\", the default, the gateway would stay quiet."}
-
-# 4. Relay with hops ----------------------------------------------------------
-xs = [50, 165, 280, 395]
-calls = ["G4ABC", "G4DEF", "G4JKL", "G4MNO"]
-nodes = ["hp-a", "hp-b", "hp-c", "hp-d"]
-tips = [(x + 12, 110) for x in xs]
-parts = [
-    '<text class="sub on-rf" x="220" y="22" text-anchor="middle">144.950 FM · one dial</text>',
-    f'<circle class="lane-bg" cx="{tips[0][0]}" cy="{tips[0][1]}" r="150" />',
-    f'<text class="sub" x="{tips[0][0] + 6}" y="44">G4ABC’s reach</text>',
-]
-for i in range(3):
-    (x1, y1), (x2, y2) = tips[i], tips[i + 1]
-    parts.append(seg(f"hp-{i + 1}", "rf", wave(x1 + 6, y1, x2 - 6, y2, amp=5, half=10.5)))
-for x, call, node in zip(xs, calls, nodes):
-    parts.append(handheld(x - 18, 140, node, call, "on-radio", "radio", body="radio", w=36, h=64, label_dy=16))
-parts += [
-    '<text class="scr" data-show="hp-a3" x="50" y="252" text-anchor="middle">3 hops left</text>',
-    '<text class="scr ok" data-show="hp-aok" x="50" y="268" text-anchor="middle">[ok]</text>',
-    '<text class="scr" data-show="hp-b2" x="165" y="252" text-anchor="middle">2 left</text>',
-    '<text class="scr" data-show="hp-c1" x="280" y="252" text-anchor="middle">1 left</text>',
-    '<text class="scr" data-show="hp-d0" x="395" y="252" text-anchor="middle">0 left</text>',
-    '<text class="scr" data-show="hp-d0" x="395" y="268" text-anchor="middle">reads it</text>',
-]
-groups.append(group("hops", "\n".join(parts), DEFAULT))
-steps["hops"] = {"viewBox": "0 0 440 280", "steps": [
-    {"say": "G4ABC sends G4MNO a direct message with 3 hops left. Only G4DEF is in reach.",
-     "segs": ["hp-1"], "on": ["hp-a"], "show": ["hp-a3"], "ms": 1800},
-    {"say": "G4DEF hears it for the first time: it shows the line, takes one off, and sends it on with 2 left.",
-     "segs": ["hp-2"], "on": ["hp-b"], "show": ["hp-b2"], "ms": 2000},
-    {"say": "G4JKL does the same and sends it on with 1 left.", "segs": ["hp-3"], "on": ["hp-c"], "show": ["hp-c1"], "ms": 1800},
-    {"say": "G4MNO reads it. Hops left is now 0, so it does not send it on.", "show": ["hp-d0"], "ms": 1500},
-    {"say": "G4MNO’s receipt goes back with the same hop count.", "segs": ["<hp-3"], "on": ["hp-d"], "ms": 1700},
-    {"say": "G4JKL relays the receipt.", "segs": ["<hp-2"], "on": ["hp-c"], "ms": 1600},
-    {"say": "G4DEF relays it to G4ABC.", "segs": ["<hp-1"], "on": ["hp-b"], "ms": 1600},
-    {"say": "G4ABC shows [ok]. It never heard G4MNO directly.", "show": ["hp-aok"]},
-], "done": "G4ABC shows [ok]. It never heard G4MNO directly: two stations in between relayed it."}
-
-# 5. Email over radio ---------------------------------------------------------
-body = "\n".join([
-    '<g data-node="e-mail">',
-    '  <rect class="box accent" x="20" y="26" width="140" height="44" />',
-    '  <path class="wire" d="M30 36 H52 V54 H30 Z M30 36 L41 46 L52 36" />',
-    '  <text class="on-accent" x="62" y="45">Resend</text>',
-    '  <text class="sub" x="62" y="61">email service</text>',
-    '</g>',
-    '<text class="scr ok" data-show="e-acc" x="90" y="88" text-anchor="middle">accepted</text>',
-    '<text class="sub" x="90" y="104" text-anchor="middle">to alex@example.com</text>',
-    hub(),
-    seg("e-hub-mail", "net", "M250 48 H162"),
-    house(280, 160, "e-gw", "M0GWY", "mail gateway"),
-    seg("e-gw-hub", "net", "M415 192 V72"),
-    '<text class="sub" x="409" y="104" text-anchor="end">TLS</text>',
-    seg("e-a-gw", "rf", wave(G_TIP[0] + 4, G_TIP[1] - 1, MAST[0] - 4, MAST[1] + 1)),
-    '<text class="sub on-rf" x="236" y="128" text-anchor="middle">144.950</text>',
-    handheld(60, 190, "e-a", "G4ABC", "on-rplus", "radio-plus"),
-    '<text class="scr" data-show="e-tx" x="26" y="330">[tx]</text>',
-    '<text class="scr ok" data-show="e-gw" x="62" y="330">[gw]</text>',
-    '<text class="scr ok" data-show="e-sent" x="98" y="330">Sent</text>',
-    '<text class="scr" data-show="e-inbox" x="26" y="346">inbox: 1 new mail</text>',
-    '<text class="sub" x="355" y="298" text-anchor="middle">internet-radio · 144.950</text>',
-    '<text class="sub" x="355" y="312" text-anchor="middle">named in [mail] gateway</text>',
-])
-groups.append(group("email", body, DEFAULT))
-steps["email"] = {"viewBox": "0 0 440 356", "steps": [
-    {"say": "G4ABC writes to alex@example.com and keys the mail as a burst on 144.950. The outbox shows [tx].",
-     "segs": ["e-a-gw"], "on": ["e-a"], "show": ["e-tx"], "ms": 1900},
-    {"say": "The gateway has every chunk and acks on the air. The outbox shows [gw].",
-     "segs": ["<e-a-gw"], "on": ["e-gw"], "show": ["e-gw"], "ms": 1900},
-    {"say": "The gateway posts the mail to the hub.", "segs": ["e-gw-hub"]},
-    {"say": "The hub hands it to Resend, the email service, which accepts it.", "segs": ["e-hub-mail"], "show": ["e-acc"]},
-    {"say": "The gateway keys a CompleteAck. Only now does G4ABC’s mail show Sent.",
-     "segs": ["<e-gw-hub", "<e-a-gw"], "chain": True, "on": ["e-gw"], "show": ["e-sent"], "ms": 2400},
-    {"say": "Later, G4ABC presses Check mail. Nothing comes over the air unless it asks.",
-     "segs": ["e-a-gw"], "on": ["e-a"], "ms": 1900},
-    {"say": "The gateway pulls G4ABC’s inbox from the hub and sends the list back on the air.",
-     "segs": ["e-gw-hub", "<e-gw-hub", "<e-a-gw"], "chain": True, "on": ["e-gw"], "show": ["e-inbox"], "ms": 3200},
-], "done": "Mail goes out and comes in through the gateway named in [mail] gateway. Radio-plus never opens the hub itself."}
-
-
-# --- Wide drawings (desktop) -------------------------------------------------
-# Same ids as the narrow drawings, laid out left to right in an 800-wide box:
-# radios on the left, the gateway at home, the hub, then the internet end on the right.
-W_HOUSE = (270, 120)
-W_MAST = (W_HOUSE[0] + 110, W_HOUSE[1] - 30)   # top of the house mast
-W_HUB = dict(x=480, y=158, w=130, h=44)
-GW_TO_HUB, HUB_TO_GW = "M420 180 H480", "M480 180 H420"
-HUB_TO_END, END_TO_HUB = "M610 180 H640", "M640 180 H610"
-TLS_GW = '<text class="sub" x="450" y="172" text-anchor="middle">TLS</text>'
-TLS_END = '<text class="sub" x="625" y="172" text-anchor="middle">TLS</text>'
-W_TIP = (110, 114)                              # handheld(70, 150) antenna tip
-wide_groups = []
-
-# 1. home gateway
-WA_TIP, WB_TIP = (76, 68), (172, 114)
-wide_groups.append(group("home", "\n".join([
-    '<rect class="lane-bg" x="16" y="40" width="214" height="262" />',
-    '<text class="sub" x="26" y="58">out walking · 144.950 FM</text>',
-    house(*W_HOUSE, "home-gw", "M0GWY", "home gateway"),
-    hub(**W_HUB),
-    seg("home-gw-hub", "net", GW_TO_HUB),
-    seg("home-hub-x", "net", HUB_TO_END),
-    TLS_GW, TLS_END,
-    laptop(640, 145, "home-x", "G4XYZ · internet", [
-        ("hx-hi", "scr", "&lt;G4ABC&gt; hi #walk"),
-        ("hx-re", "scr", "&lt;G4XYZ&gt; hello"),
-    ], w=130),
-    seg("home-rf-a", "rf", wave(WA_TIP[0] + 4, WA_TIP[1] - 1, W_MAST[0] - 4, W_MAST[1] + 1)),
-    seg("home-rf-b", "rf", wave(WB_TIP[0] + 4, WB_TIP[1] - 1, W_MAST[0] - 4, W_MAST[1] + 2)),
-    seg("home-rf-ab", "rf", wave(WA_TIP[0] + 2, WA_TIP[1] + 4, WB_TIP[0] - 2, WB_TIP[1] - 4, amp=4, half=9)),
-    handheld(36, 104, "home-a", "G4ABC", "on-rplus", "radio-plus"),
-    handheld(132, 150, "home-b", "G4DEF", "on-rplus", "radio-plus"),
-    '<text class="scr ok" data-show="ha-gw" x="24" y="246">[gw]</text>',
-    '<text class="scr" data-show="ha-re" x="60" y="246">“hello”</text>',
-    '<text class="scr" data-show="hb-hi" x="120" y="292">“hi”</text>',
-    '<text class="scr" data-show="hb-re" x="154" y="292">“hello”</text>',
-    '<text class="sub" x="345" y="262" text-anchor="middle">internet-radio · 144.950</text>',
-    '<text class="sub" x="345" y="276" text-anchor="middle">rf_egress = true</text>',
 ]), DEFAULT))
-steps["home"]["viewBoxWide"] = "0 24 800 290"
-
-# 2. HF to HF
 wide_groups.append(group("hf", "\n".join([
     '<text class="sub on-rf" x="435" y="46" text-anchor="middle">14.070 USB · 20m</text>',
     house(60, 100, "hf-a", "G4ABC", "radio", body="radio", text_cls="on-radio"),
@@ -322,57 +202,154 @@ wide_groups.append(group("hf", "\n".join([
     '<text class="sub" x="435" y="184" text-anchor="middle">no gateway</text>',
     '<text class="sub" x="135" y="248" text-anchor="middle">preset hf-poor</text>',
     '<text class="sub" x="665" y="248" text-anchor="middle">preset hf-poor</text>',
-    '<text class="scr ok" data-show="hfa-ok" x="135" y="268" text-anchor="middle">&lt;G4ABC&gt; hi [ok]</text>',
-    '<text class="scr" data-show="hfb-hi" x="665" y="268" text-anchor="middle">&lt;G4ABC&gt; hi</text>',
+    slot(HF_B, 665, 270),
 ]), DEFAULT))
-steps["hf"]["viewBoxWide"] = "0 28 800 256"
+steps["hf"] = {"viewBox": "0 0 440 262", "viewBoxWide": "0 28 800 256", "steps": [
+    {"say": "G4ABC keys a line on 14.070. In radio mode it stays on the air: nothing goes to the hub.",
+     "segs": ["hf-rf"], "on": ["hf-a"], "show": ["f1"], "ms": 1900},
+    {"say": "EA4XYZ decodes it and sends a receipt on the same frequency.",
+     "segs": ["<hf-rf"], "on": ["hf-b"], "show": ["b1"], "ms": 1900},
+    {"say": "The receipt arrives: G4ABC’s line shows [ok].", "show": ["f1ok"], "on": ["hf-a"], "ms": 1200},
+    {"say": "EA4XYZ replies.", "segs": ["<hf-rf"], "on": ["hf-b"], "show": ["b2"], "ms": 1800},
+    {"say": "G4ABC decodes it, and its station sends the receipt back by itself.",
+     "segs": ["hf-rf"], "on": ["hf-a"], "show": ["f2"], "ms": 1900},
+    {"say": "G4ABC answers.", "segs": ["hf-rf"], "on": ["hf-a"], "show": ["f3"], "ms": 1700},
+    {"say": "EA4XYZ reads it and acks; G4ABC’s line shows [ok].",
+     "segs": ["<hf-rf"], "on": ["hf-b"], "show": ["b3", "f3ok"], "ms": 1900},
+    {"say": "EA4XYZ signs off.", "segs": ["<hf-rf"], "on": ["hf-b"], "show": ["b4"], "ms": 1700},
+    {"say": "G4ABC reads it and acks. No hub, no gateway, no internet the whole time.",
+     "segs": ["hf-rf"], "on": ["hf-a"], "show": ["f4"], "ms": 2000},
+], "done": "Two stations, one frequency, no internet anywhere. Every line got its receipt on the air."}
 
-# 3. internet guest
+# 3. Internet guest via a gateway ---------------------------------------------
+GUEST_A = [("a1", "&lt;~sam&gt; on the hill yet?"), ("a2", "&lt;G4ABC&gt; yes, at the top"),
+           ("a3", "&lt;~sam&gt; photo later?"), ("a4", "&lt;G4ABC&gt; will email it")]
+GUEST_S = [("s1", "on the hill yet?"), ("s2", "yes, at the top"), ("s3", "photo later?"), ("s4", "will email it")]
+groups.append(group("guest", "\n".join([
+    laptop_slot(20, 14, "g-sam", "~sam · G4ABC", GUEST_S),
+    hub(sub="picks the gateway"),
+    seg("g-sam-hub", "net", "M162 48 H250"),
+    '<text class="sub" x="206" y="42" text-anchor="middle">TLS</text>',
+    house(280, 160, "g-gw", "M0GWY", "home gateway"),
+    seg("g-hub-gw", "net", "M415 72 V192"),
+    '<text class="sub" x="409" y="104" text-anchor="end">TLS</text>',
+    seg("g-gw-a", "rf", wave(MAST[0] - 4, MAST[1] + 1, N_TIP[0] + 4, N_TIP[1] - 1)),
+    '<text class="sub on-rf" x="236" y="128" text-anchor="middle">144.950</text>',
+    handheld(60, 190, "g-a", "G4ABC", "on-rplus", "radio-plus"),
+    slot(GUEST_A, 92, 330),
+    '<text class="scr ok" data-show="g-chk" x="355" y="298" text-anchor="middle">rf_egress = true</text>',
+    '<text class="scr ok" data-show="g-chk" x="355" y="314" text-anchor="middle">G4ABC heard here</text>',
+    '<text class="scr ok" data-show="g-chk" x="355" y="330" text-anchor="middle">third_party = "allow"</text>',
+]), DEFAULT))
 wide_groups.append(group("guest", "\n".join([
     house(*W_HOUSE, "g-gw", "M0GWY", "home gateway"),
     hub(**W_HUB, sub="picks the gateway"),
     seg("g-hub-gw", "net", HUB_TO_GW),
     seg("g-sam-hub", "net", END_TO_HUB),
     TLS_GW, TLS_END,
-    laptop(640, 145, "g-sam", "~sam · internet", [
-        ("gs-out", "scr", "&lt;~sam&gt; hi G4ABC"),
-        ("gs-re", "scr", "&lt;G4ABC&gt; hi ~sam"),
-    ], w=130),
+    laptop_slot(640, 145, "g-sam", "~sam · G4ABC", GUEST_S, w=130),
     seg("g-gw-a", "rf", wave(W_MAST[0] - 4, W_MAST[1] + 1, W_TIP[0] + 4, W_TIP[1] - 1)),
     '<text class="sub on-rf" x="245" y="86" text-anchor="middle">144.950</text>',
     handheld(70, 150, "g-a", "G4ABC", "on-rplus", "radio-plus"),
-    '<text class="scr" data-show="ga-hi" x="94" y="292" text-anchor="middle">&lt;~sam&gt; hi G4ABC</text>',
+    slot(GUEST_A, 102, 292),
     '<text class="scr ok" data-show="g-chk" x="345" y="262" text-anchor="middle">rf_egress = true</text>',
     '<text class="scr ok" data-show="g-chk" x="345" y="278" text-anchor="middle">G4ABC heard here</text>',
     '<text class="scr ok" data-show="g-chk" x="345" y="294" text-anchor="middle">third_party = "allow"</text>',
 ]), DEFAULT))
-steps["guest"]["viewBoxWide"] = "0 64 800 242"
+steps["guest"] = {"viewBox": "0 0 440 342", "viewBoxWide": "0 64 800 242", "steps": [
+    {"say": "~sam has no radio and no callsign. They message G4ABC through the hub.",
+     "segs": ["g-sam-hub"], "on": ["g-sam"], "show": ["s1"], "ms": 1600},
+    {"say": "The hub picks the gateway that has heard G4ABC: M0GWY at home.", "segs": ["g-hub-gw"], "ms": 1500},
+    {"say": "M0GWY checks: rf_egress is on, G4ABC was heard on this dial in the last 10 minutes, and guests are allowed.",
+     "on": ["g-gw"], "show": ["g-chk"], "ms": 2500},
+    {"say": "All three pass, so M0GWY keys the line on 144.950. G4ABC reads it.",
+     "segs": ["g-gw-a"], "on": ["g-gw"], "show": ["a1"], "ms": 1900},
+    {"say": "G4ABC replies on the air in radio-plus.", "segs": ["<g-gw-a"], "on": ["g-a"], "show": ["a2"], "ms": 1700},
+    {"say": "The gateway hears a radio-plus line and sends it to the hub…", "segs": ["<g-hub-gw"], "on": ["g-gw"], "ms": 1300},
+    {"say": "…which delivers it to ~sam.", "segs": ["<g-sam-hub"], "on": ["g-sam"], "show": ["s2"], "ms": 1300},
+    {"say": "~sam asks again. The same checks pass, so it goes straight out.",
+     "segs": ["g-sam-hub", "g-hub-gw"], "chain": True, "on": ["g-sam"], "show": ["s3"], "ms": 2100},
+    {"say": "G4ABC reads it.", "segs": ["g-gw-a"], "on": ["g-gw"], "show": ["a3"], "ms": 1500},
+    {"say": "G4ABC answers, and the gateway carries it back.",
+     "segs": ["<g-gw-a", "<g-hub-gw"], "chain": True, "on": ["g-a"], "show": ["a4"], "ms": 2200},
+    {"say": "~sam reads it.", "segs": ["<g-sam-hub"], "on": ["g-sam"], "show": ["s4"], "ms": 1300},
+], "done": "~sam and G4ABC chat through the gateway. With third_party = \"deny\", the default, the gateway would stay quiet."}
 
-# 4. relay with hops
-wxs = [100, 300, 500, 700]
-wtips = [(x + 12, 94) for x in wxs]
-parts = [
-    '<text class="sub on-rf" x="400" y="22" text-anchor="middle">144.950 FM · one dial</text>',
-    f'<circle class="lane-bg" cx="{wtips[0][0]}" cy="{wtips[0][1]}" r="260" />',
-    f'<text class="sub" x="{wtips[0][0] + 12}" y="44">G4ABC’s reach</text>',
+# 4. Relay with hops ----------------------------------------------------------
+calls = ["G4ABC", "G4DEF", "G4JKL", "G4MNO"]
+nodes = ["hp-a", "hp-b", "hp-c", "hp-d"]
+HOP_SLOTS = [  # one line under each station: the message out, then the reply back
+    [("p1", "3 hops left"), ("pok", "[ok]", "scr ok"), ("r0", ""), ("r4", "reads it")],
+    [("p2", "2 left"), ("r0", ""), ("r3", "1 left")],
+    [("p3", "1 left"), ("r0", ""), ("r2", "2 left")],
+    [("p4", "reads it"), ("r0", ""), ("r1", "3 hops left")],
 ]
-for i in range(3):
-    (x1, y1), (x2, y2) = wtips[i], wtips[i + 1]
-    parts.append(seg(f"hp-{i + 1}", "rf", wave(x1 + 6, y1, x2 - 6, y2, amp=5, half=10.5)))
-for x, call, node in zip(wxs, calls, nodes):
-    parts.append(handheld(x - 20, 130, node, call, "on-radio", "radio", body="radio", w=40, h=72, label_dy=16))
-parts += [
-    '<text class="scr" data-show="hp-a3" x="100" y="256" text-anchor="middle">3 hops left</text>',
-    '<text class="scr ok" data-show="hp-aok" x="100" y="272" text-anchor="middle">[ok]</text>',
-    '<text class="scr" data-show="hp-b2" x="300" y="256" text-anchor="middle">2 left</text>',
-    '<text class="scr" data-show="hp-c1" x="500" y="256" text-anchor="middle">1 left</text>',
-    '<text class="scr" data-show="hp-d0" x="700" y="256" text-anchor="middle">0 left</text>',
-    '<text class="scr" data-show="hp-d0" x="700" y="272" text-anchor="middle">reads it</text>',
-]
-wide_groups.append(group("hops", "\n".join(parts), DEFAULT))
-steps["hops"]["viewBoxWide"] = "0 0 800 284"
 
-# 5. email over radio
+
+def hops_body(xs, tip_y, radius, hand, label):
+    tips = [(x + hand["tip_dx"], tip_y) for x in xs]
+    parts = [
+        f'<text class="sub on-rf" x="{label[0]}" y="22" text-anchor="middle">144.950 FM · one dial</text>',
+        f'<circle class="lane-bg" cx="{tips[0][0]}" cy="{tips[0][1]}" r="{radius}" />',
+        f'<text class="sub" x="{tips[0][0] + label[1]}" y="44">G4ABC’s reach</text>',
+    ]
+    for i in range(3):
+        (x1, y1), (x2, y2) = tips[i], tips[i + 1]
+        parts.append(seg(f"hp-{i + 1}", "rf", wave(x1 + 6, y1, x2 - 6, y2, amp=5, half=10.5)))
+    for x, call, node, items in zip(xs, calls, nodes, HOP_SLOTS):
+        parts.append(handheld(x - hand["dx"], hand["y"], node, call, "on-radio", "radio", body="radio",
+                              w=hand["w"], h=hand["h"], label_dy=16))
+        parts.append(slot(items, x, hand["slot_y"]))
+    return "\n".join(parts)
+
+
+groups.append(group("hops", hops_body([50, 165, 280, 395], 110, 150,
+                                      dict(dx=18, y=140, w=36, h=64, tip_dx=10, slot_y=252), (220, 6)), DEFAULT))
+wide_groups.append(group("hops", hops_body([100, 300, 500, 700], 94, 260,
+                                           dict(dx=20, y=130, w=40, h=72, tip_dx=12, slot_y=256), (400, 12)), DEFAULT))
+steps["hops"] = {"viewBox": "0 0 440 266", "viewBoxWide": "0 0 800 270", "steps": [
+    {"say": "G4ABC sends G4MNO a direct message with 3 hops left. Only G4DEF is in reach.",
+     "segs": ["hp-1"], "on": ["hp-a"], "show": ["p1", "m1"], "ms": 1900},
+    {"say": "G4DEF hears it for the first time, takes one off and sends it on with 2 left. G4ABC hears that too: [rl].",
+     "segs": ["hp-2"], "on": ["hp-b"], "show": ["p2", "m1rl"], "ms": 2300},
+    {"say": "G4JKL does the same with 1 left.", "segs": ["hp-3"], "on": ["hp-c"], "show": ["p3"], "ms": 1700},
+    {"say": "G4MNO reads it. Hops left is now 0, so it does not send it on.", "on": ["hp-d"], "show": ["p4"], "ms": 1600},
+    {"say": "G4MNO’s receipt comes back the same way, relayed by G4JKL and G4DEF.",
+     "segs": ["<hp-3", "<hp-2", "<hp-1"], "chain": True, "ms": 2900},
+    {"say": "G4ABC shows [ok]. It never heard G4MNO directly.", "on": ["hp-a"], "show": ["pok", "m1ok"], "ms": 1500},
+    {"say": "G4MNO replies with 3 hops left.", "segs": ["<hp-3"], "on": ["hp-d"], "show": ["r0", "r1"], "ms": 1800},
+    {"say": "G4JKL and G4DEF relay it, each taking one off.",
+     "segs": ["<hp-2", "<hp-1"], "chain": True, "show": ["r2", "r3"], "ms": 2200},
+    {"say": "G4ABC reads it with 0 left, and its receipt goes back through the same two relays.",
+     "segs": ["hp-1", "hp-2", "hp-3"], "chain": True, "on": ["hp-a"], "show": ["r4", "m2"], "ms": 3000},
+], "done": "G4ABC and G4MNO never hear each other, yet they hold a conversation through two relays on one dial."}
+
+# 5. Email over radio ---------------------------------------------------------
+EMAIL_INBOX = [("e-inbox", "inbox: 1 waiting"), ("e-got", "inbox: Re: Meeting point")]
+groups.append(group("email", "\n".join([
+    '<g data-node="e-mail">',
+    '  <rect class="box accent" x="20" y="26" width="140" height="44" />',
+    '  <path class="wire" d="M30 36 H52 V54 H30 Z M30 36 L41 46 L52 36" />',
+    '  <text class="on-accent" x="62" y="45">Resend</text>',
+    '  <text class="sub" x="62" y="61">email service</text>',
+    '</g>',
+    slot([("e-acc", "accepted", "scr ok"), ("e-re", "reply from alex")], 90, 88),
+    '<text class="sub" x="90" y="104" text-anchor="middle">alex@example.com</text>',
+    hub(),
+    seg("e-hub-mail", "net", "M250 48 H162"),
+    house(280, 160, "e-gw", "M0GWY", "mail gateway"),
+    seg("e-gw-hub", "net", "M415 192 V72"),
+    '<text class="sub" x="409" y="104" text-anchor="end">TLS</text>',
+    seg("e-a-gw", "rf", wave(N_TIP[0] + 4, N_TIP[1] - 1, MAST[0] - 4, MAST[1] + 1)),
+    '<text class="sub on-rf" x="236" y="128" text-anchor="middle">144.950</text>',
+    handheld(60, 190, "e-a", "G4ABC", "on-rplus", "radio-plus"),
+    '<text class="scr" data-show="e-tx" x="26" y="330">[tx]</text>',
+    '<text class="scr ok" data-show="e-gw" x="62" y="330">[gw]</text>',
+    '<text class="scr ok" data-show="e-sent" x="98" y="330">Sent</text>',
+    slot(EMAIL_INBOX, 26, 346, anchor="start"),
+    '<text class="sub" x="355" y="298" text-anchor="middle">internet-radio · 144.950</text>',
+    '<text class="sub" x="355" y="312" text-anchor="middle">named in [mail] gateway</text>',
+]), DEFAULT))
 wide_groups.append(group("email", "\n".join([
     house(*W_HOUSE, "e-gw", "M0GWY", "mail gateway"),
     hub(**W_HUB),
@@ -385,19 +362,38 @@ wide_groups.append(group("email", "\n".join([
     '  <text class="on-accent" x="682" y="177">Resend</text>',
     '  <text class="sub" x="682" y="193">email service</text>',
     '</g>',
-    '<text class="scr ok" data-show="e-acc" x="710" y="222" text-anchor="middle">accepted</text>',
-    '<text class="sub" x="710" y="238" text-anchor="middle">to alex@example.com</text>',
+    slot([("e-acc", "accepted", "scr ok"), ("e-re", "reply from alex")], 710, 222),
+    '<text class="sub" x="710" y="238" text-anchor="middle">alex@example.com</text>',
     seg("e-a-gw", "rf", wave(W_TIP[0] + 4, W_TIP[1] - 1, W_MAST[0] - 4, W_MAST[1] + 1)),
     '<text class="sub on-rf" x="245" y="86" text-anchor="middle">144.950</text>',
     handheld(70, 150, "e-a", "G4ABC", "on-rplus", "radio-plus"),
     '<text class="scr" data-show="e-tx" x="44" y="292">[tx]</text>',
     '<text class="scr ok" data-show="e-gw" x="80" y="292">[gw]</text>',
     '<text class="scr ok" data-show="e-sent" x="116" y="292">Sent</text>',
-    '<text class="scr" data-show="e-inbox" x="44" y="308">inbox: 1 new mail</text>',
+    slot(EMAIL_INBOX, 44, 308, anchor="start"),
     '<text class="sub" x="345" y="262" text-anchor="middle">internet-radio · 144.950</text>',
     '<text class="sub" x="345" y="276" text-anchor="middle">named in [mail] gateway</text>',
 ]), DEFAULT))
-steps["email"]["viewBoxWide"] = "0 64 800 256"
+steps["email"] = {"viewBox": "0 0 440 356", "viewBoxWide": "0 64 800 256", "steps": [
+    {"say": "G4ABC writes to alex@example.com and keys the mail as a burst on 144.950. The outbox shows [tx].",
+     "segs": ["e-a-gw"], "on": ["e-a"], "show": ["e-tx"], "ms": 2000},
+    {"say": "The gateway has every chunk and acks on the air. The outbox shows [gw].",
+     "segs": ["<e-a-gw"], "on": ["e-gw"], "show": ["e-gw"], "ms": 1900},
+    {"say": "The gateway posts the mail to the hub.", "segs": ["e-gw-hub"], "on": ["e-gw"], "ms": 1300},
+    {"say": "The hub hands it to Resend, the email service, which accepts it.",
+     "segs": ["e-hub-mail"], "on": ["e-mail"], "show": ["e-acc"], "ms": 1600},
+    {"say": "The gateway keys a CompleteAck. Only now does G4ABC’s mail show Sent.",
+     "segs": ["<e-gw-hub", "<e-a-gw"], "chain": True, "on": ["e-gw"], "show": ["e-sent"], "ms": 2400},
+    {"say": "Alex replies. Resend passes it to the hub, which keeps it. Nothing goes on the air unasked.",
+     "segs": ["<e-hub-mail"], "on": ["e-mail"], "show": ["e-re"], "ms": 2200},
+    {"say": "Later, G4ABC presses Check mail.", "segs": ["e-a-gw"], "on": ["e-a"], "ms": 1600},
+    {"say": "The gateway pulls G4ABC’s inbox list from the hub and keys it back: one waiting mail.",
+     "segs": ["e-gw-hub", "<e-gw-hub", "<e-a-gw"], "chain": True, "on": ["e-gw"], "show": ["e-inbox"], "ms": 3000},
+    {"say": "G4ABC opens the waiting line, confirms the airtime and presses Get.",
+     "segs": ["e-a-gw"], "on": ["e-a"], "ms": 1700},
+    {"say": "The gateway fetches the mail from the hub and keys it. It lands in G4ABC’s Inbox.",
+     "segs": ["e-gw-hub", "<e-gw-hub", "<e-a-gw"], "chain": True, "on": ["e-gw"], "show": ["e-got"], "ms": 3200},
+], "done": "Mail goes out and comes back through the gateway named in [mail] gateway. Radio-plus never opens the hub itself."}
 
 
 # --- App window: the chat (or Email) part of the app, filled in as the steps play ---
@@ -447,37 +443,52 @@ def app_window(setup, me, mode, dial, side, lines, stations=(),
     ])
 
 
+
+
 app_windows = "\n".join([
     app_window("home", "G4ABC", "radio-plus", "144.950",
                [("#bulletin", False), ("#walk", True)], [
-                   chat_line("ha-tx", "20:14:05", "G4ABC", "hi #walk", me=True,
-                             ticks=[("ha-tx", "[tx]"), ("ha-gw", "[gw]")]),
-                   chat_line("ha-re", "20:14:41", "G4XYZ", "hello", via="rf"),
-               ], stations=["G4DEF [2m]", "M0GWY [2m]"]),
+                   chat_line("h1", "10:02:15", "G4ABC", "at the trailhead", me=True,
+                             ticks=[("h1", "[tx]"), ("h1gw", "[gw]")]),
+                   chat_line("h2", "10:03:40", "G4XYZ", "windy up there?", via="rf"),
+                   chat_line("h3", "10:04:02", "G4ABC", "a bit. back by 4", me=True,
+                             ticks=[("h3", "[tx]"), ("h3gw", "[gw]")]),
+                   chat_line("h4", "10:05:31", "G4XYZ", "kettle on at 4", via="rf"),
+               ], stations=["M0GWY [2m]"]),
     app_window("hf", "G4ABC", "radio", "14.070",
                [("#bulletin", False), ("EA4XYZ", True)], [
-                   chat_line("hfa-tx", "09:02:11", "G4ABC", "hi", me=True,
-                             ticks=[("hfa-tx", "[tx]"), ("hfa-ok", "[ok]")]),
+                   chat_line("f1", "19:02:11", "G4ABC", "good evening", me=True,
+                             ticks=[("f1", "[tx]"), ("f1ok", "[ok]")]),
+                   chat_line("f2", "19:03:05", "EA4XYZ", "hola, copy fine", via="rf"),
+                   chat_line("f3", "19:03:48", "G4ABC", "73, same time tmrw?", me=True,
+                             ticks=[("f3", "[tx]"), ("f3ok", "[ok]")]),
+                   chat_line("f4", "19:04:30", "EA4XYZ", "si, 73", via="rf"),
                ], stations=["EA4XYZ [20m]"]),
     app_window("guest", "~sam", "internet", "",
                [("#bulletin", False), ("G4ABC", True)], [
-                   chat_line("gs-out", "18:30:02", "~sam", "hi G4ABC", me=True),
-                   chat_line("gs-re", "18:30:40", "G4ABC", "hi ~sam", via="inet"),
+                   chat_line("s1", "11:30:02", "~sam", "on the hill yet?", me=True),
+                   chat_line("s2", "11:30:41", "G4ABC", "yes, at the top", via="inet"),
+                   chat_line("s3", "11:31:10", "~sam", "photo later?", me=True),
+                   chat_line("s4", "11:31:52", "G4ABC", "will email it", via="inet"),
                ]),
     app_window("hops", "G4ABC", "radio", "144.950",
                [("#bulletin", False), ("G4MNO", True)], [
-                   chat_line("hp-a3", "12:00:03", "G4ABC", "hi G4MNO", me=True,
-                             ticks=[("hp-a3", "[tx]"), ("hp-b2", "[rl]"), ("hp-aok", "[rl] [ok]")]),
+                   chat_line("m1", "12:00:03", "G4ABC", "hi G4MNO, copy?", me=True,
+                             ticks=[("m1", "[tx]"), ("m1rl", "[rl]"), ("m1ok", "[rl] [ok]")]),
+                   chat_line("m2", "12:01:20", "G4MNO", "copy, via two relays", via="rf"),
                ], stations=["G4DEF [2m]"]),
     app_window("email", "G4ABC", "radio-plus", "144.950",
-               [("Inbox", False), ("Outbox", True), ("Sent", False)], [
+               [("Inbox", False), ("Outbox", False), ("Sent", False)], [
                    '<li data-show="e-tx"><time>19:20:05</time> <span class="ticks">'
                    '<span data-show="e-tx">[tx]</span><span data-show="e-gw">[gw]</span>'
-                   '<span data-show="e-sent" class="tick-ok">[ok]</span></span>  alex@example.com  Meeting point'
+                   '<span data-show="e-sent" class="tick-ok">[ok]</span></span>  <span class="mail-dir">to</span> alex@example.com  Meeting point'
                    '<span class="ticks"> <span data-show="e-gw">at gateway</span><span data-show="e-sent"></span></span></li>',
-                   '<li data-show="e-inbox"><span class="mail-waiting">waiting</span>  alex@example.com  Re: Meeting point  612 B</li>',
+                   '<li data-show="e-inbox"><span class="slot">'
+                   '<span data-show="e-inbox"><span class="mail-waiting">waiting</span>  <span class="mail-dir">from</span> alex@example.com  Re: Meeting point  612 B</span>'
+                   '<span data-show="e-got"><time>19:48:10</time>  <span class="mail-dir">from</span> alex@example.com  Re: Meeting point</span></span></li>',
                ], buttons='<span class="app-win__send app-win__send--alt">Check mail</span>'),
 ])
+
 
 svg_body = "\n".join(groups)
 svg_body_wide = "\n".join(wide_groups)
@@ -485,15 +496,15 @@ steps_json = json.dumps(steps, ensure_ascii=False, indent=1)
 
 PANELS = """
               <div class="setup-panel" data-setup-panel="home">
-                <h3>Walkie-talkies calling a home gateway</h3>
+                <h3>A walkie-talkie calling a home gateway</h3>
                 <div class="setup-panel__main">
-                  <p>A few people out walking each carry a 2m radio on one calling spot, linked to a computer running WeeChat Radio in <code>radio-plus</code>. At home, one station runs <code>internet-radio</code> on the same dial: a base station on a roof antenna, or a handheld by a window.</p>
-                  <p>Everyone on 144.950 hears the chat on the air. The home gateway also carries it to the hub for people with no radio, and puts their replies back on the air.</p>
-                  <p class="setup-note">The gateway only puts a hub line on the air when the station, or a member of the group, was heard on this dial in the last 10 minutes. A base station with an outdoor antenna hears much further than a handheld indoors.</p>
+                  <p>G4ABC is out walking with a 2m handheld on 144.950, linked to a computer running WeeChat Radio in <code>radio-plus</code>. At home, a base station on a roof antenna runs <code>internet-radio</code> on the same dial.</p>
+                  <p>The home gateway carries G4ABC’s lines to the hub for people with no radio, like G4XYZ, and puts their replies back on the air. Anyone else on 144.950 hears the chat too.</p>
+                  <p class="setup-note">The gateway only puts a hub line on the air when the station, or a member of the group, was heard on this dial in the last 10 minutes. A base station with an outdoor antenna hears a handheld much further away than another handheld would.</p>
                 </div>
                 <dl class="who-list">
-                  <div class="mode-radio-plus"><dt>G4ABC, G4DEF<small>radio-plus</small></dt><dd>144.950 FM. Their computers never open the hub.</dd></div>
-                  <div class="mode-internet-radio"><dt>M0GWY<small>internet-radio</small></dt><dd>At home on 144.950, with <code>rf_egress = true</code>.</dd></div>
+                  <div class="mode-radio-plus"><dt>G4ABC<small>radio-plus</small></dt><dd>Handheld on 144.950 FM. The computer never opens the hub.</dd></div>
+                  <div class="mode-internet-radio"><dt>M0GWY<small>internet-radio</small></dt><dd>Base station at home on 144.950, with <code>rf_egress = true</code>.</dd></div>
                   <div class="mode-internet"><dt>G4XYZ<small>internet</small></dt><dd>No radio. Chats through the hub.</dd></div>
                 </dl>
               </div>
@@ -553,7 +564,7 @@ HTML = f"""<!doctype html>
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="mobile-web-app-capable" content="yes" />
   <title>Common setups — WeeChat Radio</title>
-  <meta name="description" content="Five everyday WeeChat Radio setups, animated: walkie-talkies calling a home gateway, HF to HF with no internet, an internet guest, relays with hops, and email over radio." />
+  <meta name="description" content="Five everyday WeeChat Radio setups, animated: a walkie-talkie calling a home gateway, HF to HF with no internet, an internet guest, relays with hops, and email over radio." />
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="WeeChat Radio" />
   <meta property="og:title" content="Common setups — WeeChat Radio" />
@@ -569,7 +580,7 @@ HTML = f"""<!doctype html>
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="/styles.css?v=34" />
-  <link rel="stylesheet" href="/docs.css?v=2" />
+  <link rel="stylesheet" href="/docs.css?v=3" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -651,7 +662,7 @@ HTML = f"""<!doctype html>
   </div>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=10"></script>
-  <script src="/live-dgm.js?v=2"></script>
+  <script src="/live-dgm.js?v=3"></script>
 </body>
 </html>
 """

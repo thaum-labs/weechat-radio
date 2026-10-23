@@ -25,6 +25,13 @@ test("desktop: the wide diagram spans the column and the text sits under it", as
   await ctx.close();
 });
 
+test("home setup has one handheld and the text has no quote bar", async ({ page }) => {
+  await page.goto(PAGE);
+  await expect(page.locator('svg.dgm[data-layout="wide"] [data-node]', { hasText: "G4DEF" })).toHaveCount(0);
+  const note = page.locator('[data-setup-panel="home"] .setup-note');
+  await expect(note).toHaveCSS("border-left-style", "none");
+});
+
 test("phone: the narrow diagram shows instead", async ({ browser }) => {
   const ctx = await browser.newContext({ viewport: { width: 375, height: 812 } });
   const page = await ctx.newPage();
@@ -41,11 +48,12 @@ test("the app window fills in with the chat as the diagram plays", async ({ page
   await expect(page.locator('.app-win[data-setups="hf"]')).toBeHidden();
 
   await page.locator("[data-live-dgm] .dgm-wrap").scrollIntoViewIfNeeded();
-  const mine = win.locator("li", { hasText: "hi #walk" });
+  const mine = win.locator("li", { hasText: "at the trailhead" });
   await expect(mine).toBeVisible();
   await expect(mine.locator(".ticks")).toHaveText("[tx]", { useInnerText: true });
   await expect(mine.locator(".ticks")).toHaveText("[gw]", { timeout: 6_000, useInnerText: true });
-  await expect(win.locator("li", { hasText: "hello" })).toBeVisible({ timeout: 12_000 });
+  await expect(win.locator("li", { hasText: "windy up there?" })).toBeVisible({ timeout: 12_000 });
+  await expect(win.locator("li", { hasText: "kettle on at 4" })).toBeVisible({ timeout: 25_000 });
 
   await page.getByRole("button", { name: "relay with hops" }).click();
   await expect(page.locator('.app-win[data-setups="hops"]')).toBeVisible();
@@ -56,7 +64,8 @@ test("reduced motion: the app window shows the finished chat with the last mark"
   const ctx = await browser.newContext({ reducedMotion: "reduce" });
   const page = await ctx.newPage();
   await page.goto(PAGE);
-  const ticks = page.locator('.app-win[data-setups="home"] li', { hasText: "hi #walk" }).locator(".ticks");
+  const ticks = page.locator('.app-win[data-setups="home"] li', { hasText: "a bit. back by 4" }).locator(".ticks");
   await expect(ticks).toHaveText("[gw]", { useInnerText: true });
+  await expect(page.locator('.app-win[data-setups="home"] .app-win__lines > li')).toHaveCount(4);
   await ctx.close();
 });

@@ -472,12 +472,7 @@ svg.dgm.fit .sub { font-size: 11px; }
   line-height: 1.6;
 }
 .page-panel .setup-panel + .setup-panel { margin-top: 18px; }
-.page-panel .setup-note {
-  padding-left: 10px;
-  border-left: 2px solid var(--line);
-  font-size: 12.5px;
-  color: var(--body);
-}
+.page-panel .setup-note { color: var(--body); }
 /* With the script running, only the chosen setup's text shows. */
 .live-dgm.has-switch .setup-panel:not(.is-active) { display: none; }
 .live-dgm.has-switch .setup-panel + .setup-panel { margin-top: 0; }
@@ -566,7 +561,7 @@ svg.dgm .is-on .box.rplus { fill: rgba(255, 77, 255, 0.14); }
   flex-direction: column;
   justify-content: flex-end;
   gap: 2px;
-  min-height: 5.6em;
+  min-height: 8.4em;
   margin: 0;
   padding: 8px 10px;
 }
@@ -580,7 +575,8 @@ svg.dgm .is-on .box.rplus { fill: rgba(255, 77, 255, 0.14); }
 }
 .app-win time,
 .app-win .ticks,
-.app-win .mail-waiting { color: var(--dim); }
+.app-win .mail-waiting,
+.app-win .mail-dir { color: var(--dim); }
 .app-win .nick { color: var(--accent); }
 .app-win .nick.me { color: var(--orange); }
 .app-win .via-rf { color: var(--orange); }
@@ -618,6 +614,9 @@ svg.dgm .is-on .box.rplus { fill: rgba(255, 77, 255, 0.14); }
   .page-panel .app-win__side { display: none; }
 }
 .live-dgm.js-live .app-win [data-show]:not(.is-shown) { display: none; }
+/* .slot: several items in one place; only the latest one shown stays (no script: the last). */
+.slot > .is-shown:has(~ .is-shown) { display: none; }
+.live-dgm:not(.js-live) .slot > :not(:last-child) { display: none; }
 .app-win .ticks > .is-shown:has(~ .is-shown) { display: none; }
 .live-dgm:not(.js-live) .app-win .ticks > :not(:last-child) { display: none; }
 @media (prefers-reduced-motion: no-preference) {

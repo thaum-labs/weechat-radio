@@ -246,6 +246,8 @@ Under the status line, `div.app-win` draws the chat (or Email) part of the app f
 
 Lines and marks use the same `data-show` names as the drawings, so a step that shows `ha-gw` on the diagram also moves the mark to `[gw]`. A `.ticks` row shows only its latest mark; `.tick-ok` colours `[ok]` green as the app does. Your own nick is `.nick.me` (orange), others `.nick`; `via-rf` / `via-inet` give `[rf]` / `[net]` their colours. On phones the side list hides.
 
+To keep several lines in one spot (a laptop screen, an inbox row), wrap them in `class="slot"` (a `<g>` in a drawing, a `<span>` in the app window): only the latest one shown stays visible, and without script the last one shows. `.setup-note` is a plain small paragraph for a caveat, with no bar or box.
+
 Keeping two drawings in step by hand is error-prone, so the scenarios page is built by `scripts/gen_scenarios.py` (run `python3 scripts/gen_scenarios.py` from the repo root). Edit the script, not the page.
 
 ## Checks before a page is done
