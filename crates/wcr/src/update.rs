@@ -56,7 +56,7 @@ async fn fetch_releases(client: &reqwest::Client) -> Result<Vec<Release>> {
         .await
         .map_err(|e| Error::Net(e.to_string()))?;
     if !res.status().is_success() {
-        return Err(Error::Net(format!("GitHub releases HTTP {}", res.status())));
+        return Err(github_http_error("releases", res.status()));
     }
     res.json().await.map_err(|e| Error::Net(e.to_string()))
 }
@@ -74,10 +74,22 @@ async fn fetch_tag_names(client: &reqwest::Client) -> Result<Vec<String>> {
         .await
         .map_err(|e| Error::Net(e.to_string()))?;
     if !res.status().is_success() {
-        return Err(Error::Net(format!("GitHub tags HTTP {}", res.status())));
+        return Err(github_http_error("tags", res.status()));
     }
     let tags: Vec<Tag> = res.json().await.map_err(|e| Error::Net(e.to_string()))?;
     Ok(tags.into_iter().map(|t| t.name).collect())
+}
+
+/// GitHub answers 403 or 429 when it rate-limits (several updates in a row
+/// from one address), so say that in plain words instead of a bare code.
+fn github_http_error(what: &str, status: reqwest::StatusCode) -> Error {
+    if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+    {
+        return Error::Net(format!(
+            "GitHub is rate-limiting update checks, try again in a minute (GitHub {what} HTTP {status})"
+        ));
+    }
+    Error::Net(format!("GitHub {what} HTTP {status}"))
 }
 
 fn github_client() -> Result<reqwest::Client> {
@@ -798,6 +810,16 @@ mod tests {
             tag_name: tag.to_string(),
             assets,
         }
+    }
+
+    #[test]
+    fn a_github_rate_limit_says_try_again() {
+        let limited = github_http_error("releases", reqwest::StatusCode::FORBIDDEN).to_string();
+        assert!(limited.contains("rate-limiting"), "{limited}");
+        assert!(limited.contains("try again in a minute"), "{limited}");
+        let other = github_http_error("releases", reqwest::StatusCode::NOT_FOUND).to_string();
+        assert!(!other.contains("rate-limiting"), "{other}");
+        assert!(other.contains("404"), "{other}");
     }
 
     #[test]
