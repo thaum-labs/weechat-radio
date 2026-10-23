@@ -151,7 +151,7 @@ You need a valid licence, a radio, and audio into the PC. [modem73](https://gith
 
 | Path | What you need |
 |------|----------------|
-| Supported radio | Pick it by name in setup: VR-N76 / UV-PRO / GA-5WB, VR-N7600 (Bluetooth); Xiegu X6100, Xiegu G90, Yaesu FT-710 (CAT); AnyTone AT-5555N, Retevis RT95 (Digirig); IC-980 Pro (VOX cable). Setup fills in the rest; you confirm the port and sound card. CAT radios need no Hamlib install: modem73 talks to the radio itself |
+| Supported radio | Pick it by name in setup: VR-N76 / UV-PRO / GA-5WB, VR-N7600 (Bluetooth); Xiegu X6100, X6200, G90, G106, X5105, Yaesu FT-710, QRP Labs QDX, (tr)uSDX (CAT); AnyTone AT-5555N, Retevis RT95 (Digirig); IC-980 Pro (VOX cable). Setup fills in the rest; you confirm the port and sound card. CAT radios need no Hamlib install: modem73 talks to the radio itself |
 | VR-N76 / UV-PRO (Bluetooth) | Vero VR-N76, BTECH UV-PRO or Radioddity GA-5WB — built-in KISS TNC, no cable; the app pairs and connects (`wcr tnc find`) |
 | KISS TNC on a serial port | Mobilinkd, `/dev/rfcomm0`, or any KISS TNC on a COM port |
 | Handheld + Digirig | VHF/UHF HT and a [Digirig](https://digirig.net/) (or AIOC) USB cable |
