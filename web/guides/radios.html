@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Supported radios — WeeChat Radio</title>
+  <meta name="description" content="Live messaging chat powered by radio. HF, VHF, UHF and handhelds via VOX. Non-ham operators can get involved with just an internet connection." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="WeeChat Radio" />
+  <meta property="og:title" content="Supported radios — WeeChat Radio" />
+  <meta property="og:description" content="Live messaging chat powered by radio. HF, VHF, UHF and handhelds via VOX. Non-ham operators can get involved with just an internet connection." />
+  <meta property="og:url" content="https://weechatradio.com/guides/radios.html" />
+  <meta property="og:image" content="https://weechatradio.com/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="WeeChat Radio. Live messaging chat powered by radio." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://weechatradio.com/og.png" />
+  <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=4" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/map.html">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/why.html">why</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/guides.html">guides</a> / <a href="/guides/radio.html">radio</a> / supported radios</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> Supported radios</h1>
+      <p class="lead">Pick your radio by name in setup and it fills in the rest: how it connects, how it keys, the preset and the first frequency. You only confirm the port and the sound card it picked.</p>
+
+      <section class="article-section" aria-labelledby="howH">
+        <h2 id="howH">How to use it</h2>
+        <ol class="steps">
+          <li>
+            <strong class="step-title">Connect the radio</strong>
+            <p>Use the cable from the table below and set the radio as listed.</p>
+          </li>
+          <li>
+            <strong class="step-title">Pick it in setup</strong>
+            <p>In the app's setup page, or <code>wcr setup</code> in a terminal, choose your radio under <strong>Supported radios</strong>.</p>
+          </li>
+          <li>
+            <strong class="step-title">Check the port and sound card</strong>
+            <p>Setup picks the ones that look like your radio. If the names don't match, choose them from the list. Then save and start.</p>
+          </li>
+        </ol>
+        <p>CAT radios need nothing else installed. The modem talks to the radio itself, so there is no Hamlib or <code>rigctld</code> to set up. The status bar shows the dial frequency the radio reports, and <code>/radio qsy 7.045</code> moves it.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="listH">
+        <h2 id="listH">The list</h2>
+        <div class="table-wrap">
+          <table class="stack-table">
+            <thead>
+              <tr><th>Radio</th><th>Connect with</th><th>Keying</th><th>Preset</th><th>Set on the radio</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>VR-N76 / UV-PRO / GA-5WB</td><td>Bluetooth, no cable</td><td>Radio's own TNC</td><td><code>afsk-1200</code></td><td>KISS TNC on, Digital Mode off, then pair.</td></tr>
+              <tr><td>VR-N7600</td><td>Bluetooth, no cable</td><td>Radio's own TNC</td><td><code>afsk-1200</code></td><td>KISS TNC on, then Bluetooth pairing mode.</td></tr>
+              <tr><td>Xiegu X6100</td><td>One USB-C cable</td><td>CAT (Hamlib 3087, 19200)</td><td><code>hf-poor</code></td><td>Mode USB, CI-V 19200 baud.</td></tr>
+              <tr><td>Xiegu X6200</td><td>One USB-C cable</td><td>CAT (Hamlib 3091, 19200)</td><td><code>hf-poor</code></td><td>Mode USB, CI-V 19200 baud.</td></tr>
+              <tr><td>Xiegu G90</td><td>Xiegu DE-19, or <a href="https://digirig.net/product/xiegu-g90-cables/">Digirig G90 cable set</a></td><td>CAT (Hamlib 3088, 19200)</td><td><code>hf-poor</code></td><td>Mode USB, CI-V 19200 baud.</td></tr>
+              <tr><td>Xiegu G106</td><td>Xiegu DE-19, or <a href="https://digirig.net/product/xiegu-g90-cables/">Digirig G90 cable set</a></td><td>CAT (as a G90, 19200)</td><td><code>hf-poor</code></td><td>Mode USB, CI-V 19200 baud.</td></tr>
+              <tr><td>Xiegu X5105</td><td>Xiegu DE-19, or <a href="https://digirig.net/product/xiegu-g90-cables/">Digirig G90 cable set</a></td><td>CAT (Hamlib 3089, 19200)</td><td><code>hf-poor</code></td><td>Mode USB, CI-V 19200 baud.</td></tr>
+              <tr><td>Yaesu FT-710</td><td>One USB cable</td><td>CAT (Hamlib 1049, 38400)</td><td><code>hf-poor</code></td><td>Mode USB, CAT RATE 38400 (factory default). Use the Enhanced COM port.</td></tr>
+              <tr><td>QRP Labs QDX</td><td>One USB cable</td><td>CAT (Hamlib QCX/QDX)</td><td><code>hf-deep</code></td><td>Nothing. Single tone: see below.</td></tr>
+              <tr><td>uSDX / (tr)uSDX</td><td>USB for CAT, plus a USB sound card or Digirig on the audio jacks</td><td>CAT (Hamlib (tr)uSDX, 38400)</td><td><code>hf-deep</code></td><td>CAT 38400 baud. Single tone: see below.</td></tr>
+              <tr><td>AnyTone AT-5555N (10 m)</td><td><a href="https://digirig.net/product/anytone-at-778uv-cable/">Digirig + AnyTone AT-778UV cable</a></td><td>Digirig RTS</td><td><code>hf-poor</code></td><td>Mode USB on 10 m.</td></tr>
+              <tr><td>Retevis RT95</td><td><a href="https://digirig.net/product/anytone-at-778uv-cable/">Digirig + AnyTone AT-778UV cable</a></td><td>Digirig RTS</td><td><code>vhf-fm</code></td><td>FM.</td></tr>
+              <tr><td>IC-980 Pro</td><td>Audio cable to mic and speaker jacks</td><td>Radio VOX</td><td><code>vox-safe</code></td><td>VOX on, VOX delay long.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>You can change the preset at any time with <code>/radio preset &lt;name&gt;</code>. What each preset does: <a href="/docs/weak.html">weak signals</a>.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="toneH">
+        <h2 id="toneH">Single-tone radios: QDX and (tr)uSDX</h2>
+        <p>These radios do not pass audio through like a normal SSB rig. They listen to the computer's audio, measure its pitch, and transmit one carrier at that pitch. That is perfect for FT8, which only ever sends one tone at a time.</p>
+        <p>Most WeeChat Radio modes send many tones at once (OFDM and ROBUST). A single-tone radio can't reproduce that, so those frames go out garbled. That's why these radios start on <code>hf-deep</code> (MFSK-32R), the one mode that sends a single tone at a time.</p>
+        <ul>
+          <li><strong>Slow.</strong> About 99 bits per second, so a chat line takes several seconds and each frame carries at most 55 bytes.</li>
+          <li><strong>Keep it on <code>hf-deep</code>.</strong> Do not switch to <code>hf-good</code>, <code>hf-poor</code> or <code>hf-weak</code> on these radios.</li>
+          <li><strong>Big frames.</strong> A frame larger than 55 bytes cannot fit in MFSK, so it goes out in a multi-tone mode that these radios can't send cleanly. Short chat lines are fine. Long mail is not something to expect to work yet.</li>
+          <li><strong>Receive is normal.</strong> They hear every mode, so you still decode other stations whatever preset they use.</li>
+          <li><strong>Not yet tested on air.</strong> Please report how it goes.</li>
+        </ul>
+      </section>
+
+      <section class="article-section" aria-labelledby="limitsH">
+        <h2 id="limitsH">Other things to know</h2>
+        <ul>
+          <li><strong>VR-N76 family and VR-N7600:</strong> the radio does the modem work itself (1200 bd packet). No sound card, but slower and VHF/UHF only. Close the radio's phone app: only one Bluetooth client at a time.</li>
+          <li><strong>Xiegu X6100 and X6200:</strong> one cable carries sound and CAT. The X6100's Bluetooth can carry CAT but not the data sound, so use the USB cable.</li>
+          <li><strong>G90, G106, X5105:</strong> the DE-19 is one USB cable with both CAT and sound. With a Digirig you need both cables from the set.</li>
+          <li><strong>AnyTone AT-5555N:</strong> no CAT, so frequency is set on the radio and typed into the app. The Digirig keys it.</li>
+          <li><strong>Retevis RT95:</strong> no CAT either. Same Digirig cable as the AT-5555N.</li>
+          <li><strong>IC-980 Pro:</strong> this is a generic dual-band mobile, not an Icom, and has no data port. It uses VOX, which adds a short tone before each frame so the radio keys in time. It works, but it's slower to start each transmission than a keyed radio.</li>
+          <li><strong>Port and sound card names</strong> are best guesses until each radio has been tested here. If setup picks the wrong one, choose yours from the list.</li>
+        </ul>
+      </section>
+
+      <div class="ok">
+        <h2>How you know it worked</h2>
+        <p>CAT radios: the status bar shows the frequency the radio reports, and the radio's TX light comes on when you send. Digirig and VOX radios: the TX light comes on when you send. A decoded frame shows SNR.</p>
+      </div>
+
+      <p class="next">Radio not on the list? Pick <strong>Other setup</strong>: <a href="/guides/handheld.html">handheld + Digirig</a> · <a href="/guides/vox.html">VOX cable</a> · <a href="/guides/hf.html">HF rig through rigctld</a>.</p>
+    </main>
+  </div>
+  <script src="/copy.js?v=1"></script>
+  <script src="/shell.js?v=10"></script>
+</body>
+</html>
