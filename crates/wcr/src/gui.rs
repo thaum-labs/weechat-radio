@@ -918,6 +918,12 @@ impl GuiApp {
             cfg.modem.backend = "modem73".into();
             cfg.modem.manage = true;
         }
+        match self.radio.map(|i| &RADIOS[i]) {
+            // Digirig or VOX radio: the generic path above, with this radio's preset.
+            Some(r) if matches!(self.path, 1 | 2) => r.apply(&mut cfg),
+            Some(r) => cfg.modem.radio = r.name.into(),
+            None => cfg.modem.radio.clear(),
+        }
         if matches!(self.path, 1 | 2 | 3 | SUPPORTED_CAT) {
             cfg.modem.audio_input = self.audio_input.trim().to_string();
             cfg.modem.audio_output = self.audio_output.trim().to_string();
@@ -926,10 +932,10 @@ impl GuiApp {
         cfg.ui.theme = "tron".into();
         // The dial is set from FREQ on the main page; setup only seeds a first one.
         if self.path != 0 && cfg.rf.frequency_khz == 0 {
-            cfg.rf.frequency_khz = if matches!(self.path, 3 | SUPPORTED_CAT) {
-                7045
-            } else {
-                144950
+            cfg.rf.frequency_khz = match self.radio.map(|i| &RADIOS[i]) {
+                Some(r) => r.dial_khz,
+                None if self.path == 3 => 7045,
+                None => 144950,
             };
         }
         if let Err(e) = config::ensure_dirs() {
@@ -4596,8 +4602,8 @@ fn load_form() -> Form {
             crate::radios::from_config(&cfg).and_then(|r| RADIOS.iter().position(|x| x == r));
         let path = if cfg.mode == Mode::Internet {
             0
-        } else if radio.is_some_and(|i| RADIOS[i].is_cat()) {
-            SUPPORTED_CAT
+        } else if let Some(i) = radio {
+            RADIOS[i].setup_path()
         } else if cfg.modem.is_bluetooth() {
             4
         } else if cfg.modem.uses_tnc() {
@@ -4658,14 +4664,12 @@ impl GuiApp {
             }
         }
         self.hw = Some(probe);
-        if self.path == SUPPORTED_CAT {
-            self.guess_radio_hardware();
-        }
+        self.guess_radio_hardware();
         self.hw_rx = None;
     }
 }
 
-/// Setup path for a supported CAT radio; 0 to 5 are the "Other" setups.
+/// Setup path for a supported CAT radio ([`crate::radios::Radio::setup_path`]).
 const SUPPORTED_CAT: usize = 6;
 
 impl GuiApp {
@@ -4673,20 +4677,15 @@ impl GuiApp {
     fn choose_radio(&mut self, i: usize) {
         let r = &RADIOS[i];
         self.radio = Some(i);
-        match r.link {
-            crate::radios::Link::BluetoothTnc { bt_name } => {
-                self.path = 4;
-                if self.bt_name != bt_name {
-                    self.bt_name = bt_name.into();
-                    self.bt_found = None;
-                    self.bt_note.clear();
-                }
-            }
-            crate::radios::Link::Cat { .. } => {
-                self.path = SUPPORTED_CAT;
-                self.guess_radio_hardware();
+        self.path = r.setup_path();
+        if let crate::radios::Link::BluetoothTnc { bt_name } = r.link {
+            if self.bt_name != bt_name {
+                self.bt_name = bt_name.into();
+                self.bt_found = None;
+                self.bt_note.clear();
             }
         }
+        self.guess_radio_hardware();
     }
 
     /// Fill the CAT port and sound cards from the radio's hints, if still empty.
@@ -4695,9 +4694,14 @@ impl GuiApp {
             return;
         };
         let r = &RADIOS[i];
-        if self.cat_port.is_empty() {
+        let port = match self.path {
+            1 => &mut self.com_port,
+            SUPPORTED_CAT => &mut self.cat_port,
+            _ => return,
+        };
+        if port.is_empty() {
             if let Some(p) = r.pick_port(&hw.ports) {
-                self.cat_port = p;
+                *port = p;
             }
         }
         if self.audio_input.is_empty() {

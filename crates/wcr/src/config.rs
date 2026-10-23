@@ -109,6 +109,9 @@ pub struct ModemConfig {
     pub binary: String,
     /// vox | digirig | cm108 | rigctl | hamlib | tnc | none
     pub ptt: String,
+    /// Supported radio picked in setup, by its setup name; empty for the
+    /// "Other" setups.
+    pub radio: String,
     pub preset: String,
     pub com_port: String,
     pub com_line: String,
@@ -139,6 +142,7 @@ impl Default for ModemConfig {
             manage: true,
             binary: "modem73".into(),
             ptt: "none".into(),
+            radio: String::new(),
             preset: "vhf-fm".into(),
             com_port: String::new(),
             com_line: "rts".into(),
