@@ -40,7 +40,11 @@ pub enum Command {
         action: ServiceAction,
     },
     /// Check or apply an update
-    Update,
+    Update {
+        /// Also take release candidates (e.g. v1.0.0-rc1)
+        #[arg(long)]
+        rc: bool,
+    },
     /// Offline help
     Help { topic: Option<String> },
     /// Desktop window: setup, station, and chat
