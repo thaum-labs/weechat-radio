@@ -23,3 +23,13 @@ test("region filter hides spots and bands with nothing for that region", async (
   await expect(page.locator("#band-pmr446")).toBeHidden();
   await expect(page.getByRole("button", { name: "US & Canada" })).toHaveAttribute("aria-pressed", "true");
 });
+
+test("every band says why its spots sit where they do, and CB has a reason per country", async ({ page }) => {
+  await page.goto(PAGE);
+  await expect(page.getByRole("heading", { name: "How the spots were picked" })).toBeVisible();
+  const bands = page.locator(".bp-band");
+  const n = await bands.count();
+  for (let i = 0; i < n; i++) await expect(bands.nth(i).locator(".bp-why").last()).not.toBeEmpty();
+  await expect(page.locator("#band-cb .bp-why--region")).toHaveCount(6);
+  await expect(page.locator("#band-23cm .bp-why")).toContainText("beacons only");
+});
