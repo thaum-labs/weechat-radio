@@ -2678,7 +2678,10 @@ fn audio_meter_row(ui: &mut egui::Ui, k: &str, db: f32, live: bool, tip: &str) {
         station_key(ui, k);
         let h = ui.spacing().interact_size.y;
         let db_w = 36.0;
-        let bar_w = (ui.available_width() - db_w).max(28.0);
+        // Leave room for the gap before the dB label too. Without it the row
+        // overflows, egui widens the panel, and the next meter's bar is longer.
+        let gap = ui.spacing().item_spacing.x;
+        let bar_w = (ui.available_width() - gap - db_w).max(28.0);
         let (rect, _) = ui.allocate_exact_size(egui::vec2(bar_w, h), egui::Sense::hover());
         let bar = egui::Rect::from_center_size(
             rect.center(),
