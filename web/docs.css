@@ -10,7 +10,7 @@
      4. Lists                .fix-list (+ --long), .fix-also, .who-list (station rows), .mark-list
      5. Flow                 .flow (A → B chips with a short condition between)
      6. Fitting              svg.dgm.fit, .pair (cards beside a diagram), table.stack-table
-     7. Live diagram         .live-dgm figure, .setup-switch, .live-status, .setup-panel
+     7. Live diagram         .live-dgm figure, .setup-switch, .live-status, .setup-panel, .app-win
      8. Diagram glyphs       laptop, handheld radio, base station, house
      9. Packets              .seg + .pkt animation, .btn-replay
     10. App comparison       #apps-table (docs/apps.html) */
@@ -171,6 +171,7 @@
   color: var(--who, var(--dim));
 }
 .who-list dd { margin: 0; color: var(--body); }
+.page-panel .who-list dd code { white-space: normal; }
 .who-list .mode-internet { --who: var(--mode-internet); }
 .who-list .mode-internet-radio { --who: var(--mode-internet-radio); }
 .who-list .mode-radio { --who: var(--mode-radio); }
@@ -383,7 +384,8 @@ svg.dgm.fit .sub { font-size: 11px; }
   outline-offset: -1px;
 }
 
-/* Picture beside its text on desktop; .live-dgm--wide stacks text under a wide picture. */
+/* Picture beside its text on desktop; .live-dgm--wide puts the picture across the full width
+   and the text under it (see the wide figure rules below). */
 .live-dgm__body {
   display: grid;
   grid-template-columns: minmax(0, 440px) minmax(0, 1fr);
@@ -396,6 +398,52 @@ svg.dgm.fit .sub { font-size: 11px; }
 }
 /* Live diagrams are drawn to fit a phone, so skip the shared 620px scroll width. */
 .live-dgm svg.dgm { min-width: 0; }
+
+/* Two drawings of one diagram (data-layout on each svg): the wide one on desktop,
+   the narrow one on phones. Both carry the same ids; live-dgm.js drives both. */
+.live-dgm svg.dgm[data-layout="wide"] { display: none; }
+.live-dgm svg.dgm[data-layout="narrow"] {
+  max-width: 480px;
+  margin: 0 auto;
+}
+@media (min-width: 761px) {
+  .live-dgm svg.dgm[data-layout="wide"] { display: block; }
+  .live-dgm svg.dgm[data-layout="narrow"] { display: none; }
+}
+
+/* Wide figure: a full-width picker, the picture across the column, then the chosen
+   setup's text with its station list beside it. */
+.setup-switch--fill {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  width: 100%;
+  padding: 0 1px 1px 0;
+  border: 0;
+}
+.setup-switch--fill button {
+  margin: 0 -1px -1px 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  line-height: 1.3;
+}
+.setup-switch--fill button:last-child { border-right: 1px solid var(--line); }
+.setup-switch--fill button[aria-pressed="true"] {
+  position: relative;
+  z-index: 1;
+  border-color: var(--accent);
+}
+.live-dgm--wide .setup-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 20rem);
+  gap: 0 28px;
+  align-items: start;
+}
+.live-dgm--wide .setup-panel > h3 { grid-column: 1 / -1; }
+.page-panel .live-dgm--wide .setup-panel > .who-list { margin: 0; }
+@media (max-width: 760px) {
+  .live-dgm--wide .setup-panel { grid-template-columns: minmax(0, 1fr); }
+  .page-panel .live-dgm--wide .setup-panel > .who-list { margin-top: 4px; }
+}
 
 .live-status {
   display: flex;
@@ -456,6 +504,129 @@ svg.dgm .is-on .box.radio { fill: rgba(255, 122, 61, 0.12); }
 svg.dgm .is-on .box.gw { fill: rgba(57, 255, 20, 0.11); }
 svg.dgm .is-on .box.hub { fill: rgba(0, 229, 255, 0.1); }
 svg.dgm .is-on .box.rplus { fill: rgba(255, 77, 255, 0.14); }
+
+/* App window: the chat (or Email) part of the app, filled in as the diagram plays.
+   <div class="app-win mode-radio-plus" data-setups="home"> with __bar, __side, __lines, __input.
+   Lines and marks use data-show like the drawings; a .ticks row shows only its latest mark. */
+.live-dgm .app-win.is-off { display: none; }
+.app-win {
+  --who: var(--line);
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 12px;
+}
+.app-win.mode-internet { --who: var(--mode-internet); }
+.app-win.mode-internet-radio { --who: var(--mode-internet-radio); }
+.app-win.mode-radio { --who: var(--mode-radio); }
+.app-win.mode-radio-plus { --who: var(--mode-radio-plus); }
+.page-panel .app-win__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: #08080d;
+  font-size: 11px;
+  color: var(--dim);
+}
+.app-win__bar b { font-weight: 400; color: var(--fg); }
+.app-win__bar > span:last-child { margin-left: auto; }
+.app-win__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--who);
+}
+.app-win__body {
+  display: grid;
+  grid-template-columns: 9.5rem minmax(0, 1fr);
+  grid-template-areas: "side lines" "side input";
+}
+.page-panel .app-win__side {
+  grid-area: side;
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px;
+  border-right: 1px solid var(--line);
+}
+.page-panel .app-win__side li {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dim);
+}
+.page-panel .app-win__side li.is-active { color: var(--accent); }
+.page-panel .app-win__side li.app-win__label { margin-top: 8px; font-size: 11px; }
+.page-panel .app-win__lines {
+  grid-area: lines;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 2px;
+  min-height: 5.6em;
+  margin: 0;
+  padding: 8px 10px;
+}
+.page-panel .app-win__lines li {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.app-win time,
+.app-win .ticks,
+.app-win .mail-waiting { color: var(--dim); }
+.app-win .nick { color: var(--accent); }
+.app-win .nick.me { color: var(--orange); }
+.app-win .via-rf { color: var(--orange); }
+.app-win .via-inet { color: var(--accent); }
+.app-win .ticks .tick-ok { color: var(--mode-internet-radio); }
+.page-panel .app-win__input {
+  grid-area: input;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 10px 8px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+.app-win__sym { color: var(--accent); }
+.app-win__field {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.app-win__send {
+  padding: 3px 12px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+}
+.app-win__send--alt { border-color: var(--orange); color: var(--orange); }
+@media (max-width: 600px) {
+  .app-win__body { grid-template-columns: minmax(0, 1fr); grid-template-areas: "lines" "input"; }
+  .page-panel .app-win__side { display: none; }
+}
+.live-dgm.js-live .app-win [data-show]:not(.is-shown) { display: none; }
+.app-win .ticks > .is-shown:has(~ .is-shown) { display: none; }
+.live-dgm:not(.js-live) .app-win .ticks > :not(:last-child) { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .live-dgm.js-live .app-win__lines > li.is-shown { animation: app-line-in 0.35s ease-out both; }
+}
+@keyframes app-line-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
 
 /* --- 8. diagram glyphs -------------------------------------------------- */
 /* Snippets live in docs/KIT.md. */

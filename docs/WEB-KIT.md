@@ -15,12 +15,12 @@ How pages under `web/docs/` and `web/guides/` are built. Writing rules are in [S
 
 ```html
 <link rel="stylesheet" href="/styles.css?v=34" />
-<link rel="stylesheet" href="/docs.css?v=1" />
+<link rel="stylesheet" href="/docs.css?v=2" />
 <!-- optional: <link rel="stylesheet" href="/<page>.css?v=1" /> -->
 …
 <script src="/copy.js?v=1"></script>
 <script src="/shell.js?v=10"></script>
-<script src="/live-dgm.js?v=1"></script>   <!-- only if the page has a live diagram -->
+<script src="/live-dgm.js?v=2"></script>   <!-- only if the page has a live diagram -->
 ```
 
 Bump `?v=` when a file changes.
@@ -185,7 +185,7 @@ Use one when the page explains how a message travels. One per page is usually en
     <button type="button" data-setup-btn="cable" aria-pressed="true">radios + cable</button>
     <button type="button" data-setup-btn="noradio" aria-pressed="false">no radio</button>
   </div>
-  <div class="live-dgm__body">                     <!-- add live-dgm--wide on the figure to stack text under the picture -->
+  <div class="live-dgm__body">                     <!-- picture beside its text; see "Wide figure" below -->
     <div class="live-dgm__pic">
       <div class="dgm-wrap"><svg class="dgm" viewBox="0 0 440 322" role="img" aria-labelledby="…">…</svg></div>
       <div class="live-status">
@@ -214,6 +214,39 @@ Step fields: `say` (status line, one plain sentence), `segs` (segments to run, `
 Parts that only belong to some setups get `data-setups="a b"`; also give them `class="is-off"` when they are not in the default setup, so the page reads right without script. Several elements may share a `data-seg` id (e.g. a cable lead and an air lead); all of them run.
 
 The engine plays once when the diagram scrolls into view, and again on Replay or a setup change. Reduced motion and no-script show the finished state.
+
+### Wide figure (picture across the column)
+
+When the picture needs more room than the column beside its text allows (`docs/scenarios.html`):
+
+- Add `live-dgm--wide` to the figure: the picture spans the column and the setup's text goes under it.
+- Add `setup-switch--fill` to the picker: equal buttons across the full width, wrapping on phones.
+- In each setup panel, put the paragraphs and note in `<div class="setup-panel__main">` and the `dl.who-list` after it; on desktop the station list sits to the right of the text.
+- Draw the diagram twice inside the one `.dgm-wrap`: `<svg class="dgm" data-layout="wide">` about 800 wide for desktop, and `<svg class="dgm" data-layout="narrow">` about 440 wide for phones. `docs.css` shows one by screen width (761px and up is wide). Give each setup a `"viewBoxWide"` beside its `"viewBox"`.
+- Both drawings use the same `data-seg`, `data-node` and `data-show` ids, and each path is drawn in the same direction in both, so one list of steps drives both.
+
+### App window (the chat as the diagram plays)
+
+Under the status line, `div.app-win` draws the chat (or Email) part of the app for one station, one per setup:
+
+```html
+<div class="app-win mode-radio-plus" data-setups="home">        <!-- add is-off for setups other than the default -->
+  <p class="app-win__bar"><span class="app-win__dot"></span><b>G4ABC · radio-plus · 144.950</b><span>WeeChat Radio</span></p>
+  <div class="app-win__body">
+    <ul class="app-win__side"><li>#bulletin</li><li class="is-active">#walk</li><li class="app-win__label">stations</li><li>G4DEF [2m]</li></ul>
+    <ol class="app-win__lines">
+      <li data-show="ha-tx"><time>20:14:05</time> <span class="nick me">[G4ABC]</span> hi #walk
+        <span class="ticks"><span data-show="ha-tx">[tx]</span><span data-show="ha-gw">[gw]</span></span></li>
+      <li data-show="ha-re"><time>20:14:41</time> <span class="nick">[G4XYZ]</span> hello <span class="via via-rf">[rf]</span></li>
+    </ol>
+    <p class="app-win__input"><span class="app-win__sym">$</span><span class="app-win__field">message in this channel…</span><span class="app-win__send">send</span></p>
+  </div>
+</div>
+```
+
+Lines and marks use the same `data-show` names as the drawings, so a step that shows `ha-gw` on the diagram also moves the mark to `[gw]`. A `.ticks` row shows only its latest mark; `.tick-ok` colours `[ok]` green as the app does. Your own nick is `.nick.me` (orange), others `.nick`; `via-rf` / `via-inet` give `[rf]` / `[net]` their colours. On phones the side list hides.
+
+Keeping two drawings in step by hand is error-prone, so the scenarios page is built by `scripts/gen_scenarios.py` (run `python3 scripts/gen_scenarios.py` from the repo root). Edit the script, not the page.
 
 ## Checks before a page is done
 

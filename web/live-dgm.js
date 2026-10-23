@@ -24,6 +24,13 @@
  * Step fields: say (status line), segs (paths to run; "<id" runs backwards), chain (run segs one
  * after another instead of together), on (nodes lit for this step), show (lines that appear and
  * stay), ms (step length, default 1500).
+ *
+ * Elements outside the svg take part too: an HTML line with data-show appears when a step
+ * shows it, and a block with data-setups is shown only for those setups (see .app-win).
+ *
+ * Two drawings of one diagram: give each svg data-layout="wide" or "narrow" (docs.css shows one
+ * by screen width) and each setup a "viewBoxWide" next to "viewBox". Both drawings use the same
+ * ids, so the steps light both and the visible one is what the reader sees.
  * Plays once when the figure comes into view, again on Replay or a setup change.
  * Reduced motion and no-script both show the finished state.
  */
@@ -34,9 +41,9 @@
   document.querySelectorAll("[data-live-dgm]").forEach(init);
 
   function init(fig) {
-    const svg = fig.querySelector("svg");
+    const svgs = Array.from(fig.querySelectorAll("svg.dgm"));
     const dataEl = fig.querySelector("script[data-live-steps]");
-    if (!svg || !dataEl) return;
+    if (!svgs.length || !dataEl) return;
 
     let setups;
     try {
@@ -55,12 +62,25 @@
     let timers = [];
     let seen = false;
 
-    const all = (sel) => Array.from(svg.querySelectorAll(sel));
+    // Lines, nodes and setup-only parts may sit in the drawings or elsewhere in the figure
+    // (an app window, for example), so look across the whole figure.
+    const all = (sel) => Array.from(fig.querySelectorAll(sel));
 
-    // Packet animation needs each path's length (see .pkt in docs.css).
-    all(".pkt").forEach((path) => {
-      path.style.setProperty("--len", String(Math.ceil(path.getTotalLength())));
-    });
+    // Packet animation needs each path's length (see .pkt in docs.css). A drawing hidden
+    // for this screen width may not report one yet, so measure again when a step runs.
+    function measure(paths) {
+      paths.forEach((path) => {
+        if (path.style.getPropertyValue("--len")) return;
+        let len = 0;
+        try {
+          len = path.getTotalLength();
+        } catch (err) {
+          len = 0;
+        }
+        if (len > 0) path.style.setProperty("--len", String(Math.ceil(len)));
+      });
+    }
+    measure(all(".pkt"));
 
     function steps() {
       return (setups[setup] && setups[setup].steps) || [];
@@ -95,11 +115,12 @@
       });
       const segs = step.segs || (step.seg ? [step.seg] : []);
       if (!segs.length) return;
-      void svg.getBoundingClientRect(); // restart packet animations
+      void fig.getBoundingClientRect(); // restart packet animations
       segs.forEach((raw, i) => {
         const rev = raw.charAt(0) === "<";
         const id = rev ? raw.slice(1) : raw;
         all('[data-seg="' + id + '"]').forEach((seg) => {
+          measure(Array.from(seg.querySelectorAll(".pkt")));
           seg.style.setProperty("--leg", step.chain ? String(i) : "0");
           seg.classList.toggle("is-rev", rev);
           seg.classList.add("is-live");
@@ -136,8 +157,11 @@
     function applySetup(next) {
       setup = next;
       fig.dataset.setup = next;
-      const viewBox = setups[next] && setups[next].viewBox;
-      if (viewBox) svg.setAttribute("viewBox", viewBox);
+      svgs.forEach((svg) => {
+        const data = setups[next] || {};
+        const viewBox = (svg.dataset.layout === "wide" && data.viewBoxWide) || data.viewBox;
+        if (viewBox) svg.setAttribute("viewBox", viewBox);
+      });
       buttons.forEach((btn) => btn.setAttribute("aria-pressed", btn.dataset.setupBtn === next ? "true" : "false"));
       panels.forEach((panel) => panel.classList.toggle("is-active", panel.dataset.setupPanel === next));
       all("[data-setups]").forEach((el) => {
@@ -174,7 +198,7 @@
           play();
         }
       }, { threshold: 0.35 });
-      io.observe(svg);
+      io.observe(fig.querySelector(".dgm-wrap") || svgs[0]);
     } else {
       play();
     }
