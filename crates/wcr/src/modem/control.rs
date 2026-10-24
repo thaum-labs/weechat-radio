@@ -261,6 +261,17 @@ impl ControlClient {
                 .ok();
                 Ok(())
             }
+            "hamlib" => {
+                self.set_config(serde_json::json!({
+                    "ptt": "hamlib",
+                    "hamlib_model": cfg.hamlib_model,
+                    "hamlib_device": cfg.hamlib_device,
+                    "hamlib_baud": cfg.hamlib_baud
+                }))
+                .await
+                .ok();
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
