@@ -50,6 +50,13 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v1.0.0-rc5</p>
+          <p>Sat, 24 Oct 2026</p>
+        </h3>
+        <pre>Release candidate 5 for v1.0.0, still a pre-release. Fixes a runaway log on Linux and macOS: if the sound card was unplugged or the audio server crashed, the live input meter wrote the same error hundreds of thousands of times a second, used a whole CPU core and could fill the disk in minutes. Now it logs one line, stops the meter, and quietly tries again (every 2 s, slowing to once a minute) until the device is back.</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>v1.0.0-rc4</p>
           <p>Fri, 23 Oct 2026</p>
         </h3>
