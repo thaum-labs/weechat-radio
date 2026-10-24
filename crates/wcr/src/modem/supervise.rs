@@ -44,6 +44,20 @@ fn set_csma_threshold(args: &mut Vec<String>, db: i16) {
     args.extend(["--csma-threshold".into(), db.to_string()]);
 }
 
+/// modem73 keys the radio over CAT with its built-in Hamlib.
+fn hamlib_args(m: &crate::config::ModemConfig) -> Vec<String> {
+    vec![
+        "--ptt".into(),
+        "hamlib".into(),
+        "--hamlib-model".into(),
+        m.hamlib_model.to_string(),
+        "--hamlib-device".into(),
+        m.hamlib_device.clone(),
+        "--hamlib-baud".into(),
+        m.hamlib_baud.to_string(),
+    ]
+}
+
 /// Ends the modem73 this station started. For a stop signal, where the
 /// station exits without dropping its [`ModemProcess`].
 pub fn stop_managed() {
@@ -125,6 +139,7 @@ impl ModemProcess {
             "rigctl" => {
                 args.extend(["--rigctl".into(), cfg.modem.rigctl.clone()]);
             }
+            "hamlib" => args.extend(hamlib_args(&cfg.modem)),
             _ => {}
         }
         let binary = ensure::ensure_binary(&cfg.modem.binary).await?;
@@ -228,6 +243,20 @@ mod tests {
         assert_eq!(modem_callsign("~ABCDEFGHIJK").as_deref(), Some("ABCDEFGHI"));
         assert_eq!(modem_callsign("~"), None);
         assert_eq!(modem_callsign(""), None);
+    }
+
+    #[test]
+    fn hamlib_ptt_passes_model_port_and_baud() {
+        let m = crate::config::ModemConfig {
+            hamlib_model: 3087,
+            hamlib_device: "COM5".into(),
+            hamlib_baud: 19200,
+            ..Default::default()
+        };
+        assert_eq!(
+            hamlib_args(&m).join(" "),
+            "--ptt hamlib --hamlib-model 3087 --hamlib-device COM5 --hamlib-baud 19200"
+        );
     }
 
     #[test]
