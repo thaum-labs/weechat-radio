@@ -89,16 +89,108 @@ fn peak_to_db(peak: f32) -> f32 {
     }
 }
 
+#[cfg(any(test, all(feature = "setup-probe", not(windows))))]
+/// First wait before reopening a meter stream that failed.
+const METER_RETRY_MIN_SECS: u64 = 2;
+#[cfg(any(test, all(feature = "setup-probe", not(windows))))]
+/// Longest wait between reopen attempts.
+const METER_RETRY_MAX_SECS: u64 = 60;
+#[cfg(all(feature = "setup-probe", not(windows)))]
+/// A stream that stayed up this long counts as healthy again, so the
+/// next failure starts over at the short wait.
+const METER_HEALTHY_SECS: u64 = 30;
+
+#[cfg(any(test, all(feature = "setup-probe", not(windows))))]
+/// Next wait after a failed attempt: doubles, capped at the maximum.
+fn next_meter_retry(secs: u64) -> u64 {
+    (secs * 2).clamp(METER_RETRY_MIN_SECS, METER_RETRY_MAX_SECS)
+}
+
+/// Keeps the input meter running. When the sound card or audio server
+/// goes away, cpal can call the error callback thousands of times a
+/// second. The callback only raises a flag; this loop drops the broken
+/// stream, logs once, and tries to reopen it with a growing wait.
 #[cfg(all(feature = "setup-probe", not(windows)))]
 fn run_input_meter(
     device_name: &str,
     snap: Arc<SharedStatus>,
     cancel: CancellationToken,
 ) -> Result<(), String> {
+    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+    use std::time::{Duration, Instant};
+
+    let peak_millidb = Arc::new(AtomicI32::new(-80_000));
+    let mut retry_secs = METER_RETRY_MIN_SECS;
+    let mut ever_opened = false;
+    let mut reported_down = false;
+    while !cancel.is_cancelled() {
+        let broken = Arc::new(AtomicBool::new(false));
+        match open_input_stream(device_name, peak_millidb.clone(), broken.clone()) {
+            Ok((stream, selected_name)) => {
+                if reported_down {
+                    tracing::info!("live audio input meter back on {selected_name}");
+                } else {
+                    tracing::info!("live audio input meter on {selected_name}");
+                }
+                ever_opened = true;
+                let opened_at = Instant::now();
+                while !cancel.is_cancelled() && !broken.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(100));
+                    let db = peak_millidb.swap(-80_000, Ordering::Relaxed) as f32 / 1000.0;
+                    set_input_level(&snap, db);
+                }
+                drop(stream);
+                if cancel.is_cancelled() {
+                    break;
+                }
+                set_input_level(&snap, crate::presets::AUDIO_FLOOR_DB);
+                if opened_at.elapsed() >= Duration::from_secs(METER_HEALTHY_SECS) {
+                    retry_secs = METER_RETRY_MIN_SECS;
+                }
+                tracing::warn!(
+                    "audio input meter {selected_name:?} stopped (device or audio server error); \
+                     retrying quietly every {METER_RETRY_MIN_SECS}-{METER_RETRY_MAX_SECS} s"
+                );
+                reported_down = true;
+            }
+            Err(e) if !ever_opened && !reported_down => {
+                // Same as before: a station with no usable input device just
+                // has no live meter. Keep trying quietly in case it appears.
+                tracing::warn!("live audio input meter unavailable: {e}");
+                reported_down = true;
+            }
+            Err(e) => tracing::debug!("audio input meter reopen failed: {e}"),
+        }
+        let wait_until = Instant::now() + Duration::from_secs(retry_secs);
+        while !cancel.is_cancelled() && Instant::now() < wait_until {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        retry_secs = next_meter_retry(retry_secs);
+    }
+    Ok(())
+}
+
+#[cfg(all(feature = "setup-probe", not(windows)))]
+fn set_input_level(snap: &SharedStatus, db: f32) {
+    let mut s = snap.lock();
+    if s.audio_label.as_str() != "no modem" {
+        s.audio_in_db = db;
+        s.audio_db = db;
+        s.audio_label = crate::presets::audio_level_label(db).into();
+    }
+}
+
+/// Opens the capture stream. The error callback never logs: it only sets
+/// `broken`, so a dead device cannot flood the log or spin the CPU.
+#[cfg(all(feature = "setup-probe", not(windows)))]
+fn open_input_stream(
+    device_name: &str,
+    peak_millidb: Arc<std::sync::atomic::AtomicI32>,
+    broken: Arc<std::sync::atomic::AtomicBool>,
+) -> Result<(cpal::Stream, String), String> {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use cpal::SampleFormat;
-    use std::sync::atomic::{AtomicI32, Ordering};
-    use std::time::Duration;
+    use std::sync::atomic::Ordering;
 
     let host = cpal::default_host();
     let device = if device_name.trim().is_empty() {
@@ -118,57 +210,33 @@ fn run_input_meter(
     let supported = device.default_input_config().map_err(|e| e.to_string())?;
     let sample_format = supported.sample_format();
     let config = supported.config();
-    let peak_millidb = Arc::new(AtomicI32::new(-80_000));
-    let on_error_name = selected_name.clone();
-    let error_callback = move |e| {
-        tracing::warn!("audio input meter {on_error_name:?}: {e}");
-    };
+    let error_callback = move |_e| broken.store(true, Ordering::Relaxed);
 
+    let peak = peak_millidb;
     let stream = match sample_format {
-        SampleFormat::F32 => {
-            let peak = peak_millidb.clone();
-            device.build_input_stream(
-                &config,
-                move |data: &[f32], _| note_f32(data, &peak),
-                error_callback,
-                None,
-            )
-        }
-        SampleFormat::I16 => {
-            let peak = peak_millidb.clone();
-            device.build_input_stream(
-                &config,
-                move |data: &[i16], _| note_i16(data, &peak),
-                error_callback,
-                None,
-            )
-        }
-        SampleFormat::U16 => {
-            let peak = peak_millidb.clone();
-            device.build_input_stream(
-                &config,
-                move |data: &[u16], _| note_u16(data, &peak),
-                error_callback,
-                None,
-            )
-        }
+        SampleFormat::F32 => device.build_input_stream(
+            &config,
+            move |data: &[f32], _| note_f32(data, &peak),
+            error_callback,
+            None,
+        ),
+        SampleFormat::I16 => device.build_input_stream(
+            &config,
+            move |data: &[i16], _| note_i16(data, &peak),
+            error_callback,
+            None,
+        ),
+        SampleFormat::U16 => device.build_input_stream(
+            &config,
+            move |data: &[u16], _| note_u16(data, &peak),
+            error_callback,
+            None,
+        ),
         other => return Err(format!("unsupported input sample format {other:?}")),
     }
     .map_err(|e| e.to_string())?;
     stream.play().map_err(|e| e.to_string())?;
-    tracing::info!("live audio input meter on {selected_name}");
-
-    while !cancel.is_cancelled() {
-        std::thread::sleep(Duration::from_millis(100));
-        let db = peak_millidb.swap(-80_000, Ordering::Relaxed) as f32 / 1000.0;
-        let mut s = snap.lock();
-        if s.audio_label.as_str() != "no modem" {
-            s.audio_in_db = db;
-            s.audio_db = db;
-            s.audio_label = crate::presets::audio_level_label(db).into();
-        }
-    }
-    Ok(())
+    Ok((stream, selected_name))
 }
 
 #[cfg(all(feature = "setup-probe", not(windows)))]
@@ -222,6 +290,13 @@ mod tests {
         assert_eq!(samples_db([0.0; 8].into_iter()), -80.0);
         assert!((samples_db([1.0; 8].into_iter()) - 0.0).abs() < 0.001);
         assert!((samples_db([0.1; 8].into_iter()) - -20.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn meter_retry_doubles_up_to_a_minute() {
+        assert_eq!(next_meter_retry(METER_RETRY_MIN_SECS), 4);
+        assert_eq!(next_meter_retry(32), 60);
+        assert_eq!(next_meter_retry(60), 60);
     }
 
     #[test]
