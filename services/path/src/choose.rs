@@ -9,7 +9,8 @@ pub const REQ_SNR_DIGITAL: f64 = 27.0;
 /// Tougher threshold for `hf-weak` when 27 dB-Hz needs more than 100 W.
 pub const REQ_SNR_WEAK: f64 = 22.0;
 pub const REF_POWER_W: f64 = 100.0;
-pub const CLOSE_KM: f64 = 50.0;
+/// VHF radio horizon for a 10 m antenna at each end (4/3 earth radius).
+pub const CLOSE_KM: f64 = 26.0;
 
 const POWER_STEPS: [u32; 5] = [5, 10, 20, 50, 100];
 
@@ -387,8 +388,9 @@ mod tests {
     #[test]
     fn close_needs_shared_region() {
         assert!(try_close_fm(Region::UkEu, Region::UkEu, 10.0).is_some());
+        assert!(try_close_fm(Region::UkEu, Region::UkEu, 20.0).is_some());
         assert!(try_close_fm(Region::UkEu, Region::UsCa, 10.0).is_none());
-        assert!(try_close_fm(Region::UkEu, Region::UkEu, 80.0).is_none());
+        assert!(try_close_fm(Region::UkEu, Region::UkEu, 30.0).is_none());
     }
 
     #[test]
