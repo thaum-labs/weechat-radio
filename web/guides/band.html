@@ -12,7 +12,7 @@
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" />
-  <link rel="stylesheet" href="/styles.css?v=40" />
+  <link rel="stylesheet" href="/styles.css?v=41" />
 </head>
 <body class="page-map page-band">
   <div id="scan"></div>
@@ -56,10 +56,37 @@
       </h3>
       <div class="band-search-row">
         <div class="band-rx-field">
-          <input id="band-search" type="search" placeholder="other station, city or grid" autocomplete="off" aria-label="Other station, city or grid" aria-controls="band-places" />
+          <input id="band-search" type="search" placeholder="other station: callsign, city or grid" autocomplete="off" aria-label="Other station: callsign, city or grid" aria-controls="band-places" />
           <ul id="band-places" class="band-places" hidden></ul>
         </div>
+        <button type="button" id="band-onair" class="band-locate">on air</button>
         <button type="button" id="band-locate" class="band-locate">use my location</button>
+      </div>
+      <div class="band-opts">
+        <label class="band-time">
+          <span>time</span>
+          <input id="band-hour" type="range" min="0" max="23" step="1" value="0" aria-label="Hours from now" />
+          <b id="band-hour-label">now</b>
+        </label>
+        <label>
+          <span>antennas</span>
+          <select id="band-antenna" aria-label="Antenna height at each end">
+            <option value="1.5">handheld 1.5 m</option>
+            <option value="6">roof 6 m</option>
+            <option value="10" selected>mast 10 m</option>
+            <option value="20">tower 20 m</option>
+          </select>
+        </label>
+        <label>
+          <span>power</span>
+          <select id="band-power" aria-label="Most power you have">
+            <option value="5">5 W</option>
+            <option value="10">10 W</option>
+            <option value="20">20 W</option>
+            <option value="50">50 W</option>
+            <option value="100" selected>100 W</option>
+          </select>
+        </label>
       </div>
       <div class="band-map-stage">
         <div id="map"></div>
@@ -69,6 +96,7 @@
           <span class="band-los-note" id="los-note">terrain along the path</span>
         </div>
       </div>
+      <div id="band-profile" class="band-profile" hidden></div>
     </article>
     <article id="band-card" class="band-result" aria-live="polite">
       <p class="band-wait" id="band-wait" hidden>&gt; path ……</p>
@@ -78,6 +106,6 @@
   <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=11"></script>
-  <script src="/guides/band.js?v=8"></script>
+  <script src="/guides/band.js?v=9"></script>
 </body>
 </html>

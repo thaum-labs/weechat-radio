@@ -82,6 +82,12 @@
   const searchEl = document.getElementById("band-search");
   const placesEl = document.getElementById("band-places");
   const locateBtn = document.getElementById("band-locate");
+  const onAirBtn = document.getElementById("band-onair");
+  const hourEl = document.getElementById("band-hour");
+  const hourLabel = document.getElementById("band-hour-label");
+  const antennaEl = document.getElementById("band-antenna");
+  const powerEl = document.getElementById("band-power");
+  const profileEl = document.getElementById("band-profile");
 
   let tx = null;
   let rx = null;
@@ -91,6 +97,31 @@
   let pathFailed = false;
   let arcCanvas = null;
   let arcCtx = null;
+  let answer = null;
+
+  function hourOffset() {
+    return hourEl ? Number(hourEl.value) || 0 : 0;
+  }
+  function planDate() {
+    return new Date(Date.now() + hourOffset() * 3600000);
+  }
+  function planHourUtc() {
+    return planDate().getUTCHours();
+  }
+  function antennaM() {
+    const v = antennaEl ? Number(antennaEl.value) : 10;
+    return Number.isFinite(v) && v > 0 ? v : 10;
+  }
+  function powerW() {
+    const v = powerEl ? Number(powerEl.value) : 100;
+    return Number.isFinite(v) && v > 0 ? v : 100;
+  }
+  function showHourLabel() {
+    if (!hourLabel) return;
+    const off = hourOffset();
+    const hh = String(planHourUtc()).padStart(2, "0");
+    hourLabel.textContent = off ? `${hh}:00 UTC · +${off} h` : "now";
+  }
   function markEl(color, kind) {
     const wrap = document.createElement("div");
     wrap.className = "map-mark-wrap";
@@ -204,7 +235,7 @@
   }
   function ensureDayNightLayers() {
     if (!map.getSource(NIGHT_SRC)) {
-      map.addSource(NIGHT_SRC, { type: "geojson", data: nightGeoJSON(new Date()) });
+      map.addSource(NIGHT_SRC, { type: "geojson", data: nightGeoJSON(planDate()) });
     }
     TWILIGHT_OPACITY.forEach((opacity, i) => {
       const id = twilightLayerId(i);
@@ -237,14 +268,16 @@
     try {
       ensureDayNightLayers();
       const src = map.getSource(NIGHT_SRC);
-      if (src) src.setData(nightGeoJSON(new Date()));
+      if (src) src.setData(nightGeoJSON(planDate()));
     } catch (_) {}
   }
 
   // Copernicus DEM via Open-Meteo. CARTO's path-profile tool needs a
-  // BigQuery warehouse, so it is not used here. 10 m antennas, 4/3 earth.
-  const ANTENNA_M = 10;
+  // BigQuery warehouse, so it is not used here. Antenna height from the
+  // page at both ends, 4/3 earth.
+  const K_EARTH_KM = 6371 * (4 / 3);
   let terrain = null;
+  let elevation = null;
 
   function distKm(a, b) {
     const R = 6371;
@@ -281,7 +314,7 @@
     if (el) el.textContent = text;
   }
 
-  async function terrainProfile(a, b, signal) {
+  async function fetchElevation(a, b, signal) {
     const total = distKm(a, b);
     const n = Math.min(99, Math.max(8, Math.ceil(total / 0.4)));
     const pts = [];
@@ -305,25 +338,35 @@
       return { lat: p.lat, lon: p.lon, dKm: d, elev: typeof e === "number" ? e : null };
     });
     if (known < pts.length / 2) return null;
+    return samples;
+  }
+
+  // Straight radio line between the antenna tops against ground plus the
+  // 4/3-earth bulge. `byTerrain` means the ground itself is above the line;
+  // otherwise a blocked point is only the curve of the earth.
+  function lineOfSight(raw, antenna) {
+    const samples = raw.map((s) => ({ ...s }));
     const D = samples[samples.length - 1].dKm;
-    const y0 = (samples[0].elev || 0) + ANTENNA_M;
-    const y1 = (samples[samples.length - 1].elev || 0) + ANTENNA_M;
-    const kR = 6371 * (4 / 3);
+    const y0 = (samples[0].elev || 0) + antenna;
+    const y1 = (samples[samples.length - 1].elev || 0) + antenna;
     let blocked = false;
+    let byTerrain = false;
     for (const s of samples) {
+      const d1 = s.dKm;
+      const d2 = Math.max(0, D - d1);
+      s.bulge = (d1 * d2 * 1000) / (2 * K_EARTH_KM);
+      s.line = D < 1e-6 ? y0 : y0 + (y1 - y0) * (d1 / D);
       if (s.elev == null) {
         s.blocked = false;
         continue;
       }
-      const d1 = s.dKm;
-      const d2 = Math.max(0, D - d1);
-      const bulge = (d1 * d2 * 1000) / (2 * kR);
-      const line = D < 1e-6 ? y0 : y0 + (y1 - y0) * (d1 / D);
-      s.clearance = line - (s.elev + bulge);
-      s.blocked = d1 > 0.05 && d2 > 0.05 && s.clearance < 0;
+      const inside = d1 > 0.05 && d2 > 0.05;
+      s.clearance = s.line - (s.elev + s.bulge);
+      s.blocked = inside && s.clearance < 0;
       if (s.blocked) blocked = true;
+      if (s.blocked && s.line - s.elev < 0) byTerrain = true;
     }
-    return { samples, blocked };
+    return { samples, blocked, byTerrain, y0, y1, D };
   }
 
   function ensureArcLayer() {
@@ -422,7 +465,10 @@
       else rx = { lat: ll.lat, lon: ll.lng };
       terrain = null;
       if (tx && rx) requestCard();
-      else paintPath();
+      else {
+        paintPath();
+        saveUrl();
+      }
     });
     return marker;
   }
@@ -432,8 +478,10 @@
     if (txMarker) txMarker.remove();
     txMarker = placeMarker("tx", ll);
     terrain = null;
-    if (!rx) setHint("RX", "Click the other station");
-    else requestCard();
+    if (!rx) {
+      setHint("RX", "Click the other station");
+      saveUrl();
+    } else requestCard();
   }
 
   function setRx(ll) {
@@ -451,18 +499,21 @@
     map.fitBounds(b, { padding: 80, maxZoom: 8, duration: reduceMotion ? 0 : 600 });
   }
 
-  async function requestCard() {
+  async function requestCard(opts) {
     if (!tx || !rx) return;
+    const refit = !opts || opts.refit !== false;
     pathFailed = false;
     if (abort) abort.abort();
     abort = new AbortController();
+    const signal = abort.signal;
     if (emptyEl) emptyEl.hidden = true;
     waitEl.hidden = false;
     cardEl.classList.remove("has-answer");
     setHint("…", "Working out the path");
     if (txMarker) pulse(txMarker.getElement(), "tx");
     paintPath();
-    fitPins();
+    if (refit) fitPins();
+    saveUrl();
     try {
       const res = await fetch(`${PATH_API}/api/path`, {
         method: "POST",
@@ -472,28 +523,31 @@
           tx_lon: tx.lon,
           rx_lat: rx.lat,
           rx_lon: rx.lon,
+          hour_utc: planHourUtc(),
+          power_w: powerW(),
+          antenna_m: antennaM(),
         }),
-        signal: abort.signal,
+        signal,
       });
       if (!res.ok) throw new Error(await res.text());
-      const card = await res.json();
+      answer = await res.json();
       pathFailed = false;
       paintPath();
       waitEl.hidden = true;
       if (emptyEl) emptyEl.hidden = true;
-      renderCard(card);
+      showAnswer();
       if (rxMarker) pulse(rxMarker.getElement(), "rx");
-      setHint("OK", card.confidence || "Ready");
-      await applyTerrain(card, abort.signal);
+      await loadTerrain(signal);
     } catch (e) {
       if (e.name === "AbortError") return;
       pathFailed = true;
+      answer = null;
       paintPath();
       waitEl.hidden = true;
       if (emptyEl) emptyEl.hidden = true;
       cardEl.classList.add("has-answer");
-      const answer = cardEl.querySelector(".band-answer");
-      if (answer) answer.remove();
+      const old = cardEl.querySelector(".band-answer");
+      if (old) old.remove();
       cardEl.insertAdjacentHTML(
         "beforeend",
         `<div class="band-answer"><p class="band-err">${escapeHtml(e.message || "request failed")}</p></div>`
@@ -502,35 +556,109 @@
     }
   }
 
-  async function applyTerrain(card, signal) {
-    setLosNote("checking terrain…");
-    try {
-      const profile = await terrainProfile(tx, rx, signal);
-      if (signal.aborted) return;
-      terrain = profile;
-      paintPath();
-      if (!profile) {
-        setLosNote("no terrain data for this path");
-        return;
-      }
-      if (profile.blocked) {
-        setLosNote("terrain blocks VHF and UHF");
-        const next = card.kind === "fm" && card.hf ? card.hf : card;
-        next.note = "Terrain blocks VHF and UHF. " + (next.note || "");
-        renderCard(next);
-        setHint("OK", next.confidence || "Ready");
-        return;
-      }
-      setLosNote("terrain is clear for VHF and UHF");
-      if (card.kind === "fm") {
-        card.note = "Terrain is clear for VHF and UHF. " + (card.note || "");
-        renderCard(card);
-      }
-    } catch (e) {
-      if (e.name === "AbortError") return;
+  function pathKey() {
+    return tx && rx ? `${tx.lat},${tx.lon}|${rx.lat},${rx.lon}` : "";
+  }
+
+  // Elevation is fetched once per pin pair; antenna or time changes reuse it.
+  async function loadTerrain(signal) {
+    const key = pathKey();
+    if (!elevation || elevation.key !== key) {
+      setLosNote("checking terrain…");
       terrain = null;
-      setLosNote("no terrain data for this path");
+      drawProfile();
+      try {
+        const samples = await fetchElevation(tx, rx, signal);
+        if (signal.aborted) return;
+        elevation = { key, samples };
+      } catch (e) {
+        if (e.name === "AbortError") return;
+        elevation = { key, samples: null };
+      }
     }
+    judgeTerrain();
+  }
+
+  function judgeTerrain() {
+    terrain = elevation && elevation.key === pathKey() && elevation.samples
+      ? lineOfSight(elevation.samples, antennaM())
+      : null;
+    paintPath();
+    drawProfile();
+    if (!terrain) setLosNote("no terrain data for this path");
+    else if (terrain.byTerrain) setLosNote("terrain blocks VHF and UHF");
+    else if (terrain.blocked) setLosNote("beyond line of sight for VHF and UHF");
+    else setLosNote("clear line of sight for VHF and UHF");
+    showAnswer();
+  }
+
+  // The server answers on distance alone. When it says 2m FM and the ground
+  // or the earth's curve is in the way, switch to the HF card it sent along.
+  function showAnswer() {
+    if (!answer) return;
+    let card = { ...answer };
+    if (terrain && terrain.blocked) {
+      const reason = terrain.byTerrain ? "Terrain blocks VHF and UHF." : "Beyond line of sight for VHF and UHF.";
+      if (card.kind === "fm" && card.hf) {
+        card = { ...card.hf, why: `${reason} ${card.hf.why || ""}`.trim() };
+      }
+      card.note = `${reason} ${card.note || ""}`.trim();
+    } else if (terrain && card.kind === "fm") {
+      card.note = `Clear line of sight for VHF and UHF. ${card.note || ""}`.trim();
+    }
+    renderCard(card);
+    setHint("OK", card.confidence || "Ready");
+  }
+
+  // Terrain under the path, drawn on the curved earth: the dashed curve is
+  // sea level bent by the 4/3-earth bulge, the ground sits on top of it,
+  // and the straight line joins the two antenna tops.
+  function drawProfile() {
+    if (!profileEl) return;
+    if (!terrain) {
+      profileEl.hidden = true;
+      profileEl.innerHTML = "";
+      return;
+    }
+    profileEl.hidden = false;
+    const W = Math.max(240, profileEl.clientWidth || 600);
+    const H = 104;
+    const pad = { l: 6, r: 6, t: 16, b: 14 };
+    const pts = terrain.samples;
+    const ground = (s) => (s.elev == null ? s.bulge : s.elev + s.bulge);
+    let lo = 0;
+    let hi = Math.max(terrain.y0, terrain.y1);
+    for (const s of pts) {
+      lo = Math.min(lo, s.elev == null ? 0 : s.elev);
+      hi = Math.max(hi, ground(s), s.bulge);
+    }
+    if (hi - lo < 1) hi = lo + 1;
+    const D = terrain.D || 1;
+    const x = (d) => pad.l + (d / D) * (W - pad.l - pad.r);
+    const y = (v) => H - pad.b - ((v - lo) / (hi - lo)) * (H - pad.t - pad.b);
+    const f = (n) => n.toFixed(1);
+    const groundPts = pts.map((s) => `${f(x(s.dKm))},${f(y(ground(s)))}`);
+    const fill = `M${f(x(0))},${f(y(lo))} L${groundPts.join(" L")} L${f(x(D))},${f(y(lo))} Z`;
+    const curve = pts.map((s) => `${f(x(s.dKm))},${f(y(s.bulge))}`).join(" L");
+    let hits = "";
+    for (let i = 1; i < pts.length; i++) {
+      if (!pts[i - 1].blocked && !pts[i].blocked) continue;
+      hits += `M${groundPts[i - 1]} L${groundPts[i]} `;
+    }
+    const km = D >= 100 ? Math.round(D) : D.toFixed(1);
+    const end = (s) => (s.elev == null ? "?" : `${Math.round(s.elev)} m`);
+    profileEl.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Path profile">
+        <path class="pf-ground" d="${fill}"/>
+        <path class="pf-curve" d="M${curve}"/>
+        ${hits ? `<path class="pf-block" d="${hits}"/>` : ""}
+        <line class="pf-line" x1="${f(x(0))}" y1="${f(y(terrain.y0))}" x2="${f(x(D))}" y2="${f(y(terrain.y1))}"/>
+        <text x="${pad.l}" y="11">TX ${end(pts[0])}</text>
+        <text x="${W / 2}" y="11" text-anchor="middle">path profile · ${km} km · 4/3 earth</text>
+        <text x="${W - pad.r}" y="11" text-anchor="end">RX ${end(pts[pts.length - 1])}</text>
+        <text x="${pad.l}" y="${H - 2}">ground</text>
+        <text x="${W / 2}" y="${H - 2}" text-anchor="middle" class="pf-key-line">radio line</text>
+        <text x="${W - pad.r}" y="${H - 2}" text-anchor="end" class="pf-key-curve">earth curve</text>
+      </svg>`;
   }
 
   function escapeHtml(s) {
@@ -568,6 +696,7 @@
         </ul>
         <div class="band-aside">
           <p class="band-conf">${escapeHtml(c.confidence || "")}</p>
+          ${c.why ? `<p class="band-why">${escapeHtml(c.why)}</p>` : ""}
           ${voice}
           <p class="band-note">${escapeHtml(c.note || "")}</p>
           <div class="band-cmds">
@@ -628,6 +757,65 @@
     } catch (_) {}
   });
 
+  // Shareable link: ?tx=lat,lon&rx=lat,lon, plus antenna and power when not
+  // the defaults. Other query keys (e.g. api=) are kept.
+  function fmtLL(p) {
+    return `${p.lat.toFixed(4)},${p.lon.toFixed(4)}`;
+  }
+  function parseLL(v) {
+    const m = String(v || "").split(",").map(Number);
+    if (m.length !== 2 || !m.every(Number.isFinite)) return null;
+    if (Math.abs(m[0]) > 90 || Math.abs(m[1]) > 180) return null;
+    return { lat: m[0], lng: m[1] };
+  }
+  function saveUrl() {
+    const q = new URLSearchParams(location.search);
+    const set = (k, v) => (v == null ? q.delete(k) : q.set(k, v));
+    set("tx", tx ? fmtLL(tx) : null);
+    set("rx", rx ? fmtLL(rx) : null);
+    set("ant", antennaM() !== 10 ? String(antennaM()) : null);
+    set("w", powerW() !== 100 ? String(powerW()) : null);
+    const qs = q.toString().replace(/%2C/g, ",");
+    try {
+      history.replaceState(null, "", `${location.pathname}${qs ? "?" + qs : ""}${location.hash}`);
+    } catch (_) {}
+  }
+  function pickOption(sel, value) {
+    if (!sel || value == null) return;
+    const hit = [...sel.options].find((o) => Number(o.value) === Number(value));
+    if (hit) sel.value = hit.value;
+  }
+  function restoreUrl() {
+    const q = new URLSearchParams(location.search);
+    pickOption(antennaEl, q.get("ant"));
+    pickOption(powerEl, q.get("w"));
+    const t = parseLL(q.get("tx"));
+    const r = parseLL(q.get("rx"));
+    if (t) setTx(t);
+    if (t && r) setRx(r);
+    else if (t) map.jumpTo({ center: [t.lng, t.lat], zoom: 6 });
+  }
+
+  let hourTimer = null;
+  if (hourEl) {
+    hourEl.addEventListener("input", () => {
+      showHourLabel();
+      updateDayNight(true);
+      clearTimeout(hourTimer);
+      hourTimer = setTimeout(() => requestCard({ refit: false }), 250);
+    });
+  }
+  if (antennaEl) {
+    antennaEl.addEventListener("change", () => {
+      judgeTerrain();
+      requestCard({ refit: false });
+    });
+  }
+  if (powerEl) powerEl.addEventListener("change", () => requestCard({ refit: false }));
+  window.addEventListener("resize", () => drawProfile());
+  // Keep "now" honest as the clock rolls over an hour.
+  setInterval(showHourLabel, 60000);
+
   map.on("click", (e) => {
     if (!tx) setTx(e.lngLat);
     else setRx(e.lngLat);
@@ -649,19 +837,68 @@
     );
   });
 
+  // "other station": on-air stations from the live map first, then places.
+  // Enter takes the first hit, and looks the place up right away if the
+  // suggestions have not arrived yet.
+  const ON_AIR_MS = 48 * 60 * 60 * 1000;
   let searchTimer = null;
-  let placeHits = [];
+  let searchSeq = 0;
+  let hits = [];
+  let hitsFor = null;
+  let onAir = [];
+  let onAirAt = 0;
+
+  async function loadOnAir() {
+    if (Date.now() - onAirAt < 60000) return onAir;
+    const api = (window.WCR && WCR.API) || "";
+    const since = Math.floor((Date.now() - ON_AIR_MS) / 1000);
+    try {
+      const res = await fetch(`${api}/api/v1/nodes?heard_since=${since}`, { signal: AbortSignal.timeout(4000) });
+      const body = await res.json();
+      onAir = (body.nodes || [])
+        .filter((n) => n.callsign && Number.isFinite(n.lat) && Number.isFinite(n.lon))
+        .sort((a, b) => (b.last_seen || 0) - (a.last_seen || 0))
+        .map((n) => ({
+          kind: "station",
+          call: String(n.callsign),
+          label: [n.callsign, n.grid, n.band].filter(Boolean).join(" · "),
+          lat: n.lat,
+          lon: n.lon,
+        }));
+      onAirAt = Date.now();
+    } catch (_) {}
+    return onAir;
+  }
+
+  function stationHits(q) {
+    const k = q.trim().toUpperCase();
+    return onAir.filter((s) => !k || s.call.toUpperCase().startsWith(k));
+  }
+
+  async function lookupPlaces(q) {
+    try {
+      const res = await fetch(`${PATH_API}/api/path/places?q=${encodeURIComponent(q)}`);
+      if (!res.ok) return [];
+      const data = await res.json();
+      return (data.places || []).map((p) => ({ kind: "place", ...p }));
+    } catch (_) {
+      return [];
+    }
+  }
 
   function hidePlaces() {
-    placeHits = [];
+    hits = [];
+    hitsFor = null;
     if (!placesEl) return;
     placesEl.hidden = true;
     placesEl.innerHTML = "";
   }
 
   function choosePlace(p) {
+    searchSeq += 1;
+    clearTimeout(searchTimer);
     hidePlaces();
-    searchEl.value = p.label || "";
+    searchEl.value = p.kind === "station" ? p.call : p.label || "";
     map.flyTo({
       center: [p.lon, p.lat],
       zoom: 7,
@@ -670,19 +907,25 @@
     setRx({ lng: p.lon, lat: p.lat });
   }
 
-  function showPlaces(items) {
-    placeHits = items || [];
+  function showPlaces(items, q) {
+    hits = items || [];
+    hitsFor = q;
     if (!placesEl) return;
     placesEl.innerHTML = "";
-    if (!placeHits.length) {
+    if (!hits.length) {
       placesEl.hidden = true;
       return;
     }
-    placeHits.forEach((p) => {
+    hits.forEach((p) => {
       const li = document.createElement("li");
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.textContent = p.label || `${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}`;
+      if (p.kind === "station") {
+        btn.className = "band-onair-hit";
+        btn.innerHTML = `${escapeHtml(p.label)}<span>on air</span>`;
+      } else {
+        btn.textContent = p.label || `${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}`;
+      }
       btn.addEventListener("click", () => choosePlace(p));
       li.appendChild(btn);
       placesEl.appendChild(li);
@@ -690,40 +933,83 @@
     placesEl.hidden = false;
   }
 
-  searchEl.addEventListener("input", () => {
-    clearTimeout(searchTimer);
-    const q = searchEl.value.trim();
-    if (q.length < 2) {
-      hidePlaces();
+  async function showOnAir() {
+    const seq = ++searchSeq;
+    await loadOnAir();
+    if (seq !== searchSeq) return;
+    if (!onAir.length) {
+      showPlaces([{ kind: "none", label: "No stations on air in the last 48 h" }], "");
+      const b = placesEl && placesEl.querySelector("button");
+      if (b) b.disabled = true;
+      hits = [];
       return;
     }
+    showPlaces(stationHits(searchEl.value), searchEl.value.trim());
+  }
+
+  searchEl.addEventListener("focus", () => {
+    if (!searchEl.value.trim()) showOnAir();
+  });
+
+  searchEl.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    const seq = ++searchSeq;
+    const q = searchEl.value.trim();
+    if (!q) {
+      showOnAir();
+      return;
+    }
+    const stations = stationHits(q);
+    if (q.length < 2) {
+      if (stations.length) showPlaces(stations, q);
+      else hidePlaces();
+      return;
+    }
+    if (stations.length) showPlaces(stations, null);
     searchTimer = setTimeout(async () => {
-      try {
-        const res = await fetch(`${PATH_API}/api/path/places?q=${encodeURIComponent(q)}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (searchEl.value.trim() !== q) return;
-        showPlaces(data.places || []);
-      } catch (_) {}
+      const places = await lookupPlaces(q);
+      if (seq !== searchSeq || searchEl.value.trim() !== q) return;
+      showPlaces(stationHits(q).concat(places), q);
     }, 250);
   });
 
-  searchEl.addEventListener("keydown", (e) => {
+  searchEl.addEventListener("keydown", async (e) => {
     if (e.key === "Escape") {
       hidePlaces();
       return;
     }
-    if (e.key === "Enter") {
-      e.preventDefault();
-      if (placeHits[0]) choosePlace(placeHits[0]);
-    }
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const q = searchEl.value.trim();
+    if (!q) return;
+    const exact = onAir.find((s) => s.call.toUpperCase() === q.toUpperCase());
+    if (exact) return choosePlace(exact);
+    if (hitsFor === q && hits[0]) return choosePlace(hits[0]);
+    clearTimeout(searchTimer);
+    const seq = ++searchSeq;
+    setHint("…", "Looking up " + q);
+    const places = stationHits(q).concat(await lookupPlaces(q));
+    if (seq !== searchSeq || searchEl.value.trim() !== q) return;
+    if (places[0]) choosePlace(places[0]);
+    else setHint("ERR", `No place called ${q}`);
   });
+
+  if (onAirBtn) {
+    onAirBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      searchEl.value = "";
+      searchEl.focus();
+      showOnAir();
+    });
+  }
 
   document.addEventListener("click", (e) => {
     if (!searchEl.contains(e.target) && placesEl && !placesEl.contains(e.target)) hidePlaces();
   });
 
   setHint("TX", "Click where you are");
+  showHourLabel();
+  restoreUrl();
 
   // Used by local checks; not part of the public page API.
   window.__WCR_BAND = {
@@ -736,6 +1022,7 @@
       wait: waitEl && !waitEl.hidden,
       card: cardEl && !cardEl.hidden,
       cardText: cardEl && cardEl.innerText,
+      terrain: terrain && { blocked: terrain.blocked, byTerrain: terrain.byTerrain, n: terrain.samples.length },
     }),
   };
 })();

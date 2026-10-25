@@ -9,10 +9,16 @@ pub const REQ_SNR_DIGITAL: f64 = 27.0;
 /// Tougher threshold for `hf-weak` when 27 dB-Hz needs more than 100 W.
 pub const REQ_SNR_WEAK: f64 = 22.0;
 pub const REF_POWER_W: f64 = 100.0;
-/// VHF radio horizon for a 10 m antenna at each end (4/3 earth radius).
-pub const CLOSE_KM: f64 = 26.0;
+/// Antenna height when the page sends none: a 10 m mast at each end.
+pub const DEFAULT_ANTENNA_M: f64 = 10.0;
 
-const POWER_STEPS: [u32; 5] = [5, 10, 20, 50, 100];
+pub const POWER_STEPS: [u32; 5] = [5, 10, 20, 50, 100];
+
+/// VHF radio horizon in km for antennas `antenna_m` high at both ends
+/// (4/3 earth radius). 10 m gives about 26 km.
+pub fn radio_horizon_km(antenna_m: f64) -> f64 {
+    2.0 * 4.12 * antenna_m.max(0.0).sqrt()
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Card {
@@ -29,6 +35,8 @@ pub struct Card {
     pub preset_cmd: String,
     pub confidence: String,
     pub note: String,
+    /// One or two plain sentences on why this band was picked.
+    pub why: String,
     pub voice_note: Option<String>,
     pub footnote: String,
     pub distance_km: u32,
@@ -153,6 +161,7 @@ fn card_shell(
     preset: &'static str,
     confidence: String,
     note: String,
+    why: String,
     distance_km: u32,
     next_utc: Option<String>,
 ) -> Card {
@@ -170,6 +179,7 @@ fn card_shell(
         preset_cmd: format!("/radio preset {preset}"),
         confidence,
         note,
+        why,
         voice_note: voice_note(spot.band),
         footnote: "Simple wire antenna at each end, average noise, digital rather than voice. Check your band plan before you transmit. This is the usual chance for this month, not a promise for today.".into(),
         distance_km,
@@ -177,7 +187,7 @@ fn card_shell(
     }
 }
 
-pub fn fm_card(region: Region, distance_km: f64) -> Option<Card> {
+pub fn fm_card(region: Region, distance_km: f64, antenna_m: f64) -> Option<Card> {
     let spot = match region {
         Region::UkEu => Spot {
             khz: 144_950,
@@ -205,32 +215,45 @@ pub fn fm_card(region: Region, distance_km: f64) -> Option<Card> {
         "vhf-fm",
         "Close path - line of sight on 2m FM.".into(),
         "A hill can still block a short path. SSB stays off.".into(),
+        format!(
+            "2m FM: {:.0} km is inside the {:.0} km radio horizon for {} antennas.",
+            distance_km,
+            radio_horizon_km(antenna_m),
+            antenna_label(antenna_m)
+        ),
         distance_km.round() as u32,
         None,
     ))
+}
+
+fn antenna_label(antenna_m: f64) -> String {
+    if (antenna_m - antenna_m.round()).abs() < 0.05 {
+        format!("{:.0} m", antenna_m)
+    } else {
+        format!("{:.1} m", antenna_m)
+    }
 }
 
 struct Candidate {
     spot: Spot,
     power: u32,
     reliability: f64,
-    preset: &'static str,
 }
 
-fn best_at_hour(cells: &[Cell], hour: u8, req: f64, preset: &'static str) -> Option<Candidate> {
+/// Lowest-power spot that works at `hour` within `max_w`, most reliable on a tie.
+fn best_at_hour(cells: &[Cell], hour: u8, req: f64, max_w: u32) -> Option<Candidate> {
     let mut best: Option<Candidate> = None;
     for c in cells.iter().filter(|c| c.hour == hour) {
         let Some(spot) = spot_for(c.freq_mhz) else {
             continue;
         };
-        let Some(power) = power_for_snr(c.snr, req) else {
+        let Some(power) = power_for_snr(c.snr, req).filter(|&p| p <= max_w) else {
             continue;
         };
         let cand = Candidate {
             spot,
             power,
             reliability: c.reliability,
-            preset,
         };
         let replace = match &best {
             None => true,
@@ -245,41 +268,117 @@ fn best_at_hour(cells: &[Cell], hour: u8, req: f64, preset: &'static str) -> Opt
     best
 }
 
-fn next_open_hour(cells: &[Cell], from_hour: u8, req: f64) -> Option<u8> {
-    for step in 1..=23u8 {
-        let h = (from_hour + step) % 24;
-        if best_at_hour(cells, h, req, "hf-poor").is_some() {
-            return Some(h);
-        }
-    }
-    None
+fn next_open_hour(cells: &[Cell], from_hour: u8, req: f64, max_w: u32) -> Option<u8> {
+    (1..=23u8)
+        .map(|step| (from_hour + step) % 24)
+        .find(|&h| best_at_hour(cells, h, req, max_w).is_some())
 }
 
-pub fn pick_hf(cells: &[Cell], hour_utc: u8, distance_km: f64) -> Card {
+/// Does `khz` still work at `hour` within `max_w`?
+fn spot_open(cells: &[Cell], khz: u32, hour: u8, req: f64, max_w: u32) -> bool {
+    cells.iter().any(|c| {
+        c.hour == hour
+            && (c.freq_mhz * 1000.0).round() as u32 == khz
+            && power_for_snr(c.snr, req).is_some_and(|p| p <= max_w)
+    })
+}
+
+/// First hour after `hour` when `khz` stops working, or None if it stays open all day.
+fn closes_at(cells: &[Cell], khz: u32, hour: u8, req: f64, max_w: u32) -> Option<u8> {
+    (1..=23u8)
+        .map(|step| (hour + step) % 24)
+        .find(|&h| !spot_open(cells, khz, h, req, max_w))
+}
+
+/// Best opening in the 12 hours from `hour`, as (hour, candidate).
+fn best_next_12h(cells: &[Cell], hour: u8, req: f64, max_w: u32) -> Option<(u8, Candidate)> {
+    let mut best: Option<(u8, Candidate)> = None;
+    for step in 0..12u8 {
+        let h = (hour + step) % 24;
+        let Some(c) = best_at_hour(cells, h, req, max_w) else {
+            continue;
+        };
+        let better = match &best {
+            None => true,
+            Some((_, b)) => {
+                c.power < b.power || (c.power == b.power && c.reliability > b.reliability + 0.05)
+            }
+        };
+        if better {
+            best = Some((h, c));
+        }
+    }
+    best
+}
+
+fn hh(hour: u8) -> String {
+    format!("{hour:02}:00 UTC")
+}
+
+/// Pick the HF card for `hour_utc`. `now` says whether that hour is the
+/// current one, which only changes the wording ("this hour" or "at 14:00 UTC").
+pub fn pick_hf(cells: &[Cell], hour_utc: u8, now: bool, distance_km: f64, max_w: u32) -> Card {
     let dist = distance_km.round() as u32;
-    if let Some(c) = best_at_hour(cells, hour_utc, REQ_SNR_DIGITAL, "hf-poor") {
+    let when = if now {
+        "this hour".to_string()
+    } else {
+        format!("at {}", hh(hour_utc))
+    };
+    let open_when = if now { "now".to_string() } else { when.clone() };
+    let later = best_next_12h(cells, hour_utc, REQ_SNR_DIGITAL, max_w);
+
+    if let Some(c) = best_at_hour(cells, hour_utc, REQ_SNR_DIGITAL, max_w) {
         let conf = if c.reliability >= 0.5 {
-            "Likely this hour.".to_string()
+            format!("Likely {when}.")
         } else {
             format!(
-                "Possible this hour (about {:.0}% of days this month).",
+                "Possible {when} (about {:.0}% of days this month).",
                 c.reliability * 100.0
             )
         };
+        let mut why = format!(
+            "{}: open {open_when} on this path, {} W is enough.",
+            c.spot.band, c.power
+        );
+        match closes_at(cells, c.spot.khz, hour_utc, REQ_SNR_DIGITAL, max_w) {
+            Some(h) => why.push_str(&format!(" It closes about {}.", hh(h))),
+            None => why.push_str(" It stays open all day."),
+        }
+        if let Some((h, b)) = later.filter(|(h, b)| *h != hour_utc && b.power < c.power) {
+            why.push_str(&format!(
+                " Best in the next 12 h: {} at {}, {} W.",
+                b.spot.band,
+                hh(h),
+                b.power
+            ));
+        }
         return card_shell(
             "hf",
             c.spot,
             true,
             "USB",
             Some(c.power),
-            c.preset,
+            "hf-poor",
             conf,
             "SSB on, USB for data.".into(),
+            why,
             dist,
             None,
         );
     }
-    if let Some(c) = best_at_hour(cells, hour_utc, REQ_SNR_WEAK, "hf-weak") {
+    if let Some(c) = best_at_hour(cells, hour_utc, REQ_SNR_WEAK, max_w) {
+        let mut why = format!(
+            "{}: too faint {when} for the normal preset at {max_w} W, so use the slower one.",
+            c.spot.band
+        );
+        if let Some((h, b)) = later {
+            why.push_str(&format!(
+                " Best in the next 12 h: {} at {}, {} W.",
+                b.spot.band,
+                hh(h),
+                b.power
+            ));
+        }
         return card_shell(
             "hf",
             c.spot,
@@ -289,16 +388,30 @@ pub fn pick_hf(cells: &[Cell], hour_utc: u8, distance_km: f64) -> Card {
             "hf-weak",
             "Faint path - use the slower preset.".into(),
             "SSB on, USB for data.".into(),
+            why,
             dist,
             None,
         );
     }
-    let next = next_open_hour(cells, hour_utc, REQ_SNR_DIGITAL)
-        .or_else(|| next_open_hour(cells, hour_utc, REQ_SNR_WEAK));
-    let next_s = next.map(|h| format!("{h:02}:00 UTC"));
+    let next = next_open_hour(cells, hour_utc, REQ_SNR_DIGITAL, max_w)
+        .or_else(|| next_open_hour(cells, hour_utc, REQ_SNR_WEAK, max_w));
+    let next_s = next.map(hh);
     let confidence = match &next_s {
-        Some(t) => format!("Not now. Try {t}."),
-        None => "Nothing under 100 W in the next 24 hours.".into(),
+        Some(t) => format!("Not {open_when}. Try {t}."),
+        None => format!("Nothing at {max_w} W in the next 24 hours."),
+    };
+    let why = match next {
+        Some(h) => {
+            let band = best_at_hour(cells, h, REQ_SNR_DIGITAL, max_w)
+                .or_else(|| best_at_hour(cells, h, REQ_SNR_WEAK, max_w))
+                .map(|c| c.spot.band)
+                .unwrap_or("HF");
+            format!(
+                "No band reaches this far {when} at {max_w} W. The first opening is {band} at {}.",
+                hh(h)
+            )
+        }
+        None => format!("No band reaches this far at {max_w} W on any hour this month."),
     };
     // Still show the least-bad frequency at this hour for context.
     let fallback = cells
@@ -324,17 +437,18 @@ pub fn pick_hf(cells: &[Cell], hour_utc: u8, distance_km: f64) -> Card {
         "hf-poor",
         confidence,
         "SSB on, USB for data. Wait for a better hour or use a gateway.".into(),
+        why,
         dist,
         next_s,
     )
 }
 
-pub fn try_close_fm(tx: Region, rx: Region, distance_km: f64) -> Option<Card> {
-    if distance_km > CLOSE_KM {
+pub fn try_close_fm(tx: Region, rx: Region, distance_km: f64, antenna_m: f64) -> Option<Card> {
+    if distance_km > radio_horizon_km(antenna_m) {
         return None;
     }
     let region = Region::shared_vhf(tx, rx)?;
-    fm_card(region, distance_km)
+    fm_card(region, distance_km, antenna_m)
 }
 
 #[cfg(test)]
@@ -368,7 +482,7 @@ mod tests {
             reliability: 0.8,
             snr: 41.0,
         }];
-        let card = pick_hf(&cells, 12, 800.0);
+        let card = pick_hf(&cells, 12, true, 800.0, 100);
         assert_eq!(card.mode, "USB");
         assert!(card.ssb);
         assert_eq!(card.band, "40m");
@@ -378,7 +492,7 @@ mod tests {
 
     #[test]
     fn fm_uk() {
-        let c = fm_card(Region::UkEu, 12.0).unwrap();
+        let c = fm_card(Region::UkEu, 12.0, DEFAULT_ANTENNA_M).unwrap();
         assert!(!c.ssb);
         assert_eq!(c.mode, "FM");
         assert_eq!(c.frequency_khz, 144_950);
@@ -387,10 +501,11 @@ mod tests {
 
     #[test]
     fn close_needs_shared_region() {
-        assert!(try_close_fm(Region::UkEu, Region::UkEu, 10.0).is_some());
-        assert!(try_close_fm(Region::UkEu, Region::UkEu, 20.0).is_some());
-        assert!(try_close_fm(Region::UkEu, Region::UsCa, 10.0).is_none());
-        assert!(try_close_fm(Region::UkEu, Region::UkEu, 30.0).is_none());
+        let m = DEFAULT_ANTENNA_M;
+        assert!(try_close_fm(Region::UkEu, Region::UkEu, 10.0, m).is_some());
+        assert!(try_close_fm(Region::UkEu, Region::UkEu, 20.0, m).is_some());
+        assert!(try_close_fm(Region::UkEu, Region::UsCa, 10.0, m).is_none());
+        assert!(try_close_fm(Region::UkEu, Region::UkEu, 30.0, m).is_none());
     }
 
     #[test]
@@ -401,7 +516,7 @@ mod tests {
             reliability: 0.0,
             snr: -10.0,
         }];
-        let card = pick_hf(&cells, 12, 5000.0);
+        let card = pick_hf(&cells, 12, true, 5000.0, 100);
         assert!(card.power_w.is_none());
         assert!(card.confidence.contains("Nothing") || card.confidence.contains("Not now"));
     }
@@ -412,5 +527,75 @@ mod tests {
         assert!(f.contains(&7.045));
         let f2 = hf_freqs_mhz(Region::UsCa, Region::Au);
         assert!(f2.contains(&7.090));
+    }
+
+    #[test]
+    fn handheld_horizon_is_shorter() {
+        assert!((radio_horizon_km(10.0) - 26.0).abs() < 0.5);
+        assert!(try_close_fm(Region::UkEu, Region::UkEu, 12.0, 1.5).is_none());
+        assert!(try_close_fm(Region::UkEu, Region::UkEu, 8.0, 1.5).is_some());
+        let c = try_close_fm(Region::UkEu, Region::UkEu, 8.0, 1.5).unwrap();
+        assert!(c.why.contains("1.5 m"), "{}", c.why);
+    }
+
+    fn cell(hour: u8, freq_mhz: f64, snr: f64) -> Cell {
+        Cell {
+            hour,
+            freq_mhz,
+            reliability: 0.8,
+            snr,
+        }
+    }
+
+    #[test]
+    fn why_names_the_band_and_when_it_closes() {
+        // 30m open 10..=17, 20m only at 14 and stronger.
+        let mut cells = Vec::new();
+        for h in 0..24u8 {
+            cells.push(cell(
+                h,
+                10.14,
+                if (10..=17).contains(&h) { 30.0 } else { 0.0 },
+            ));
+            cells.push(cell(h, 14.07, if h == 14 { 40.0 } else { 0.0 }));
+        }
+        let card = pick_hf(&cells, 12, true, 1500.0, 100);
+        assert_eq!(card.band, "30m");
+        assert!(card.why.starts_with("30m: open now"), "{}", card.why);
+        assert!(card.why.contains("closes about 18:00 UTC"), "{}", card.why);
+        assert!(
+            card.why.contains("Best in the next 12 h: 20m at 14:00 UTC"),
+            "{}",
+            card.why
+        );
+    }
+
+    #[test]
+    fn a_later_hour_changes_the_pick_and_the_wording() {
+        let mut cells = Vec::new();
+        for h in 0..24u8 {
+            cells.push(cell(h, 10.14, if h < 12 { 30.0 } else { 0.0 }));
+            cells.push(cell(h, 3.58, if h >= 18 { 30.0 } else { 0.0 }));
+        }
+        let card = pick_hf(&cells, 20, false, 600.0, 100);
+        assert_eq!(card.band, "80m");
+        assert!(
+            card.confidence.contains("at 20:00 UTC"),
+            "{}",
+            card.confidence
+        );
+    }
+
+    #[test]
+    fn low_power_rules_out_a_band_that_needs_more() {
+        // 32 dB-Hz needs 50 W for 27 dB-Hz; at 10 W only the faint preset fits.
+        let cells = [cell(12, 10.14, 32.0)];
+        assert_eq!(pick_hf(&cells, 12, true, 1500.0, 100).power_w, Some(50));
+        let low = pick_hf(&cells, 12, true, 1500.0, 10);
+        assert_eq!(low.preset, "hf-weak");
+        assert_eq!(low.power_w, Some(10));
+        let none = pick_hf(&cells, 12, true, 1500.0, 5);
+        assert!(none.power_w.is_none());
+        assert!(none.why.contains("5 W"), "{}", none.why);
     }
 }

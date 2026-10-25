@@ -11,7 +11,7 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use choose::{hf_freqs_mhz, pick_hf, try_close_fm, Card};
+use choose::{hf_freqs_mhz, pick_hf, try_close_fm, Card, DEFAULT_ANTENNA_M, POWER_STEPS};
 use chrono::{Datelike, Timelike, Utc};
 use forecast::Forecast;
 use geo::{distance_km, Region};
@@ -36,6 +36,15 @@ struct PathBody {
     tx_lon: f64,
     rx_lat: f64,
     rx_lon: f64,
+    /// Hour to plan for (0-23 UTC). Missing means this hour.
+    #[serde(default)]
+    hour_utc: Option<u8>,
+    /// Most power the station has, in watts. Missing means 100 W.
+    #[serde(default)]
+    power_w: Option<u32>,
+    /// Antenna height above ground at each end, in metres. Missing means 10 m.
+    #[serde(default)]
+    antenna_m: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -100,6 +109,17 @@ async fn path_handler(
     {
         return Err((StatusCode::BAD_REQUEST, "bad coordinates".into()));
     }
+    if body.hour_utc.is_some_and(|h| h > 23) {
+        return Err((StatusCode::BAD_REQUEST, "bad hour".into()));
+    }
+    let max_w = body.power_w.unwrap_or(100);
+    if !POWER_STEPS.contains(&max_w) {
+        return Err((StatusCode::BAD_REQUEST, "bad power".into()));
+    }
+    let antenna_m = body.antenna_m.unwrap_or(DEFAULT_ANTENNA_M);
+    if !(0.5..=100.0).contains(&antenna_m) {
+        return Err((StatusCode::BAD_REQUEST, "bad antenna height".into()));
+    }
 
     let tx = (body.tx_lat, body.tx_lon);
     let rx = (body.rx_lat, body.rx_lon);
@@ -124,9 +144,12 @@ async fn path_handler(
     let tx_r = Region::from_country(&tx_place.country);
     let rx_r = Region::from_country(&rx_place.country);
 
-    let hf = hf_card(&app, tx, rx, tx_r, rx_r, dist).await?;
-    if let Some(fm) = try_close_fm(tx_r, rx_r, dist) {
-        return Ok(Json(Answer { card: fm, hf: Some(hf) }));
+    let hf = hf_card(&app, tx, rx, tx_r, rx_r, dist, body.hour_utc, max_w).await?;
+    if let Some(fm) = try_close_fm(tx_r, rx_r, dist, antenna_m) {
+        return Ok(Json(Answer {
+            card: fm,
+            hf: Some(hf),
+        }));
     }
     Ok(Json(Answer { card: hf, hf: None }))
 }
@@ -148,8 +171,12 @@ async fn hf_card(
     tx_r: Region,
     rx_r: Region,
     dist: f64,
+    hour_utc: Option<u8>,
+    max_w: u32,
 ) -> Result<Card, (StatusCode, String)> {
     let now = Utc::now();
+    let this_hour = now.hour() as u8;
+    let hour = hour_utc.unwrap_or(this_hour);
     let ssn = app.ssn.current().await;
     let freqs = hf_freqs_mhz(tx_r, rx_r);
     let forecast = app.forecast.clone();
@@ -161,5 +188,5 @@ async fn hf_card(
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
             .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
 
-    Ok(pick_hf(&cells, now.hour() as u8, dist))
+    Ok(pick_hf(&cells, hour, hour == this_hour, dist, max_w))
 }
