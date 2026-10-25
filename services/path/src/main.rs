@@ -88,7 +88,7 @@ async fn places_handler(
 async fn path_handler(
     State(app): State<App>,
     Json(body): Json<PathBody>,
-) -> Result<Json<Card>, (StatusCode, String)> {
+) -> Result<Json<Answer>, (StatusCode, String)> {
     if !body.tx_lat.is_finite()
         || !body.tx_lon.is_finite()
         || !body.rx_lat.is_finite()
@@ -124,10 +124,31 @@ async fn path_handler(
     let tx_r = Region::from_country(&tx_place.country);
     let rx_r = Region::from_country(&rx_place.country);
 
-    if let Some(card) = try_close_fm(tx_r, rx_r, dist) {
-        return Ok(Json(card));
+    let hf = hf_card(&app, tx, rx, tx_r, rx_r, dist).await?;
+    if let Some(fm) = try_close_fm(tx_r, rx_r, dist) {
+        return Ok(Json(Answer { card: fm, hf: Some(hf) }));
     }
+    Ok(Json(Answer { card: hf, hf: None }))
+}
 
+#[derive(serde::Serialize)]
+struct Answer {
+    #[serde(flatten)]
+    card: Card,
+    /// HF alternative when the flat-earth answer is local FM. The page
+    /// switches to this if terrain blocks VHF and UHF.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hf: Option<Card>,
+}
+
+async fn hf_card(
+    app: &App,
+    tx: (f64, f64),
+    rx: (f64, f64),
+    tx_r: Region,
+    rx_r: Region,
+    dist: f64,
+) -> Result<Card, (StatusCode, String)> {
     let now = Utc::now();
     let ssn = app.ssn.current().await;
     let freqs = hf_freqs_mhz(tx_r, rx_r);
@@ -140,6 +161,5 @@ async fn path_handler(
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
             .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
 
-    let hour = now.hour() as u8;
-    Ok(Json(pick_hf(&cells, hour, dist)))
+    Ok(pick_hf(&cells, now.hour() as u8, dist))
 }

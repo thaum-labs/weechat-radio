@@ -72,7 +72,7 @@
       if (href === "/") {
         on = path === "/" || path.endsWith("/index.html");
       } else if (href === "/guides.html") {
-        on = path === "/guides.html" || path.startsWith("/guides/");
+        on = path === "/guides.html" || (path.startsWith("/guides/") && !path.endsWith("/band.html"));
       } else if (href === "/docs.html") {
         on = path === "/docs.html" || path.startsWith("/docs/");
       } else {

@@ -1242,8 +1242,8 @@ details.maplibregl-ctrl-attrib:not([open]) {
   vertical-align: middle;
   border: 1.5px solid;
 }
-.los-vhf { border-color: #ffbf00; background: rgba(255, 191, 0, 0.28); }
-.los-uhf { border-color: #7d9bff; background: rgba(125, 155, 255, 0.4); }
+.los-clear { border-color: #7d9bff; background: rgba(125, 155, 255, 0.45); }
+.los-block { border-color: #ff3b6b; background: rgba(255, 59, 107, 0.55); }
 .band-los-note { color: var(--fg); }
 .band-hint {
   color: var(--dim);
@@ -1255,9 +1255,15 @@ details.maplibregl-ctrl-attrib:not([open]) {
   flex-wrap: wrap;
   gap: 8px;
   margin: 0 0 8px;
+  align-items: flex-start;
+}
+.band-rx-field {
+  position: relative;
+  flex: 1 1 180px;
+  min-width: 0;
 }
 .band-search-row input {
-  flex: 1 1 180px;
+  width: 100%;
   min-width: 0;
   background: #050508;
   border: 1px solid var(--line);
@@ -1265,6 +1271,33 @@ details.maplibregl-ctrl-attrib:not([open]) {
   font: 13px/1.4 var(--font-mono);
   padding: 8px 10px;
 }
+.band-places {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: rgba(7, 7, 10, 0.96);
+  border: 1px solid var(--line);
+  max-height: 180px;
+  overflow: auto;
+}
+.band-places button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid rgba(125, 155, 255, 0.12);
+  color: var(--fg);
+  font: 13px/1.4 var(--font-mono);
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.band-places button:hover { color: var(--orange); }
 .band-search-row input:focus {
   outline: none;
   border-color: var(--accent);
