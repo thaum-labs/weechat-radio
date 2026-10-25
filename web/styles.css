@@ -1233,6 +1233,19 @@ details.maplibregl-ctrl-attrib:not([open]) {
   outline: none;
   border-color: var(--accent);
 }
+.band-locate {
+  position: static;
+  flex: none;
+  border: 1px solid var(--line);
+  background: #07070a;
+  color: var(--dim);
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.band-locate:hover { color: var(--orange); }
 .band-result {
   flex: none;
   border-top: 1px solid var(--line);
@@ -1311,6 +1324,7 @@ details.maplibregl-ctrl-attrib:not([open]) {
   margin: 8px 0;
 }
 .band-cmds .copy-btn {
+  position: static;
   font-size: 13px;
   padding: 6px 10px;
 }
