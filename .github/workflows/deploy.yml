@@ -23,6 +23,12 @@ jobs:
           file: deploy/Dockerfile
           push: true
           tags: ghcr.io/thaum-labs/wcr:latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: services/path
+          file: services/path/Dockerfile
+          push: true
+          tags: ghcr.io/thaum-labs/wcr-path:latest
   droplet:
     needs: image
     if: ${{ !cancelled() }}

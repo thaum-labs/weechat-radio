@@ -1,0 +1,27 @@
+[package]
+name = "wcr-path"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+rust-version = "1.87"
+
+[[bin]]
+name = "wcr-path"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["macros"] }
+chrono = { version = "0.4", features = ["clock"] }
+hfcast = { git = "https://github.com/jonathanmcsweet/hfcast-engine", rev = "f9782529dcd2e40d67eba6725687c69124dab1c1", features = ["embedded-coefficients"] }
+parking_lot = "0.12"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.44", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tokio = { version = "1.44", features = ["full", "test-util"] }

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Which frequency — WeeChat Radio</title>
+  <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" />
+  <link rel="stylesheet" href="/styles.css?v=35" />
+</head>
+<body class="page-map page-band">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/map.html">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/docs.html">docs</a>
+      <a href="/why.html">why</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="band-workspace">
+    <div class="band-tools mod activated">
+      <h3 class="title"><p>PATH</p><p id="band-step">TX</p></h3>
+      <p class="band-hint" id="band-hint">Click where you are</p>
+      <div class="band-search-row">
+        <input id="band-search" type="search" placeholder="city or grid FN31" autocomplete="off" aria-label="Fly to a place" />
+        <button type="button" id="band-locate" class="copy-btn">use my location</button>
+      </div>
+      <div id="band-wait" class="band-wait" hidden>&gt; path ……</div>
+      <div id="band-card" class="station-pop band-card activated" hidden></div>
+    </div>
+    <div class="band-map-wrap">
+      <div id="map"></div>
+    </div>
+  </div>
+  <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+  <script src="/copy.js?v=1"></script>
+  <script src="/shell.js?v=10"></script>
+  <script src="/guides/band.js?v=2"></script>
+</body>
+</html>

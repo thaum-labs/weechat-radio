@@ -1202,6 +1202,105 @@ details.maplibregl-ctrl-attrib:not([open]) {
   display: none !important;
 }
 
+.band-workspace {
+  position: relative;
+  height: calc(100% - var(--topbar-h, 48px));
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) 1fr;
+}
+.band-tools {
+  opacity: 1;
+  border-right: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.45);
+  overflow: auto;
+}
+.band-hint {
+  font-size: 12px;
+  color: var(--dim);
+  margin: 0 0 10px;
+}
+.band-search-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.band-search-row input {
+  flex: 1 1 140px;
+  min-width: 0;
+  background: #050508;
+  border: 1px solid var(--line);
+  color: var(--fg);
+  font: 12px/1.4 var(--font-mono);
+  padding: 6px 8px;
+}
+.band-search-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.band-wait {
+  font-size: 12px;
+  color: var(--accent);
+  margin: 8px 0;
+  white-space: nowrap;
+}
+.band-card {
+  position: static;
+  top: auto;
+  left: auto;
+  max-width: none;
+  width: 100%;
+  margin-top: 8px;
+  opacity: 0;
+}
+.band-card.activated {
+  opacity: 1;
+  animation: fadeIn 0.35s ease forwards;
+}
+.band-card .band-conf {
+  margin: 8px 0 4px;
+  color: var(--orange);
+  font-size: 12px;
+}
+.band-card .band-note,
+.band-card .band-voice,
+.band-card .band-foot {
+  font-size: 11px;
+  color: var(--dim);
+  margin: 4px 0;
+  line-height: 1.45;
+}
+.band-card .band-voice { color: var(--purple); }
+.band-card .band-err { color: var(--warn); font-size: 12px; }
+.band-card pre {
+  margin: 8px 0;
+  font-size: 12px;
+  color: var(--fg);
+}
+.band-map-wrap {
+  position: relative;
+  min-height: 0;
+}
+.band-map-wrap #map {
+  position: absolute;
+  inset: 0;
+}
+.band-pin-label {
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  transform: translateX(-50%);
+  margin-top: 2px;
+  font: 10px/1 var(--font-mono);
+  color: var(--fg);
+  text-shadow: 0 0 4px #07070a;
+  pointer-events: none;
+}
+body.page-band .map-mark-wrap {
+  position: relative;
+}
+
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -1213,6 +1312,7 @@ details.maplibregl-ctrl-attrib:not([open]) {
 @media (prefers-reduced-motion: reduce) {
   .clock-mod .colon { animation: none; }
   .mod, .mod_column.activated .mod { animation: none; opacity: 1; }
+  .band-card.activated { animation: none; opacity: 1; }
   .map-mark-wrap.pulse-tx svg,
   .map-mark-wrap.pulse-rx svg { animation: none; }
 }
@@ -1297,6 +1397,18 @@ details.maplibregl-ctrl-attrib:not([open]) {
     min-height: 36px;
     min-width: 52px;
     padding: 6px 10px;
+  }
+}
+
+@media (max-width: 900px) {
+  .band-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(50vh, 1fr);
+    height: auto;
+    min-height: calc(100dvh - var(--topbar-h, 48px));
+  }
+  .band-map-wrap {
+    min-height: 50vh;
   }
 }
 

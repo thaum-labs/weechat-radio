@@ -4,9 +4,14 @@
 
 weechatradio.com, www.weechatradio.com {
   encode gzip
-  root * /srv/web
-  file_server
-  try_files {path} /index.html
+  handle /api/path* {
+    reverse_proxy path:7380
+  }
+  handle {
+    root * /srv/web
+    file_server
+    try_files {path} /index.html
+  }
 }
 
 hub.weechatradio.com, api.weechatradio.com {
