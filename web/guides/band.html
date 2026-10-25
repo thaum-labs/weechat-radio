@@ -12,7 +12,7 @@
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" />
-  <link rel="stylesheet" href="/styles.css?v=35" />
+  <link rel="stylesheet" href="/styles.css?v=36" />
 </head>
 <body class="page-map page-band">
   <div id="scan"></div>
@@ -34,23 +34,39 @@
     </div>
   </header>
   <div class="band-workspace">
-    <div class="band-tools mod activated">
-      <h3 class="title"><p>PATH</p><p id="band-step">TX</p></h3>
-      <p class="band-hint" id="band-hint">Click where you are</p>
+    <article class="map-panel band-map-panel">
+      <h3 class="title">
+        <p>PATH <span class="band-hint" id="band-hint">Click where you are</span></p>
+        <div class="map-tools">
+          <label class="map-night">
+            <input type="checkbox" id="map-night" checked />
+            night
+          </label>
+          <label class="map-style">
+            <select id="map-style" aria-label="Map type">
+              <option value="voyager">voyager</option>
+              <option value="light">light</option>
+              <option value="dark">dark</option>
+              <option value="terrain">terrain</option>
+              <option value="satellite" selected>satellite</option>
+            </select>
+          </label>
+        </div>
+      </h3>
       <div class="band-search-row">
         <input id="band-search" type="search" placeholder="city or grid FN31" autocomplete="off" aria-label="Fly to a place" />
         <button type="button" id="band-locate" class="copy-btn">use my location</button>
       </div>
-      <div id="band-wait" class="band-wait" hidden>&gt; path ……</div>
-      <div id="band-card" class="station-pop band-card activated" hidden></div>
-    </div>
-    <div class="band-map-wrap">
       <div id="map"></div>
-    </div>
+    </article>
+    <article id="band-card" class="band-result" aria-live="polite">
+      <p class="band-wait" id="band-wait" hidden>&gt; path ……</p>
+      <p class="band-empty" id="band-empty">Drop two pins. The frequency, SSB, and power show here.</p>
+    </article>
   </div>
   <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=10"></script>
-  <script src="/guides/band.js?v=2"></script>
+  <script src="/guides/band.js?v=3"></script>
 </body>
 </html>
