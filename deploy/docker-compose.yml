@@ -15,6 +15,17 @@ services:
     expose:
       - "7373"
 
+  path:
+    image: ghcr.io/thaum-labs/wcr-path:latest
+    build:
+      context: ../services/path
+      dockerfile: Dockerfile
+    environment:
+      WCR_PATH_BIND: 0.0.0.0:7380
+    restart: unless-stopped
+    expose:
+      - "7380"
+
   web:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -28,6 +39,7 @@ services:
       - caddy-config:/config
     depends_on:
       - hub
+      - path
 
 volumes:
   wcr-data:

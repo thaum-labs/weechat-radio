@@ -16,3 +16,7 @@ Rajdhani (SIL Open Font License 1.1) by Indian Type Foundry.
 
 Visual design is inspired by eDEX-UI (GPL-3.0) by GitSquared. No eDEX-UI
 source, fonts, sounds, or assets are reused.
+
+The path helper (`services/path`) uses HFcast Engine (Apache-2.0) by
+Jonathan McSweet, a Rust port of VOACAP. VOACAP is NTIA/ITS work; see that
+project's NOTICE for the status of the ionospheric coefficient maps.

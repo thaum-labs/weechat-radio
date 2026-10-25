@@ -35,11 +35,13 @@ Create A records, all pointing at the droplet IP:
 
 5. Caddy issues certificates for the three names. Wait a minute.
 
-6. GitHub Actions workflow `.github/workflows/deploy.yml` rebuilds images and `docker compose pull && up -d` on each push to `main`.
+6. GitHub Actions workflow `.github/workflows/deploy.yml` rebuilds images (`wcr` and `wcr-path`) and `docker compose pull && up -d` on each push to `main`.
+
+The path helper (`services/path`, image `ghcr.io/thaum-labs/wcr-path`) answers `POST /api/path` behind Caddy on the main site. It is a separate binary from the hub.
 
 ## App version vs website
 
-The website and hub **image** update on every push to `main`. That does not bump the app version and does not make `wcr update` download anything.
+The website, hub image, and path image update on every push to `main`. That does not bump the app version and does not make `wcr update` download anything.
 
 Bump `Cargo.toml`, the README badge, OpenAPI `info.version`, the numbered changelog, and a `v*` tag **only** when `wcr` / `wcr-gui` behaviour (or the bits inside the binary) change. `wcr update` follows those tags.
 

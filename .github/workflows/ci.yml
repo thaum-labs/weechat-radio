@@ -66,3 +66,14 @@ jobs:
       - name: playwright
         working-directory: e2e
         run: npx playwright install chromium --with-deps && npm test
+  path-service:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: test
+        working-directory: services/path
+        run: cargo test
+      - name: fmt
+        working-directory: services/path
+        run: cargo fmt --all -- --check

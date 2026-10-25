@@ -1,4 +1,5 @@
 /target
+/services/path/target
 **/*.rs.bk
 *.pdb
 .idea/

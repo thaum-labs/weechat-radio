@@ -60,4 +60,7 @@ The setup wizard can set the radio via rigctl only if you confirm.
 On a rough HF path use hf-weak or hf-deep instead of hf-poor.
 Guide: https://weechatradio.com/docs/weak.html  (offline: wcr help weak)
 
+Not sure which band? https://weechatradio.com/guides/band.html drops two
+pins and picks one calling frequency for a digital path.
+
 To see where each spot sits in its band, see the [band plan](BAND-PLAN.md).
