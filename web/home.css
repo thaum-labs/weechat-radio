@@ -51,7 +51,14 @@ body.page-home { overflow: auto; }
 .home-brand__weechat { color: var(--fg); font-weight: 700; }
 .home-brand__radio { color: var(--accent); }
 .home-brand__sym { color: var(--orange); }
-.home .home-nav { margin-left: auto; gap: 0 22px; }
+.home .home-nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-left: auto;
+  max-width: 100%;
+  gap: 0 16px;
+}
 .home .home-nav a { font-size: 14px; padding: 12px 4px; text-decoration: none; }
 .home-nav__github { display: inline-flex; align-items: center; gap: 6px; }
 
