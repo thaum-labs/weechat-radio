@@ -1209,6 +1209,42 @@ details.maplibregl-ctrl-attrib:not([open]) {
   min-height: 0;
 }
 .band-map-panel { flex: 1; }
+.band-map-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.band-map-stage #map { flex: 1; min-height: 0; }
+.band-los-key {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  max-width: calc(100% - 64px);
+  padding: 6px 8px;
+  background: rgba(7, 7, 10, 0.88);
+  border: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 11px;
+  pointer-events: none;
+}
+.band-los-key i {
+  display: inline-block;
+  width: 16px;
+  height: 8px;
+  margin-right: 5px;
+  vertical-align: middle;
+  border: 1.5px solid;
+}
+.los-vhf { border-color: #ffbf00; background: rgba(255, 191, 0, 0.28); }
+.los-uhf { border-color: #7d9bff; background: rgba(125, 155, 255, 0.4); }
+.band-los-note { color: var(--fg); }
 .band-hint {
   color: var(--dim);
   font-size: 12px;

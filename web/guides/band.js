@@ -270,6 +270,98 @@
     } catch (_) {}
   }
 
+  // Radio horizon for a 10 m antenna at each end. VHF uses 4/3-earth
+  // refraction; UHF stays closer to the optical horizon.
+  const VHF_KM = 4.12 * 2 * Math.sqrt(10);
+  const UHF_KM = 3.57 * 2 * Math.sqrt(10);
+
+  function destination(lat, lon, km, bearing) {
+    const R = 6371;
+    const δ = km / R;
+    const φ1 = (lat * Math.PI) / 180;
+    const λ1 = (lon * Math.PI) / 180;
+    const φ2 = Math.asin(
+      Math.sin(φ1) * Math.cos(δ) + Math.cos(φ1) * Math.sin(δ) * Math.cos(bearing)
+    );
+    const λ2 =
+      λ1 +
+      Math.atan2(
+        Math.sin(bearing) * Math.sin(δ) * Math.cos(φ1),
+        Math.cos(δ) - Math.sin(φ1) * Math.sin(φ2)
+      );
+    return [(λ2 * 180) / Math.PI, (φ2 * 180) / Math.PI];
+  }
+
+  function circleRing(center, km) {
+    const pts = [];
+    for (let i = 0; i <= 72; i++) pts.push(destination(center.lat, center.lon, km, (i / 72) * 2 * Math.PI));
+    return pts;
+  }
+
+  function ensureLosLayers() {
+    if (map.getSource("los")) return;
+    map.addSource("los", {
+      type: "geojson",
+      data: { type: "FeatureCollection", features: [] },
+    });
+    const before = map.getLayer("path-line") ? "path-line" : undefined;
+    const add = (layer) => map.addLayer(layer, before);
+    add({
+      id: "los-vhf",
+      type: "fill",
+      source: "los",
+      filter: ["==", ["get", "band"], "vhf"],
+      paint: { "fill-color": "#ffbf00", "fill-opacity": 0.14 },
+    });
+    add({
+      id: "los-vhf-line",
+      type: "line",
+      source: "los",
+      filter: ["==", ["get", "band"], "vhf"],
+      paint: { "line-color": "#ffbf00", "line-width": 1.5, "line-dasharray": [2, 1] },
+    });
+    add({
+      id: "los-uhf",
+      type: "fill",
+      source: "los",
+      filter: ["==", ["get", "band"], "uhf"],
+      paint: { "fill-color": "#7d9bff", "fill-opacity": 0.2 },
+    });
+    add({
+      id: "los-uhf-line",
+      type: "line",
+      source: "los",
+      filter: ["==", ["get", "band"], "uhf"],
+      paint: { "line-color": "#7d9bff", "line-width": 1.5 },
+    });
+  }
+
+  function paintLos() {
+    if (!map.isStyleLoaded()) return;
+    ensureLosLayers();
+    const features = [];
+    if (tx) {
+      features.push({
+        type: "Feature",
+        properties: { band: "vhf" },
+        geometry: { type: "Polygon", coordinates: [circleRing(tx, VHF_KM)] },
+      });
+      features.push({
+        type: "Feature",
+        properties: { band: "uhf" },
+        geometry: { type: "Polygon", coordinates: [circleRing(tx, UHF_KM)] },
+      });
+    }
+    map.getSource("los").setData({ type: "FeatureCollection", features });
+  }
+
+  function frameLos() {
+    if (!tx) return;
+    const b = new maplibregl.LngLatBounds();
+    circleRing(tx, VHF_KM).forEach((c) => b.extend(c));
+    map.fitBounds(b, { padding: 36, duration: reduceMotion ? 0 : 500 });
+  }
+
   function ensurePathLayer() {
     if (map.getSource("path")) return;
     map.addSource("path", {
@@ -346,6 +438,7 @@
       const ll = marker.getLngLat();
       if (kind === "tx") tx = { lat: ll.lat, lon: ll.lng };
       else rx = { lat: ll.lat, lon: ll.lng };
+      paintLos();
       if (tx && rx) requestCard();
       else paintPath();
     });
@@ -356,8 +449,11 @@
     tx = { lat: ll.lat, lon: ll.lng };
     if (txMarker) txMarker.remove();
     txMarker = placeMarker("tx", ll);
-    if (!rx) setHint("RX", "Click the other station");
-    else requestCard();
+    paintLos();
+    if (!rx) {
+      setHint("RX", "Click the other station");
+      frameLos();
+    } else requestCard();
   }
 
   function setRx(ll) {
@@ -509,6 +605,7 @@
 
   function onStyleReady() {
     updateDayNight(true);
+    paintLos();
     paintPath();
     try {
       map.resize();
