@@ -87,10 +87,9 @@
   let txMarker = null;
   let rxMarker = null;
   let abort = null;
-  let crawlT = 0;
-  let dashTimer = null;
-  let pathReady = false;
   let pathFailed = false;
+  let arcCanvas = null;
+  let arcCtx = null;
   function markEl(color, kind) {
     const wrap = document.createElement("div");
     wrap.className = "map-mark-wrap";
@@ -113,35 +112,6 @@
 
   function setHint(_step, text) {
     if (hintEl) hintEl.textContent = text;
-  }
-
-  function greatCircle(a, b, n) {
-    const toRad = (d) => (d * Math.PI) / 180;
-    const toDeg = (r) => (r * 180) / Math.PI;
-    const lat1 = toRad(a.lat);
-    const lon1 = toRad(a.lon);
-    const lat2 = toRad(b.lat);
-    const lon2 = toRad(b.lon);
-    const d =
-      2 *
-      Math.asin(
-        Math.sqrt(
-          Math.sin((lat2 - lat1) / 2) ** 2 +
-            Math.cos(lat1) * Math.cos(lat2) * Math.sin((lon2 - lon1) / 2) ** 2
-        )
-      );
-    if (!(d > 1e-9)) return [[a.lon, a.lat], [b.lon, b.lat]];
-    const out = [];
-    for (let i = 0; i < n; i++) {
-      const f = i / (n - 1);
-      const A = Math.sin((1 - f) * d) / Math.sin(d);
-      const B = Math.sin(f * d) / Math.sin(d);
-      const x = A * Math.cos(lat1) * Math.cos(lon1) + B * Math.cos(lat2) * Math.cos(lon2);
-      const y = A * Math.cos(lat1) * Math.sin(lon1) + B * Math.cos(lat2) * Math.sin(lon2);
-      const z = A * Math.sin(lat1) + B * Math.sin(lat2);
-      out.push([toDeg(Math.atan2(y, x)), toDeg(Math.atan2(z, Math.sqrt(x * x + y * y)))]);
-    }
-    return out;
   }
 
   const NIGHT_SRC = "daynight";
@@ -304,8 +274,7 @@
       type: "geojson",
       data: { type: "FeatureCollection", features: [] },
     });
-    const before = map.getLayer("path-line") ? "path-line" : undefined;
-    const add = (layer) => map.addLayer(layer, before);
+    const add = (layer) => map.addLayer(layer);
     add({
       id: "los-vhf",
       type: "fill",
@@ -362,69 +331,71 @@
     map.fitBounds(b, { padding: 36, duration: reduceMotion ? 0 : 500 });
   }
 
-  function ensurePathLayer() {
-    if (map.getSource("path")) return;
-    map.addSource("path", {
-      type: "geojson",
-      data: { type: "FeatureCollection", features: [] },
+  function ensureArcLayer() {
+    const host = document.getElementById("map");
+    if (!host || arcCanvas) return;
+    arcCanvas = document.createElement("canvas");
+    arcCanvas.id = "map-arcs";
+    host.style.position = "relative";
+    host.appendChild(arcCanvas);
+    arcCtx = arcCanvas.getContext("2d");
+    syncArcCanvas();
+    map.on("move", paintPath);
+    map.on("resize", () => {
+      syncArcCanvas();
+      paintPath();
     });
-    map.addLayer({
-      id: "path-line",
-      type: "line",
-      source: "path",
-      paint: {
-        "line-color": "#39ff14",
-        "line-width": 2.5,
-        "line-dasharray": [2, 1.33],
-        "line-opacity": 0.95,
-      },
-      layout: {
-        "line-cap": "round",
-        "line-join": "round",
-      },
-    });
+  }
+
+  function syncArcCanvas() {
+    const host = document.getElementById("map");
+    if (!host || !arcCanvas || !arcCtx) return;
+    const dpr = window.devicePixelRatio || 1;
+    const w = host.clientWidth || 800;
+    const h = host.clientHeight || 600;
+    arcCanvas.style.width = `${w}px`;
+    arcCanvas.style.height = `${h}px`;
+    arcCanvas.width = Math.round(w * dpr);
+    arcCanvas.height = Math.round(h * dpr);
+    arcCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  // Same screen-space arc as the live map (strokePinLink in app.js).
+  function strokePinLink(s1, s2, color, dash) {
+    const dx = s2.x - s1.x;
+    const dy = s2.y - s1.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const bulge = Math.min(90, Math.max(28, dist * 0.22));
+    const mx = (s1.x + s2.x) / 2;
+    const my = (s1.y + s2.y) / 2 - bulge;
+    arcCtx.beginPath();
+    arcCtx.moveTo(s1.x, s1.y);
+    arcCtx.quadraticCurveTo(mx, my, s2.x, s2.y);
+    arcCtx.strokeStyle = color;
+    arcCtx.setLineDash(dash);
+    arcCtx.lineWidth = 2.5;
+    arcCtx.lineCap = "round";
+    arcCtx.stroke();
   }
 
   function paintPath() {
-    if (!tx || !rx || !map.isStyleLoaded()) return;
-    ensurePathLayer();
-    const all = greatCircle(tx, rx, 128);
-    let coords = all;
-    if (!pathReady && !pathFailed && !reduceMotion) {
-      const n = Math.max(2, Math.floor(all.length * Math.min(1, crawlT)));
-      coords = all.slice(0, n);
+    ensureArcLayer();
+    if (!arcCtx || !arcCanvas) return;
+    syncArcCanvas();
+    const cssW = arcCanvas.clientWidth || 800;
+    const cssH = arcCanvas.clientHeight || 600;
+    arcCtx.clearRect(0, 0, cssW, cssH);
+    if (!tx || !rx) return;
+    const s1 = map.project([tx.lon, tx.lat]);
+    const s2 = map.project([rx.lon, rx.lat]);
+    const color = pathFailed ? "rgba(122,115,136,0.9)" : "rgba(57,255,20,0.95)";
+    const dash = pathFailed ? [5, 5] : [6, 4];
+    if (!pathFailed && !reduceMotion && waitEl && !waitEl.hidden) {
+      arcCtx.shadowColor = color;
+      arcCtx.shadowBlur = 10;
     }
-    const features =
-      coords.length >= 2
-        ? [{ type: "Feature", geometry: { type: "LineString", coordinates: coords } }]
-        : [];
-    map.getSource("path").setData({ type: "FeatureCollection", features });
-    const color = pathFailed ? "#7a7388" : "#39ff14";
-    map.setPaintProperty("path-line", "line-color", color);
-    // RF dash [6,4] ≈ 1.5 : 1; solid when ready; dim dashes on failure.
-    if (pathFailed) map.setPaintProperty("path-line", "line-dasharray", [1.5, 1.5]);
-    else if (pathReady) map.setPaintProperty("path-line", "line-dasharray", [1, 0]);
-    else map.setPaintProperty("path-line", "line-dasharray", [1.5, 1]);
-  }
-
-  function startCrawl() {
-    stopCrawl();
-    crawlT = reduceMotion ? 1 : 0;
-    paintPath();
-    if (reduceMotion) return;
-    dashTimer = setInterval(() => {
-      // Grow to full, then keep a soft pulse by looping growth slightly past 1.
-      crawlT += 0.035;
-      if (crawlT > 1.15) crawlT = 0.55;
-      paintPath();
-    }, 50);
-  }
-
-  function stopCrawl() {
-    if (dashTimer) {
-      clearInterval(dashTimer);
-      dashTimer = null;
-    }
+    strokePinLink(s1, s2, color, dash);
+    arcCtx.shadowBlur = 0;
   }
 
   function placeMarker(kind, lngLat) {
@@ -473,7 +444,6 @@
 
   async function requestCard() {
     if (!tx || !rx) return;
-    pathReady = false;
     pathFailed = false;
     if (abort) abort.abort();
     abort = new AbortController();
@@ -483,7 +453,6 @@
     setHint("…", "Working out the path");
     if (txMarker) pulse(txMarker.getElement(), "tx");
     paintPath();
-    startCrawl();
     fitPins();
     try {
       const res = await fetch(`${PATH_API}/api/path`, {
@@ -499,9 +468,7 @@
       });
       if (!res.ok) throw new Error(await res.text());
       const card = await res.json();
-      pathReady = true;
       pathFailed = false;
-      stopCrawl();
       paintPath();
       waitEl.hidden = true;
       if (emptyEl) emptyEl.hidden = true;
@@ -511,7 +478,6 @@
     } catch (e) {
       if (e.name === "AbortError") return;
       pathFailed = true;
-      stopCrawl();
       paintPath();
       waitEl.hidden = true;
       if (emptyEl) emptyEl.hidden = true;
