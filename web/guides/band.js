@@ -80,6 +80,7 @@
   const emptyEl = document.getElementById("band-empty");
   const cardEl = document.getElementById("band-card");
   const searchEl = document.getElementById("band-search");
+  const placesEl = document.getElementById("band-places");
   const locateBtn = document.getElementById("band-locate");
 
   let tx = null;
@@ -240,95 +241,89 @@
     } catch (_) {}
   }
 
-  // Radio horizon for a 10 m antenna at each end. VHF uses 4/3-earth
-  // refraction; UHF stays closer to the optical horizon.
-  const VHF_KM = 4.12 * 2 * Math.sqrt(10);
-  const UHF_KM = 3.57 * 2 * Math.sqrt(10);
+  // Copernicus DEM via Open-Meteo. CARTO's path-profile tool needs a
+  // BigQuery warehouse, so it is not used here. 10 m antennas, 4/3 earth.
+  const ANTENNA_M = 10;
+  let terrain = null;
 
-  function destination(lat, lon, km, bearing) {
+  function distKm(a, b) {
     const R = 6371;
-    const δ = km / R;
-    const φ1 = (lat * Math.PI) / 180;
-    const λ1 = (lon * Math.PI) / 180;
-    const φ2 = Math.asin(
-      Math.sin(φ1) * Math.cos(δ) + Math.cos(φ1) * Math.sin(δ) * Math.cos(bearing)
-    );
-    const λ2 =
-      λ1 +
-      Math.atan2(
-        Math.sin(bearing) * Math.sin(δ) * Math.cos(φ1),
-        Math.cos(δ) - Math.sin(φ1) * Math.sin(φ2)
-      );
-    return [(λ2 * 180) / Math.PI, (φ2 * 180) / Math.PI];
+    const φ1 = (a.lat * Math.PI) / 180;
+    const φ2 = (b.lat * Math.PI) / 180;
+    const dφ = ((b.lat - a.lat) * Math.PI) / 180;
+    const dλ = ((b.lon - a.lon) * Math.PI) / 180;
+    const h = Math.sin(dφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(dλ / 2) ** 2;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
   }
 
-  function circleRing(center, km) {
+  function along(a, b, f) {
+    const φ1 = (a.lat * Math.PI) / 180;
+    const λ1 = (a.lon * Math.PI) / 180;
+    const φ2 = (b.lat * Math.PI) / 180;
+    const λ2 = (b.lon * Math.PI) / 180;
+    const d = 2 * Math.asin(Math.sqrt(
+      Math.sin((φ2 - φ1) / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin((λ2 - λ1) / 2) ** 2
+    ));
+    if (d < 1e-9) return { lat: a.lat, lon: a.lon };
+    const A = Math.sin((1 - f) * d) / Math.sin(d);
+    const B = Math.sin(f * d) / Math.sin(d);
+    const x = A * Math.cos(φ1) * Math.cos(λ1) + B * Math.cos(φ2) * Math.cos(λ2);
+    const y = A * Math.cos(φ1) * Math.sin(λ1) + B * Math.cos(φ2) * Math.sin(λ2);
+    const z = A * Math.sin(φ1) + B * Math.sin(φ2);
+    return {
+      lat: (Math.atan2(z, Math.hypot(x, y)) * 180) / Math.PI,
+      lon: (Math.atan2(y, x) * 180) / Math.PI,
+    };
+  }
+
+  function setLosNote(text) {
+    const el = document.getElementById("los-note");
+    if (el) el.textContent = text;
+  }
+
+  async function terrainProfile(a, b, signal) {
+    const total = distKm(a, b);
+    const n = Math.min(99, Math.max(8, Math.ceil(total / 0.4)));
     const pts = [];
-    for (let i = 0; i <= 72; i++) pts.push(destination(center.lat, center.lon, km, (i / 72) * 2 * Math.PI));
-    return pts;
-  }
-
-  function ensureLosLayers() {
-    if (map.getSource("los")) return;
-    map.addSource("los", {
-      type: "geojson",
-      data: { type: "FeatureCollection", features: [] },
+    for (let i = 0; i <= n; i++) pts.push(along(a, b, i / n));
+    const url =
+      "https://api.open-meteo.com/v1/elevation?latitude=" +
+      pts.map((p) => p.lat.toFixed(5)).join(",") +
+      "&longitude=" +
+      pts.map((p) => p.lon.toFixed(5)).join(",");
+    const res = await fetch(url, { signal });
+    if (!res.ok) return null;
+    const body = await res.json();
+    const elev = body && body.elevation;
+    if (!elev || elev.length !== pts.length) return null;
+    let known = 0;
+    let d = 0;
+    const samples = pts.map((p, i) => {
+      if (i) d += distKm(pts[i - 1], p);
+      const e = elev[i];
+      if (typeof e === "number" && Number.isFinite(e)) known += 1;
+      return { lat: p.lat, lon: p.lon, dKm: d, elev: typeof e === "number" ? e : null };
     });
-    const add = (layer) => map.addLayer(layer);
-    add({
-      id: "los-vhf",
-      type: "fill",
-      source: "los",
-      filter: ["==", ["get", "band"], "vhf"],
-      paint: { "fill-color": "#ffbf00", "fill-opacity": 0.14 },
-    });
-    add({
-      id: "los-vhf-line",
-      type: "line",
-      source: "los",
-      filter: ["==", ["get", "band"], "vhf"],
-      paint: { "line-color": "#ffbf00", "line-width": 1.5, "line-dasharray": [2, 1] },
-    });
-    add({
-      id: "los-uhf",
-      type: "fill",
-      source: "los",
-      filter: ["==", ["get", "band"], "uhf"],
-      paint: { "fill-color": "#7d9bff", "fill-opacity": 0.2 },
-    });
-    add({
-      id: "los-uhf-line",
-      type: "line",
-      source: "los",
-      filter: ["==", ["get", "band"], "uhf"],
-      paint: { "line-color": "#7d9bff", "line-width": 1.5 },
-    });
-  }
-
-  function paintLos() {
-    if (!map.isStyleLoaded()) return;
-    ensureLosLayers();
-    const features = [];
-    if (tx) {
-      features.push({
-        type: "Feature",
-        properties: { band: "vhf" },
-        geometry: { type: "Polygon", coordinates: [circleRing(tx, VHF_KM)] },
-      });
-      features.push({
-        type: "Feature",
-        properties: { band: "uhf" },
-        geometry: { type: "Polygon", coordinates: [circleRing(tx, UHF_KM)] },
-      });
+    if (known < pts.length / 2) return null;
+    const D = samples[samples.length - 1].dKm;
+    const y0 = (samples[0].elev || 0) + ANTENNA_M;
+    const y1 = (samples[samples.length - 1].elev || 0) + ANTENNA_M;
+    const kR = 6371 * (4 / 3);
+    let blocked = false;
+    for (const s of samples) {
+      if (s.elev == null) {
+        s.blocked = false;
+        continue;
+      }
+      const d1 = s.dKm;
+      const d2 = Math.max(0, D - d1);
+      const bulge = (d1 * d2 * 1000) / (2 * kR);
+      const line = D < 1e-6 ? y0 : y0 + (y1 - y0) * (d1 / D);
+      s.clearance = line - (s.elev + bulge);
+      s.blocked = d1 > 0.05 && d2 > 0.05 && s.clearance < 0;
+      if (s.blocked) blocked = true;
     }
-    map.getSource("los").setData({ type: "FeatureCollection", features });
-  }
-
-  function frameLos() {
-    if (!tx) return;
-    const b = new maplibregl.LngLatBounds();
-    circleRing(tx, VHF_KM).forEach((c) => b.extend(c));
-    map.fitBounds(b, { padding: 36, duration: reduceMotion ? 0 : 500 });
+    return { samples, blocked };
   }
 
   function ensureArcLayer() {
@@ -396,6 +391,22 @@
     }
     strokePinLink(s1, s2, color, dash);
     arcCtx.shadowBlur = 0;
+    if (!terrain || !terrain.samples) return;
+    arcCtx.lineWidth = 4;
+    arcCtx.lineCap = "round";
+    for (let i = 1; i < terrain.samples.length; i++) {
+      const a = terrain.samples[i - 1];
+      const b = terrain.samples[i];
+      const hit = a.blocked || b.blocked;
+      const p1 = map.project([a.lon, a.lat]);
+      const p2 = map.project([b.lon, b.lat]);
+      arcCtx.beginPath();
+      arcCtx.moveTo(p1.x, p1.y);
+      arcCtx.lineTo(p2.x, p2.y);
+      arcCtx.strokeStyle = hit ? "rgba(255,59,107,0.95)" : "rgba(125,155,255,0.9)";
+      arcCtx.setLineDash(hit ? [] : [6, 4]);
+      arcCtx.stroke();
+    }
   }
 
   function placeMarker(kind, lngLat) {
@@ -409,7 +420,7 @@
       const ll = marker.getLngLat();
       if (kind === "tx") tx = { lat: ll.lat, lon: ll.lng };
       else rx = { lat: ll.lat, lon: ll.lng };
-      paintLos();
+      terrain = null;
       if (tx && rx) requestCard();
       else paintPath();
     });
@@ -420,11 +431,9 @@
     tx = { lat: ll.lat, lon: ll.lng };
     if (txMarker) txMarker.remove();
     txMarker = placeMarker("tx", ll);
-    paintLos();
-    if (!rx) {
-      setHint("RX", "Click the other station");
-      frameLos();
-    } else requestCard();
+    terrain = null;
+    if (!rx) setHint("RX", "Click the other station");
+    else requestCard();
   }
 
   function setRx(ll) {
@@ -475,6 +484,7 @@
       renderCard(card);
       if (rxMarker) pulse(rxMarker.getElement(), "rx");
       setHint("OK", card.confidence || "Ready");
+      await applyTerrain(card, abort.signal);
     } catch (e) {
       if (e.name === "AbortError") return;
       pathFailed = true;
@@ -489,6 +499,37 @@
         `<div class="band-answer"><p class="band-err">${escapeHtml(e.message || "request failed")}</p></div>`
       );
       setHint("ERR", "Try again");
+    }
+  }
+
+  async function applyTerrain(card, signal) {
+    setLosNote("checking terrain…");
+    try {
+      const profile = await terrainProfile(tx, rx, signal);
+      if (signal.aborted) return;
+      terrain = profile;
+      paintPath();
+      if (!profile) {
+        setLosNote("no terrain data for this path");
+        return;
+      }
+      if (profile.blocked) {
+        setLosNote("terrain blocks VHF and UHF");
+        const next = card.kind === "fm" && card.hf ? card.hf : card;
+        next.note = "Terrain blocks VHF and UHF. " + (next.note || "");
+        renderCard(next);
+        setHint("OK", next.confidence || "Ready");
+        return;
+      }
+      setLosNote("terrain is clear for VHF and UHF");
+      if (card.kind === "fm") {
+        card.note = "Terrain is clear for VHF and UHF. " + (card.note || "");
+        renderCard(card);
+      }
+    } catch (e) {
+      if (e.name === "AbortError") return;
+      terrain = null;
+      setLosNote("no terrain data for this path");
     }
   }
 
@@ -571,7 +612,6 @@
 
   function onStyleReady() {
     updateDayNight(true);
-    paintLos();
     paintPath();
     try {
       map.resize();
@@ -610,33 +650,77 @@
   });
 
   let searchTimer = null;
+  let placeHits = [];
+
+  function hidePlaces() {
+    placeHits = [];
+    if (!placesEl) return;
+    placesEl.hidden = true;
+    placesEl.innerHTML = "";
+  }
+
+  function choosePlace(p) {
+    hidePlaces();
+    searchEl.value = p.label || "";
+    map.flyTo({
+      center: [p.lon, p.lat],
+      zoom: 7,
+      duration: reduceMotion ? 0 : 700,
+    });
+    setRx({ lng: p.lon, lat: p.lat });
+  }
+
+  function showPlaces(items) {
+    placeHits = items || [];
+    if (!placesEl) return;
+    placesEl.innerHTML = "";
+    if (!placeHits.length) {
+      placesEl.hidden = true;
+      return;
+    }
+    placeHits.forEach((p) => {
+      const li = document.createElement("li");
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = p.label || `${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}`;
+      btn.addEventListener("click", () => choosePlace(p));
+      li.appendChild(btn);
+      placesEl.appendChild(li);
+    });
+    placesEl.hidden = false;
+  }
+
   searchEl.addEventListener("input", () => {
     clearTimeout(searchTimer);
     const q = searchEl.value.trim();
-    if (q.length < 2) return;
+    if (q.length < 2) {
+      hidePlaces();
+      return;
+    }
     searchTimer = setTimeout(async () => {
       try {
-        const res = await fetch(
-          `${PATH_API}/api/path/places?q=${encodeURIComponent(q)}`
-        );
+        const res = await fetch(`${PATH_API}/api/path/places?q=${encodeURIComponent(q)}`);
         if (!res.ok) return;
         const data = await res.json();
-        const p = (data.places || [])[0];
-        if (!p) return;
-        map.flyTo({
-          center: [p.lon, p.lat],
-          zoom: 6,
-          duration: reduceMotion ? 0 : 700,
-        });
+        if (searchEl.value.trim() !== q) return;
+        showPlaces(data.places || []);
       } catch (_) {}
-    }, 350);
+    }, 250);
   });
 
   searchEl.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      hidePlaces();
+      return;
+    }
     if (e.key === "Enter") {
       e.preventDefault();
-      searchEl.dispatchEvent(new Event("input"));
+      if (placeHits[0]) choosePlace(placeHits[0]);
     }
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!searchEl.contains(e.target) && placesEl && !placesEl.contains(e.target)) hidePlaces();
   });
 
   setHint("TX", "Click where you are");
