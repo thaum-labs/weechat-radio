@@ -1203,88 +1203,116 @@ details.maplibregl-ctrl-attrib:not([open]) {
 }
 
 .band-workspace {
-  position: relative;
+  display: flex;
+  flex-direction: column;
   height: calc(100% - var(--topbar-h, 48px));
   min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(240px, 300px) 1fr;
 }
-.band-tools {
-  opacity: 1;
-  border-right: 1px solid var(--line);
-  background: rgba(0, 0, 0, 0.45);
-  overflow: auto;
-}
+.band-map-panel { flex: 1; }
 .band-hint {
-  font-size: 12px;
   color: var(--dim);
-  margin: 0 0 10px;
+  font-size: 12px;
+  margin-left: 12px;
 }
 .band-search-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 10px;
+  margin: 0 0 8px;
 }
 .band-search-row input {
-  flex: 1 1 140px;
+  flex: 1 1 180px;
   min-width: 0;
   background: #050508;
   border: 1px solid var(--line);
   color: var(--fg);
-  font: 12px/1.4 var(--font-mono);
-  padding: 6px 8px;
+  font: 13px/1.4 var(--font-mono);
+  padding: 8px 10px;
 }
 .band-search-row input:focus {
   outline: none;
   border-color: var(--accent);
 }
+.band-result {
+  flex: none;
+  border-top: 1px solid var(--line);
+  background: #050508;
+  padding: 14px 16px 16px;
+}
+.band-empty,
 .band-wait {
-  font-size: 12px;
-  color: var(--accent);
-  margin: 8px 0;
-  white-space: nowrap;
-}
-.band-card {
-  position: static;
-  top: auto;
-  left: auto;
-  max-width: none;
-  width: 100%;
-  margin-top: 8px;
-  opacity: 0;
-}
-.band-card.activated {
-  opacity: 1;
-  animation: fadeIn 0.35s ease forwards;
-}
-.band-card .band-conf {
-  margin: 8px 0 4px;
-  color: var(--orange);
-  font-size: 12px;
-}
-.band-card .band-note,
-.band-card .band-voice,
-.band-card .band-foot {
-  font-size: 11px;
+  margin: 0;
+  font-size: 15px;
   color: var(--dim);
-  margin: 4px 0;
-  line-height: 1.45;
 }
-.band-card .band-voice { color: var(--purple); }
-.band-card .band-err { color: var(--warn); font-size: 12px; }
-.band-card pre {
-  margin: 8px 0;
-  font-size: 12px;
+.band-wait { color: var(--accent); }
+.band-result.has-answer .band-empty { display: none; }
+.band-answer {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 8px 28px;
+  align-items: center;
+}
+.band-freq {
+  margin: 0;
+  font-size: 40px;
+  line-height: 0.95;
+  letter-spacing: -0.04em;
+  color: var(--accent);
+}
+.band-freq span {
+  font-size: 16px;
+  color: var(--orange);
+  letter-spacing: 0;
+}
+.band-band {
+  margin: 6px 0 0;
+  color: var(--orange);
+  font-size: 16px;
+}
+.band-stats {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  margin: 0;
+  padding: 0;
+}
+.band-stats span {
+  display: block;
+  color: var(--dim);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+.band-stats b {
+  font-weight: 400;
+  font-size: 22px;
   color: var(--fg);
 }
-.band-map-wrap {
-  position: relative;
-  min-height: 0;
+.band-conf {
+  margin: 0 0 4px;
+  color: var(--orange);
+  font-size: 15px;
 }
-.band-map-wrap #map {
-  position: absolute;
-  inset: 0;
+.band-note,
+.band-voice,
+.band-foot {
+  margin: 4px 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--dim);
+}
+.band-voice { color: var(--purple); }
+.band-err { color: var(--warn); font-size: 15px; margin: 0; }
+.band-cmds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+.band-cmds .copy-btn {
+  font-size: 13px;
+  padding: 6px 10px;
 }
 .band-pin-label {
   position: absolute;
@@ -1312,7 +1340,6 @@ body.page-band .map-mark-wrap {
 @media (prefers-reduced-motion: reduce) {
   .clock-mod .colon { animation: none; }
   .mod, .mod_column.activated .mod { animation: none; opacity: 1; }
-  .band-card.activated { animation: none; opacity: 1; }
   .map-mark-wrap.pulse-tx svg,
   .map-mark-wrap.pulse-rx svg { animation: none; }
 }
@@ -1401,15 +1428,18 @@ body.page-band .map-mark-wrap {
 }
 
 @media (max-width: 900px) {
-  .band-workspace {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(50vh, 1fr);
+  body.page-band .band-workspace {
     height: auto;
     min-height: calc(100dvh - var(--topbar-h, 48px));
   }
-  .band-map-wrap {
-    min-height: 50vh;
+  body.page-band #map {
+    height: 46dvh;
+    min-height: 240px;
+    flex: none;
   }
+  .band-answer { grid-template-columns: 1fr; }
+  .band-freq { font-size: 32px; }
+  .band-stats b { font-size: 18px; }
 }
 
 @media (max-width: 960px) {
