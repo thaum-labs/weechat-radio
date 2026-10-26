@@ -427,6 +427,40 @@ test("a band picked by hand rates the path at that band, shows a banner, and rev
   await expect(page).not.toHaveURL(/band=/);
 });
 
+// #153: changing the band, power or antenna on the same pins swaps the
+// answer in place. No waiting line above the card, and the card never
+// shrinks, so the page does not jump.
+test("a band change updates the card in place without a jump", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockServices(page, (i, n) => (Math.abs(i - n / 2) < 2 ? 130 : 100));
+  await open(page, "?tx=46.2,6.14&rx=46.1,6.25");
+  await expect(page.locator(".band-freq")).toContainText("144.950");
+  await page.evaluate(() => {
+    const card = document.getElementById("band-card")!;
+    const wait = document.getElementById("band-wait")!;
+    const w = window as unknown as { __jank: string[] };
+    w.__jank = [];
+    let h = card.offsetHeight;
+    new MutationObserver(() => {
+      if (!wait.hidden) w.__jank.push("wait shown");
+      if (!card.classList.contains("has-answer")) w.__jank.push("answer dropped");
+      if (card.offsetHeight < h) w.__jank.push(`shrank ${h}->${card.offsetHeight}`);
+      h = Math.max(h, card.offsetHeight);
+    }).observe(card, { attributes: true, childList: true, subtree: true });
+  });
+  const top = await page.locator(".band-answer").evaluate((e) => e.getBoundingClientRect().top);
+  for (const band of ["pmr446", "cb", "murs", ""]) {
+    await page.locator("#band-override").selectOption(band);
+    await expect(page.locator(".band-freq")).toContainText(
+      { pmr446: "446.00625", cb: "27.185", murs: "151.820", "": "144.950" }[band]!
+    );
+  }
+  await page.locator("#band-power").selectOption("20");
+  await expect(page.locator(".band-freq")).toBeVisible();
+  expect(await page.evaluate(() => (window as unknown as { __jank: string[] }).__jank)).toEqual([]);
+  expect(await page.locator(".band-answer").evaluate((e) => e.getBoundingClientRect().top)).toBe(top);
+});
+
 test("an HF band picked by hand comes from the service", async ({ page }) => {
   const bodies = await mockServices(page, () => 0);
   await open(page, "?tx=51.5,-0.12&rx=40.7,-74");
@@ -517,6 +551,9 @@ for (const size of [
     // Same paths with RX set the way a click sets it, after TX only.
     runs.push(["Frome to Bath by click", "?tx=51.2247,-2.3124", [-2.3257, 51.3734]]);
     runs.push(["London to Manchester by click", "?tx=51.5074,-0.1278", [-2.2426, 53.4808]]);
+    // #153: a new RX on a path that is already drawn fits the new path,
+    // not the old one's bounds.
+    runs.push(["new RX on Frome to Bath", "?tx=51.2247,-2.3124&rx=51.3734,-2.3257", [-2.2981, 51.299]]);
     for (const [name, query, click] of runs) {
       await open(page, query);
       if (click) await page.evaluate(([lon, lat]) => window.__WCR_BAND.setRxLngLat(lon, lat), click);
