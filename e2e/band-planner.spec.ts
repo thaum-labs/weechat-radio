@@ -389,9 +389,13 @@ test("a wire antenna shows how it can be strung, and the link keeps it", async (
   await page.reload();
   await expect(page.locator("#band-hfwire")).toHaveValue("sloper");
   await expect(page.locator("#band-hfwire-note")).toContainText("Sloper:");
+  // The row keeps its space when hidden, so the map below does not move.
+  const mapTop = () => page.locator("#map").evaluate((e) => e.getBoundingClientRect().top);
+  const top = await mapTop();
   await page.locator(".band-hfant label", { hasText: "vertical" }).first().click();
   await expect(page.locator("#band-hfwire")).toBeHidden();
   await expect(page).not.toHaveURL(/hfwire=/);
+  expect(await mapTop()).toBe(top);
 });
 
 test("a band picked by hand rates the path at that band, shows a banner, and reverts", async ({ page }) => {
@@ -411,6 +415,9 @@ test("a band picked by hand rates the path at that band, shows a banner, and rev
   await expect(page.locator(".band-override-info")).toContainText("0.5 W");
   await expect(page.locator(".band-freq")).toContainText("446.00625");
   await expect(page).toHaveURL(/band=pmr446/);
+  // A picked band on a marginal path gets a yellow tag, not green.
+  await expect(page.locator(".band-note")).toContainText("Marginal:");
+  await expect(page.locator(".band-conf")).toHaveClass(/band-conf-warn/);
   // At 446 MHz the Fresnel zone is narrower, so the same ridge reads worse.
   await expect(page.locator("#los-note")).not.toContainText("for VHF and UHF");
   await page.locator("#band-override").selectOption("cb");

@@ -174,11 +174,13 @@
   }
   function showWireNote() {
     if (!wireEl) return;
-    const wire = isWireAntenna();
-    wireEl.parentElement.hidden = !wire;
+    // The row keeps its space when hidden, so picking a vertical or a loop
+    // does not move the map and card up (and back down on dipole).
+    const show = isWireAntenna() ? "" : "hidden";
+    wireEl.parentElement.style.visibility = show;
     if (wireNoteEl) {
-      wireNoteEl.hidden = !wire;
-      wireNoteEl.textContent = wire ? WIRE_NOTES[wireOrientation()] : "";
+      wireNoteEl.style.visibility = show;
+      wireNoteEl.textContent = WIRE_NOTES[wireOrientation()];
     }
   }
 
@@ -1236,12 +1238,14 @@
   // (what the forecast assumes) stays quiet.
   const BAND_PLAN = "Check your band plan before you transmit.";
 
-  // Colour of the verdict tag: red when the band doesn't work, yellow for
-  // a marginal or later opening, green otherwise.
-  function verdictState(c, nogo) {
+  // Colour of the verdict tag: red when the band doesn't work, yellow for a
+  // marginal or faint path (for a hand-picked band, also when only the lines
+  // under its tag say so), green for clear paths only.
+  function verdictState(c, nogo, manual) {
     const t = c.confidence || "";
     if (nogo || /doesn't work|^Nothing|^Not /.test(t)) return "bad";
-    if (/marginal/i.test(t)) return "warn";
+    const said = manual ? `${t} ${c.why || ""} ${c.note || ""}` : t;
+    if (/marginal|faint/i.test(said)) return "warn";
     return "ok";
   }
 
@@ -1288,7 +1292,7 @@
             </dl>
           </div>
           <div class="band-verdict">
-            <p class="band-conf band-conf-${verdictState(c, nogo)}${nogo ? " band-nogo" : ""}"><i class="band-led" aria-hidden="true"></i>${escapeHtml(c.confidence || "")}</p>
+            <p class="band-conf band-conf-${verdictState(c, nogo, manual)}${nogo ? " band-nogo" : ""}"><i class="band-led" aria-hidden="true"></i>${escapeHtml(c.confidence || "")}</p>
             ${c.why ? `<p class="band-why">${escapeHtml(c.why)}</p>` : ""}
             ${voice}
             ${note}
