@@ -24,6 +24,8 @@ declare global {
           n: number;
           y0: number;
           y1: number;
+          strict: string;
+          shown: string;
         } | null;
       };
     };
@@ -471,4 +473,75 @@ test("both pins stay on their points when zooming", async ({ page }) => {
     expect(off).toHaveLength(2);
     for (const d of off) expect(d).toBeLessThanOrEqual(2);
   }
+});
+
+test("the track is yellow only where the path is pinched", async ({ page }) => {
+  const ridge = (i: number, n: number) => (Math.abs(i - n / 2) < 2 ? 130 : 100);
+  const shown = () => page.evaluate(() => window.__WCR_BAND.state().terrain?.shown ?? "");
+  // Flat 14 km between 10 m masts: marginal all along by the strict rating,
+  // but 27 dB to spare, so only the one worst spot is yellow.
+  await mockServices(page, () => 100);
+  await open(page, "?tx=46.2,6.14&rx=46.1,6.25&txant=10&rxant=10");
+  await expect.poll(shown).toMatch(/^c+mc+$/);
+  expect((await page.evaluate(() => window.__WCR_BAND.state().terrain))?.strict).toMatch(/^cm+c$/);
+  // Two handhelds: short of signal, so the whole pinch is yellow, but the
+  // first and last 2 km or so (the sure range) stay blue.
+  await open(page, "?tx=46.2,6.14&rx=46.1,6.25&txant=1.5&rxant=1.5&w=20");
+  await expect.poll(shown).toMatch(/^c{8,}m+c{8,}$/);
+  // A ridge on an 8 dB path: yellow at the ridge only, not the flat ends.
+  await page.unrouteAll();
+  await mockServices(page, ridge);
+  await open(page, "?tx=46.2,6.14&rx=46.1,6.25&txant=6&rxant=6&w=5");
+  await expect.poll(shown).toMatch(/^c{20,}m{1,6}c{20,}$/);
+  await expect(page.locator("#band-profile .pf-marginal")).toHaveCount(1);
+});
+
+test("a busy elevation service is retried, then says so with a Retry button", async ({ page }) => {
+  await mockServices(page, () => 100);
+  let busy = true;
+  let calls = 0;
+  await page.route("https://api.open-meteo.com/**", (route) => {
+    calls += 1;
+    if (busy) return route.fulfill({ status: 429, body: "rate limited" });
+    return route.fallback();
+  });
+  await open(page, "?tx=46.2,6.14&rx=46.1,6.25");
+  await expect(page.locator("#los-note")).toHaveText("terrain lookup busy, retrying…");
+  await expect(page.locator(".band-err")).toContainText("Terrain lookup failed", { timeout: 15_000 });
+  await expect(page.locator("#los-note")).toHaveText("terrain lookup failed");
+  // No answer that ignores the hills.
+  await expect(page.locator(".band-freq")).toHaveCount(0);
+  expect(calls).toBeGreaterThanOrEqual(4);
+  busy = false;
+  await page.locator(".band-retry").click();
+  await expect(page.locator(".band-freq")).toContainText("144.950");
+  await expect(page.locator("#los-note")).toContainText("marginal");
+});
+
+test("use my location shows a spinner, ignores repeat clicks and names the error", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as any).__geoCalls = 0;
+    Object.defineProperty(navigator, "geolocation", {
+      value: {
+        getCurrentPosition(_ok: unknown, fail: (e: { code: number }) => void) {
+          (window as any).__geoCalls += 1;
+          setTimeout(() => fail({ code: 1 }), 800);
+        },
+      },
+    });
+  });
+  await mockServices(page, () => 0);
+  await open(page);
+  const btn = page.locator("#band-locate");
+  const width = (await btn.boundingBox())!.width;
+  await btn.click();
+  await expect(btn).toHaveAttribute("aria-busy", "true");
+  await expect(btn).toBeDisabled();
+  await expect(btn).toHaveClass(/is-busy/);
+  expect(Math.abs((await btn.boundingBox())!.width - width)).toBeLessThan(1);
+  await btn.click({ force: true });
+  await expect(btn).not.toHaveAttribute("aria-busy", "true");
+  await expect(btn).toBeEnabled();
+  await expect(page.locator("#band-hint")).toHaveText("Location permission denied");
+  expect(await page.evaluate(() => (window as any).__geoCalls)).toBe(1);
 });
