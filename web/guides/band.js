@@ -791,6 +791,8 @@
     rx = { lat: ll.lat, lon: ll.lng };
     if (rxMarker) rxMarker.remove();
     rxMarker = placeMarker("rx", ll);
+    // The old path's terrain would keep the old RX in the fit (#153).
+    terrain = null;
     requestCard();
   }
 
@@ -847,8 +849,14 @@
     abort = new AbortController();
     const signal = abort.signal;
     if (emptyEl) emptyEl.hidden = true;
-    waitEl.hidden = false;
-    cardEl.classList.remove("has-answer");
+    // Same pins, new band, power or antenna: the old answer stays until the
+    // new one replaces it in place, so the card does not jump (#153). A new
+    // path starts from the waiting line.
+    if (refit || !cardEl.classList.contains("has-answer")) {
+      waitEl.hidden = false;
+      cardEl.classList.remove("has-answer");
+      cardEl.style.minHeight = "";
+    }
     setHint("…", "Working out the path");
     if (txMarker) pulse(txMarker.getElement(), "tx");
     paintPath();
@@ -1296,6 +1304,9 @@
         ${foot || plan ? `<p class="band-foot"><span>${escapeHtml(foot)}</span>${plan}</p>` : ""}
       </div>`
     );
+    // While the pins stay put the card only grows, so a shorter band's card
+    // does not pull the page up on a phone scrolled to the bottom (#153).
+    cardEl.style.minHeight = `${cardEl.offsetHeight}px`;
   }
 
   cardEl.addEventListener("click", (e) => {
@@ -1352,10 +1363,17 @@
   setInterval(() => {
     if (nightOn()) updateDayNight();
   }, 60000);
+  // A new width reflows the card, so its kept height no longer fits. A
+  // phone's URL bar only changes the height, which keeps it.
+  let cardWidth = window.innerWidth;
   window.addEventListener("resize", () => {
     try {
       map.resize();
     } catch (_) {}
+    if (window.innerWidth !== cardWidth) {
+      cardWidth = window.innerWidth;
+      cardEl.style.minHeight = "";
+    }
   });
 
   // Shareable link: ?tx=lat,lon&rx=lat,lon, plus txant=, rxant= (metres or
