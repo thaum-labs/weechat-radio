@@ -5,6 +5,7 @@ mod choose;
 mod forecast;
 mod geo;
 mod places;
+mod sonde;
 mod ssn;
 
 use axum::extract::{Query, State};
@@ -20,6 +21,7 @@ use forecast::Forecast;
 use geo::{distance_km, Region};
 use places::{Place, Places};
 use serde::Deserialize;
+use sonde::Sonde;
 use ssn::Ssn;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -31,6 +33,7 @@ struct App {
     places: Arc<Places>,
     ssn: Arc<Ssn>,
     forecast: Arc<Forecast>,
+    sonde: Arc<Sonde>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,6 +72,12 @@ struct PlacesQuery {
     q: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct PointQuery {
+    lat: f64,
+    lon: f64,
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -82,11 +91,13 @@ async fn main() {
         places: Arc::new(Places::new()),
         ssn: Arc::new(Ssn::new()),
         forecast: Arc::new(Forecast::new()),
+        sonde: Arc::new(Sonde::new()),
     };
 
     let app = Router::new()
         .route("/api/path", post(path_handler))
         .route("/api/path/places", get(places_handler))
+        .route("/api/path/ionosonde", get(ionosonde_handler))
         .route("/healthz", get(|| async { "ok" }))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
@@ -109,6 +120,30 @@ async fn places_handler(
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
     Ok(Json(serde_json::json!({ "places": hits })))
+}
+
+/// The nearest ionosonde with a recent, confident reading to a point (the
+/// page sends the path midpoint). `station` is null when none is usable.
+/// `fetched_at` says when the stations file was last fetched; it is kept
+/// for `cached_for_s`.
+async fn ionosonde_handler(
+    State(app): State<App>,
+    Query(q): Query<PointQuery>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if !(-90.0..=90.0).contains(&q.lat) || !(-180.0..=180.0).contains(&q.lon) {
+        return Err((StatusCode::BAD_REQUEST, "bad coordinates".into()));
+    }
+    let (fetched, list) = app
+        .sonde
+        .stations()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+    let station = sonde::nearest(&list, q.lat, q.lon, Utc::now());
+    Ok(Json(serde_json::json!({
+        "station": station,
+        "fetched_at": fetched.to_rfc3339(),
+        "cached_for_s": sonde::CACHE_TTL.as_secs(),
+    })))
 }
 
 async fn path_handler(
@@ -166,7 +201,12 @@ async fn path_handler(
     let tx_r = Region::from_country(&tx_place.country);
     let rx_r = Region::from_country(&rx_place.country);
 
-    let (hf, band_card, bands) = hf_cards(
+    let HfAnswer {
+        card: hf,
+        band_card,
+        bands,
+        sky,
+    } = hf_cards(
         &app,
         tx,
         rx,
@@ -186,6 +226,7 @@ async fn path_handler(
             fm: None,
             band_card,
             bands,
+            sky,
         }));
     }
     Ok(Json(Answer {
@@ -194,6 +235,7 @@ async fn path_handler(
         fm: far_fm(tx_r, rx_r, dist, tx_m, rx_m),
         band_card,
         bands,
+        sky,
     }))
 }
 
@@ -216,10 +258,32 @@ struct Answer {
     /// Every HF band on this path and whether it works at this hour and
     /// power. The page lists the ones that do on every card.
     bands: Vec<BandWorks>,
+    sky: Sky,
 }
 
-/// The HF pick, the pick for `band` alone when the user chose one, and
-/// which HF bands work on the path.
+/// The engine's figures for the sky view at the planned hour.
+#[derive(serde::Serialize)]
+struct Sky {
+    /// Path MUF in MHz, from VOACAP.
+    muf_mhz: Option<f64>,
+    /// Hops of the mode at the MUF.
+    muf_hops: Option<u8>,
+    /// False when NOAA's sunspot number was unreachable and a typical
+    /// month (80) was assumed.
+    solar_live: bool,
+}
+
+struct HfAnswer {
+    card: Card,
+    band_card: Option<Card>,
+    bands: Vec<BandWorks>,
+    sky: Sky,
+}
+
+const SOLAR_FALLBACK_NOTE: &str = "Solar data unavailable, typical month assumed.";
+
+/// The HF pick, the pick for `band` alone when the user chose one, which
+/// HF bands work on the path, and the sky view's figures.
 #[allow(clippy::too_many_arguments)]
 async fn hf_cards(
     app: &App,
@@ -232,7 +296,7 @@ async fn hf_cards(
     max_w: u32,
     antenna: HfAntenna,
     band: Option<&str>,
-) -> Result<(Card, Option<Card>, Vec<BandWorks>), (StatusCode, String)> {
+) -> Result<HfAnswer, (StatusCode, String)> {
     let now = Utc::now();
     let this_hour = now.hour() as u8;
     let hour = hour_utc.unwrap_or(this_hour);
@@ -240,22 +304,29 @@ async fn hf_cards(
     // A band with no calling spot here (40m outside a shared plan) gets no
     // band_card; the page says so.
     let band = band.filter(|b| freqs.iter().any(|&f| band_of(f) == Some(*b)));
-    let ssn = app.ssn.current().await;
+    let (ssn, solar_live) = app.ssn.current().await;
     let forecast = app.forecast.clone();
     let year = now.year();
     let month = now.month();
     let predict_freqs = freqs.clone();
-    let mut cells = tokio::task::spawn_blocking(move || {
+    let prediction = tokio::task::spawn_blocking(move || {
         forecast.predict(tx, rx, &predict_freqs, ssn, year, month)
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
 
+    let mut cells = prediction.cells;
     antenna.apply(&mut cells);
     let now = hour == this_hour;
+    let solar = |c: &mut Card| {
+        antenna.footnote(c);
+        if !solar_live {
+            c.footnote = format!("{SOLAR_FALLBACK_NOTE} {}", c.footnote);
+        }
+    };
     let mut card = pick_hf(&cells, hour, now, dist, max_w);
-    antenna.footnote(&mut card);
+    solar(&mut card);
     let band_card = band.map(|b| {
         let only: Vec<_> = cells
             .iter()
@@ -263,9 +334,20 @@ async fn hf_cards(
             .filter(|c| band_of(c.freq_mhz) == Some(b))
             .collect();
         let mut c = pick_hf_band(&only, b, hour, now, dist, max_w);
-        antenna.footnote(&mut c);
+        solar(&mut c);
         c
     });
-    let bands = hf_bands(&cells, &freqs, hour, max_w);
-    Ok((card, band_card, bands))
+    let bands = hf_bands(&cells, &freqs, hour, max_w, &prediction.muf_by_hour);
+    let h = hour as usize % 24;
+    let muf = prediction.muf_by_hour[h];
+    Ok(HfAnswer {
+        card,
+        band_card,
+        bands,
+        sky: Sky {
+            muf_mhz: (muf > 0.0).then_some(muf),
+            muf_hops: prediction.muf_hops_by_hour[h],
+            solar_live,
+        },
+    })
 }

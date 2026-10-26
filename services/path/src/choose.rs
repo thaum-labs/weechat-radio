@@ -119,6 +119,12 @@ pub struct Cell {
     pub freq_mhz: f64,
     pub reliability: f64,
     pub snr: f64,
+    /// How far below `snr` a bad day (the lower decile) is, in dB.
+    pub snr_low: Option<f64>,
+    /// Take-off angle in degrees.
+    pub takeoff_deg: Option<f64>,
+    /// Hops of the mode the engine picked ("2F2" is 2).
+    pub hops: Option<u8>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -560,13 +566,51 @@ pub fn pick_hf_band(
 #[derive(Debug, Clone, Serialize)]
 pub struct BandWorks {
     pub band: &'static str,
+    pub frequency_mhz: f64,
     pub ok: bool,
     pub power_w: Option<u32>,
+    /// "open", "marginal" or "closed" at the hour (see [`band_state`]).
+    pub state: &'static str,
+    /// The same verdict for every UTC hour, index 0 is 00:00 UTC.
+    pub hours: Vec<&'static str>,
+    /// Median and bad-day (lower decile) SNR at 100 W with the user's
+    /// antenna, in dB-Hz, so the verdict can be checked.
+    pub snr_db: Option<f64>,
+    pub snr_bad_db: Option<f64>,
+    /// Hops and take-off angle of the mode the engine picked.
+    pub hops: Option<u8>,
+    pub takeoff_deg: Option<f64>,
+    /// The band is above the path MUF at the hour: it goes through the
+    /// ionosphere and skips this path.
+    pub skips: bool,
+}
+
+/// One band at one hour within `max_w`: "open" when even a bad day (the
+/// lower-decile SNR) clears the normal preset, "marginal" when a typical
+/// day works (normal or slow preset) but a bad day doesn't, "closed" when
+/// a typical day doesn't.
+pub fn band_state(cell: Option<&Cell>, max_w: u32) -> &'static str {
+    let Some(c) = cell else { return "closed" };
+    let works = |snr: f64, req: f64| power_for_snr(snr, req).is_some_and(|p| p <= max_w);
+    let bad = c.snr - c.snr_low.unwrap_or(0.0).max(0.0);
+    if works(bad, REQ_SNR_DIGITAL) {
+        "open"
+    } else if works(c.snr, REQ_SNR_DIGITAL) || works(c.snr, REQ_SNR_WEAK) {
+        "marginal"
+    } else {
+        "closed"
+    }
 }
 
 /// Every HF band on the path, judged on its own at `hour_utc` within
 /// `max_w`. The same list goes out whichever band the user picked.
-pub fn hf_bands(cells: &[Cell], freqs: &[f64], hour_utc: u8, max_w: u32) -> Vec<BandWorks> {
+pub fn hf_bands(
+    cells: &[Cell],
+    freqs: &[f64],
+    hour_utc: u8,
+    max_w: u32,
+    muf_by_hour: &[f64; 24],
+) -> Vec<BandWorks> {
     freqs
         .iter()
         .filter_map(|&f| {
@@ -579,10 +623,21 @@ pub fn hf_bands(cells: &[Cell], freqs: &[f64], hour_utc: u8, max_w: u32) -> Vec<
             let power = best_at_hour(&only, hour_utc, REQ_SNR_DIGITAL, max_w)
                 .or_else(|| best_at_hour(&only, hour_utc, REQ_SNR_WEAK, max_w))
                 .map(|c| c.power);
+            let at = |h: u8| only.iter().find(|c| c.hour == h);
+            let cell = at(hour_utc);
+            let muf = muf_by_hour[hour_utc as usize % 24];
             Some(BandWorks {
                 band,
+                frequency_mhz: f,
                 ok: power.is_some(),
                 power_w: power,
+                state: band_state(cell, max_w),
+                hours: (0..24u8).map(|h| band_state(at(h), max_w)).collect(),
+                snr_db: cell.map(|c| c.snr),
+                snr_bad_db: cell.map(|c| c.snr - c.snr_low.unwrap_or(0.0).max(0.0)),
+                hops: cell.and_then(|c| c.hops),
+                takeoff_deg: cell.and_then(|c| c.takeoff_deg),
+                skips: power.is_none() && muf > 0.0 && f > muf,
             })
         })
         .collect()
@@ -650,6 +705,9 @@ mod tests {
             freq_mhz: 7.045,
             reliability: 0.8,
             snr: 41.0,
+            snr_low: None,
+            takeoff_deg: None,
+            hops: None,
         }];
         let card = pick_hf(&cells, 12, true, 800.0, 100);
         assert_eq!(card.mode, "USB");
@@ -684,6 +742,9 @@ mod tests {
             freq_mhz: 14.07,
             reliability: 0.0,
             snr: -10.0,
+            snr_low: None,
+            takeoff_deg: None,
+            hops: None,
         }];
         let card = pick_hf(&cells, 12, true, 5000.0, 100);
         assert!(card.power_w.is_none());
@@ -761,6 +822,9 @@ mod tests {
 
     fn cell(hour: u8, freq_mhz: f64, snr: f64) -> Cell {
         Cell {
+            snr_low: None,
+            takeoff_deg: None,
+            hops: None,
             hour,
             freq_mhz,
             reliability: 0.8,
@@ -848,10 +912,33 @@ mod tests {
             cell(12, 14.07, 0.0),
             cell(12, 3.58, 30.0),
         ];
-        let bands = hf_bands(&cells, &[3.58, 7.045, 14.07], 12, 20);
+        let mut muf = [0.0; 24];
+        muf[12] = 10.0;
+        let bands = hf_bands(&cells, &[3.58, 7.045, 14.07], 12, 20, &muf);
         let ok: Vec<_> = bands.iter().filter(|b| b.ok).map(|b| b.band).collect();
         assert_eq!(ok, ["80m", "40m"]);
         assert_eq!(bands[1].power_w, Some(5));
         assert!(bands[2].power_w.is_none());
+        // 20m is closed and above the 10 MHz path MUF: it skips.
+        assert_eq!(bands[2].state, "closed");
+        assert!(bands[2].skips);
+        assert!(!bands[0].skips);
+        assert_eq!(bands[1].hours.len(), 24);
+        assert_eq!(bands[1].hours[12], "open");
+        assert_eq!(bands[1].hours[3], "closed");
+    }
+
+    #[test]
+    fn a_bad_day_that_falls_short_is_marginal() {
+        // 32 dB-Hz at 100 W: 50 W on a typical day.
+        let mut c = cell(12, 7.045, 32.0);
+        assert_eq!(band_state(Some(&c), 100), "open");
+        // A bad day 8 dB down needs 300 W: typical yes, bad day no.
+        c.snr_low = Some(8.0);
+        assert_eq!(band_state(Some(&c), 100), "marginal");
+        // At 20 W only the slow preset works on a typical day.
+        assert_eq!(band_state(Some(&c), 20), "marginal");
+        assert_eq!(band_state(Some(&c), 5), "closed");
+        assert_eq!(band_state(None, 100), "closed");
     }
 }
