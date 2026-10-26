@@ -528,6 +528,66 @@ pub fn pick_hf(cells: &[Cell], hour_utc: u8, now: bool, distance_km: f64, max_w:
     )
 }
 
+/// Pick the HF card for one band the user chose by hand. When that band is
+/// closed, the card says so about that band alone, not about all of HF.
+pub fn pick_hf_band(
+    cells: &[Cell],
+    band: &str,
+    hour_utc: u8,
+    now: bool,
+    distance_km: f64,
+    max_w: u32,
+) -> Card {
+    let mut card = pick_hf(cells, hour_utc, now, distance_km, max_w);
+    if card.ok {
+        return card;
+    }
+    let when = if now {
+        "this hour".to_string()
+    } else {
+        format!("at {}", hh(hour_utc))
+    };
+    card.confidence = format!("{band} doesn't work on this path {when}.");
+    card.why = match &card.next_utc {
+        Some(t) => format!("{band} is closed {when} at {max_w} W. It opens about {t}."),
+        None => format!("{band} doesn't open on this path at {max_w} W on any hour this month."),
+    };
+    card.note = "SSB on, USB for data.".into();
+    card
+}
+
+/// Whether one HF band works on the path at an hour, and at what power.
+#[derive(Debug, Clone, Serialize)]
+pub struct BandWorks {
+    pub band: &'static str,
+    pub ok: bool,
+    pub power_w: Option<u32>,
+}
+
+/// Every HF band on the path, judged on its own at `hour_utc` within
+/// `max_w`. The same list goes out whichever band the user picked.
+pub fn hf_bands(cells: &[Cell], freqs: &[f64], hour_utc: u8, max_w: u32) -> Vec<BandWorks> {
+    freqs
+        .iter()
+        .filter_map(|&f| {
+            let band = band_of(f)?;
+            let only: Vec<Cell> = cells
+                .iter()
+                .copied()
+                .filter(|c| band_of(c.freq_mhz) == Some(band))
+                .collect();
+            let power = best_at_hour(&only, hour_utc, REQ_SNR_DIGITAL, max_w)
+                .or_else(|| best_at_hour(&only, hour_utc, REQ_SNR_WEAK, max_w))
+                .map(|c| c.power);
+            Some(BandWorks {
+                band,
+                ok: power.is_some(),
+                power_w: power,
+            })
+        })
+        .collect()
+}
+
 /// The HF band name ("40m") a predicted frequency belongs to.
 pub fn band_of(freq_mhz: f64) -> Option<&'static str> {
     spot_for(freq_mhz).map(|s| s.band)
@@ -758,5 +818,40 @@ mod tests {
         let none = pick_hf(&cells, 12, true, 1500.0, 5);
         assert!(none.power_w.is_none());
         assert!(none.why.contains("5 W"), "{}", none.why);
+    }
+
+    #[test]
+    fn a_closed_band_picked_by_hand_speaks_for_that_band_only() {
+        // 20m opens at 15:00; at 12:00 it is closed.
+        let cells: Vec<Cell> = (0..24u8)
+            .map(|h| cell(h, 14.07, if h >= 15 { 40.0 } else { 0.0 }))
+            .collect();
+        let card = pick_hf_band(&cells, "20m", 12, true, 20.0, 20);
+        assert!(!card.ok);
+        assert_eq!(card.band, "20m");
+        assert_eq!(card.confidence, "20m doesn't work on this path this hour.");
+        assert!(
+            card.why.contains("It opens about 15:00 UTC"),
+            "{}",
+            card.why
+        );
+        assert!(!card.why.contains("No band"), "{}", card.why);
+        let never: Vec<Cell> = (0..24u8).map(|h| cell(h, 14.07, 0.0)).collect();
+        let card = pick_hf_band(&never, "20m", 12, true, 20.0, 20);
+        assert!(card.why.contains("any hour this month"), "{}", card.why);
+    }
+
+    #[test]
+    fn the_band_list_judges_each_band_on_its_own() {
+        let cells = [
+            cell(12, 7.045, 45.0),
+            cell(12, 14.07, 0.0),
+            cell(12, 3.58, 30.0),
+        ];
+        let bands = hf_bands(&cells, &[3.58, 7.045, 14.07], 12, 20);
+        let ok: Vec<_> = bands.iter().filter(|b| b.ok).map(|b| b.band).collect();
+        assert_eq!(ok, ["80m", "40m"]);
+        assert_eq!(bands[1].power_w, Some(5));
+        assert!(bands[2].power_w.is_none());
     }
 }
