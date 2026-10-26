@@ -37,6 +37,7 @@ type PathBody = {
   power_w: number;
   tx_antenna_m: number;
   rx_antenna_m: number;
+  hf_antenna: string;
 };
 
 const HF = {
@@ -231,6 +232,17 @@ test("the signal budget says how well FM should work and picks the power", async
   await page.locator("#band-rx-ant").selectOption("1.5");
   await expect(page.locator(".band-why")).toContainText("Unlikely at 100 W");
   await expect(page.locator(".band-why")).toContainText("More antenna height helps most");
+});
+
+test("the HF antenna picker goes to the service and the link", async ({ page }) => {
+  const bodies = await mockServices(page, () => 0);
+  await open(page, "?tx=51.5,-0.12&rx=40.7,-74");
+  await expect.poll(() => bodies.at(-1)).toMatchObject({ hf_antenna: "dipole" });
+  await page.locator(".band-hfant label", { hasText: "end-fed wire" }).click();
+  await expect.poll(() => bodies.at(-1)).toMatchObject({ hf_antenna: "endfed" });
+  await expect(page).toHaveURL(/hfant=endfed/);
+  await page.reload();
+  await expect(page.locator('input[name="band-hfant"][value="endfed"]')).toBeChecked();
 });
 
 test("the time slider asks for a later hour and moves the night shading", async ({ page }) => {

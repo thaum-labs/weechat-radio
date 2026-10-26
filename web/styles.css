@@ -1346,6 +1346,50 @@ details.maplibregl-ctrl-attrib:not([open]) {
   padding: 4px 6px;
 }
 .band-ant i { font-style: normal; }
+.band-hfant {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--dim);
+}
+.band-hfant-label { white-space: nowrap; }
+.band-hfant-tiles {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  min-width: 0;
+}
+.band-hfant label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  background: #050508;
+  color: var(--dim);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.band-hfant input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.band-hfant svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+.band-hfant label:hover { color: var(--fg); }
+.band-hfant label:has(input:checked) { color: var(--orange); border-color: var(--orange); }
+.band-hfant label:has(input:focus-visible) { outline: 1px solid var(--accent); }
 .band-time { flex: 1 1 240px; min-width: 0; }
 .band-time input { flex: 1; min-width: 80px; accent-color: var(--accent); }
 .band-time b {
