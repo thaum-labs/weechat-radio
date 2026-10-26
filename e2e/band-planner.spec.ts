@@ -217,6 +217,22 @@ test("a near miss is marginal, stays on FM, and is drawn yellow", async ({ page 
   await expect.poll(() => page.evaluate(() => window.__WCR_BAND.state().terrain)).toMatchObject({ blocked: false, marginal: true });
 });
 
+test("the signal budget says how well FM should work and picks the power", async ({ page }) => {
+  // Flat 14 km path: fine between 10 m masts, too far for two handhelds.
+  await mockServices(page, () => 100);
+  await open(page);
+  await page.evaluate(() => {
+    window.__WCR_BAND.setTxLngLat(6.14, 46.2);
+    window.__WCR_BAND.setRxLngLat(6.25, 46.1);
+  });
+  await expect(page.locator(".band-why")).toContainText("Should work well");
+  await expect(page.locator(".band-stats")).toContainText("5 W");
+  await page.locator("#band-tx-ant").selectOption("1.5");
+  await page.locator("#band-rx-ant").selectOption("1.5");
+  await expect(page.locator(".band-why")).toContainText("Unlikely at 100 W");
+  await expect(page.locator(".band-why")).toContainText("More antenna height helps most");
+});
+
 test("the time slider asks for a later hour and moves the night shading", async ({ page }) => {
   const bodies = await mockServices(page, () => 0);
   await open(page);
