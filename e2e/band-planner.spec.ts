@@ -404,20 +404,20 @@ test("a band picked by hand rates the path at that band, shows a banner, and rev
   });
   await expect(page.locator(".band-freq")).toContainText("144.950");
   await page.locator("#band-override").selectOption("pmr446");
-  await expect(page.locator(".band-override-banner")).toContainText("Manual override: PMR446 (recommended: 2m)");
-  await expect(page.locator(".band-override-banner")).toContainText("0.5 W");
+  await expect(page.locator(".band-override-banner")).toContainText("PMR446 · recommended: 2m");
+  await expect(page.locator(".band-override-info")).toContainText("0.5 W");
   await expect(page.locator(".band-freq")).toContainText("446.00625");
   await expect(page).toHaveURL(/band=pmr446/);
   // At 446 MHz the Fresnel zone is narrower, so the same ridge reads worse.
   await expect(page.locator("#los-note")).not.toContainText("for VHF and UHF");
   await page.locator("#band-override").selectOption("cb");
   await expect(page.locator(".band-freq")).toContainText("27.185");
-  await expect(page.locator(".band-override-banner")).toContainText("CB in the UK");
+  await expect(page.locator(".band-override-info")).toContainText("CB in the UK");
   await page.locator("#band-override").selectOption("murs");
   await expect(page.locator(".band-freq")).toContainText("151.820");
   await page.reload();
   await expect(page.locator("#band-override")).toHaveValue("murs");
-  await expect(page.locator(".band-override-banner")).toContainText("Manual override: MURS");
+  await expect(page.locator(".band-override-banner")).toContainText("MURS · recommended");
   await page.locator(".band-revert").click();
   await expect(page.locator(".band-override-banner")).toHaveCount(0);
   await expect(page.locator(".band-freq")).toContainText("144.950");
@@ -430,14 +430,14 @@ test("an HF band picked by hand comes from the service", async ({ page }) => {
   await page.locator("#band-override").selectOption("40m");
   await expect.poll(() => bodies.at(-1)).toMatchObject({ band: "40m" });
   await expect(page.locator(".band-freq")).toContainText("7.045");
-  await expect(page.locator(".band-override-banner")).toContainText("Manual override: 40m (recommended: 30m)");
+  await expect(page.locator(".band-override-banner")).toContainText("40m · recommended: 30m");
   // HF goes by the sky: no VHF line-of-sight line on its card.
-  await expect(page.locator(".band-note")).not.toContainText("line of sight");
-  await expect(page.locator(".band-note")).not.toContainText("Marginal");
+  await expect(page.locator(".band-verdict")).not.toContainText("line of sight");
+  await expect(page.locator(".band-verdict")).not.toContainText("Marginal");
   // A band with no calling spot here still gets the banner and revert.
   await page.locator("#band-override").selectOption("60m");
   await expect(page.locator(".band-conf")).toHaveText("60m doesn't work on this path.");
-  await expect(page.locator(".band-override-banner")).toContainText("Manual override: 60m");
+  await expect(page.locator(".band-override-banner")).toContainText("60m · recommended");
   await page.locator(".band-revert").click();
   await expect(page.locator(".band-freq")).toContainText("10.140");
 });
@@ -459,7 +459,7 @@ test("a blocked band picked by hand says it doesn't work and lists bands that do
   await expect(page.locator(".band-stats")).toContainText("none");
   // Only the HF bands that work; a click picks one, the recommended one reverts.
   const chips = page.locator(".band-works-pick");
-  await expect(chips).toHaveText(["80m · 20 W", "40m · 10 W"]);
+  await expect(chips).toHaveText([/^80m\s*20 W$/, /^40m\s*10 W$/]);
   await chips.filter({ hasText: "40m" }).click();
   await expect(page.locator("#band-override")).toHaveValue("40m");
   await expect(page.locator(".band-freq")).toContainText("7.045");
@@ -479,7 +479,7 @@ test("the list of bands that work is the same whichever band is picked", async (
   await expect(chips.first()).toBeVisible();
   await expect(page.locator(".band-works")).toContainText("2m");
   const base = await chips.allTextContents();
-  expect(base.some((t) => t.startsWith("PMR446 · 0.5 W"))).toBe(true);
+  expect(base.some((t) => /^PMR446\s*0.5 W$/.test(t))).toBe(true);
   for (const band of ["pmr446", "40m", "cb"]) {
     await page.locator("#band-override").selectOption(band);
     await expect(page.locator(".band-override-banner")).toBeVisible();
