@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>VHF and UHF antennas — WeeChat Radio</title>
+  <meta name="description" content="Which VHF or UHF antenna to use for 6m, 2m and 70cm, how long to make it and how far it reaches. Animated diagrams and a calculator." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="WeeChat Radio" />
+  <meta property="og:title" content="VHF and UHF antennas — WeeChat Radio" />
+  <meta property="og:description" content="Which VHF or UHF antenna to use for 6m, 2m and 70cm, how long to make it and how far it reaches. Animated diagrams and a calculator." />
+  <meta property="og:url" content="https://weechatradio.com/guides/antennas-vhf.html" />
+  <meta property="og:image" content="https://weechatradio.com/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="WeeChat Radio. Live messaging chat powered by radio." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://weechatradio.com/og.png" />
+  <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=34" />
+  <link rel="stylesheet" href="/docs.css?v=4" />
+  <link rel="stylesheet" href="/guides/antennas.css?v=1" />
+</head>
+<body class="page-doc" data-antennas="vhf">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav>
+      <a href="/map.html">map</a>
+      <a href="/downloads.html">downloads</a>
+      <a href="/guides.html">guides</a>
+      <a href="/guides/band.html">plan</a>
+      <a href="/docs.html">docs</a>
+      <a href="/why.html">why</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+
+
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/guides.html">guides</a> / <a href="/guides/radio.html">radio</a> / VHF and UHF antennas</p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> VHF and UHF antennas</h1>
+      <p class="lead">On 2m and 70cm the antenna and its height decide how far you reach. Pick a type in the calculator, set the frequency and height, and it gives you the sizes, the range and a search term to build or buy one.</p>
+
+      <section class="article-section article-section--first" aria-labelledby="typesH">
+        <h2 id="typesH">Antenna types</h2>
+        <p>Orange dots are the current running along the antenna; green rings are the signal leaving it.</p>
+        <ul class="ant-cards" id="ant-cards"></ul>
+      </section>
+
+      <section class="article-section" aria-labelledby="calcH">
+        <h2 id="calcH">Calculator</h2>
+        <p>Sizes are a starting point: build a little long and trim for the lowest SWR. Range is line of sight; hills and buildings cut it.</p>
+        <div class="ant-calc" id="ant-calc"></div>
+      </section>
+
+      <p class="next">Plan a path with your antenna: <a href="/guides/band.html">which frequency</a>. Also: <a href="/guides/antennas-hf.html">HF antennas</a> · <a href="/guides/radio.html">radio setup</a>.</p>
+    </main>
+  </div>
+  <script src="/copy.js?v=1"></script>
+  <script src="/shell.js?v=11"></script>
+  <script src="/guides/antennas.js?v=1"></script>
+</body>
+</html>

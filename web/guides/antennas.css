@@ -1,0 +1,162 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Antenna guide pages (antennas-hf.html, antennas-vhf.html), see antennas.js. */
+
+.ant-cards {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+  margin: 10px 0 0;
+  padding: 0;
+}
+.ant-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--body);
+}
+.page-panel .ant-card h3 { margin: 0; color: var(--fg); font-size: 15px; font-weight: 400; }
+.page-panel .ant-card p { margin: 0; }
+.ant-card b { color: var(--fg); font-weight: 400; }
+.ant-use {
+  align-self: flex-start;
+  margin-top: auto;
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--dim);
+  font: 12px var(--font-mono);
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.ant-use:hover { color: var(--orange); border-color: var(--orange); }
+
+/* Diagram: wire parts, current flowing along the antenna, waves leaving it. */
+.ant-svg { display: block; width: 100%; height: auto; max-height: 160px; background: #050508; border: 1px solid var(--line); }
+.ant-ground { stroke: var(--line); stroke-width: 1; }
+.ant-mast, .ant-radial { fill: none; stroke: var(--dim); stroke-width: 1.5; }
+.ant-radial { stroke-dasharray: 3 2; }
+.ant-cp { fill: none; stroke: var(--dim); stroke-width: 1.5; stroke-dasharray: 4 3; }
+.ant-box { fill: #11111a; stroke: var(--dim); stroke-width: 1.2; }
+.ant-el { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linecap: round; }
+.ant-current {
+  fill: none;
+  stroke: var(--orange);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-dasharray: 3 14;
+  animation: ant-flow 1.2s linear infinite;
+}
+.ant-wave {
+  fill: none;
+  stroke: #39ff14;
+  stroke-width: 1;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ant-wave 3s ease-out infinite;
+  animation-delay: calc(var(--i) * -1s);
+}
+.ant-wave.is-dir { transform-origin: left center; }
+.ant-label { fill: var(--fg); font: 10px var(--font-mono); }
+@keyframes ant-flow { to { stroke-dashoffset: -34; } }
+@keyframes ant-wave {
+  0% { transform: scale(0.1); opacity: 0.9; }
+  100% { transform: scale(1); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ant-current { animation: none; }
+  .ant-wave { animation: none; opacity: 0.35; transform: scale(calc(0.35 + var(--i) * 0.3)); }
+}
+
+/* Calculator */
+.ant-calc {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 13px;
+}
+.ant-types { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.ant-types label, .ant-cut button {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  background: #050508;
+  color: var(--dim);
+  font: 12px var(--font-mono);
+  cursor: pointer;
+}
+.ant-types input { position: absolute; opacity: 0; pointer-events: none; }
+.ant-types label:has(input:checked) { color: var(--orange); border-color: var(--orange); }
+.ant-types label:has(input:focus-visible) { outline: 1px solid var(--accent); }
+.ant-cut button:hover, .ant-types label:hover { color: var(--fg); }
+.ant-calc-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+@media (max-width: 720px) {
+  .ant-calc-body { grid-template-columns: minmax(0, 1fr); }
+}
+.ant-var {
+  display: grid;
+  grid-template-columns: 8.5em minmax(0, 1fr) 6em;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--dim);
+}
+.ant-var input { width: 100%; min-width: 0; accent-color: var(--accent); }
+.ant-var output { color: var(--orange); text-align: right; white-space: nowrap; }
+.ant-cut { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; color: var(--dim); }
+.ant-cut > span { margin-right: 4px; }
+.ant-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin: 12px 0 0;
+}
+.ant-facts div { border-left: 2px solid var(--line); padding-left: 8px; }
+.ant-facts dt { color: var(--dim); font-size: 11px; }
+.ant-facts dd { margin: 0; color: var(--fg); }
+.ant-bands {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+}
+.ant-bands li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  background: #050508;
+}
+.ant-bands b { color: var(--fg); font-weight: 400; }
+.ant-bands span { justify-self: end; font-size: 11px; }
+.ant-bands small { grid-column: 1 / -1; color: var(--dim); font-size: 11px; line-height: 1.4; }
+.ant-bands .is-good { border-color: #39ff14; }
+.ant-bands .is-good span { color: #39ff14; }
+.ant-bands .is-ok { border-color: #ffd60a; }
+.ant-bands .is-ok span { color: #ffd60a; }
+.ant-bands .is-no { opacity: 0.55; }
+.ant-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  color: var(--dim);
+}
+.ant-search code { color: var(--fg); overflow-wrap: anywhere; }
+.ant-search a { color: var(--accent); }
+.ant-search .copy-btn { position: static; }
+.page-panel .ant-cards, .page-panel .ant-bands { margin-left: 0; padding-left: 0; }
