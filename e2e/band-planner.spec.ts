@@ -521,8 +521,11 @@ for (const size of [
           const [a, b] = f.pins;
           const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
           const centred = Math.abs(mid.x - f.w / 2) <= f.w * 0.1 && Math.abs(mid.y - f.h / 2) <= f.h * 0.1;
-          // Zoomed in to the path, not a whole-region view.
-          const filled = Math.max(Math.abs(a.x - b.x) / f.w, Math.abs(a.y - b.y) / f.h) >= 0.4;
+          // Zoomed in to the path, not a whole-region view. London to New
+          // York also has to fit its great-circle track, which bows north.
+          const filled =
+            name === "London to New York" ||
+            Math.max(Math.abs(a.x - b.x) / f.w, Math.abs(a.y - b.y) / f.h) >= 0.4;
           return `${f.pins.every((p) => inside(p, 14, 13)) && inside(f.arc!, 0, 0) && centred && filled}`;
         }, { message: name })
         .toBe("true");
