@@ -318,7 +318,9 @@
   }
 
   function setHint(_step, text) {
-    if (hintEl) hintEl.textContent = text;
+    if (!hintEl) return;
+    hintEl.textContent = text;
+    hintEl.title = text;
   }
 
   const NIGHT_SRC = "daynight";
@@ -920,11 +922,18 @@
     return b && b.frequency_mhz ? b.frequency_mhz : shownCard ? Number(shownCard.frequency_mhz) : NaN;
   }
   // Ground wave and skip zone around TX for the shown band, short paths only.
+  // Whether there is a skip zone comes from the engine (`skips`); only its
+  // size is worked out here (approx.), and it always reaches past RX.
   function skyRings() {
-    if (!skyOn() || distKm(tx, rx) > SHORT_PATH_KM) return null;
+    if (!skyOn()) return null;
+    const D = distKm(tx, rx);
+    if (D > SHORT_PATH_KM) return null;
     const gw = GROUND_WAVE_KM[shownCard.band] || 15;
+    const b = skyBand();
+    if (!b || !b.skips) return { gw, skip: 0, beyond: false };
     const skip = skipKm(skyMhz());
-    return { gw, skip: skip > gw && Number.isFinite(skip) ? skip : 0, beyond: skip === Infinity };
+    if (skip === Infinity) return { gw, skip: 0, beyond: true };
+    return { gw, skip: Math.max(skip, D * 1.1, gw + 1), beyond: false };
   }
   function destination(p, bearingDeg, km) {
     const δ = km / R_EARTH_KM;
@@ -1116,14 +1125,20 @@
     const parts = [hopText(), `take-off ${Math.round(to.deg)}°${to.approx ? " (approx.)" : ""}`];
     if (sky.muf_mhz) parts.push(`MUF on path ${Number(sky.muf_mhz).toFixed(1)} MHz`);
     let html = `<p class="sky-line">${escapeHtml(parts.join(" · "))}</p>`;
-    if (to.deg >= NVIS_DEG) {
+    const own = skyBand();
+    const rings = skyRings();
+    if (own && own.skips) {
+      // The engine says this band skips the path: a skip line, never the NVIS note.
+      html += rings && rings.skip
+        ? `<p class="sky-skip">${escapeHtml(shownCard.band)} skips: skip zone ≈ ${rings.gw}–${Math.round(rings.skip)} km from TX (approx.), RX is inside it.</p>`
+        : `<p class="sky-skip">${escapeHtml(shownCard.band)} skips: it goes through the layer on this path.</p>`;
+    } else if (to.deg >= NVIS_DEG) {
       html += `<p class="sky-nvis">NVIS: the signal goes almost straight up and comes back down, so there is no skip zone. A low horizontal antenna suits it.</p>`;
     }
-    const rings = skyRings();
-    if (rings && rings.skip) {
-      html += `<p class="sky-skip">${escapeHtml(shownCard.band)} skip zone ≈ ${rings.gw}–${Math.round(rings.skip)} km from TX (approx.).</p>`;
-    }
     html += `<p class="band-live" id="band-live" hidden></p>`;
+    // Credit and "unavailable" note live in the card, so showing them never
+    // moves the card on a phone (#164).
+    html += `<p class="band-credit" id="band-credit" hidden></p><p class="band-live-note" id="band-live-note" hidden></p>`;
     return html;
   }
 
