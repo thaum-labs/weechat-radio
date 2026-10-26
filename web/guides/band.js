@@ -157,8 +157,11 @@
     return hit ? hit.value : "dipole";
   }
   // How a wire antenna is strung up. It does not change the prediction; it
-  // shows a short note so a new user knows their setup is a good one.
-  const WIRE_ANTENNAS = ["dipole", "efhw", "endfed"];
+  // shows a short note so a new user knows their setup is a good one. Each
+  // wire antenna has its own list and drawings: a dipole is fed in the
+  // middle, an end-fed at one end through a box (the unun). The first entry
+  // is the default and stays out of the link.
+  const WIRE_LABELS = { flat: "horizontal", sloper: "sloper", invl: "inverted L", invv: "inverted V", vertical: "vertical" };
   const WIRE_NOTES = {
     flat: "Horizontal: the classic setup. Get it as high and clear as you can; even a few metres up works.",
     sloper: "Sloper: a common, good setup. Keep the far end out of reach, and put a choke on the coax at the feed.",
@@ -166,22 +169,92 @@
     invv: "Inverted V: a good, easy setup with one support in the middle. Keep the ends out of reach and the angle between the legs wider than 90°.",
     vertical: "Vertical: a good setup when space is tight, and fine for long paths. Lay a few radials or a counterpoise if you can, and put a choke on the coax at the feed.",
   };
-  function wireOrientation() {
-    return wireEl && WIRE_NOTES[wireEl.value] ? wireEl.value : "flat";
+  const CENTRE_FED = {
+    flat: '<path d="M2 8h20M12 8v13"/><circle cx="12" cy="8" r="1.5"/>',
+    invv: '<path d="M3 19 12 6l9 13M12 6v16"/><circle cx="12" cy="6" r="1.5"/>',
+    sloper: '<path d="M3 20 21 4M12 12v10"/><circle cx="12" cy="12" r="1.5"/>',
+  };
+  const UNUN = '<rect x="2" y="17" width="5" height="4"/>';
+  const END_FED = {
+    flat: '<rect x="2" y="5" width="5" height="4"/><path d="M7 7h15M4.5 9v13"/>',
+    sloper: UNUN + '<path d="M7 18 22 4"/>',
+    invv: UNUN + '<path d="M7 18 14 5l8 13"/>',
+    invl: UNUN + '<path d="M7 19h2V5h13"/>',
+    vertical: UNUN + '<path d="M7 19h2V2"/>',
+  };
+  const WIRE_SHAPES = {
+    dipole: CENTRE_FED,
+    efhw: END_FED,
+    endfed: { flat: END_FED.flat, sloper: END_FED.sloper, invl: END_FED.invl, vertical: END_FED.vertical },
+  };
+  let wire = "flat";
+  function wireShapes() {
+    return WIRE_SHAPES[hfAntenna()] || null;
   }
   function isWireAntenna() {
-    return WIRE_ANTENNAS.includes(hfAntenna());
+    return !!wireShapes();
   }
+  function wireOrientation() {
+    const shapes = wireShapes();
+    return shapes && shapes[wire] ? wire : "flat";
+  }
+  function wireSvg(key) {
+    return `<svg viewBox="0 0 24 24" aria-hidden="true">${wireShapes()[key]}</svg>`;
+  }
+  // The picker sits under the selected tile, so it reads as that antenna's
+  // setting. The rows keep their space when hidden, so picking a vertical or
+  // a loop does not move the map and card up (and back down on dipole).
   function showWireNote() {
     if (!wireEl) return;
-    // The row keeps its space when hidden, so picking a vertical or a loop
-    // does not move the map and card up (and back down on dipole).
+    const row = wireEl.parentElement;
     const show = isWireAntenna() ? "" : "hidden";
-    wireEl.parentElement.style.visibility = show;
-    if (wireNoteEl) {
-      wireNoteEl.style.visibility = show;
-      wireNoteEl.textContent = WIRE_NOTES[wireOrientation()];
+    row.style.visibility = show;
+    if (wireNoteEl) wireNoteEl.style.visibility = show;
+    closeWireMenu();
+    if (!show) {
+      const o = wireOrientation();
+      wireEl.innerHTML = `<b></b>${wireSvg(o)}<span>${WIRE_LABELS[o]}</span><i>▾</i>`;
+      wireMenuEl.innerHTML = Object.keys(wireShapes())
+        .map((k) => `<li role="option" tabindex="-1" data-wire="${k}" aria-selected="${k === o}">${wireSvg(k)}<span>${WIRE_LABELS[k]}</span></li>`)
+        .join("");
+      if (wireNoteEl) wireNoteEl.textContent = WIRE_NOTES[o];
     }
+    placeWirePicker();
+  }
+  function placeWirePicker() {
+    if (!wireEl) return;
+    const tile = hfAntEls.find((el) => el.checked);
+    const row = wireEl.parentElement;
+    if (!tile || row.style.visibility) return;
+    // On a phone the tiles wrap; when the selected one is not on the last
+    // line the picker can't sit under it, so it starts at the left and names
+    // the antenna instead.
+    const box = tile.parentElement.getBoundingClientRect();
+    const under = box.bottom >= tile.parentElement.parentElement.getBoundingClientRect().bottom - 1;
+    row.classList.toggle("is-detached", !under);
+    const name = wireEl.querySelector("b");
+    if (name) name.textContent = under ? "" : `${tile.parentElement.textContent.trim()}:`;
+    const x = under ? box.left - row.getBoundingClientRect().left : 0;
+    row.style.paddingLeft = `${Math.max(0, Math.min(x, row.clientWidth - wireEl.offsetWidth))}px`;
+  }
+  const wireMenuEl = document.getElementById("band-hfwire-menu");
+  function openWireMenu() {
+    wireMenuEl.hidden = false;
+    wireEl.setAttribute("aria-expanded", "true");
+    const sel = wireMenuEl.querySelector('[aria-selected="true"]');
+    if (sel) sel.focus();
+  }
+  function closeWireMenu(focus) {
+    if (!wireMenuEl || wireMenuEl.hidden) return;
+    wireMenuEl.hidden = true;
+    wireEl.setAttribute("aria-expanded", "false");
+    if (focus) wireEl.focus();
+  }
+  function pickWire(key) {
+    wire = key;
+    showWireNote();
+    wireEl.focus();
+    saveUrl();
   }
 
   // Bands you can pick by hand instead of the recommendation. Nothing is
@@ -1260,6 +1333,43 @@
     requestCard();
   }
 
+  // Clear: back to an empty map without a reload. Both pins, the card, a
+  // band picked by hand and the time go; the station settings (antenna,
+  // power, HF antenna) stay, since they describe your own gear.
+  function clearPlan() {
+    if (abort) abort.abort();
+    abort = null;
+    tx = null;
+    rx = null;
+    if (txMarker) txMarker.remove();
+    if (rxMarker) rxMarker.remove();
+    txMarker = null;
+    rxMarker = null;
+    terrain = null;
+    answer = null;
+    shownCard = null;
+    pathFailed = false;
+    terrainFailed = false;
+    autoFit = false;
+    if (overrideEl) overrideEl.value = "";
+    if (hourEl) hourEl.value = "0";
+    showHourLabel();
+    updateDayNight(true);
+    if (searchEl) searchEl.value = "";
+    const old = cardEl.querySelector(".band-answer");
+    if (old) old.remove();
+    cardEl.classList.remove("has-answer");
+    cardEl.style.minHeight = "";
+    waitEl.hidden = true;
+    if (emptyEl) emptyEl.hidden = false;
+    showSkyKey();
+    paintPath();
+    drawProfile();
+    setLosNote("terrain along the path");
+    setHint("TX", "Click where you are");
+    saveUrl();
+  }
+
   // Fit the map to the path: both pins, the track and the bowed arc, centred
   // on the midpoint. The padding is worked out per side from the map's real
   // size, so a short map (the result card takes most of the height) still
@@ -1947,7 +2057,7 @@
     pickOption(powerEl, q.get("w"));
     const hf = hfAntEls.find((el) => el.value === q.get("hfant"));
     if (hf) hf.checked = true;
-    if (wireEl && WIRE_NOTES[q.get("hfwire")]) wireEl.value = q.get("hfwire");
+    if (WIRE_NOTES[q.get("hfwire")]) wire = q.get("hfwire");
     showWireNote();
     if (overrideEl && OVERRIDES[q.get("band")]) overrideEl.value = q.get("band");
     if (mufToggle && q.get("muf") === "1") mufToggle.checked = true;
@@ -1991,6 +2101,8 @@
     });
   }
   if (powerEl) powerEl.addEventListener("change", () => requestCard({ refit: false }));
+  const clearEl = document.getElementById("band-clear");
+  if (clearEl) clearEl.addEventListener("click", clearPlan);
   for (const el of hfAntEls) {
     el.addEventListener("change", () => {
       showWireNote();
@@ -1998,10 +2110,35 @@
     });
   }
   if (wireEl) {
-    wireEl.addEventListener("change", () => {
-      showWireNote();
-      saveUrl();
+    wireEl.addEventListener("click", () => (wireMenuEl.hidden ? openWireMenu() : closeWireMenu()));
+    wireEl.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        openWireMenu();
+      }
     });
+    wireMenuEl.addEventListener("click", (e) => {
+      const li = e.target.closest("[data-wire]");
+      if (li) pickWire(li.getAttribute("data-wire"));
+    });
+    wireMenuEl.addEventListener("keydown", (e) => {
+      const items = [...wireMenuEl.querySelectorAll("[data-wire]")];
+      const i = items.indexOf(document.activeElement);
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const next = items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length];
+        if (next) next.focus();
+      } else if ((e.key === "Enter" || e.key === " ") && items[i]) {
+        e.preventDefault();
+        pickWire(items[i].getAttribute("data-wire"));
+      } else if (e.key === "Escape" || e.key === "Tab") {
+        closeWireMenu(e.key === "Escape");
+      }
+    });
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest(".band-hfwire")) closeWireMenu();
+    });
+    window.addEventListener("resize", placeWirePicker);
   }
   if (overrideEl) {
     overrideEl.addEventListener("change", () => {
