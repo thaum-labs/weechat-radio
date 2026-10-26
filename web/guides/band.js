@@ -1163,67 +1163,84 @@
       .replace(/"/g, "&quot;");
   }
 
-  function copyButton(label, text) {
-    return `<button type="button" class="copy-btn band-copy" data-copy="${escapeHtml(text)}">${escapeHtml(label)}</button>`;
+  function copyButton(text) {
+    return `<button type="button" class="band-copy" data-copy="${escapeHtml(text)}"><code>${escapeHtml(text)}</code><em>copy</em></button>`;
   }
 
-  // Chips for the bands that work here; a click picks that band, or goes
-  // back to the recommendation when it is the recommended band.
+  // The bands that work here as one switch row; a click picks that band,
+  // or goes back to the recommendation when it is the recommended band.
   function worksHtml(c, rec) {
     if (!terrain && !(answer.bands || []).length) return "";
     const list = workingBands();
     if (!list.length) return `<p class="band-works">No band works on this path at this hour and power.</p>`;
     const chips = list
       .map((b) => {
-        const on = b.label === c.band ? ' aria-pressed="true"' : "";
+        const on = b.label === c.band ? "true" : "false";
         const pick = b.label === rec ? "" : b.key;
-        const watts = b.power != null ? ` · ${b.power} W` : "";
-        return `<button type="button" class="band-works-pick" data-band="${escapeHtml(pick)}"${on}>${escapeHtml(b.label)}${watts}</button>`;
+        const watts = b.power != null ? `<small>${b.power} W</small>` : "";
+        return `<button type="button" class="band-works-pick" data-band="${escapeHtml(pick)}" aria-pressed="${on}">${escapeHtml(b.label)}${watts}</button>`;
       })
       .join("");
-    return `<div class="band-works"><p>Works on this path at this hour:</p>${chips}</div>`;
+    return `<div class="band-works" role="group" aria-label="Bands that work on this path at this hour">${chips}</div>`;
   }
 
+  // The band plan reminder gets its own line; the rest of the footnote
+  // (what the forecast assumes) stays quiet.
+  const BAND_PLAN = "Check your band plan before you transmit.";
+
+  // Three zones, left to right: what to tune, will it work, what to type.
+  // The band row on top switches bands and shows a hand-picked band.
   function renderCard(c, manual) {
     const rec = manual ? manual.rec : c.band;
     const nogo = manual && c.ok === false;
     const power = c.power_w != null ? `${c.power_w} W` : nogo ? "none" : `over ${powerW()} W`;
     const ssb = c.ssb ? "on" : "off";
     const voice = c.voice_note ? `<p class="band-voice">${escapeHtml(c.voice_note)}</p>` : "";
+    // "SSB on, USB for data." only repeats the SSB and mode readouts.
+    const noteText = (c.note || "").replace("SSB on, USB for data.", "").trim();
+    const note = noteText ? `<p class="band-note">${escapeHtml(noteText)}</p>` : "";
+    const foot = (c.footnote || "").replace(BAND_PLAN, "").replace(/\s+/g, " ").trim();
+    const plan = (c.footnote || "").includes(BAND_PLAN) ? `<b>${BAND_PLAN}</b>` : "";
+    const works = worksHtml(c, rec);
     cardEl.classList.add("has-answer");
     const old = cardEl.querySelector(".band-answer");
     if (old) old.remove();
     cardEl.insertAdjacentHTML(
       "beforeend",
       `<div class="band-answer">
-        ${manual ? `<div class="band-override-banner">
-          <p><b>Manual override: ${escapeHtml(manual.label)}</b> (recommended: ${escapeHtml(manual.rec)})</p>
-          ${manual.info ? `<p class="band-override-info">${escapeHtml(manual.info)}</p>` : ""}
-          <button type="button" class="band-revert">Revert to recommended</button>
+        ${works || manual ? `<div class="band-bandbar">
+          ${works ? `<span class="band-label">band</span>${works}` : ""}
+          ${manual ? `<div class="band-override-banner">
+            <span class="band-tag">picked by hand</span>
+            <p><b>${escapeHtml(manual.label)}</b> · recommended: ${escapeHtml(manual.rec)}</p>
+            <button type="button" class="band-revert">↺ back to ${escapeHtml(manual.rec)}</button>
+          </div>` : ""}
         </div>` : ""}
-        <div class="band-freq-block">
-          <p class="band-freq">${escapeHtml(c.frequency_mhz)}<span> MHz</span></p>
-          <p class="band-band">${escapeHtml(c.band)}</p>
-        </div>
-        <ul class="band-stats">
-          <li><span>SSB</span><b>${ssb}</b></li>
-          <li><span>mode</span><b>${escapeHtml(c.mode)}</b></li>
-          <li><span>power</span><b>${escapeHtml(power)}</b></li>
-          <li><span>preset</span><b>${escapeHtml(c.preset)}</b></li>
-          <li><span>path</span><b>${c.distance_km} km</b></li>
-        </ul>
-        <div class="band-aside">
-          <p class="band-conf${nogo ? " band-nogo" : ""}">${escapeHtml(c.confidence || "")}</p>
-          ${c.why ? `<p class="band-why">${escapeHtml(c.why)}</p>` : ""}
-          ${voice}
-          <p class="band-note">${escapeHtml(c.note || "")}</p>
-          ${worksHtml(c, rec)}
-          <div class="band-cmds">
-            ${copyButton(c.qsy, c.qsy)}
-            ${copyButton(c.preset_cmd, c.preset_cmd)}
+        <div class="band-body">
+          <div class="band-freq-block">
+            <p class="band-freq">${escapeHtml(c.frequency_mhz)}<span> MHz</span></p>
+            <p class="band-band">${escapeHtml(c.band)} · ${escapeHtml(c.mode)}</p>
+            <dl class="band-stats">
+              <dt>SSB</dt><dd>${ssb}</dd>
+              <dt>power</dt><dd>${escapeHtml(power)}</dd>
+              <dt>preset</dt><dd>${escapeHtml(c.preset)}</dd>
+              <dt>path</dt><dd>${c.distance_km} km</dd>
+            </dl>
           </div>
-          <p class="band-foot">${escapeHtml(c.footnote || "")}</p>
+          <div class="band-verdict">
+            <p class="band-conf${nogo ? " band-nogo" : ""}">${escapeHtml(c.confidence || "")}</p>
+            ${c.why ? `<p class="band-why">${escapeHtml(c.why)}</p>` : ""}
+            ${voice}
+            ${note}
+          </div>
+          <div class="band-do">
+            <span class="band-label">set your radio</span>
+            ${copyButton(c.qsy)}
+            ${copyButton(c.preset_cmd)}
+            ${manual && manual.info ? `<p class="band-override-info">⚠ ${escapeHtml(manual.info)}</p>` : ""}
+          </div>
         </div>
+        ${foot || plan ? `<p class="band-foot"><span>${escapeHtml(foot)}</span>${plan}</p>` : ""}
       </div>`
     );
   }
@@ -1246,17 +1263,14 @@
   cardEl.addEventListener("click", async (e) => {
     const btn = e.target.closest(".band-copy");
     if (!btn) return;
-    const text = btn.getAttribute("data-copy") || "";
-    try {
-      await navigator.clipboard.writeText(text);
-      const prev = btn.textContent;
-      btn.textContent = "copied";
-      setTimeout(() => {
-        btn.textContent = prev;
-      }, 1200);
-    } catch (_) {
-      btn.textContent = "copy failed";
-    }
+    const label = btn.querySelector("em");
+    const done = await window.WCR.copyText(btn.getAttribute("data-copy") || "");
+    label.textContent = done === "copied" ? "copied" : "copy failed";
+    btn.classList.toggle("band-copied", done === "copied");
+    setTimeout(() => {
+      label.textContent = "copy";
+      btn.classList.remove("band-copied");
+    }, 1200);
   });
 
   if (mapStyleSelect) {
