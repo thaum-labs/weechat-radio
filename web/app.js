@@ -975,7 +975,11 @@ function renderBands(bands) {
     const name = b.band || "inet";
     const freq = b.frequency || (b.freq_khz ? (b.freq_khz / 1000).toFixed(3) : "");
     const on = selectedBand === name ? " on" : "";
-    return `<div class="mode-row band-row${on}" data-band="${escapeHtml(name)}"><span class="mode-name">${escapeHtml(name)}</span><span class="band-freq">${escapeHtml(freq)}</span><span class="band-n">${escapeHtml(b.stations ?? 0)}</span></div>`;
+    // Internet-only stations have no dial, so say where they are instead.
+    const freqHtml = freq
+      ? `${escapeHtml(freq)}<span class="band-row-unit"> MHz</span>`
+      : `<span class="band-row-unit">via hub</span>`;
+    return `<div class="mode-row band-row${on}" data-band="${escapeHtml(name)}"><span class="band-row-name">${escapeHtml(name)}</span><span class="band-row-freq">${freqHtml}</span><span class="band-row-n">${escapeHtml(b.stations ?? 0)}</span></div>`;
   }).join("");
   grid.querySelectorAll(".band-row").forEach((el) => {
     el.onclick = () => {
