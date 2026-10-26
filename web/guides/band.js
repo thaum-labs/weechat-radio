@@ -594,7 +594,7 @@
   // for blocked. Inside the "sure range" from each end (where even
   // plane-earth loss leaves the solid margin, about 1 km for PMR446
   // handhelds) ground below the radio line is blue and ground clipping it
-  // is yellow (Tobias, #142). Elsewhere the worst spot or spots are always
+  // is yellow, but with a solid budget only the worst spot is (Tobias, #142). Elsewhere the worst spot or spots are always
   // yellow; with a solid budget nothing else is, otherwise anything under
   // 0.3 x F1 or within 3 dB of the worst obstruction loss is too.
   const PINCH_MARGIN = 0.3;
@@ -632,7 +632,7 @@
       const nearEnd = Math.min(s.dKm, t.D - s.dKm) <= sure;
       const pinch = s.margin < PINCH_MARGIN || obstructionDb(s.margin) >= worstDb - PINCH_DB;
       if (s.state === "clear" || s.state === "blocked") s.show = s.state;
-      else if (nearEnd) s.show = s.clearance >= 0 ? "clear" : "marginal";
+      else if (nearEnd) s.show = s.clearance >= 0 || (solid && !spot(i)) ? "clear" : "marginal";
       else if (spot(i)) s.show = "marginal";
       else s.show = !solid && pinch ? "marginal" : "clear";
     });
@@ -822,9 +822,9 @@
       answer = await res.json();
       pathFailed = false;
       paintPath();
-      waitEl.hidden = true;
       if (emptyEl) emptyEl.hidden = true;
-      showAnswer();
+      // No card yet: without the terrain it ignores the hills. loadTerrain
+      // shows it once the elevation is in (or straight away when cached).
       if (rxMarker) pulse(rxMarker.getElement(), "rx");
       await loadTerrain(signal);
     } catch (e) {

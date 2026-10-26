@@ -514,6 +514,34 @@ test("inside the sure range the track is blue under the line and yellow where it
   await expect.poll(shown).toMatch(/^cmc{4}m+c{6}$/);
 });
 
+test("with a solid budget only the worst spot is yellow, even inside the sure range", async ({ page }) => {
+  const shown = () => page.evaluate(() => window.__WCR_BAND.state().terrain?.shown ?? "");
+  // 10 m masts with two bumps clipping the line, one near each end, both
+  // inside the sure range. 23 dB to spare, so only the worse one is
+  // yellow (Tobias, #142 / #144).
+  await mockServices(page, (i, n) => (i === 2 ? 113 : i === n - 3 ? 111 : 100));
+  await open(page, "?tx=46.2,6.14&rx=46.1,6.25&txant=10&rxant=10");
+  await expect.poll(shown).toMatch(/^ccmc+$/);
+  await expect(page.locator(".band-why")).toContainText("Should work well");
+});
+
+test("no card shows before the first terrain reply", async ({ page }) => {
+  await mockServices(page, () => 100);
+  let release: () => void = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  await page.route("https://api.open-meteo.com/**", async (route) => {
+    await held;
+    return route.fallback();
+  });
+  await open(page, "?tx=46.2,6.14&rx=46.1,6.25");
+  await expect(page.locator("#los-note")).toHaveText("checking terrain…");
+  await expect(page.locator("#band-wait")).toBeVisible();
+  await expect(page.locator(".band-freq")).toHaveCount(0);
+  release();
+  await expect(page.locator(".band-freq")).toContainText("144.950");
+  await expect(page.locator("#band-wait")).toBeHidden();
+});
+
 test("a busy elevation service is retried, then says so with a Retry button", async ({ page }) => {
   await mockServices(page, () => 100);
   let busy = true;
