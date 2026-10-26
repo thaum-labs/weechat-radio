@@ -729,6 +729,10 @@
     const cssH = arcCanvas.clientHeight || 600;
     arcCtx.clearRect(0, 0, cssW, cssH);
     if (!tx || !rx) return;
+    if (skyOn() && !pathFailed) {
+      paintSky();
+      return;
+    }
     const s1 = map.project([tx.lon, tx.lat]);
     const s2 = map.project([rx.lon, rx.lat]);
     const color = pathFailed ? "rgba(122,115,136,0.9)" : "rgba(57,255,20,0.95)";
@@ -755,6 +759,464 @@
       arcCtx.setLineDash(state === "clear" ? [6, 4] : []);
       arcCtx.stroke();
     }
+  }
+
+  // HF sky view (#157). An HF card goes by the ionosphere, not the ground,
+  // so the map draws the great circle with its hops and the profile slot
+  // shows a side view. Hops, take-off angle, path MUF and the per-hour
+  // verdicts come from the path service (VOACAP); anything worked out here
+  // from geometry is labelled approx.
+  const SKY_COLORS = { open: "#39ff14", marginal: "#ffd60a", closed: "#ff3b6b" };
+  const SKY_TAG = { open: "ok", marginal: "warn", closed: "bad" };
+  const R_EARTH_KM = 6371;
+  const F2_KM = 300; // reflection height for the drawings
+  const F2_BAND_KM = [250, 350];
+  const NVIS_DEG = 60;
+  const SHORT_PATH_KM = 1000;
+  // Rough ground-wave reach in km at modest power (approx.).
+  const GROUND_WAVE_KM = { "80m": 40, "60m": 35, "40m": 30, "30m": 25, "20m": 20 };
+  let shownCard = null;
+
+  function skyOn() {
+    return !!(answer && shownCard && shownCard.kind === "hf" && tx && rx);
+  }
+  function skyBand() {
+    if (!skyOn()) return null;
+    return (answer.bands || []).find((b) => b.band === shownCard.band) || null;
+  }
+  function skyState() {
+    const b = skyBand();
+    return b ? b.state : shownCard && shownCard.ok ? "open" : "closed";
+  }
+  // Path points along the great circle, longitudes unwrapped so a path over
+  // the date line stays one line.
+  function greatCircle(n) {
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const p = along(tx, rx, i / n);
+      if (pts.length) {
+        const prev = pts[pts.length - 1].lon;
+        while (p.lon - prev > 180) p.lon -= 360;
+        while (p.lon - prev < -180) p.lon += 360;
+      }
+      pts.push(p);
+    }
+    return pts;
+  }
+  // Hops from the engine, else one per 4000 km (approx.).
+  function skyHops() {
+    const D = distKm(tx, rx);
+    const b = skyBand();
+    if (b && b.hops) return { n: b.hops, approx: false, D };
+    return { n: Math.max(1, Math.ceil(D / 4000)), approx: true, D };
+  }
+  // One hop of `dKm` on the ground reflected at F2_KM: take-off angle
+  // `beta` and the angle `phi` the ray meets the layer at, from vertical.
+  function hopAngles(dKm) {
+    const theta = dKm / (2 * R_EARTH_KM);
+    const k = R_EARTH_KM / (R_EARTH_KM + F2_KM);
+    const beta = Math.atan2(Math.cos(theta) - k, Math.sin(theta));
+    return { beta, phi: Math.PI / 2 - beta - theta };
+  }
+  function skyTakeoff() {
+    const b = skyBand();
+    if (b && b.takeoff_deg != null) return { deg: b.takeoff_deg, approx: false };
+    const h = skyHops();
+    return { deg: (hopAngles(h.D / h.n).beta * 180) / Math.PI, approx: true };
+  }
+  // foF2 implied by the engine's path MUF (secant law at its hop length),
+  // then the skip distance of `mhz`: 0 when it comes straight back down.
+  function foF2Approx() {
+    const sky = answer && answer.sky;
+    if (!sky || !sky.muf_mhz) return null;
+    const D = distKm(tx, rx);
+    const n = sky.muf_hops || skyHops().n;
+    return sky.muf_mhz * Math.cos(hopAngles(D / n).phi);
+  }
+  function skipKm(mhz) {
+    const fo = foF2Approx();
+    if (!fo || mhz <= fo) return 0;
+    const phi = Math.acos(fo / mhz);
+    const cosBeta = ((R_EARTH_KM + F2_KM) * Math.sin(phi)) / R_EARTH_KM;
+    if (cosBeta >= 1) return Infinity;
+    const theta = Math.PI / 2 - Math.acos(cosBeta) - phi;
+    return 2 * R_EARTH_KM * theta;
+  }
+  function skyMhz() {
+    const b = skyBand();
+    return b && b.frequency_mhz ? b.frequency_mhz : shownCard ? Number(shownCard.frequency_mhz) : NaN;
+  }
+  // Ground wave and skip zone around TX for the shown band, short paths only.
+  function skyRings() {
+    if (!skyOn() || distKm(tx, rx) > SHORT_PATH_KM) return null;
+    const gw = GROUND_WAVE_KM[shownCard.band] || 15;
+    const skip = skipKm(skyMhz());
+    return { gw, skip: skip > gw && Number.isFinite(skip) ? skip : 0, beyond: skip === Infinity };
+  }
+  function destination(p, bearingDeg, km) {
+    const δ = km / R_EARTH_KM;
+    const θ = (bearingDeg * Math.PI) / 180;
+    const φ1 = (p.lat * Math.PI) / 180;
+    const λ1 = (p.lon * Math.PI) / 180;
+    const φ2 = Math.asin(Math.sin(φ1) * Math.cos(δ) + Math.cos(φ1) * Math.sin(δ) * Math.cos(θ));
+    const λ2 = λ1 + Math.atan2(Math.sin(θ) * Math.sin(δ) * Math.cos(φ1), Math.cos(δ) - Math.sin(φ1) * Math.sin(φ2));
+    return { lat: (φ2 * 180) / Math.PI, lon: (λ2 * 180) / Math.PI };
+  }
+  function ringPath(center, km) {
+    arcCtx.beginPath();
+    for (let a = 0; a <= 360; a += 6) {
+      const q = destination(center, a, km);
+      let lon = q.lon;
+      while (lon - center.lon > 180) lon -= 360;
+      while (lon - center.lon < -180) lon += 360;
+      const s = map.project([lon, q.lat]);
+      if (a === 0) arcCtx.moveTo(s.x, s.y);
+      else arcCtx.lineTo(s.x, s.y);
+    }
+    arcCtx.closePath();
+  }
+
+  function paintSky() {
+    const color = SKY_COLORS[skyState()];
+    const rings = skyRings();
+    if (rings && rings.skip) {
+      ringPath(tx, rings.skip);
+      arcCtx.fillStyle = "rgba(255,59,107,0.16)";
+      arcCtx.fill();
+      ringPath(tx, rings.gw);
+      arcCtx.save();
+      arcCtx.globalCompositeOperation = "destination-out";
+      arcCtx.fill();
+      arcCtx.restore();
+      ringPath(tx, rings.skip);
+      arcCtx.strokeStyle = "rgba(255,59,107,0.8)";
+      arcCtx.lineWidth = 1.5;
+      arcCtx.setLineDash([]);
+      arcCtx.stroke();
+    }
+    if (rings) {
+      ringPath(tx, rings.gw);
+      arcCtx.strokeStyle = "rgba(125,155,255,0.9)";
+      arcCtx.lineWidth = 1.5;
+      arcCtx.setLineDash([5, 4]);
+      arcCtx.stroke();
+    }
+    const pts = greatCircle(96).map((p) => map.project([p.lon, p.lat]));
+    arcCtx.beginPath();
+    pts.forEach((s, i) => (i ? arcCtx.lineTo(s.x, s.y) : arcCtx.moveTo(s.x, s.y)));
+    arcCtx.strokeStyle = color;
+    arcCtx.lineWidth = 3;
+    arcCtx.lineCap = "round";
+    arcCtx.setLineDash([]);
+    arcCtx.stroke();
+    // Reflection points at the middle of each hop, ground bounces between.
+    const hops = skyHops();
+    const at = (f) => {
+      const p = along(tx, rx, f);
+      const ref = along(tx, rx, Math.max(0, f - 0.01));
+      while (p.lon - ref.lon > 180) p.lon -= 360;
+      while (p.lon - ref.lon < -180) p.lon += 360;
+      return map.project([p.lon, p.lat]);
+    };
+    for (let k = 0; k < hops.n; k++) {
+      const s = at((k + 0.5) / hops.n);
+      arcCtx.beginPath();
+      arcCtx.arc(s.x, s.y, 4.5, 0, 2 * Math.PI);
+      arcCtx.fillStyle = color;
+      arcCtx.fill();
+      arcCtx.strokeStyle = "#07070a";
+      arcCtx.lineWidth = 1.5;
+      arcCtx.stroke();
+    }
+    for (let k = 1; k < hops.n; k++) {
+      const s = at(k / hops.n);
+      arcCtx.beginPath();
+      arcCtx.arc(s.x, s.y, 6, 0, 2 * Math.PI);
+      arcCtx.strokeStyle = color;
+      arcCtx.lineWidth = 1.5;
+      arcCtx.stroke();
+    }
+  }
+
+  function hopText() {
+    const h = skyHops();
+    const each = Math.round(h.D / h.n / 10) * 10;
+    const words = h.n === 1 ? "1 hop" : `${h.n} hops`;
+    return `${words} · ~${each} km each${h.approx ? " (approx.)" : ""}`;
+  }
+
+  // Map key and hop chip: the terrain key for VHF and UHF, the sky key for HF.
+  function showSkyKey() {
+    const stage = document.querySelector(".band-map-stage");
+    if (stage) stage.classList.toggle("is-sky", skyOn());
+    const chip = document.getElementById("band-hop-chip");
+    if (chip) chip.textContent = skyOn() ? hopText() : "";
+    setGreyline();
+  }
+
+  // Side view in the profile slot: curved earth, the F2 layer and the rays,
+  // not to scale. A band above the MUF goes through as a dashed red ray.
+  function drawSky() {
+    profileEl.hidden = false;
+    const W = Math.max(240, profileEl.clientWidth || 600);
+    const H = 104;
+    const narrow = W < 560;
+    const pad = 8;
+    const ground = H - 18;
+    const lift = 14; // how far the earth bows up mid-view
+    const layerPx = 52; // F2_BAND_KM top
+    const kmPx = layerPx / F2_BAND_KM[1];
+    const f = (n) => n.toFixed(1);
+    // Earth across the whole width at `u` (0 to 1).
+    const ex = (u) => pad + u * (W - 2 * pad);
+    const ey = (u, km) => ground - lift * Math.sin(Math.PI * u) - km * kmPx;
+    const line = (km, n = 40) => Array.from({ length: n + 1 }, (_, i) => `${f(ex(i / n))},${f(ey(i / n, km))}`).join(" L");
+    // The path keeps its take-off angle where it fits: a steep (NVIS) path
+    // is drawn narrow in the middle, a long one fills the width.
+    const hops = skyHops();
+    const to = skyTakeoff();
+    const tanB = Math.tan((Math.max(3, Math.min(87, to.deg)) * Math.PI) / 180);
+    const spanPx = Math.max(60, Math.min(W - 2 * pad, (2 * hops.n * F2_KM * kmPx) / tanB));
+    const u0 = (1 - spanPx / (W - 2 * pad)) / 2;
+    const u = (t) => u0 + t * (spanPx / (W - 2 * pad));
+    const x = (t) => ex(u(t));
+    const y = (t, km) => ey(u(t), km);
+    const state = skyState();
+    const own = skyBand();
+    // The shown band goes through when it is above the MUF; otherwise the
+    // lowest band that does is drawn beside its rays.
+    const punch = own && own.skips ? own : (answer.bands || []).find((b) => b.skips);
+    let ray = "";
+    if (!(own && own.skips)) {
+      ray = `M${f(x(0))},${f(y(0, 0))}`;
+      for (let k = 0; k < hops.n; k++) {
+        ray += ` L${f(x((k + 0.5) / hops.n))},${f(y((k + 0.5) / hops.n, F2_KM))} L${f(x((k + 1) / hops.n))},${f(y((k + 1) / hops.n, 0))}`;
+      }
+    }
+    let punchSvg = "";
+    if (punch) {
+      // Steeper than the hop rays, out through the top.
+      const dx = Math.max(10, (x(0.5 / hops.n) - x(0)) * 0.6);
+      const x0 = x(0);
+      const y0 = y(0, 0);
+      const x2 = x0 + (dx * (y0 - 4)) / (y0 - y(0.5 / hops.n, F2_KM));
+      punchSvg = `<path class="sky-punch" d="M${f(x0)},${f(y0)} L${f(x2)},4"/>
+        <text x="${f(x2 + 4)}" y="12" class="sky-punch-label">${escapeHtml(punch.band)} goes through</text>`;
+    }
+    const deg = `${Math.round(to.deg)}°${to.approx ? " (approx.)" : ""}`;
+    const band = `M${line(F2_BAND_KM[0])} L${line(F2_BAND_KM[1]).split(" L").reverse().join(" L")} Z`;
+    profileEl.innerHTML = `<svg class="pf-sky" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Side view of the sky path">
+        <path class="sky-f2" d="${band}"/>
+        <path class="sky-earth" d="M${line(0)} L${f(ex(1))},${H} L${f(ex(0))},${H} Z"/>
+        ${ray ? `<path class="sky-ray" style="stroke:${SKY_COLORS[state]}" d="${ray}"/>` : ""}
+        ${punchSvg}
+        <text x="${W - pad - 4}" y="${f(ey(1, F2_KM) + 3)}" text-anchor="end">${narrow ? "F2 ≈250–350 km" : "F2 layer ≈ 250–350 km (approx.)"}</text>
+        <text x="${W - pad}" y="12" text-anchor="end">${narrow ? "not to scale" : `side view · ${hopText()} · not to scale`}</text>
+        <text x="${f(x(0))}" y="${H - 3}" text-anchor="${x(0) < W * 0.25 ? "start" : "end"}">TX · take-off ${deg}</text>
+        <text x="${f(x(1))}" y="${H - 3}" text-anchor="${x(1) > W * 0.75 ? "end" : "start"}">RX</text>
+        <circle class="sky-end" cx="${f(x(0))}" cy="${f(y(0, 0))}" r="2.5"/>
+        <circle class="sky-end" cx="${f(x(1))}" cy="${f(y(1, 0))}" r="2.5"/>
+      </svg>`;
+  }
+
+  // Next 24 hours of the shown band, from now; the planned hour outlined.
+  function skyStrip() {
+    const b = skyBand();
+    if (!b || !b.hours || b.hours.length !== 24) return "";
+    const now = new Date().getUTCHours();
+    const cells = Array.from({ length: 24 }, (_, i) => {
+      const h = (now + i) % 24;
+      const st = b.hours[h];
+      const sel = i === hourOffset() ? " is-sel" : "";
+      return `<button type="button" class="sky-cell sky-${st}${sel}" data-off="${i}" title="${String(h).padStart(2, "0")}:00 UTC · ${st}" aria-label="${String(h).padStart(2, "0")}:00 UTC ${st}"></button>`;
+    }).join("");
+    return `<div class="sky-strip" aria-label="${escapeHtml(b.band)} over the next 24 hours">
+        <span class="band-label">next 24 h · ${escapeHtml(b.band)}</span>
+        <div class="sky-cells">${cells}</div>
+      </div>`;
+  }
+
+  // The engine's figures for the card: hops, take-off angle, path MUF.
+  function skyLines() {
+    const to = skyTakeoff();
+    const sky = answer.sky || {};
+    const parts = [hopText(), `take-off ${Math.round(to.deg)}°${to.approx ? " (approx.)" : ""}`];
+    if (sky.muf_mhz) parts.push(`MUF on path ${Number(sky.muf_mhz).toFixed(1)} MHz`);
+    let html = `<p class="sky-line">${escapeHtml(parts.join(" · "))}</p>`;
+    if (to.deg >= NVIS_DEG) {
+      html += `<p class="sky-nvis">NVIS: the signal goes almost straight up and comes back down, so there is no skip zone. A low horizontal antenna suits it.</p>`;
+    }
+    const rings = skyRings();
+    if (rings && rings.skip) {
+      html += `<p class="sky-skip">${escapeHtml(shownCard.band)} skip zone ≈ ${rings.gw}–${Math.round(rings.skip)} km from TX (approx.).</p>`;
+    }
+    html += `<p class="band-live" id="band-live" hidden></p>`;
+    return html;
+  }
+
+  // Live check: the nearest ionosonde with a recent, confident reading,
+  // through the path service (KC2G's stations file has no CORS header).
+  // The card never waits for it.
+  let live = { key: "", at: 0, body: null, failed: false };
+  const LIVE_MS = 5 * 60 * 1000;
+  const CREDIT = "MUF(3000) map: prop.kc2g.com (KC2G) · ionosonde data: Lowell GIRO";
+  function midpoint() {
+    return along(tx, rx, 0.5);
+  }
+  async function fillLive() {
+    if (!skyOn()) return showLiveNotes();
+    const mid = midpoint();
+    const key = `${mid.lat.toFixed(1)},${mid.lon.toFixed(1)}`;
+    if (live.key !== key || Date.now() - live.at > LIVE_MS) {
+      live = { key, at: Date.now(), body: null, failed: false, pending: true };
+      try {
+        const res = await fetch(`${PATH_API}/api/path/ionosonde?lat=${mid.lat.toFixed(3)}&lon=${mid.lon.toFixed(3)}`, {
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!res.ok) throw new Error(String(res.status));
+        live.body = await res.json();
+      } catch (_) {
+        live.failed = true;
+      }
+      live.pending = false;
+      if (live.key !== key) return;
+    }
+    if (live.pending) return;
+    renderLive();
+  }
+  function renderLive() {
+    const el = document.getElementById("band-live");
+    if (!el || !skyOn()) return showLiveNotes();
+    const s = live.body && live.body.station;
+    if (live.failed || !live.body) {
+      el.hidden = true;
+    } else if (!s) {
+      el.hidden = false;
+      el.textContent = "live check: no recent ionosonde reading within 3000 km of this path.";
+    } else {
+      el.hidden = false;
+      const age = s.age_min <= 1 ? "just now" : `${s.age_min} min ago`;
+      let fit = "";
+      const sky = answer.sky || {};
+      if (sky.muf_mhz) {
+        // The live reading at this path's hop length, by the secant law.
+        const D = distKm(tx, rx);
+        const n = sky.muf_hops || skyHops().n;
+        const liveMuf = s.fof2_mhz / Math.cos(hopAngles(D / n).phi);
+        const r = liveMuf / sky.muf_mhz;
+        fit = r < 0.85 ? " · lower than predicted" : r > 1.15 ? " · higher than predicted" : " · fits the prediction";
+      }
+      el.textContent = `live check: ${s.name}, ${s.distance_km} km from the path midpoint, ${age}: foF2 ${s.fof2_mhz.toFixed(1)}, MUF(3000) ${s.mufd_mhz.toFixed(1)} MHz${fit}`;
+    }
+    showLiveNotes();
+  }
+  // One credit line whenever live data shows, one note when it failed.
+  function showLiveNotes() {
+    const credit = document.getElementById("band-credit");
+    const note = document.getElementById("band-live-note");
+    const sondeShown = skyOn() && live.body && live.body.station && !live.failed;
+    const sondeFailed = skyOn() && live.failed;
+    if (credit) credit.hidden = !(sondeShown || (mufOn() && mufLayer.ok));
+    if (credit) credit.textContent = CREDIT;
+    if (note) {
+      note.hidden = !(sondeFailed || (mufOn() && mufLayer.failed));
+      note.textContent = "Live ionosphere data unavailable right now.";
+    }
+  }
+
+  // KC2G MUF(3000) contours (CORS open), with `muf=1` in the link.
+  const MUF_URL = "https://prop.kc2g.com/renders/current/mufd-normal-now.geojson";
+  const MUF_SRC = "kc2g-muf";
+  const mufToggle = document.getElementById("map-muf");
+  let mufLayer = { data: null, at: 0, ok: false, failed: false, labels: [] };
+  function mufOn() {
+    return !!(mufToggle && mufToggle.checked);
+  }
+  async function showMuf() {
+    mufLayer.labels.forEach((m) => m.remove());
+    mufLayer.labels = [];
+    try {
+      if (map.getLayer(MUF_SRC)) map.removeLayer(MUF_SRC);
+      if (map.getSource(MUF_SRC)) map.removeSource(MUF_SRC);
+    } catch (_) {}
+    if (!mufOn()) {
+      showLiveNotes();
+      return;
+    }
+    if (!mufLayer.data || Date.now() - mufLayer.at > 15 * 60 * 1000) {
+      try {
+        const res = await fetch(MUF_URL, { signal: AbortSignal.timeout(10000) });
+        if (!res.ok) throw new Error(String(res.status));
+        mufLayer.data = await res.json();
+        mufLayer.at = Date.now();
+        mufLayer.failed = false;
+      } catch (_) {
+        mufLayer.data = null;
+        mufLayer.failed = true;
+      }
+    }
+    mufLayer.ok = !!mufLayer.data;
+    if (mufLayer.ok && mufOn() && !map.getSource(MUF_SRC)) {
+      try {
+        map.addSource(MUF_SRC, { type: "geojson", data: mufLayer.data });
+        map.addLayer({
+          id: MUF_SRC,
+          type: "line",
+          source: MUF_SRC,
+          paint: { "line-color": ["coalesce", ["get", "stroke"], "#ffffff"], "line-width": 1.5, "line-opacity": 0.85 },
+        });
+      } catch (_) {}
+      // One label per contour line, at its middle.
+      for (const ft of mufLayer.data.features || []) {
+        const g = ft.geometry || {};
+        const lines = g.type === "LineString" ? [g.coordinates] : g.type === "MultiLineString" ? g.coordinates : [];
+        const level = ft.properties && ft.properties["level-value"];
+        for (const coords of lines) {
+          if (!coords || coords.length < 2 || level == null) continue;
+          const mid = coords[Math.floor(coords.length / 2)];
+          const el = document.createElement("span");
+          el.className = "band-muf-label";
+          el.textContent = `${Math.round(Number(level) * 10) / 10} MHz`;
+          el.style.color = (ft.properties && ft.properties.stroke) || "#ffffff";
+          mufLayer.labels.push(new maplibregl.Marker({ element: el }).setLngLat(mid).addTo(map));
+        }
+      }
+    }
+    showLiveNotes();
+  }
+  if (mufToggle) {
+    mufToggle.addEventListener("change", () => {
+      saveUrl();
+      showMuf();
+    });
+  }
+
+  // The greyline (sunrise and sunset line) as a dashed line, from the sun's
+  // position at the planned hour. HF view only.
+  const GREY_LAYER = "greyline";
+  function greylineCoords(date) {
+    const jd = julianDay(date);
+    const gst = gmstHours(jd);
+    const sun = sunEquatorial(jd);
+    const out = [];
+    for (let lng = -180; lng <= 180; lng += 1) out.push([lng, terminatorLat(lng, sun, gst, 0)]);
+    return out;
+  }
+  function setGreyline() {
+    try {
+      const data = { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: greylineCoords(planDate()) } };
+      if (!map.getSource(GREY_LAYER)) {
+        if (!map.isStyleLoaded()) return;
+        map.addSource(GREY_LAYER, { type: "geojson", data });
+        map.addLayer({
+          id: GREY_LAYER,
+          type: "line",
+          source: GREY_LAYER,
+          paint: { "line-color": "#ffd60a", "line-width": 1.5, "line-opacity": 0.8, "line-dasharray": [3, 3] },
+        });
+      } else map.getSource(GREY_LAYER).setData(data);
+      map.setLayoutProperty(GREY_LAYER, "visibility", skyOn() ? "visible" : "none");
+    } catch (_) {}
   }
 
   function placeMarker(kind, lngLat) {
@@ -818,7 +1280,9 @@
     const b = new maplibregl.LngLatBounds();
     b.extend([tx.lon, tx.lat]);
     b.extend([rx.lon, rx.lat]);
-    if (terrain && terrain.samples) terrain.samples.forEach((s) => b.extend([s.lon, s.lat]));
+    // The great circle, which bows away from the straight line on a long
+    // path (the terrain samples follow it too).
+    greatCircle(32).forEach((p) => b.extend([p.lon, p.lat]));
     // The arc bows sideways from the chord, so an east-west path needs room
     // above and below, a north-south one left and right.
     const s1 = map.project([tx.lon, tx.lat]);
@@ -890,11 +1354,16 @@
       // No card yet: without the terrain it ignores the hills. loadTerrain
       // shows it once the elevation is in (or straight away when cached).
       if (rxMarker) pulse(rxMarker.getElement(), "rx");
+      // An HF answer goes by the sky, so it shows without the terrain
+      // (#157); the terrain only fills in the VHF and UHF bands later.
+      if (hfOnly()) showAnswer();
       await loadTerrain(signal);
     } catch (e) {
       if (e.name === "AbortError") return;
       pathFailed = true;
       answer = null;
+      shownCard = null;
+      showSkyKey();
       paintPath();
       waitEl.hidden = true;
       if (emptyEl) emptyEl.hidden = true;
@@ -1097,12 +1566,23 @@
     };
   }
 
+  // An answer that doesn't depend on the terrain: an HF answer with no
+  // FM fallback (the path is past FM range), or an HF band picked by hand.
+  function hfOnly() {
+    if (!answer) return false;
+    const o = override();
+    if (o) return !!o.hf;
+    return answer.kind === "hf" && !answer.fm;
+  }
+
   function showAnswer() {
     if (!answer) return;
-    if (terrainFailed) {
+    if (terrainFailed && !hfOnly()) {
       showTerrainFailed();
       return;
     }
+    if (terrainFailed) setLosNote("terrain unavailable, VHF/UHF not judged");
+    waitEl.hidden = true;
     const o = override();
     budget = null;
     // The recommendation is always judged at its own frequency, so the
@@ -1123,14 +1603,20 @@
     // short note (Tobias, #150).
     const mobile = txAntEl.value === "mobile" || rxAntEl.value === "mobile";
     const antNote = o && o.mobileNote && mobile ? o.mobileNote : "";
+    shownCard = card;
     renderCard(card, o ? { label: o.label, info: o.info, antNote, rec: rec.band } : null);
     setHint("OK", card.confidence || "Ready");
+    showSkyKey();
+    paintPath();
+    drawProfile();
+    fillLive();
   }
 
   // While a busy elevation service is retried, the answer so far ignores
   // the hills, so the card goes back to waiting until the terrain is in.
   function showTerrainBusy() {
     setLosNote("terrain lookup busy, retrying…");
+    if (hfOnly() && cardEl.querySelector(".band-answer")) return;
     cardEl.classList.remove("has-answer");
     const old = cardEl.querySelector(".band-answer");
     if (old) old.remove();
@@ -1141,6 +1627,8 @@
   // Without the terrain the answer could be wrong (an HF card for a path
   // the hills leave open on 2m), so no answer is shown until it loads.
   function showTerrainFailed() {
+    shownCard = null;
+    showSkyKey();
     cardEl.classList.add("has-answer");
     const old = cardEl.querySelector(".band-answer");
     if (old) old.remove();
@@ -1157,6 +1645,10 @@
   // and the straight line joins the two antenna tops.
   function drawProfile() {
     if (!profileEl) return;
+    if (skyOn()) {
+      drawSky();
+      return;
+    }
     if (!terrain) {
       profileEl.hidden = true;
       profileEl.innerHTML = "";
@@ -1220,6 +1712,7 @@
   // The bands that work here as one switch row; a click picks that band,
   // or goes back to the recommendation when it is the recommended band.
   function worksHtml(c, rec) {
+    if (skyOn()) return skyWorksHtml(c, rec);
     if (!terrain && !(answer.bands || []).length) return "";
     const list = workingBands();
     if (!list.length) return `<p class="band-works">No band works on this path at this hour and power.</p>`;
@@ -1232,6 +1725,27 @@
       })
       .join("");
     return `<div class="band-works" role="group" aria-label="Bands that work on this path at this hour">${chips}</div>`;
+  }
+
+  // HF view: every HF band with a dot for the planned hour (closed ones
+  // dimmed, "skips" when above the MUF), after the VHF and UHF bands that
+  // work.
+  function skyWorksHtml(c, rec) {
+    const chip = (key, label, state, sub) => {
+      const on = label === c.band ? "true" : "false";
+      const pick = label === rec ? "" : key;
+      const cls = state === "closed" ? " is-closed" : "";
+      return `<button type="button" class="band-works-pick${cls}" data-band="${escapeHtml(pick)}" data-state="${state}" aria-pressed="${on}"><span><i class="sky-dot sky-${state}" aria-hidden="true"></i>${escapeHtml(label)}</span><small>${escapeHtml(sub)}</small></button>`;
+    };
+    const vhf = workingBands()
+      .filter((b) => VHF_KEYS.includes(b.key))
+      .map((b) => chip(b.key, b.label, "open", b.power != null ? `${b.power} W` : ""));
+    const hf = (answer.bands || [])
+      .filter((b) => OVERRIDES[b.band])
+      .map((b) =>
+        chip(b.band, b.band, b.state || (b.ok ? "open" : "closed"), b.ok ? `${b.power_w} W` : b.skips ? "skips" : "closed")
+      );
+    return `<div class="band-works" role="group" aria-label="HF bands on this path at this hour">${vhf.concat(hf).join("")}</div>`;
   }
 
   // The band plan reminder gets its own line; the rest of the footnote
@@ -1292,10 +1806,12 @@
             </dl>
           </div>
           <div class="band-verdict">
-            <p class="band-conf band-conf-${verdictState(c, nogo, manual)}${nogo ? " band-nogo" : ""}"><i class="band-led" aria-hidden="true"></i>${escapeHtml(c.confidence || "")}</p>
+            <p class="band-conf band-conf-${skyOn() ? SKY_TAG[skyState()] : verdictState(c, nogo, manual)}${nogo ? " band-nogo" : ""}"><i class="band-led" aria-hidden="true"></i>${escapeHtml(c.confidence || "")}</p>
             ${c.why ? `<p class="band-why">${escapeHtml(c.why)}</p>` : ""}
+            ${skyOn() ? skyLines() : ""}
             ${voice}
             ${note}
+            ${skyOn() ? skyStrip() : ""}
           </div>
           <div class="band-do">
             <span class="band-label">set your radio</span>
@@ -1313,6 +1829,12 @@
     cardEl.style.minHeight = `${cardEl.offsetHeight}px`;
   }
 
+  cardEl.addEventListener("click", (e) => {
+    const cell = e.target.closest(".sky-cell");
+    if (!cell || !hourEl) return;
+    hourEl.value = cell.getAttribute("data-off");
+    hourEl.dispatchEvent(new Event("input"));
+  });
   cardEl.addEventListener("click", (e) => {
     if (e.target.closest(".band-retry")) requestCard({ refit: false });
   });
@@ -1357,6 +1879,8 @@
 
   function onStyleReady() {
     updateDayNight(true);
+    setGreyline();
+    if (mufOn()) showMuf();
     paintPath();
     try {
       map.resize();
@@ -1404,6 +1928,7 @@
     set("hfwire", isWireAntenna() && wireOrientation() !== "flat" ? wireOrientation() : null);
     set("band", overrideKey() || null);
     set("w", powerW() !== 100 ? String(powerW()) : null);
+    set("muf", mufOn() ? "1" : null);
     const qs = q.toString().replace(/%2C/g, ",");
     try {
       history.replaceState(null, "", `${location.pathname}${qs ? "?" + qs : ""}${location.hash}`);
@@ -1425,6 +1950,7 @@
     if (wireEl && WIRE_NOTES[q.get("hfwire")]) wireEl.value = q.get("hfwire");
     showWireNote();
     if (overrideEl && OVERRIDES[q.get("band")]) overrideEl.value = q.get("band");
+    if (mufToggle && q.get("muf") === "1") mufToggle.checked = true;
     const t = parseLL(q.get("tx"));
     const r = parseLL(q.get("rx"));
     if (t) setTx(t);
@@ -1437,6 +1963,8 @@
     hourEl.addEventListener("input", () => {
       showHourLabel();
       updateDayNight(true);
+      setGreyline();
+      cardEl.querySelectorAll(".sky-cell").forEach((el) => el.classList.toggle("is-sel", el.getAttribute("data-off") === hourEl.value));
       clearTimeout(hourTimer);
       hourTimer = setTimeout(() => requestCard({ refit: false }), 250);
     });
@@ -1719,6 +2247,15 @@
       },
       budget,
       override: overrideKey(),
+      sky: skyOn()
+        ? {
+            hops: skyHops(),
+            takeoff: skyTakeoff(),
+            rings: skyRings(),
+            state: skyState(),
+            greyline: greylineCoords(planDate()),
+          }
+        : null,
     }),
     zoomTo: (z) => map.jumpTo({ zoom: z }),
     // Where the pins and the arc's peak sit on the map, in px (fit checks).

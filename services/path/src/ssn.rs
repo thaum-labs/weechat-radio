@@ -9,10 +9,13 @@ const UA: &str = "WeeChatRadioPath/0.1 (https://weechatradio.com; path helper)";
 const CACHE_TTL: Duration = Duration::from_secs(12 * 3600);
 /// Quiet-cycle fallback when NOAA is unreachable.
 const FALLBACK_SSN: f64 = 80.0;
+const RETRY_AFTER: Duration = Duration::from_secs(15 * 60);
 
 pub struct Ssn {
     client: reqwest::Client,
-    cached: Mutex<Option<(Instant, f64)>>,
+    url: String,
+    /// When it was fetched, the number, and whether it came from NOAA.
+    cached: Mutex<Option<(Instant, f64, bool)>>,
 }
 
 impl Ssn {
@@ -22,30 +25,44 @@ impl Ssn {
             .timeout(Duration::from_secs(8))
             .build()
             .expect("reqwest client");
+        // WCR_PATH_SWPC_URL points elsewhere for a test of the fallback.
+        let url = std::env::var("WCR_PATH_SWPC_URL").unwrap_or_else(|_| {
+            "https://services.swpc.noaa.gov/json/solar-cycle/observed-solar-cycle-indices.json"
+                .into()
+        });
         Self {
             client,
+            url,
             cached: Mutex::new(None),
         }
     }
 
-    pub async fn current(&self) -> f64 {
-        if let Some((at, v)) = *self.cached.lock() {
-            if at.elapsed() < CACHE_TTL {
-                return v;
+    /// The sunspot number, and false when NOAA could not be reached and the
+    /// quiet-cycle fallback stands in. A failed fetch is tried again after
+    /// 15 minutes, not 12 hours.
+    pub async fn current(&self) -> (f64, bool) {
+        if let Some((at, v, live)) = *self.cached.lock() {
+            let ttl = if live { CACHE_TTL } else { RETRY_AFTER };
+            if at.elapsed() < ttl {
+                return (v, live);
             }
         }
-        let v = self.fetch().await.unwrap_or(FALLBACK_SSN);
-        *self.cached.lock() = Some((Instant::now(), v));
-        v
+        let (v, live) = match self.fetch().await {
+            Ok(v) => (v, true),
+            Err(e) => {
+                tracing::warn!("sunspot number: {e}; using {FALLBACK_SSN}");
+                (FALLBACK_SSN, false)
+            }
+        };
+        *self.cached.lock() = Some((Instant::now(), v, live));
+        (v, live)
     }
 
     async fn fetch(&self) -> Result<f64, String> {
         // Monthly observed indices; last row is the most recent complete month.
-        let url =
-            "https://services.swpc.noaa.gov/json/solar-cycle/observed-solar-cycle-indices.json";
         let text = self
             .client
-            .get(url)
+            .get(&self.url)
             .send()
             .await
             .map_err(|e| e.to_string())?

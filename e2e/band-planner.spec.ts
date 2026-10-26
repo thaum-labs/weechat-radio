@@ -28,6 +28,13 @@ declare global {
           strict: string;
           shown: string;
         } | null;
+        sky: {
+          hops: { n: number; approx: boolean; D: number };
+          takeoff: { deg: number; approx: boolean };
+          rings: { gw: number; skip: number; beyond: boolean } | null;
+          state: string;
+          greyline: [number, number][];
+        } | null;
       };
     };
   }
@@ -105,13 +112,50 @@ async function mockServices(page: Page, ground: (i: number, n: number) => number
       body.band && body.band !== "60m"
         ? { ...HF, band: body.band, frequency_mhz: "7.045", why: `${body.band} by hand.` }
         : undefined;
+    // Per band: the verdict at the hour and for every UTC hour, hops and
+    // take-off angle from the engine (#157).
+    const day = (open: number[], marginal: number[]) =>
+      Array.from({ length: 24 }, (_, h) => (open.includes(h) ? "open" : marginal.includes(h) ? "marginal" : "closed"));
+    const all = Array.from({ length: 24 }, (_, h) => h);
+    const hours = {
+      "80m": day(all.filter((h) => h < 7 || h > 17), all.filter((h) => h >= 7 && h <= 17)),
+      "40m": day(all, []),
+      "20m": day([], []),
+    };
+    const at = (b: keyof typeof hours) => hours[b][body.hour_utc];
     const bands = [
-      { band: "80m", ok: true, power_w: 20 },
-      { band: "40m", ok: true, power_w: 10 },
-      { band: "20m", ok: false, power_w: null },
+      { band: "80m", frequency_mhz: 3.58, ok: true, power_w: 20, state: at("80m"), hours: hours["80m"], hops: 1, takeoff_deg: 72, skips: false },
+      { band: "40m", frequency_mhz: 7.045, ok: true, power_w: 10, state: at("40m"), hours: hours["40m"], hops: 2, takeoff_deg: 9.5, skips: false },
+      { band: "20m", frequency_mhz: 14.07, ok: false, power_w: null, state: at("20m"), hours: hours["20m"], hops: 2, takeoff_deg: 9.5, skips: true },
     ];
-    await route.fulfill({ json: { ...card, band_card, bands, confidence: `hour ${body.hour_utc}` } });
+    // A short path (under about 300 km) gets a low MUF, so 40m skips it.
+    const short = Math.abs(body.tx_lat - body.rx_lat) + Math.abs(body.tx_lon - body.rx_lon) < 3;
+    const sky = short ? { muf_mhz: 6.0, muf_hops: 1, solar_live: true } : { muf_mhz: 11.2, muf_hops: 2, solar_live: true };
+    await route.fulfill({ json: { ...card, band_card, bands, sky, confidence: `hour ${body.hour_utc}` } });
   });
+  await page.route("http://127.0.0.1:7380/api/path/ionosonde?**", (route) =>
+    route.fulfill({
+      json: {
+        station: {
+          name: "Dourbes", code: "DB049", lat: 50.1, lon: 4.6, fof2_mhz: 3.4, mufd_mhz: 10.1, cs: 75,
+          time: new Date().toISOString(), distance_km: 512, age_min: 6,
+        },
+        fetched_at: new Date().toISOString(),
+        cached_for_s: 900,
+      },
+    }),
+  );
+  await page.route("https://prop.kc2g.com/**", (route) =>
+    route.fulfill({
+      json: {
+        type: "FeatureCollection",
+        features: [
+          { type: "Feature", properties: { "level-value": 14, stroke: "#ff9900" }, geometry: { type: "LineString", coordinates: [[-10, 45], [0, 46], [10, 47]] } },
+          { type: "Feature", properties: { "level-value": 10.1, stroke: "#3399ff" }, geometry: { type: "LineString", coordinates: [[-10, 55], [0, 56], [10, 57]] } },
+        ],
+      },
+    }),
+  );
   await page.route("http://127.0.0.1:7380/api/path/places?**", async (route) => {
     await new Promise((r) => setTimeout(r, 600));
     await route.fulfill({ json: { places: [{ label: "Edinburgh, GB", lat: 55.95, lon: -3.19, country: "GB" }] } });
@@ -150,7 +194,7 @@ test("Enter right after typing a place sets the other station", async ({ page })
   await expect(page.locator("#band-places")).toBeHidden();
 });
 
-test("a long sea path is beyond line of sight, explained, and drawn as a profile", async ({ page }) => {
+test("a long sea path is beyond line of sight, explained, and drawn as a sky view", async ({ page }) => {
   await mockServices(page, () => 0);
   await open(page);
   await page.evaluate(() => {
@@ -160,9 +204,9 @@ test("a long sea path is beyond line of sight, explained, and drawn as a profile
   await expect(page.locator("#los-note")).toHaveText("beyond line of sight for VHF and UHF");
   await expect(page.locator(".band-why")).toContainText("30m: open now");
   await expect(page.locator("#band-card")).not.toContainText("Terrain blocks");
-  await expect(page.locator("#band-profile svg .pf-curve")).toBeVisible();
-  await expect(page.locator("#band-profile svg .pf-line")).toHaveCount(1);
-  await expect(page.locator("#band-profile")).toContainText("4/3 earth");
+  // HF goes by the sky: the profile slot holds the side view (#157).
+  await expect(page.locator("#band-profile svg.pf-sky")).toBeVisible();
+  await expect(page.locator("#band-profile")).toContainText("not to scale");
 });
 
 test("a long path with land on it is still beyond line of sight, not terrain", async ({ page }) => {
@@ -189,7 +233,9 @@ test("a hill switches FM to HF; antenna height and power go to the service", asy
   await expect(page.locator("#los-note")).toHaveText("terrain blocks VHF and UHF");
   await expect(page.locator(".band-freq")).toContainText("3.580");
   await expect(page.locator(".band-why")).toContainText("Terrain blocks VHF and UHF.");
-  await expect(page.locator("#band-profile .pf-block")).toHaveCount(1);
+  // A blocked path switching to HF shows the sky view (#157).
+  await expect(page.locator(".band-map-stage")).toHaveClass(/is-sky/);
+  await expect(page.locator("#band-profile svg.pf-sky")).toBeVisible();
   await page.locator("#band-tx-ant").selectOption("20");
   await page.locator("#band-power").selectOption("5");
   await expect.poll(() => bodies.at(-1)).toMatchObject({ tx_antenna_m: 20, rx_antenna_m: 10, power_w: 5 });
@@ -733,4 +779,141 @@ test("use my location shows a spinner, ignores repeat clicks and names the error
   await expect(btn).toBeEnabled();
   await expect(page.locator("#band-hint")).toHaveText("Location permission denied");
   expect(await page.evaluate(() => (window as any).__geoCalls)).toBe(1);
+});
+
+// #157: HF sky view.
+const BATH_MADRID = "?tx=51.38,-2.36&rx=40.42,-3.70";
+
+test("an HF answer shows even when the elevation service fails", async ({ page }) => {
+  await mockServices(page, () => 100);
+  await page.route("https://api.open-meteo.com/**", (route) => route.abort());
+  await open(page, `${BATH_MADRID}&band=40m`);
+  await expect(page.locator(".band-freq")).toContainText("7.045");
+  await expect(page.locator("#band-card")).not.toContainText("Terrain lookup failed");
+  await expect(page.locator("#los-note")).toHaveText("terrain unavailable, VHF/UHF not judged", { timeout: 15_000 });
+  await expect(page.locator(".band-freq")).toContainText("7.045");
+  // Recommended HF too, with no band picked.
+  await open(page, BATH_MADRID);
+  await expect(page.locator(".band-freq")).toContainText("10.140");
+  await expect(page.locator("#los-note")).toHaveText("terrain unavailable, VHF/UHF not judged", { timeout: 15_000 });
+  await expect(page.locator(".band-err")).toHaveCount(0);
+});
+
+test("the sky view draws hops, a side view and a 24 hour strip, and goes for VHF", async ({ page }) => {
+  await mockServices(page, () => 100);
+  await open(page, `${BATH_MADRID}&band=40m`);
+  await expect(page.locator(".band-map-stage")).toHaveClass(/is-sky/);
+  // 2 hops from the engine: no "approx." on the hop count.
+  await expect(page.locator("#band-hop-chip")).toHaveText("2 hops · ~610 km each");
+  await expect(page.locator(".sky-line")).toContainText("2 hops · ~610 km each · take-off 10° · MUF on path 11.2 MHz");
+  await expect(page.locator("#band-profile svg.pf-sky")).toContainText("take-off 10°");
+  await expect(page.locator("#band-profile svg.pf-sky")).toContainText("not to scale");
+  // 20m is above the MUF: dimmed, red, "skips", and drawn going through.
+  const c20 = page.locator('.band-works-pick[data-band="20m"]');
+  await expect(c20).toHaveClass(/is-closed/);
+  await expect(c20).toContainText("skips");
+  await expect(c20.locator(".sky-dot")).toHaveClass(/sky-closed/);
+  await expect(page.locator("#band-profile .sky-punch")).toHaveCount(1);
+  // Strip: 24 cells from now, the planned hour outlined, same verdict as the chip.
+  const cells = page.locator(".sky-cell");
+  await expect(cells).toHaveCount(24);
+  await expect(page.locator(".sky-cell.is-sel")).toHaveAttribute("data-off", "0");
+  await page.locator("#band-hour").fill("5");
+  await expect(page.locator(".sky-cell.is-sel")).toHaveAttribute("data-off", "5");
+  const hour = (new Date().getUTCHours() + 5) % 24;
+  const want = hour < 7 || hour > 17 ? "open" : "marginal";
+  await expect(page.locator('.band-works-pick[data-band="80m"] .sky-dot')).toHaveClass(new RegExp(`sky-${want}`));
+  await expect(cells.nth(5)).toHaveClass(/sky-open/);
+  // A click on a cell sets the slider.
+  await cells.nth(9).click();
+  await expect(page.locator("#band-hour")).toHaveValue("9");
+  await expect(page.locator("#band-hour-label")).toContainText("+9 h");
+  // The tag colour comes from the band's verdict.
+  await expect(page.locator(".band-conf")).toHaveClass(/band-conf-ok/);
+  // 2m: back to the terrain key and profile, no sky pieces.
+  await page.locator("#band-override").selectOption("2m");
+  await expect(page.locator(".band-map-stage")).not.toHaveClass(/is-sky/);
+  await expect(page.locator("#band-profile svg.pf-sky")).toHaveCount(0);
+  await expect(page.locator(".sky-strip")).toHaveCount(0);
+  await expect(page.locator(".sky-dot")).toHaveCount(0);
+});
+
+test("a short HF path shows NVIS, the ground wave and the skip zone", async ({ page }) => {
+  await mockServices(page, () => 100);
+  // Frome to Plymouth, 80m: 72° take-off from the engine.
+  await open(page, "?tx=51.2286,-2.3206&rx=50.3755,-4.1427&band=80m");
+  await expect(page.locator(".sky-nvis")).toContainText("no skip zone");
+  await expect(page.locator(".sky-skip")).toHaveCount(0);
+  // 40m is above the foF2 the 6 MHz MUF implies, so it has a skip zone.
+  await page.locator("#band-override").selectOption("40m");
+  await expect(page.locator(".sky-skip")).toContainText("40m skip zone ≈ 30–");
+  const rings = await page.evaluate(() => window.__WCR_BAND.state().sky!.rings);
+  expect(rings!.gw).toBe(30);
+  expect(rings!.skip).toBeGreaterThan(159);
+});
+
+test("the greyline is the sunrise and sunset line at the planned hour", async ({ page }) => {
+  await mockServices(page, () => 100);
+  await open(page, `${BATH_MADRID}&band=40m`);
+  await expect(page.locator(".band-map-stage")).toHaveClass(/is-sky/);
+  for (const off of ["0", "6", "13"]) {
+    await page.locator("#band-hour").fill(off);
+    const line = await page.evaluate(() => window.__WCR_BAND.state().sky!.greyline);
+    // Independent check: every point is 90° from the subsolar point.
+    const t = new Date(Date.now() + Number(off) * 3600000);
+    const n = t.getTime() / 86400000 + 2440587.5 - 2451545.0;
+    const rad = Math.PI / 180;
+    const g = (357.529 + 0.98560028 * n) * rad;
+    const q = 280.459 + 0.98564736 * n;
+    const L = (q + 1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g)) * rad;
+    const e = (23.439 - 0.00000036 * n) * rad;
+    const decl = Math.asin(Math.sin(e) * Math.sin(L));
+    const ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L)) / rad;
+    const gmst = (18.697374558 + 24.06570982441908 * n) * 15;
+    const subLon = ((((ra - gmst) % 360) + 540) % 360) - 180;
+    for (const [lon, lat] of line.filter((_, i) => i % 30 === 0)) {
+      const d = Math.acos(
+        Math.sin(lat * rad) * Math.sin(decl) + Math.cos(lat * rad) * Math.cos(decl) * Math.cos((lon - subLon) * rad)
+      ) / rad;
+      expect(Math.abs(d - 90)).toBeLessThan(0.5);
+    }
+  }
+});
+
+test("live data: KC2G contours with muf=1 and the nearest ionosonde, with credits", async ({ page }) => {
+  await mockServices(page, () => 100);
+  await open(page, `${BATH_MADRID}&band=40m&muf=1`);
+  await expect(page.locator("#map-muf")).toBeChecked();
+  await expect(page.locator(".band-muf-label").first()).toHaveText("14 MHz");
+  await expect(page.locator("#band-live")).toContainText(
+    "live check: Dourbes, 512 km from the path midpoint, 6 min ago: foF2 3.4, MUF(3000) 10.1 MHz"
+  );
+  await expect(page.locator("#band-credit")).toHaveText("MUF(3000) map: prop.kc2g.com (KC2G) · ionosonde data: Lowell GIRO");
+  await expect(page.locator("#band-live-note")).toBeHidden();
+  await page.locator("#map-muf").uncheck();
+  await expect(page).not.toHaveURL(/muf=/);
+  await expect(page.locator(".band-muf-label")).toHaveCount(0);
+});
+
+test("when live data fails it hides with one note, and the card still shows", async ({ page }) => {
+  await mockServices(page, () => 100);
+  await page.route("https://prop.kc2g.com/**", (route) => route.abort());
+  await page.route("http://127.0.0.1:7380/api/path/ionosonde?**", (route) => route.fulfill({ status: 502, body: "down" }));
+  await open(page, `${BATH_MADRID}&band=40m&muf=1`);
+  await expect(page.locator(".band-freq")).toContainText("7.045");
+  await expect(page.locator("#band-live-note")).toHaveText("Live ionosphere data unavailable right now.");
+  await expect(page.locator("#band-live")).toBeHidden();
+  await expect(page.locator("#band-credit")).toBeHidden();
+  await expect(page.locator(".band-muf-label")).toHaveCount(0);
+});
+
+test("on a phone the sky view fits with no sideways scroll", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockServices(page, () => 100);
+  await open(page, `${BATH_MADRID}&band=40m&muf=1`);
+  await expect(page.locator(".sky-cell")).toHaveCount(24);
+  await expect(page.locator("#band-profile svg.pf-sky")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  const svgW = await page.locator("#band-profile svg.pf-sky").evaluate((e) => e.getBoundingClientRect().width);
+  expect(svgW).toBeLessThanOrEqual(390);
 });

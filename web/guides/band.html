@@ -12,7 +12,7 @@
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" />
-  <link rel="stylesheet" href="/styles.css?v=50" />
+  <link rel="stylesheet" href="/styles.css?v=51" />
 </head>
 <body class="page-map page-band">
   <div id="scan"></div>
@@ -42,6 +42,10 @@
           <label class="map-night">
             <input type="checkbox" id="map-night" checked />
             night
+          </label>
+          <label class="map-night map-muf" title="Live MUF(3000) map from prop.kc2g.com">
+            <input type="checkbox" id="map-muf" />
+            MUF map
           </label>
           <label class="map-style">
             <select id="map-style" aria-label="Map type">
@@ -160,6 +164,15 @@
           <span><i class="los-block"></i>blocked</span>
           <span class="band-los-note" id="los-note">terrain along the path</span>
         </div>
+        <div class="band-sky-key">
+          <span><i class="sky-open"></i>open</span>
+          <span><i class="sky-marginal"></i>marginal</span>
+          <span><i class="sky-closed"></i>closed</span>
+          <span><i class="sky-grey"></i>night · greyline</span>
+          <span class="band-hop-chip" id="band-hop-chip"></span>
+        </div>
+        <p class="band-credit" id="band-credit" hidden></p>
+        <p class="band-live-note" id="band-live-note" hidden></p>
       </div>
       <div id="band-profile" class="band-profile" hidden></div>
     </article>
@@ -171,6 +184,6 @@
   <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=11"></script>
-  <script src="/guides/band.js?v=25"></script>
+  <script src="/guides/band.js?v=26"></script>
 </body>
 </html>
