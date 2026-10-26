@@ -2,7 +2,7 @@
 //! Pick one calling card from distance and VOACAP cells.
 
 use crate::geo::Region;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Digital chat threshold (dB-Hz), between VOACAP CW (19) and SSB voice (38).
 pub const REQ_SNR_DIGITAL: f64 = 27.0;
@@ -18,6 +18,76 @@ pub const POWER_STEPS: [u32; 5] = [5, 10, 20, 50, 100];
 /// `rx_m` high (4/3 earth radius). 10 m at both ends gives about 26 km.
 pub fn radio_horizon_km(tx_m: f64, rx_m: f64) -> f64 {
     4.12 * (tx_m.max(0.0).sqrt() + rx_m.max(0.0).sqrt())
+}
+
+/// HF antenna at the user's end, picked on the page. The prediction assumes
+/// a simple wire (a dipole); each type is a rough dB gain against that, and
+/// short or small antennas lose more below 7 MHz (80m and 160m).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HfAntenna {
+    #[default]
+    Dipole,
+    /// End-fed half-wave.
+    Efhw,
+    /// End-fed random or long wire on a 9:1 unun, often 10-20 m long.
+    Endfed,
+    Vertical,
+    /// Small magnetic loop.
+    Loop,
+    /// Yagi or other beam, usually 20m and up.
+    Beam,
+    /// Mobile whip or manpack.
+    Whip,
+}
+
+impl HfAntenna {
+    pub fn gain_db(self, mhz: f64) -> f64 {
+        let low = mhz < 7.0;
+        match self {
+            HfAntenna::Dipole => 0.0,
+            HfAntenna::Efhw => -1.0,
+            HfAntenna::Endfed if low => -10.0,
+            HfAntenna::Endfed => -4.0,
+            HfAntenna::Vertical if low => -4.0,
+            HfAntenna::Vertical => -2.0,
+            HfAntenna::Loop if low => -12.0,
+            HfAntenna::Loop => -6.0,
+            HfAntenna::Beam if mhz >= 14.0 => 6.0,
+            HfAntenna::Beam => 0.0,
+            HfAntenna::Whip if low => -20.0,
+            HfAntenna::Whip => -12.0,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            HfAntenna::Dipole => "Dipole",
+            HfAntenna::Efhw => "End-fed half-wave",
+            HfAntenna::Endfed => "End-fed wire",
+            HfAntenna::Vertical => "Vertical",
+            HfAntenna::Loop => "Magnetic loop",
+            HfAntenna::Beam => "Beam",
+            HfAntenna::Whip => "Mobile whip",
+        }
+    }
+
+    /// Apply this antenna to the predicted cells and say so in the footnote.
+    pub fn apply(self, cells: &mut [Cell]) {
+        for c in cells {
+            c.snr += self.gain_db(c.freq_mhz);
+        }
+    }
+
+    pub fn footnote(self, card: &mut Card) {
+        if self != HfAntenna::Dipole {
+            card.footnote = card.footnote.replacen(
+                "Simple wire antenna at each end",
+                &format!("{} at your end, simple wire at the other", self.label()),
+                1,
+            );
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -552,6 +622,28 @@ mod tests {
         assert!(try_close_fm(Region::UkEu, Region::UkEu, 8.0, 1.5, 1.5).is_some());
         let c = try_close_fm(Region::UkEu, Region::UkEu, 8.0, 1.5, 1.5).unwrap();
         assert!(c.why.contains("1.5 m antennas"), "{}", c.why);
+    }
+
+    #[test]
+    fn a_weaker_antenna_needs_more_power() {
+        // 30m needs 20 W with a dipole; an end-fed wire (-4 dB) needs 50 W
+        // and a mobile whip (-12 dB) needs more than that.
+        let base = vec![cell(12, 10.14, REQ_SNR_DIGITAL + 7.5)];
+        let mut endfed = base.clone();
+        HfAntenna::Endfed.apply(&mut endfed);
+        let mut whip = base.clone();
+        HfAntenna::Whip.apply(&mut whip);
+        assert_eq!(pick_hf(&base, 12, true, 1000.0, 100).power_w, Some(20));
+        assert_eq!(pick_hf(&endfed, 12, true, 1000.0, 100).power_w, Some(50));
+        assert!(pick_hf(&whip, 12, true, 1000.0, 100).power_w.unwrap_or(999) > 50);
+        let mut card = pick_hf(&endfed, 12, true, 1000.0, 100);
+        HfAntenna::Endfed.footnote(&mut card);
+        assert!(
+            card.footnote.starts_with("End-fed wire at your end"),
+            "{}",
+            card.footnote
+        );
+        assert!(HfAntenna::Endfed.gain_db(3.58) < HfAntenna::Endfed.gain_db(7.045));
     }
 
     #[test]
