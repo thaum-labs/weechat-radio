@@ -11,7 +11,9 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use choose::{hf_freqs_mhz, pick_hf, try_close_fm, Card, DEFAULT_ANTENNA_M, POWER_STEPS};
+use choose::{
+    hf_freqs_mhz, pick_hf, try_close_fm, Card, HfAntenna, DEFAULT_ANTENNA_M, POWER_STEPS,
+};
 use chrono::{Datelike, Timelike, Utc};
 use forecast::Forecast;
 use geo::{distance_km, Region};
@@ -51,6 +53,9 @@ struct PathBody {
     tx_antenna_m: Option<f64>,
     #[serde(default)]
     rx_antenna_m: Option<f64>,
+    /// HF antenna at the user's end. Missing means a dipole.
+    #[serde(default)]
+    hf_antenna: HfAntenna,
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,7 +160,18 @@ async fn path_handler(
     let tx_r = Region::from_country(&tx_place.country);
     let rx_r = Region::from_country(&rx_place.country);
 
-    let hf = hf_card(&app, tx, rx, tx_r, rx_r, dist, body.hour_utc, max_w).await?;
+    let hf = hf_card(
+        &app,
+        tx,
+        rx,
+        tx_r,
+        rx_r,
+        dist,
+        body.hour_utc,
+        max_w,
+        body.hf_antenna,
+    )
+    .await?;
     if let Some(fm) = try_close_fm(tx_r, rx_r, dist, tx_m, rx_m) {
         return Ok(Json(Answer {
             card: fm,
@@ -184,6 +200,7 @@ async fn hf_card(
     dist: f64,
     hour_utc: Option<u8>,
     max_w: u32,
+    antenna: HfAntenna,
 ) -> Result<Card, (StatusCode, String)> {
     let now = Utc::now();
     let this_hour = now.hour() as u8;
@@ -193,11 +210,14 @@ async fn hf_card(
     let forecast = app.forecast.clone();
     let year = now.year();
     let month = now.month();
-    let cells =
+    let mut cells =
         tokio::task::spawn_blocking(move || forecast.predict(tx, rx, &freqs, ssn, year, month))
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
             .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
 
-    Ok(pick_hf(&cells, hour, hour == this_hour, dist, max_w))
+    antenna.apply(&mut cells);
+    let mut card = pick_hf(&cells, hour, hour == this_hour, dist, max_w);
+    antenna.footnote(&mut card);
+    Ok(card)
 }

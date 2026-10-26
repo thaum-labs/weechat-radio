@@ -133,6 +133,12 @@
     const other = sel.value === "other";
     sel.parentElement.querySelectorAll("input, i").forEach((el) => (el.hidden = !other));
   }
+  // HF antenna at your end; the far end is taken as a simple wire.
+  const hfAntEls = [...document.querySelectorAll('input[name="band-hfant"]')];
+  function hfAntenna() {
+    const hit = hfAntEls.find((el) => el.checked);
+    return hit ? hit.value : "dipole";
+  }
   function powerW() {
     const v = powerEl ? Number(powerEl.value) : 100;
     return Number.isFinite(v) && v > 0 ? v : 100;
@@ -647,6 +653,7 @@
           power_w: powerW(),
           tx_antenna_m: txAntM(),
           rx_antenna_m: rxAntM(),
+          hf_antenna: hfAntenna(),
         }),
         signal,
       });
@@ -896,7 +903,7 @@
     } catch (_) {}
   });
 
-  // Shareable link: ?tx=lat,lon&rx=lat,lon, plus txant=, rxant= and w= when
+  // Shareable link: ?tx=lat,lon&rx=lat,lon, plus txant=, rxant=, hfant= and w= when
   // not the defaults. An old ant= sets both ends. Other query keys (e.g.
   // api=) are kept.
   function fmtLL(p) {
@@ -916,6 +923,7 @@
     set("ant", null);
     set("txant", txAntM() !== 10 ? String(txAntM()) : null);
     set("rxant", rxAntM() !== 10 ? String(rxAntM()) : null);
+    set("hfant", hfAntenna() !== "dipole" ? hfAntenna() : null);
     set("w", powerW() !== 100 ? String(powerW()) : null);
     const qs = q.toString().replace(/%2C/g, ",");
     try {
@@ -933,6 +941,8 @@
     setAntenna(txAntEl, Number(q.get("txant") || both));
     setAntenna(rxAntEl, Number(q.get("rxant") || both));
     pickOption(powerEl, q.get("w"));
+    const hf = hfAntEls.find((el) => el.value === q.get("hfant"));
+    if (hf) hf.checked = true;
     const t = parseLL(q.get("tx"));
     const r = parseLL(q.get("rx"));
     if (t) setTx(t);
@@ -971,6 +981,7 @@
     });
   }
   if (powerEl) powerEl.addEventListener("change", () => requestCard({ refit: false }));
+  for (const el of hfAntEls) el.addEventListener("change", () => requestCard({ refit: false }));
   window.addEventListener("resize", () => drawProfile());
   // Keep "now" honest as the clock rolls over an hour.
   setInterval(showHourLabel, 60000);
