@@ -20,6 +20,8 @@ const PAGES = [
   "/docs/scenarios.html",
   "/docs/try.html",
   "/docs/weak.html",
+  "/guides/antennas-hf.html",
+  "/guides/antennas-vhf.html",
   "/guides/handheld.html",
   "/guides/hf.html",
   "/guides/linux.html",
