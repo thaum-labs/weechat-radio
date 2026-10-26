@@ -404,6 +404,8 @@ test("a band picked by hand rates the path at that band, shows a banner, and rev
     window.__WCR_BAND.setRxLngLat(6.25, 46.1);
   });
   await expect(page.locator(".band-freq")).toContainText("144.950");
+  // The recommended band carries its licence note too.
+  await expect(page.locator(".band-override-info")).toHaveText("⚠ 2m needs an amateur licence.");
   await page.locator("#band-override").selectOption("pmr446");
   await expect(page.locator(".band-override-banner")).toContainText("PMR446 · recommended: 2m");
   await expect(page.locator(".band-override-info")).toContainText("0.5 W");
