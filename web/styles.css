@@ -1315,6 +1315,55 @@ details.maplibregl-ctrl-attrib:not([open]) {
   white-space: nowrap;
 }
 .band-locate:hover { color: var(--orange); }
+.band-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--dim);
+}
+.band-opts label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.band-opts select {
+  background: #050508;
+  border: 1px solid var(--line);
+  color: var(--fg);
+  font: 12px/1.4 var(--font-mono);
+  padding: 4px 6px;
+}
+.band-time { flex: 1 1 240px; min-width: 0; }
+.band-time input { flex: 1; min-width: 80px; accent-color: var(--accent); }
+.band-time b {
+  font-weight: 400;
+  color: var(--orange);
+  min-width: 9.5em;
+  white-space: nowrap;
+}
+.band-places .band-onair-hit span {
+  float: right;
+  color: #39ff14;
+  font-size: 11px;
+}
+.band-places button:disabled { color: var(--dim); cursor: default; }
+.band-profile {
+  flex: none;
+  margin: 6px 0 8px;
+  border: 1px solid var(--line);
+  background: #050508;
+}
+.band-profile svg { display: block; width: 100%; height: 104px; }
+.band-profile text { fill: var(--dim); font: 10px var(--font-mono); }
+.band-profile .pf-ground { fill: rgba(125, 155, 255, 0.28); stroke: #7d9bff; stroke-width: 1; }
+.band-profile .pf-curve { fill: none; stroke: var(--purple); stroke-width: 1; stroke-dasharray: 3 3; }
+.band-profile .pf-block { fill: none; stroke: #ff3b6b; stroke-width: 2.5; }
+.band-profile .pf-line { stroke: #39ff14; stroke-width: 1.5; }
+.band-profile .pf-key-line { fill: #39ff14; }
+.band-profile .pf-key-curve { fill: var(--purple); }
 .band-result {
   flex: none;
   border-top: 1px solid var(--line);
@@ -1385,6 +1434,12 @@ details.maplibregl-ctrl-attrib:not([open]) {
   color: var(--dim);
 }
 .band-voice { color: var(--purple); }
+.band-why {
+  margin: 0 0 4px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--fg);
+}
 .band-err { color: var(--warn); font-size: 15px; margin: 0; }
 .band-cmds {
   display: flex;
