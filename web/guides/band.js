@@ -191,7 +191,7 @@
     "2m": { label: "2m", mhz: 145.5, info: "2m needs an amateur licence." },
     "70cm": { label: "70cm", mhz: 433.5, info: "70cm needs an amateur licence." },
     cb: { label: "CB", freq: "27.185", mhz: 27.185, maxW: 4, info: "CB in the UK: 4 W FM on the 27/81 and CEPT channels. Channel 19 shown." },
-    pmr446: { label: "PMR446", freq: "446.00625", mhz: 446.00625, maxW: 0.5, info: "PMR446 in the UK and EU: 0.5 W, built-in antenna, no licence. Channel 1 shown." },
+    pmr446: { label: "PMR446", freq: "446.00625", mhz: 446.00625, maxW: 0.5, info: "PMR446 in the UK and EU: 0.5 W, built-in antenna, no licence. Channel 1 shown.", mobileNote: "UK PMR446 radios must use their built-in antenna; an external roof antenna isn't licence-free." },
     murs: { label: "MURS", freq: "151.820", mhz: 151.82, maxW: 2, info: "MURS is US only: 2 W, no licence. Channel 1 shown." },
     "80m": { label: "80m", mhz: 3.58, hf: true },
     "60m": { label: "60m", mhz: 5.357, hf: true },
@@ -794,13 +794,49 @@
     requestCard();
   }
 
-  function fitPins() {
+  // Fit the map to the path: both pins, the track and the bowed arc, centred
+  // on the midpoint. The padding is worked out per side from the map's real
+  // size, so a short map (the result card takes most of the height) still
+  // shows the whole path. Until the user pans or zooms, a later size change
+  // (the card appearing) fits again.
+  const FIT_MARGIN = 16;
+  const PIN_HALF_W = 14; // 28 px pin
+  const PIN_HALF_H = 28; // 26 px pin plus the TX/RX label under it
+  const ARC_PEAK = 45; // strokePinLink bows at most 90 / 2 px off the chord
+  let autoFit = false;
+
+  function fitPins(opts) {
     if (!tx || !rx) return;
+    const host = map.getContainer();
+    const w = host.clientWidth;
+    const h = host.clientHeight;
+    if (!w || !h) return;
     const b = new maplibregl.LngLatBounds();
     b.extend([tx.lon, tx.lat]);
     b.extend([rx.lon, rx.lat]);
-    map.fitBounds(b, { padding: 80, maxZoom: 8, duration: reduceMotion ? 0 : 600 });
+    if (terrain && terrain.samples) terrain.samples.forEach((s) => b.extend([s.lon, s.lat]));
+    // The arc bows sideways from the chord, so an east-west path needs room
+    // above and below, a north-south one left and right.
+    const s1 = map.project([tx.lon, tx.lat]);
+    const s2 = map.project([rx.lon, rx.lat]);
+    const dist = Math.hypot(s2.x - s1.x, s2.y - s1.y) || 1;
+    const bowX = (ARC_PEAK * Math.abs(s2.y - s1.y)) / dist;
+    const bowY = (ARC_PEAK * Math.abs(s2.x - s1.x)) / dist;
+    const padX = Math.min(w * 0.4, FIT_MARGIN + Math.max(PIN_HALF_W, bowX));
+    const padY = Math.min(h * 0.4, FIT_MARGIN + Math.max(PIN_HALF_H, bowY));
+    autoFit = true;
+    map.fitBounds(b, {
+      padding: { top: padY, bottom: padY, left: padX, right: padX },
+      maxZoom: 14,
+      duration: reduceMotion || (opts && opts.instant) ? 0 : 600,
+    });
   }
+  map.on("movestart", (e) => {
+    if (e.originalEvent) autoFit = false;
+  });
+  map.on("resize", () => {
+    if (autoFit) fitPins({ instant: true });
+  });
 
   async function requestCard(opts) {
     if (!tx || !rx) return;
@@ -1073,7 +1109,11 @@
         card.note = `${PLENTY_NOTE} SSB stays off.`;
       }
     }
-    renderCard(card, o ? { label: o.label, info: o.info, rec: rec.band } : null);
+    // Mobile stays allowed on PMR446 with its roof-whip gain; it only gets a
+    // short note (Tobias, #150).
+    const mobile = txAntEl.value === "mobile" || rxAntEl.value === "mobile";
+    const antNote = o && o.mobileNote && mobile ? o.mobileNote : "";
+    renderCard(card, o ? { label: o.label, info: o.info, antNote, rec: rec.band } : null);
     setHint("OK", card.confidence || "Ready");
   }
 
@@ -1238,6 +1278,7 @@
             ${copyButton(c.qsy)}
             ${copyButton(c.preset_cmd)}
             ${manual && manual.info ? `<p class="band-override-info">⚠ ${escapeHtml(manual.info)}</p>` : ""}
+            ${manual && manual.antNote ? `<p class="band-override-info band-ant-note">ⓘ ${escapeHtml(manual.antNote)}</p>` : ""}
           </div>
         </div>
         ${foot || plan ? `<p class="band-foot"><span>${escapeHtml(foot)}</span>${plan}</p>` : ""}
@@ -1646,6 +1687,21 @@
       override: overrideKey(),
     }),
     zoomTo: (z) => map.jumpTo({ zoom: z }),
+    // Where the pins and the arc's peak sit on the map, in px (fit checks).
+    fitBox: () => {
+      const host = map.getContainer();
+      const pins = [tx, rx].filter(Boolean).map((p) => map.project([p.lon, p.lat]));
+      let arc = null;
+      if (pins.length === 2) {
+        const [s1, s2] = pins;
+        const dist = Math.hypot(s2.x - s1.x, s2.y - s1.y) || 1;
+        const bulge = Math.min(90, Math.max(48, dist * 0.22));
+        const cx = (s1.x + s2.x) / 2 + ((s2.y - s1.y) / dist) * bulge;
+        const cy = (s1.y + s2.y) / 2 - ((s2.x - s1.x) / dist) * bulge;
+        arc = { x: (s1.x + s2.x) / 4 + cx / 2, y: (s1.y + s2.y) / 4 + cy / 2 };
+      }
+      return { w: host.clientWidth, h: host.clientHeight, pins: pins.map((p) => ({ x: p.x, y: p.y })), arc };
+    },
     // How far each pin's centre sits from its point on the map, in px.
     pinOffsets: () =>
       [txMarker, rxMarker].filter(Boolean).map((m) => {

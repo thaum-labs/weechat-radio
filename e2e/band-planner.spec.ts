@@ -13,6 +13,7 @@ declare global {
       setRxLngLat(lon: number, lat: number): void;
       zoomTo(z: number): void;
       pinOffsets(): number[];
+      fitBox(): { w: number; h: number; pins: { x: number; y: number }[]; arc: { x: number; y: number } | null };
       state(): {
         tx: { lat: number; lon: number } | null;
         rx: { lat: number; lon: number } | null;
@@ -489,6 +490,72 @@ test("the list of bands that work is the same whichever band is picked", async (
   await page.locator("#band-override").selectOption("pmr446");
   await expect(page.locator(".band-stats")).toContainText("0.5 W");
   await expect(page.locator(".band-why")).toContainText("at 0.5 W");
+});
+
+// #146/#150: after RX is set (or a link opens) the map shows both pins and
+// the whole arc with a margin, centred on the middle of the path, even when
+// the result card leaves the map short. The map never drops under 240 px.
+for (const size of [
+  { width: 1280, height: 800 },
+  { width: 390, height: 844 },
+  { width: 1920, height: 1080 },
+  { width: 1024, height: 600 },
+]) {
+  test(`the map fits the whole path at ${size.width}×${size.height}`, async ({ page }) => {
+    await page.setViewportSize(size);
+    await mockServices(page, () => 100);
+    const paths = {
+      "Frome to Bath": "?tx=51.2247,-2.3124&rx=51.3734,-2.3257",
+      "London to Manchester": "?tx=51.5074,-0.1278&rx=53.4808,-2.2426",
+      "London to New York": "?tx=51.5074,-0.1278&rx=40.7128,-74.0060",
+      "1 km PMR": "?tx=51.2247,-2.3124&rx=51.2337,-2.3124",
+      "east to west": "?tx=51.30,-2.10&rx=51.30,-2.60",
+    };
+    const runs: [string, string, [number, number] | null][] = Object.entries(paths).map(([n, q]) => [n, q, null]);
+    // Same paths with RX set the way a click sets it, after TX only.
+    runs.push(["Frome to Bath by click", "?tx=51.2247,-2.3124", [-2.3257, 51.3734]]);
+    runs.push(["London to Manchester by click", "?tx=51.5074,-0.1278", [-2.2426, 53.4808]]);
+    for (const [name, query, click] of runs) {
+      await open(page, query);
+      if (click) await page.evaluate(([lon, lat]) => window.__WCR_BAND.setRxLngLat(lon, lat), click);
+      await expect(page.locator(".band-freq")).toBeVisible();
+      await expect
+        .poll(async () => {
+          const f = await page.evaluate(() => window.__WCR_BAND.fitBox());
+          if (f.h < 238) return `map only ${f.h} px tall`;
+          const m = 16;
+          const inside = (p: { x: number; y: number }, dx: number, dy: number) =>
+            p.x - dx >= m - 1 && p.x + dx <= f.w - m + 1 && p.y - dy >= m - 1 && p.y + dy <= f.h - m + 1;
+          const [a, b] = f.pins;
+          const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+          const centred = Math.abs(mid.x - f.w / 2) <= f.w * 0.1 && Math.abs(mid.y - f.h / 2) <= f.h * 0.1;
+          // Zoomed in to the path, not a whole-region view. London to New
+          // York also has to fit its great-circle track, which bows north.
+          const filled =
+            name.startsWith("London to New York") ||
+            Math.max(Math.abs(a.x - b.x) / f.w, Math.abs(a.y - b.y) / f.h) >= 0.4;
+          return `${f.pins.every((p) => inside(p, 14, 13)) && inside(f.arc!, 0, 0) && centred && filled}`;
+        }, { message: name })
+        .toBe("true");
+    }
+  });
+}
+
+// #150: Mobile stays allowed on PMR446 with its gain, plus a short note.
+test("PMR446 with a mobile antenna keeps the gain and shows a short note", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockServices(page, () => 0);
+  await open(page, "?tx=46.2,6.14&rx=46.2,6.192&band=pmr446");
+  await expect(page.locator(".band-freq")).toBeVisible();
+  await expect(page.locator(".band-ant-note")).toHaveCount(0);
+  await page.locator("#band-tx-ant").selectOption("mobile");
+  const note = page.locator(".band-ant-note");
+  await expect(note).toContainText("built-in antenna; an external roof antenna isn't licence-free");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  const box = await note.boundingBox();
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  await page.locator("#band-override").selectOption("cb");
+  await expect(page.locator(".band-ant-note")).toHaveCount(0);
 });
 
 test("both pins stay on their points when zooming", async ({ page }) => {
