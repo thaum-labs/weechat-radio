@@ -220,6 +220,32 @@ test("an old ant= link sets both ends", async ({ page }) => {
   await expect.poll(() => bodies.at(-1)).toMatchObject({ tx_antenna_m: 6, rx_antenna_m: 6 });
 });
 
+test("the mobile preset is a 1.8 m roof whip with more gain than a handheld, per end and in links", async ({ page }) => {
+  const bodies = await mockServices(page, () => 100);
+  const spare = async () => {
+    const t = await page.locator(".band-why").innerText();
+    const m = t.match(/about (\d+) dB (to spare|short)/);
+    return m ? (m[2] === "short" ? -Number(m[1]) : Number(m[1])) : NaN;
+  };
+  await open(page, "?tx=46.2,6.14&rx=46.1,6.25&txant=1.5&rxant=1.5&w=20");
+  await expect(page.locator(".band-why")).toContainText("dB");
+  const handheld = await spare();
+  await page.locator("#band-tx-ant").selectOption("mobile");
+  await expect.poll(() => bodies.at(-1)).toMatchObject({ tx_antenna_m: 1.8, rx_antenna_m: 1.5 });
+  await expect(page).toHaveURL(/txant=mobile/);
+  await expect(page.locator("#band-tx-ant-m")).toBeHidden();
+  await page.locator("#band-rx-ant").selectOption("mobile");
+  await expect(page).toHaveURL(/rxant=mobile/);
+  await expect.poll(() => page.evaluate(() => window.__WCR_BAND.state().terrain)).toMatchObject({ y0: 101.8, y1: 101.8 });
+  // 2 dBi each end instead of -5 dBi, plus a little height: about 17 dB more.
+  await expect.poll(spare).toBeGreaterThanOrEqual(handheld + 15);
+  // The link opens with both ends on mobile.
+  await open(page, "?tx=46.2,6.14&rx=46.1,6.25&txant=mobile&rxant=mobile");
+  await expect(page.locator("#band-tx-ant")).toHaveValue("mobile");
+  await expect(page.locator("#band-rx-ant")).toHaveValue("mobile");
+  await expect.poll(() => bodies.at(-1)).toMatchObject({ tx_antenna_m: 1.8, rx_antenna_m: 1.8 });
+});
+
 test("a near miss is marginal, stays on FM, and is drawn yellow", async ({ page }) => {
   // A ridge 15 m above the radio line in the middle of a 16 km path: well
   // inside 0.6 of the 2m Fresnel zone (about 90 m there), so not blocked.
