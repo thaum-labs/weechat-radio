@@ -364,6 +364,7 @@
   const K_EARTH_KM = 6371 * (4 / 3);
   let terrain = null;
   let elevation = null;
+  let terrainFailed = false;
 
   function distKm(a, b) {
     const R = 6371;
@@ -406,8 +407,38 @@
   const SAMPLE_KM = 0.2;
   const MAX_SAMPLES = 1000;
   const PER_CALL = 100;
+  // Open-Meteo answers 429 when it is busy. Each call is tried again after
+  // 1, 2 and 4 s; if it still fails the lookup throws, so the page says so
+  // instead of answering as if there were no hills.
+  const ELEV_RETRY_MS = [1000, 2000, 4000];
 
-  async function fetchElevation(a, b, signal) {
+  function wait(ms, signal) {
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(resolve, ms);
+      signal.addEventListener("abort", () => {
+        clearTimeout(t);
+        reject(new DOMException("aborted", "AbortError"));
+      }, { once: true });
+    });
+  }
+
+  async function fetchElevationPart(url, signal, onRetry) {
+    for (let attempt = 0; ; attempt++) {
+      let res = null;
+      try {
+        res = await fetch(url, { signal });
+      } catch (e) {
+        if (e.name === "AbortError") throw e;
+      }
+      if (res && res.ok) return res.json();
+      const busy = !res || res.status === 429 || res.status >= 500;
+      if (!busy || attempt >= ELEV_RETRY_MS.length) throw new Error("terrain lookup failed");
+      onRetry();
+      await wait(ELEV_RETRY_MS[attempt], signal);
+    }
+  }
+
+  async function fetchElevation(a, b, signal, onRetry) {
     const total = distKm(a, b);
     const n = Math.min(MAX_SAMPLES - 1, Math.max(8, Math.ceil(total / SAMPLE_KM)));
     const pts = [];
@@ -421,9 +452,7 @@
           part.map((p) => p.lat.toFixed(5)).join(",") +
           "&longitude=" +
           part.map((p) => p.lon.toFixed(5)).join(",");
-        const res = await fetch(url, { signal });
-        if (!res.ok) return null;
-        const body = await res.json();
+        const body = await fetchElevationPart(url, signal, onRetry);
         const elev = body && body.elevation;
         return elev && elev.length === part.length ? elev : null;
       })
@@ -560,6 +589,54 @@
     return { watts, margin, text };
   }
 
+  // Map and profile colours. The card keeps the strict Fresnel rating above;
+  // the track only shows yellow where the path is really pinched. Red stays
+  // for blocked. The worst spot or spots are always yellow. With a solid
+  // budget nothing else is; otherwise anything under 0.3 x F1 or within
+  // 3 dB of the worst obstruction loss is too, except inside the "sure
+  // range" from each end (where even plane-earth loss leaves the solid
+  // margin, about 1 km for PMR446 handhelds) while the ground stays below
+  // the radio line.
+  const PINCH_MARGIN = 0.3;
+  const PINCH_DB = 3;
+  const WORST_SPOT = 0.05;
+
+  function obstructionDb(margin) {
+    return knifeEdgeDb(-Math.SQRT2 * margin);
+  }
+  function sureRangeKm(watts, mhz) {
+    const allowed = 10 * Math.log10(watts * 1000) + antGainDbi(txAntM()) + antGainDbi(rxAntM())
+      - FM_FLOOR_DBM - SOLID_MARGIN_DB;
+    const freeKm = 10 ** ((allowed - 32.45 - 20 * Math.log10(mhz)) / 20);
+    const planeKm = 10 ** ((allowed + 20 * Math.log10(txAntM()) + 20 * Math.log10(rxAntM())) / 40) / 1000;
+    return Math.min(freeKm, planeKm);
+  }
+  function markTrack(t, mhz) {
+    const o = override();
+    const maxW = Math.min(powerW(), (o && o.maxW) || powerW());
+    const b = signalBudget(t, mhz, maxW);
+    const solid = b.margin >= SOLID_MARGIN_DB;
+    const sure = sureRangeKm(b.watts, mhz);
+    const worst = t.worst;
+    const worstDb = worst ? obstructionDb(worst.margin) : 0;
+    const ss = t.samples;
+    // A worst spot is a dip in the clearance (a sample no better than its
+    // neighbours) about as tight as the tightest one, so a flat path has
+    // one spot, not its whole middle.
+    const spot = (i) => {
+      const m = ss[i].margin;
+      const lower = (j) => ss[j] && ss[j].margin != null && ss[j].margin < m;
+      return m <= worst.margin + WORST_SPOT && !lower(i - 1) && !lower(i + 1);
+    };
+    ss.forEach((s, i) => {
+      const nearEnd = Math.min(s.dKm, t.D - s.dKm) <= sure && s.clearance >= 0;
+      const pinch = s.margin < PINCH_MARGIN || obstructionDb(s.margin) >= worstDb - PINCH_DB;
+      if (s.state === "clear" || s.state === "blocked") s.show = s.state;
+      else if (spot(i)) s.show = "marginal";
+      else s.show = !solid && !nearEnd && pinch ? "marginal" : "clear";
+    });
+  }
+
   function ensureArcLayer() {
     const host = document.getElementById("map");
     if (!host || arcCanvas) return;
@@ -594,9 +671,13 @@
     const dx = s2.x - s1.x;
     const dy = s2.y - s1.y;
     const dist = Math.hypot(dx, dy) || 1;
-    const bulge = Math.min(90, Math.max(28, dist * 0.22));
-    const mx = (s1.x + s2.x) / 2;
-    const my = (s1.y + s2.y) / 2 - bulge;
+    // Bow sideways from the chord (to the left going TX to RX, so up for a
+    // west-to-east link), never along it: a north-south link bowed screen-up
+    // lies on top of its own track. The peak is half the control offset, so
+    // 48 px keeps at least a 24 px bow.
+    const bulge = Math.min(90, Math.max(48, dist * 0.22));
+    const mx = (s1.x + s2.x) / 2 + (dy / dist) * bulge;
+    const my = (s1.y + s2.y) / 2 - (dx / dist) * bulge;
     arcCtx.beginPath();
     arcCtx.moveTo(s1.x, s1.y);
     arcCtx.quadraticCurveTo(mx, my, s2.x, s2.y);
@@ -607,7 +688,8 @@
     arcCtx.stroke();
   }
 
-  // Blue clear, yellow marginal, red blocked: same colours as the profile.
+  // Blue clear, yellow marginal, red blocked (the `show` colour from
+  // markTrack): same colours as the profile.
   const TRACK_COLORS = {
     clear: "rgba(125,155,255,0.9)",
     marginal: "rgba(255,214,10,0.95)",
@@ -615,7 +697,7 @@
   };
   const STATE_RANK = { clear: 0, marginal: 1, blocked: 2 };
   function segmentState(a, b) {
-    return STATE_RANK[a.state] >= STATE_RANK[b.state] ? a.state : b.state;
+    return STATE_RANK[a.show] >= STATE_RANK[b.show] ? a.show : b.show;
   }
 
   function paintPath() {
@@ -705,6 +787,7 @@
     if (!tx || !rx) return;
     const refit = !opts || opts.refit !== false;
     pathFailed = false;
+    terrainFailed = false;
     if (abort) abort.abort();
     abort = new AbortController();
     const signal = abort.signal;
@@ -769,17 +852,19 @@
   // The Fresnel zone uses the FM card's frequency, else 2m calling.
   async function loadTerrain(signal) {
     const key = pathKey();
+    terrainFailed = false;
     if (!elevation || elevation.key !== key) {
       setLosNote("checking terrain…");
       terrain = null;
       drawProfile();
       try {
-        const samples = await fetchElevation(tx, rx, signal);
+        const samples = await fetchElevation(tx, rx, signal, () => setLosNote("terrain lookup busy, retrying…"));
         if (signal.aborted) return;
         elevation = { key, samples };
       } catch (e) {
         if (e.name === "AbortError") return;
-        elevation = { key, samples: null };
+        // Not kept, so the next request (or Retry) looks it up again.
+        terrainFailed = true;
       }
     }
     judgeTerrain();
@@ -804,11 +889,13 @@
 
   function judgeTerrain() {
     terrain = losAt(fresnelMhz());
+    if (terrain) markTrack(terrain, fresnelMhz());
     paintPath();
     drawProfile();
     const o = override();
     const what = o ? o.label : "VHF and UHF";
-    if (!terrain) setLosNote("no terrain data for this path");
+    if (terrainFailed) setLosNote("terrain lookup failed");
+    else if (!terrain) setLosNote("no terrain data for this path");
     else if (terrain.byTerrain) setLosNote(`terrain blocks ${what}`);
     else if (terrain.blocked) setLosNote(`beyond line of sight for ${what}`);
     else if (terrain.marginal) setLosNote(`marginal: ${marginalCause(terrain).text}`);
@@ -946,6 +1033,10 @@
 
   function showAnswer() {
     if (!answer) return;
+    if (terrainFailed) {
+      showTerrainFailed();
+      return;
+    }
     const o = override();
     budget = null;
     // The recommendation is always judged at its own frequency, so the
@@ -964,6 +1055,20 @@
     }
     renderCard(card, o ? { label: o.label, info: o.info, rec: rec.band } : null);
     setHint("OK", card.confidence || "Ready");
+  }
+
+  // Without the terrain the answer could be wrong (an HF card for a path
+  // the hills leave open on 2m), so no answer is shown until it loads.
+  function showTerrainFailed() {
+    cardEl.classList.add("has-answer");
+    const old = cardEl.querySelector(".band-answer");
+    if (old) old.remove();
+    cardEl.insertAdjacentHTML(
+      "beforeend",
+      `<div class="band-answer"><p class="band-err">Terrain lookup failed: the elevation service is busy, so this path can't be judged yet.</p>
+        <button type="button" class="band-retry">Retry</button></div>`
+    );
+    setHint("ERR", "Terrain lookup failed");
   }
 
   // Terrain under the path, drawn on the curved earth: the dashed curve is
@@ -1092,6 +1197,9 @@
     );
   }
 
+  cardEl.addEventListener("click", (e) => {
+    if (e.target.closest(".band-retry")) requestCard({ refit: false });
+  });
   cardEl.addEventListener("click", (e) => {
     if (!e.target.closest(".band-revert") || !overrideEl) return;
     overrideEl.value = "";
@@ -1262,18 +1370,33 @@
     else setRx(e.lngLat);
   });
 
+  // A spinner in the button while the browser looks; repeat clicks are
+  // ignored until it answers.
+  const LOCATE_ERRORS = { 1: "Location permission denied", 2: "Location not available", 3: "Location timed out" };
+  function setLocating(on) {
+    locateBtn.disabled = on;
+    locateBtn.classList.toggle("is-busy", on);
+    if (on) locateBtn.setAttribute("aria-busy", "true");
+    else locateBtn.removeAttribute("aria-busy");
+  }
   locateBtn.addEventListener("click", () => {
+    if (locateBtn.disabled) return;
     if (!navigator.geolocation) {
       setHint("ERR", "Location not available");
       return;
     }
+    setLocating(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        setLocating(false);
         const ll = { lng: pos.coords.longitude, lat: pos.coords.latitude };
         map.flyTo({ center: [ll.lng, ll.lat], zoom: 7, duration: reduceMotion ? 0 : 800 });
         setTx(ll);
       },
-      () => setHint("ERR", "Could not read location"),
+      (err) => {
+        setLocating(false);
+        setHint("ERR", LOCATE_ERRORS[err && err.code] || "Could not read location");
+      },
       { enableHighAccuracy: true, timeout: 10000 }
     );
   });
@@ -1470,6 +1593,9 @@
         n: terrain.samples.length,
         y0: terrain.y0,
         y1: terrain.y1,
+        // Samples per rating (strict) and per track colour (shown).
+        strict: terrain.samples.map((s) => s.state[0]).join(""),
+        shown: terrain.samples.map((s) => s.show[0]).join(""),
       },
       budget,
       override: overrideKey(),
