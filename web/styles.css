@@ -1208,15 +1208,17 @@ details.maplibregl-ctrl-attrib:not([open]) {
   height: calc(100% - var(--topbar-h, 48px));
   min-height: 0;
 }
-.band-map-panel { flex: 1; }
+/* The map never shrinks under 240 px when the result card opens; on a short
+   window the workspace scrolls instead (#150). */
+.band-workspace { overflow-y: auto; }
+.band-map-panel { flex: 1 0 auto; }
 .band-map-stage {
   flex: 1;
-  min-height: 0;
   position: relative;
   display: flex;
   flex-direction: column;
 }
-.band-map-stage #map { flex: 1; min-height: 0; }
+.band-map-stage #map { flex: 1; min-height: 240px; }
 .band-los-key {
   position: absolute;
   z-index: 2;

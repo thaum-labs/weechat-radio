@@ -191,7 +191,7 @@
     "2m": { label: "2m", mhz: 145.5, info: "2m needs an amateur licence." },
     "70cm": { label: "70cm", mhz: 433.5, info: "70cm needs an amateur licence." },
     cb: { label: "CB", freq: "27.185", mhz: 27.185, maxW: 4, info: "CB in the UK: 4 W FM on the 27/81 and CEPT channels. Channel 19 shown." },
-    pmr446: { label: "PMR446", freq: "446.00625", mhz: 446.00625, maxW: 0.5, info: "PMR446 in the UK and EU: 0.5 W, built-in antenna, no licence. Channel 1 shown." },
+    pmr446: { label: "PMR446", freq: "446.00625", mhz: 446.00625, maxW: 0.5, info: "PMR446 in the UK and EU: 0.5 W, built-in antenna, no licence. Channel 1 shown.", mobileNote: "UK PMR446 radios must use their built-in antenna; an external roof antenna isn't licence-free." },
     murs: { label: "MURS", freq: "151.820", mhz: 151.82, maxW: 2, info: "MURS is US only: 2 W, no licence. Channel 1 shown." },
     "80m": { label: "80m", mhz: 3.58, hf: true },
     "60m": { label: "60m", mhz: 5.357, hf: true },
@@ -1109,7 +1109,11 @@
         card.note = `${PLENTY_NOTE} SSB stays off.`;
       }
     }
-    renderCard(card, o ? { label: o.label, info: o.info, rec: rec.band } : null);
+    // Mobile stays allowed on PMR446 with its roof-whip gain; it only gets a
+    // short note (Tobias, #150).
+    const mobile = txAntEl.value === "mobile" || rxAntEl.value === "mobile";
+    const antNote = o && o.mobileNote && mobile ? o.mobileNote : "";
+    renderCard(card, o ? { label: o.label, info: o.info, antNote, rec: rec.band } : null);
     setHint("OK", card.confidence || "Ready");
   }
 
@@ -1274,6 +1278,7 @@
             ${copyButton(c.qsy)}
             ${copyButton(c.preset_cmd)}
             ${manual && manual.info ? `<p class="band-override-info">⚠ ${escapeHtml(manual.info)}</p>` : ""}
+            ${manual && manual.antNote ? `<p class="band-override-info band-ant-note">ⓘ ${escapeHtml(manual.antNote)}</p>` : ""}
           </div>
         </div>
         ${foot || plan ? `<p class="band-foot"><span>${escapeHtml(foot)}</span>${plan}</p>` : ""}
