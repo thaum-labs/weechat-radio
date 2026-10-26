@@ -136,6 +136,19 @@ test("a long sea path is beyond line of sight, explained, and drawn as a profile
   await expect(page.locator("#band-profile")).toContainText("4/3 earth");
 });
 
+test("a long path with land on it is still beyond line of sight, not terrain", async ({ page }) => {
+  // London to New York: sea with a 424 m stretch of land near each end.
+  await mockServices(page, (i, n) => (i === Math.round(n / 6) || i === Math.round((5 * n) / 6) ? 424 : 0));
+  await open(page);
+  await page.evaluate(() => {
+    window.__WCR_BAND.setTxLngLat(-0.12, 51.5);
+    window.__WCR_BAND.setRxLngLat(-74, 40.7);
+  });
+  await expect(page.locator("#los-note")).toHaveText("beyond line of sight for VHF and UHF");
+  await expect(page.locator("#band-card")).not.toContainText("Terrain blocks");
+  await expect.poll(() => page.evaluate(() => window.__WCR_BAND.state().terrain)).toMatchObject({ blocked: true, byTerrain: false });
+});
+
 test("a hill switches FM to HF; antenna height and power go to the service", async ({ page }) => {
   // A 900 m ridge in the middle of a 16 km path.
   const bodies = await mockServices(page, (i, n) => (Math.abs(i - n / 2) < 2 ? 900 : 100));
