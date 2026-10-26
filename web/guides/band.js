@@ -171,12 +171,14 @@
   // Bands you can pick by hand instead of the recommendation. Nothing is
   // greyed out for licence rules; `info` is a short note only. Line-of-sight
   // bands are worked out on the page; HF bands come from the path service.
+  // `maxW` is the legal power of a licence-free band; the signal budget
+  // uses it instead of the station's power.
   const OVERRIDES = {
     "2m": { label: "2m", mhz: 145.5, info: "2m needs an amateur licence." },
     "70cm": { label: "70cm", mhz: 433.5, info: "70cm needs an amateur licence." },
-    cb: { label: "CB", freq: "27.185", mhz: 27.185, info: "CB in the UK: 4 W FM on the 27/81 and CEPT channels. Channel 19 shown." },
-    pmr446: { label: "PMR446", freq: "446.00625", mhz: 446.00625, info: "PMR446 in the UK and EU: 0.5 W, built-in antenna, no licence. Channel 1 shown." },
-    murs: { label: "MURS", freq: "151.820", mhz: 151.82, info: "MURS is US only: 2 W, no licence. Channel 1 shown." },
+    cb: { label: "CB", freq: "27.185", mhz: 27.185, maxW: 4, info: "CB in the UK: 4 W FM on the 27/81 and CEPT channels. Channel 19 shown." },
+    pmr446: { label: "PMR446", freq: "446.00625", mhz: 446.00625, maxW: 0.5, info: "PMR446 in the UK and EU: 0.5 W, built-in antenna, no licence. Channel 1 shown." },
+    murs: { label: "MURS", freq: "151.820", mhz: 151.82, maxW: 2, info: "MURS is US only: 2 W, no licence. Channel 1 shown." },
     "80m": { label: "80m", mhz: 3.58, hf: true },
     "60m": { label: "60m", mhz: 5.357, hf: true },
     "40m": { label: "40m", mhz: 7.045, hf: true },
@@ -188,6 +190,7 @@
     "10m": { label: "10m", mhz: 28.12, hf: true },
   };
   for (const o of Object.values(OVERRIDES)) if (o.hf) o.info = `${o.label} needs an amateur licence.`;
+  const VHF_KEYS = ["2m", "70cm", "cb", "pmr446", "murs"];
   function overrideKey() {
     return overrideEl && OVERRIDES[overrideEl.value] ? overrideEl.value : "";
   }
@@ -513,9 +516,12 @@
   // knife-edge loss when the ground pokes above the radio line. A handheld whip
   // (2 m up or lower) counts as -5 dBi, an antenna on a roof or mast as
   // 0 dBi after feeder loss. -116 dBm is a clean FM signal; 10 dB above it
-  // counts as "should work well".
+  // counts as "should work well". On a marginal path the signal margin sets
+  // the headline: 20 dB or more covers the ground crowding the path.
   const FM_FLOOR_DBM = -116;
   const GOOD_MARGIN_DB = 10;
+  const SOLID_MARGIN_DB = 20;
+  const PLENTY_NOTE = "Ground is close to the signal path in places; you have plenty of signal to cover it.";
   const POWER_STEPS = [5, 10, 20, 50, 100];
 
   function antGainDbi(m) {
@@ -526,26 +532,27 @@
     if (!(nu > -0.78)) return 0;
     return 6.9 + 20 * Math.log10(Math.sqrt((nu - 0.1) ** 2 + 1) + nu - 0.1);
   }
-  function pathLossDb(mhz) {
-    const dKm = Math.max(terrain ? terrain.D : distKm(tx, rx), 0.01);
+  function pathLossDb(t, mhz) {
+    const dKm = Math.max(t ? t.D : distKm(tx, rx), 0.01);
     const free = 32.45 + 20 * Math.log10(dKm) + 20 * Math.log10(mhz);
-    const w = terrain && terrain.worst;
+    const w = t && t.worst;
     const edge = w && w.clearance < 0 ? knifeEdgeDb((-Math.SQRT2 * w.clearance) / w.f1) : 0;
     const plane = 40 * Math.log10(dKm * 1000) - 20 * Math.log10(txAntM()) - 20 * Math.log10(rxAntM());
     return Math.max(free, plane) + edge;
   }
-  function marginDb(watts, mhz) {
+  function marginDb(t, watts, mhz) {
     const dbm = 10 * Math.log10(watts * 1000);
-    return dbm + antGainDbi(txAntM()) + antGainDbi(rxAntM()) - pathLossDb(mhz) - FM_FLOOR_DBM;
+    return dbm + antGainDbi(txAntM()) + antGainDbi(rxAntM()) - pathLossDb(t, mhz) - FM_FLOOR_DBM;
   }
-  // The least power (up to what the station has) that should work well,
-  // and a plain verdict for the card.
+  // The least power (up to `maxW`) that should work well over the terrain
+  // `t` at `mhz`, and a plain verdict for the card. A marginal path asks
+  // for the solid margin.
   let budget = null;
-  function signalBudget() {
-    const mhz = fresnelMhz();
-    const steps = POWER_STEPS.filter((w) => w <= powerW());
-    const watts = steps.find((w) => marginDb(w, mhz) >= GOOD_MARGIN_DB) || powerW();
-    const margin = Math.round(marginDb(watts, mhz));
+  function signalBudget(t, mhz, maxW) {
+    const target = t && t.marginal ? SOLID_MARGIN_DB : GOOD_MARGIN_DB;
+    const steps = POWER_STEPS.filter((w) => w <= maxW);
+    const watts = steps.find((w) => marginDb(t, w, mhz) >= target) || maxW;
+    const margin = Math.round(marginDb(t, watts, mhz));
     let text;
     if (margin >= GOOD_MARGIN_DB) text = `Should work well: about ${margin} dB to spare at ${watts} W.`;
     else if (margin >= 0) text = `Should work, but may be noisy or drop out as you move: about ${margin} dB to spare at ${watts} W.`;
@@ -839,16 +846,64 @@
     return card;
   }
 
-  // A band picked by hand. HF comes from the path service's band_card;
-  // the rest is worked out here from the terrain and the signal budget.
+  // How a line-of-sight band does on this path: blocked by the ground, or
+  // its signal budget at its own power (the station's, or the band's legal
+  // limit). Null while the terrain is unknown.
+  function vhfVerdict(o) {
+    const t = losAt(o.mhz);
+    if (!t) return null;
+    if (t.blocked) return { ok: false, t, budget: null };
+    const b = signalBudget(t, o.mhz, Math.min(powerW(), o.maxW || powerW()));
+    return { ok: b.margin >= 0, t, budget: b };
+  }
+
+  // Bands that work on this path at this hour and power: HF from the
+  // service's per-band list, VHF and UHF from the terrain here. The same
+  // list whichever band is picked.
+  function workingBands() {
+    const out = [];
+    for (const key of VHF_KEYS) {
+      const v = vhfVerdict(OVERRIDES[key]);
+      if (v && v.ok) out.push({ key, label: OVERRIDES[key].label, power: v.budget.watts });
+    }
+    for (const b of answer.bands || []) {
+      if (b.ok && OVERRIDES[b.band]) out.push({ key: b.band, label: b.band, power: b.power_w });
+    }
+    return out;
+  }
+
+  // A line-of-sight note for a path that is not blocked: a marginal path
+  // with plenty of signal gets the soft note, not the advice to go higher.
+  function vhfNote(t, what, margin) {
+    if (t.marginal && margin >= SOLID_MARGIN_DB) return PLENTY_NOTE;
+    return losLine(t, what);
+  }
+
+  // A band picked by hand. HF comes from the path service's band_card,
+  // with no terrain line (it goes by the sky); the rest is worked out here
+  // from the terrain and the signal budget.
   function overrideCard(o) {
     const what = o.label;
-    const los = terrain ? losLine(terrain, what) : "";
     if (o.hf) {
-      const c = { ...(answer.band_card || answer) };
-      const sky = terrain && terrain.blocked ? " HF can still go by the sky." : "";
-      c.note = `${los}${sky} ${c.note || ""}`.trim();
-      return c;
+      if (answer.band_card) return { ...answer.band_card };
+      return {
+        ok: false,
+        kind: "hf",
+        frequency_mhz: o.mhz.toFixed(3),
+        band: what,
+        ssb: true,
+        mode: "USB",
+        power_w: null,
+        preset: "hf-poor",
+        qsy: `/radio qsy ${o.mhz.toFixed(3)}`,
+        preset_cmd: "/radio preset hf-poor",
+        confidence: `${what} doesn't work on this path.`,
+        why: `There is no ${what} calling frequency shared by these two countries.`,
+        note: "",
+        voice_note: null,
+        footnote: "",
+        distance_km: answer.distance_km,
+      };
     }
     let freq = o.freq;
     if (!freq) {
@@ -856,20 +911,33 @@
       const us = fm && fm.frequency_mhz === "145.010";
       freq = o.label === "2m" ? (fm ? fm.frequency_mhz : "145.500") : us ? "446.000" : "433.500";
     }
-    budget = signalBudget();
+    const v = vhfVerdict(o);
+    budget = v && v.budget;
+    if (!v) budget = signalBudget(null, o.mhz, Math.min(powerW(), o.maxW || powerW()));
+    let confidence = `${what}, picked by hand.`;
+    let why = budget ? budget.text : "";
+    let note = v && v.budget ? vhfNote(v.t, what, v.budget.margin) : v ? losLine(v.t, what) : "";
+    if (v && !v.ok) {
+      confidence = `${what} doesn't work on this path.`;
+      if (!v.budget) {
+        why = `${losLine(v.t, what)} More power will not get past it.`;
+        note = "";
+      }
+    }
     return {
+      ok: !v || v.ok,
       kind: "fm",
       frequency_mhz: freq,
       band: o.label,
       ssb: false,
       mode: "FM",
-      power_w: budget.watts,
+      power_w: budget && (!v || v.ok || v.budget) ? budget.watts : null,
       preset: "vhf-fm",
       qsy: `/radio qsy ${freq}`,
       preset_cmd: "/radio preset vhf-fm",
-      confidence: terrain && terrain.blocked ? `${what}: no direct path.` : `${what}, picked by hand.`,
-      why: budget.text,
-      note: `${los} SSB stays off.`.trim(),
+      confidence,
+      why,
+      note: `${note} SSB stays off.`.trim(),
       voice_note: null,
       footnote: "",
       distance_km: answer.distance_km,
@@ -886,9 +954,13 @@
     let card = rec;
     if (o) card = overrideCard(o);
     else if (card.kind === "fm" && !(terrain && terrain.blocked)) {
-      budget = signalBudget();
+      budget = signalBudget(terrain, fresnelMhz(), powerW());
       card.power_w = budget.watts;
       card.why = `${card.why || ""} ${budget.text}`.trim();
+      if (terrain && terrain.marginal && budget.margin >= SOLID_MARGIN_DB) {
+        card.confidence = `Should work well on ${card.band} FM.`;
+        card.note = `${PLENTY_NOTE} SSB stays off.`;
+      }
     }
     renderCard(card, o ? { label: o.label, info: o.info, rec: rec.band } : null);
     setHint("OK", card.confidence || "Ready");
@@ -959,8 +1031,27 @@
     return `<button type="button" class="copy-btn band-copy" data-copy="${escapeHtml(text)}">${escapeHtml(label)}</button>`;
   }
 
+  // Chips for the bands that work here; a click picks that band, or goes
+  // back to the recommendation when it is the recommended band.
+  function worksHtml(c, rec) {
+    if (!terrain && !(answer.bands || []).length) return "";
+    const list = workingBands();
+    if (!list.length) return `<p class="band-works">No band works on this path at this hour and power.</p>`;
+    const chips = list
+      .map((b) => {
+        const on = b.label === c.band ? ' aria-pressed="true"' : "";
+        const pick = b.label === rec ? "" : b.key;
+        const watts = b.power != null ? ` · ${b.power} W` : "";
+        return `<button type="button" class="band-works-pick" data-band="${escapeHtml(pick)}"${on}>${escapeHtml(b.label)}${watts}</button>`;
+      })
+      .join("");
+    return `<div class="band-works"><p>Works on this path at this hour:</p>${chips}</div>`;
+  }
+
   function renderCard(c, manual) {
-    const power = c.power_w != null ? `${c.power_w} W` : "over 100 W";
+    const rec = manual ? manual.rec : c.band;
+    const nogo = manual && c.ok === false;
+    const power = c.power_w != null ? `${c.power_w} W` : nogo ? "none" : `over ${powerW()} W`;
     const ssb = c.ssb ? "on" : "off";
     const voice = c.voice_note ? `<p class="band-voice">${escapeHtml(c.voice_note)}</p>` : "";
     cardEl.classList.add("has-answer");
@@ -986,10 +1077,11 @@
           <li><span>path</span><b>${c.distance_km} km</b></li>
         </ul>
         <div class="band-aside">
-          <p class="band-conf">${escapeHtml(c.confidence || "")}</p>
+          <p class="band-conf${nogo ? " band-nogo" : ""}">${escapeHtml(c.confidence || "")}</p>
           ${c.why ? `<p class="band-why">${escapeHtml(c.why)}</p>` : ""}
           ${voice}
           <p class="band-note">${escapeHtml(c.note || "")}</p>
+          ${worksHtml(c, rec)}
           <div class="band-cmds">
             ${copyButton(c.qsy, c.qsy)}
             ${copyButton(c.preset_cmd, c.preset_cmd)}
@@ -1003,6 +1095,12 @@
   cardEl.addEventListener("click", (e) => {
     if (!e.target.closest(".band-revert") || !overrideEl) return;
     overrideEl.value = "";
+    requestCard({ refit: false });
+  });
+  cardEl.addEventListener("click", (e) => {
+    const btn = e.target.closest(".band-works-pick");
+    if (!btn || !overrideEl) return;
+    overrideEl.value = btn.getAttribute("data-band") || "";
     requestCard({ refit: false });
   });
 
@@ -1376,5 +1474,14 @@
       budget,
       override: overrideKey(),
     }),
+    zoomTo: (z) => map.jumpTo({ zoom: z }),
+    // How far each pin's centre sits from its point on the map, in px.
+    pinOffsets: () =>
+      [txMarker, rxMarker].filter(Boolean).map((m) => {
+        const r = m.getElement().getBoundingClientRect();
+        const box = map.getContainer().getBoundingClientRect();
+        const p = map.project(m.getLngLat());
+        return Math.hypot(r.left + r.width / 2 - box.left - p.x, r.top + r.height / 2 - box.top - p.y);
+      }),
   };
 })();
