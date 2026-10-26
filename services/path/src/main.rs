@@ -42,9 +42,15 @@ struct PathBody {
     /// Most power the station has, in watts. Missing means 100 W.
     #[serde(default)]
     power_w: Option<u32>,
-    /// Antenna height above ground at each end, in metres. Missing means 10 m.
+    /// Antenna height above ground at both ends, in metres. Missing means
+    /// 10 m. Older pages send only this.
     #[serde(default)]
     antenna_m: Option<f64>,
+    /// TX and RX antenna heights in metres. Each falls back to `antenna_m`.
+    #[serde(default)]
+    tx_antenna_m: Option<f64>,
+    #[serde(default)]
+    rx_antenna_m: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,8 +122,13 @@ async fn path_handler(
     if !POWER_STEPS.contains(&max_w) {
         return Err((StatusCode::BAD_REQUEST, "bad power".into()));
     }
-    let antenna_m = body.antenna_m.unwrap_or(DEFAULT_ANTENNA_M);
-    if !(0.5..=100.0).contains(&antenna_m) {
+    let both_m = body.antenna_m.unwrap_or(DEFAULT_ANTENNA_M);
+    let tx_m = body.tx_antenna_m.unwrap_or(both_m);
+    let rx_m = body.rx_antenna_m.unwrap_or(both_m);
+    if ![both_m, tx_m, rx_m]
+        .iter()
+        .all(|m| (0.5..=100.0).contains(m))
+    {
         return Err((StatusCode::BAD_REQUEST, "bad antenna height".into()));
     }
 
@@ -145,7 +156,7 @@ async fn path_handler(
     let rx_r = Region::from_country(&rx_place.country);
 
     let hf = hf_card(&app, tx, rx, tx_r, rx_r, dist, body.hour_utc, max_w).await?;
-    if let Some(fm) = try_close_fm(tx_r, rx_r, dist, antenna_m) {
+    if let Some(fm) = try_close_fm(tx_r, rx_r, dist, tx_m, rx_m) {
         return Ok(Json(Answer {
             card: fm,
             hf: Some(hf),

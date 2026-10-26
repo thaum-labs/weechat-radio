@@ -85,7 +85,8 @@
   const onAirBtn = document.getElementById("band-onair");
   const hourEl = document.getElementById("band-hour");
   const hourLabel = document.getElementById("band-hour-label");
-  const antennaEl = document.getElementById("band-antenna");
+  const txAntEl = document.getElementById("band-tx-ant");
+  const rxAntEl = document.getElementById("band-rx-ant");
   const powerEl = document.getElementById("band-power");
   const profileEl = document.getElementById("band-profile");
 
@@ -108,9 +109,29 @@
   function planHourUtc() {
     return planDate().getUTCHours();
   }
-  function antennaM() {
-    const v = antennaEl ? Number(antennaEl.value) : 10;
-    return Number.isFinite(v) && v > 0 ? v : 10;
+  // Each end has a preset list plus "other…", which shows a metres box.
+  function antennaM(sel) {
+    if (!sel) return 10;
+    const box = sel.parentElement.querySelector("input");
+    const v = Number(sel.value === "other" ? box && box.value : sel.value);
+    return Number.isFinite(v) && v >= 0.5 && v <= 100 ? v : 10;
+  }
+  function txAntM() {
+    return antennaM(txAntEl);
+  }
+  function rxAntM() {
+    return antennaM(rxAntEl);
+  }
+  function setAntenna(sel, m) {
+    if (!sel || !Number.isFinite(m) || m < 0.5 || m > 100) return;
+    const hit = [...sel.options].find((o) => Number(o.value) === m);
+    sel.value = hit ? hit.value : "other";
+    if (!hit) sel.parentElement.querySelector("input").value = String(m);
+    showAntennaBox(sel);
+  }
+  function showAntennaBox(sel) {
+    const other = sel.value === "other";
+    sel.parentElement.querySelectorAll("input, i").forEach((el) => (el.hidden = !other));
   }
   function powerW() {
     const v = powerEl ? Number(powerEl.value) : 100;
@@ -273,8 +294,8 @@
   }
 
   // Copernicus DEM via Open-Meteo. CARTO's path-profile tool needs a
-  // BigQuery warehouse, so it is not used here. Antenna height from the
-  // page at both ends, 4/3 earth.
+  // BigQuery warehouse, so it is not used here. TX and RX antenna heights
+  // from the page, 4/3 earth.
   const K_EARTH_KM = 6371 * (4 / 3);
   let terrain = null;
   let elevation = null;
@@ -314,21 +335,36 @@
     if (el) el.textContent = text;
   }
 
+  // A sample every 200 m so narrow ridges are not missed, 100 points per
+  // Open-Meteo call. Past 200 km the spacing grows to keep it to 10 calls;
+  // such paths are beyond VHF line of sight unless both ends are on peaks.
+  const SAMPLE_KM = 0.2;
+  const MAX_SAMPLES = 1000;
+  const PER_CALL = 100;
+
   async function fetchElevation(a, b, signal) {
     const total = distKm(a, b);
-    const n = Math.min(99, Math.max(8, Math.ceil(total / 0.4)));
+    const n = Math.min(MAX_SAMPLES - 1, Math.max(8, Math.ceil(total / SAMPLE_KM)));
     const pts = [];
     for (let i = 0; i <= n; i++) pts.push(along(a, b, i / n));
-    const url =
-      "https://api.open-meteo.com/v1/elevation?latitude=" +
-      pts.map((p) => p.lat.toFixed(5)).join(",") +
-      "&longitude=" +
-      pts.map((p) => p.lon.toFixed(5)).join(",");
-    const res = await fetch(url, { signal });
-    if (!res.ok) return null;
-    const body = await res.json();
-    const elev = body && body.elevation;
-    if (!elev || elev.length !== pts.length) return null;
+    const chunks = [];
+    for (let i = 0; i < pts.length; i += PER_CALL) chunks.push(pts.slice(i, i + PER_CALL));
+    const parts = await Promise.all(
+      chunks.map(async (part) => {
+        const url =
+          "https://api.open-meteo.com/v1/elevation?latitude=" +
+          part.map((p) => p.lat.toFixed(5)).join(",") +
+          "&longitude=" +
+          part.map((p) => p.lon.toFixed(5)).join(",");
+        const res = await fetch(url, { signal });
+        if (!res.ok) return null;
+        const body = await res.json();
+        const elev = body && body.elevation;
+        return elev && elev.length === part.length ? elev : null;
+      })
+    );
+    if (parts.some((p) => !p)) return null;
+    const elev = parts.flat();
     let known = 0;
     let d = 0;
     const samples = pts.map((p, i) => {
@@ -341,36 +377,58 @@
     return samples;
   }
 
-  // Straight radio line between the antenna tops against ground plus the
-  // 4/3-earth bulge. `byCurve` means a smooth earth at the lower pin's ground
-  // height would already block the line (a long path, often over sea), so the
-  // path is beyond line of sight whatever the hills do. `byTerrain` means the
-  // earth's curve alone leaves the line clear and the ground is in the way.
-  function lineOfSight(raw, antenna) {
+  // Straight radio line from the TX antenna top to the RX antenna top
+  // against ground plus the 4/3-earth bulge, judged with the first Fresnel
+  // zone (F1) at `mhz`. Each sample is "clear" when 60% of F1 is free,
+  // "blocked" when the ground stands more than 0.6 x F1 above the line
+  // (knife-edge loss well past 10 dB), and "marginal" in between: a near
+  // miss that may work with more height or power. `byCurve` means a smooth
+  // earth at the lower pin's ground height would already block the line (a
+  // long path, often over sea), so the path is beyond line of sight whatever
+  // the hills do. `byTerrain` means the earth's curve alone leaves the line
+  // clear and the ground is in the way. `worst` is the tightest sample.
+  function lineOfSight(raw, txAnt, rxAnt, mhz) {
     const samples = raw.map((s) => ({ ...s }));
     const D = samples[samples.length - 1].dKm;
-    const y0 = (samples[0].elev || 0) + antenna;
-    const y1 = (samples[samples.length - 1].elev || 0) + antenna;
+    const y0 = (samples[0].elev || 0) + txAnt;
+    const y1 = (samples[samples.length - 1].elev || 0) + rxAnt;
     const floor = Math.min(samples[0].elev || 0, samples[samples.length - 1].elev || 0);
+    const lambdaM = 299.792458 / (mhz || 145);
     let blocked = false;
+    let marginal = false;
     let byCurve = false;
+    let worst = null;
     for (const s of samples) {
       const d1 = s.dKm;
       const d2 = Math.max(0, D - d1);
       s.bulge = (d1 * d2 * 1000) / (2 * K_EARTH_KM);
       s.line = D < 1e-6 ? y0 : y0 + (y1 - y0) * (d1 / D);
-      if (s.elev == null) {
-        s.blocked = false;
-        continue;
-      }
+      s.state = "clear";
+      if (s.elev == null) continue;
       const inside = d1 > 0.05 && d2 > 0.05;
+      if (!inside) continue;
       s.clearance = s.line - (s.elev + s.bulge);
-      s.blocked = inside && s.clearance < 0;
-      if (s.blocked) blocked = true;
-      if (inside && s.line < floor + s.bulge) byCurve = true;
+      s.f1 = Math.sqrt((lambdaM * d1 * d2 * 1000) / D);
+      s.margin = s.clearance / s.f1;
+      if (s.margin <= -0.6) s.state = "blocked";
+      else if (s.margin < 0.6) s.state = "marginal";
+      if (s.state === "blocked") blocked = true;
+      if (s.state === "marginal") marginal = true;
+      if (!worst || s.margin < worst.margin) worst = s;
+      if (s.line < floor + s.bulge) byCurve = true;
     }
     const byTerrain = blocked && !byCurve;
-    return { samples, blocked, byTerrain, y0, y1, D };
+    marginal = marginal && !blocked;
+    return { samples, blocked, marginal, byTerrain, worst, y0, y1, D, txAnt, rxAnt };
+  }
+
+  // "just clips a hill at 12 km" when the ground pokes above the line,
+  // "skims the ground at 12 km" when it only crowds the Fresnel zone.
+  function marginalText() {
+    const w = terrain && terrain.worst;
+    if (!w) return "";
+    const km = w.dKm >= 10 ? Math.round(w.dKm) : w.dKm.toFixed(1);
+    return `${w.clearance < 0 ? "just clips a hill" : "skims the ground"} at ${km} km, may work with more height or power`;
   }
 
   function ensureArcLayer() {
@@ -420,6 +478,17 @@
     arcCtx.stroke();
   }
 
+  // Blue clear, yellow marginal, red blocked: same colours as the profile.
+  const TRACK_COLORS = {
+    clear: "rgba(125,155,255,0.9)",
+    marginal: "rgba(255,214,10,0.95)",
+    blocked: "rgba(255,59,107,0.95)",
+  };
+  const STATE_RANK = { clear: 0, marginal: 1, blocked: 2 };
+  function segmentState(a, b) {
+    return STATE_RANK[a.state] >= STATE_RANK[b.state] ? a.state : b.state;
+  }
+
   function paintPath() {
     ensureArcLayer();
     if (!arcCtx || !arcCanvas) return;
@@ -444,14 +513,14 @@
     for (let i = 1; i < terrain.samples.length; i++) {
       const a = terrain.samples[i - 1];
       const b = terrain.samples[i];
-      const hit = a.blocked || b.blocked;
+      const state = segmentState(a, b);
       const p1 = map.project([a.lon, a.lat]);
       const p2 = map.project([b.lon, b.lat]);
       arcCtx.beginPath();
       arcCtx.moveTo(p1.x, p1.y);
       arcCtx.lineTo(p2.x, p2.y);
-      arcCtx.strokeStyle = hit ? "rgba(255,59,107,0.95)" : "rgba(125,155,255,0.9)";
-      arcCtx.setLineDash(hit ? [] : [6, 4]);
+      arcCtx.strokeStyle = TRACK_COLORS[state];
+      arcCtx.setLineDash(state === "clear" ? [6, 4] : []);
       arcCtx.stroke();
     }
   }
@@ -529,7 +598,8 @@
           rx_lon: rx.lon,
           hour_utc: planHourUtc(),
           power_w: powerW(),
-          antenna_m: antennaM(),
+          tx_antenna_m: txAntM(),
+          rx_antenna_m: rxAntM(),
         }),
         signal,
       });
@@ -565,6 +635,7 @@
   }
 
   // Elevation is fetched once per pin pair; antenna or time changes reuse it.
+  // The Fresnel zone uses the FM card's frequency, else 2m calling.
   async function loadTerrain(signal) {
     const key = pathKey();
     if (!elevation || elevation.key !== key) {
@@ -583,15 +654,21 @@
     judgeTerrain();
   }
 
+  function fresnelMhz() {
+    const f = answer && answer.kind === "fm" ? Number(answer.frequency_mhz) : NaN;
+    return Number.isFinite(f) && f > 30 ? f : 145;
+  }
+
   function judgeTerrain() {
     terrain = elevation && elevation.key === pathKey() && elevation.samples
-      ? lineOfSight(elevation.samples, antennaM())
+      ? lineOfSight(elevation.samples, txAntM(), rxAntM(), fresnelMhz())
       : null;
     paintPath();
     drawProfile();
     if (!terrain) setLosNote("no terrain data for this path");
     else if (terrain.byTerrain) setLosNote("terrain blocks VHF and UHF");
     else if (terrain.blocked) setLosNote("beyond line of sight for VHF and UHF");
+    else if (terrain.marginal) setLosNote(`marginal: ${marginalText()}`);
     else setLosNote("clear line of sight for VHF and UHF");
     showAnswer();
   }
@@ -607,6 +684,9 @@
         card = { ...card.hf, why: `${reason} ${card.hf.why || ""}`.trim() };
       }
       card.note = `${reason} ${card.note || ""}`.trim();
+    } else if (terrain && terrain.marginal && card.kind === "fm") {
+      const m = marginalText();
+      card.note = `Marginal for VHF and UHF: ${m.charAt(0).toUpperCase()}${m.slice(1)}. ${card.note || ""}`.trim();
     } else if (terrain && card.kind === "fm") {
       card.note = `Clear line of sight for VHF and UHF. ${card.note || ""}`.trim();
     }
@@ -644,21 +724,23 @@
     const groundPts = pts.map((s) => `${f(x(s.dKm))},${f(y(ground(s)))}`);
     const fill = `M${f(x(0))},${f(y(lo))} L${groundPts.join(" L")} L${f(x(D))},${f(y(lo))} Z`;
     const curve = pts.map((s) => `${f(x(s.dKm))},${f(y(s.bulge))}`).join(" L");
-    let hits = "";
+    const hits = { marginal: "", blocked: "" };
     for (let i = 1; i < pts.length; i++) {
-      if (!pts[i - 1].blocked && !pts[i].blocked) continue;
-      hits += `M${groundPts[i - 1]} L${groundPts[i]} `;
+      const state = segmentState(pts[i - 1], pts[i]);
+      if (state === "clear") continue;
+      hits[state] += `M${groundPts[i - 1]} L${groundPts[i]} `;
     }
     const km = D >= 100 ? Math.round(D) : D.toFixed(1);
-    const end = (s) => (s.elev == null ? "?" : `${Math.round(s.elev)} m`);
+    const end = (s, ant) => `${s.elev == null ? "?" : `${Math.round(s.elev)} m`} +${ant} m`;
     profileEl.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Path profile">
         <path class="pf-ground" d="${fill}"/>
         <path class="pf-curve" d="M${curve}"/>
-        ${hits ? `<path class="pf-block" d="${hits}"/>` : ""}
+        ${hits.marginal ? `<path class="pf-marginal" d="${hits.marginal}"/>` : ""}
+        ${hits.blocked ? `<path class="pf-block" d="${hits.blocked}"/>` : ""}
         <line class="pf-line" x1="${f(x(0))}" y1="${f(y(terrain.y0))}" x2="${f(x(D))}" y2="${f(y(terrain.y1))}"/>
-        <text x="${pad.l}" y="11">TX ${end(pts[0])}</text>
-        <text x="${W / 2}" y="11" text-anchor="middle">path profile · ${km} km · 4/3 earth</text>
-        <text x="${W - pad.r}" y="11" text-anchor="end">RX ${end(pts[pts.length - 1])}</text>
+        <text x="${pad.l}" y="11">TX ${end(pts[0], terrain.txAnt)}</text>
+        <text x="${W / 2}" y="11" text-anchor="middle">${W < 560 ? `${km} km` : `path profile · ${km} km · 4/3 earth`}</text>
+        <text x="${W - pad.r}" y="11" text-anchor="end">RX ${end(pts[pts.length - 1], terrain.rxAnt)}</text>
         <text x="${pad.l}" y="${H - 2}">ground</text>
         <text x="${W / 2}" y="${H - 2}" text-anchor="middle" class="pf-key-line">radio line</text>
         <text x="${W - pad.r}" y="${H - 2}" text-anchor="end" class="pf-key-curve">earth curve</text>
@@ -761,8 +843,9 @@
     } catch (_) {}
   });
 
-  // Shareable link: ?tx=lat,lon&rx=lat,lon, plus antenna and power when not
-  // the defaults. Other query keys (e.g. api=) are kept.
+  // Shareable link: ?tx=lat,lon&rx=lat,lon, plus txant=, rxant= and w= when
+  // not the defaults. An old ant= sets both ends. Other query keys (e.g.
+  // api=) are kept.
   function fmtLL(p) {
     return `${p.lat.toFixed(4)},${p.lon.toFixed(4)}`;
   }
@@ -777,7 +860,9 @@
     const set = (k, v) => (v == null ? q.delete(k) : q.set(k, v));
     set("tx", tx ? fmtLL(tx) : null);
     set("rx", rx ? fmtLL(rx) : null);
-    set("ant", antennaM() !== 10 ? String(antennaM()) : null);
+    set("ant", null);
+    set("txant", txAntM() !== 10 ? String(txAntM()) : null);
+    set("rxant", rxAntM() !== 10 ? String(rxAntM()) : null);
     set("w", powerW() !== 100 ? String(powerW()) : null);
     const qs = q.toString().replace(/%2C/g, ",");
     try {
@@ -791,7 +876,9 @@
   }
   function restoreUrl() {
     const q = new URLSearchParams(location.search);
-    pickOption(antennaEl, q.get("ant"));
+    const both = q.get("ant");
+    setAntenna(txAntEl, Number(q.get("txant") || both));
+    setAntenna(rxAntEl, Number(q.get("rxant") || both));
     pickOption(powerEl, q.get("w"));
     const t = parseLL(q.get("tx"));
     const r = parseLL(q.get("rx"));
@@ -809,10 +896,25 @@
       hourTimer = setTimeout(() => requestCard({ refit: false }), 250);
     });
   }
-  if (antennaEl) {
-    antennaEl.addEventListener("change", () => {
+  let antTimer = null;
+  for (const sel of [txAntEl, rxAntEl]) {
+    if (!sel) continue;
+    const box = sel.parentElement.querySelector("input");
+    const changed = () => {
       judgeTerrain();
       requestCard({ refit: false });
+    };
+    sel.addEventListener("change", () => {
+      showAntennaBox(sel);
+      if (sel.value === "other") {
+        if (!box.value) box.value = "10";
+        box.focus();
+      }
+      changed();
+    });
+    box.addEventListener("input", () => {
+      clearTimeout(antTimer);
+      antTimer = setTimeout(changed, 300);
     });
   }
   if (powerEl) powerEl.addEventListener("change", () => requestCard({ refit: false }));
@@ -1026,7 +1128,14 @@
       wait: waitEl && !waitEl.hidden,
       card: cardEl && !cardEl.hidden,
       cardText: cardEl && cardEl.innerText,
-      terrain: terrain && { blocked: terrain.blocked, byTerrain: terrain.byTerrain, n: terrain.samples.length },
+      terrain: terrain && {
+        blocked: terrain.blocked,
+        marginal: terrain.marginal,
+        byTerrain: terrain.byTerrain,
+        n: terrain.samples.length,
+        y0: terrain.y0,
+        y1: terrain.y1,
+      },
     }),
   };
 })();

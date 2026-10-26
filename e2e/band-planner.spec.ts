@@ -15,7 +15,14 @@ declare global {
         tx: { lat: number; lon: number } | null;
         rx: { lat: number; lon: number } | null;
         cardText: string;
-        terrain: { blocked: boolean; byTerrain: boolean; n: number } | null;
+        terrain: {
+          blocked: boolean;
+          marginal: boolean;
+          byTerrain: boolean;
+          n: number;
+          y0: number;
+          y1: number;
+        } | null;
       };
     };
   }
@@ -28,7 +35,8 @@ type PathBody = {
   rx_lon: number;
   hour_utc: number;
   power_w: number;
-  antenna_m: number;
+  tx_antenna_m: number;
+  rx_antenna_m: number;
 };
 
 const HF = {
@@ -161,11 +169,52 @@ test("a hill switches FM to HF; antenna height and power go to the service", asy
   await expect(page.locator(".band-freq")).toContainText("3.580");
   await expect(page.locator(".band-why")).toContainText("Terrain blocks VHF and UHF.");
   await expect(page.locator("#band-profile .pf-block")).toHaveCount(1);
-  await page.locator("#band-antenna").selectOption("20");
+  await page.locator("#band-tx-ant").selectOption("20");
   await page.locator("#band-power").selectOption("5");
-  await expect.poll(() => bodies.at(-1)).toMatchObject({ antenna_m: 20, power_w: 5 });
-  await expect(page).toHaveURL(/ant=20/);
+  await expect.poll(() => bodies.at(-1)).toMatchObject({ tx_antenna_m: 20, rx_antenna_m: 10, power_w: 5 });
+  await expect(page).toHaveURL(/txant=20/);
+  await expect(page).not.toHaveURL(/rxant=/);
   await expect(page).toHaveURL(/w=5/);
+});
+
+test("TX and RX heights are separate, typed heights work, and links carry both", async ({ page }) => {
+  const bodies = await mockServices(page, () => 100);
+  await open(page, "?tx=46.2,6.14&rx=46.1,6.25&txant=20");
+  await expect(page.locator("#band-tx-ant")).toHaveValue("20");
+  await expect(page.locator("#band-rx-ant")).toHaveValue("10");
+  await page.locator("#band-rx-ant").selectOption("other");
+  const box = page.locator("#band-rx-ant-m");
+  await expect(box).toBeVisible();
+  await box.fill("2.5");
+  await expect.poll(() => bodies.at(-1)).toMatchObject({ tx_antenna_m: 20, rx_antenna_m: 2.5 });
+  await expect(page).toHaveURL(/txant=20/);
+  await expect(page).toHaveURL(/rxant=2\.5/);
+  await expect.poll(() => page.evaluate(() => window.__WCR_BAND.state().terrain)).toMatchObject({ y0: 120, y1: 102.5 });
+});
+
+test("an old ant= link sets both ends", async ({ page }) => {
+  const bodies = await mockServices(page, () => 0);
+  await open(page, "?tx=51.5,-0.12&rx=40.7,-74&ant=6");
+  await expect(page.locator("#band-tx-ant")).toHaveValue("6");
+  await expect(page.locator("#band-rx-ant")).toHaveValue("6");
+  await expect.poll(() => bodies.at(-1)).toMatchObject({ tx_antenna_m: 6, rx_antenna_m: 6 });
+});
+
+test("a near miss is marginal, stays on FM, and is drawn yellow", async ({ page }) => {
+  // A ridge 15 m above the radio line in the middle of a 16 km path: well
+  // inside 0.6 of the 2m Fresnel zone (about 90 m there), so not blocked.
+  await mockServices(page, (i, n) => (Math.abs(i - n / 2) < 2 ? 130 : 100));
+  await open(page);
+  await page.evaluate(() => {
+    window.__WCR_BAND.setTxLngLat(6.14, 46.2);
+    window.__WCR_BAND.setRxLngLat(6.25, 46.1);
+  });
+  await expect(page.locator("#los-note")).toContainText("marginal: just clips a hill at");
+  await expect(page.locator(".band-freq")).toContainText("144.950");
+  await expect(page.locator(".band-note")).toContainText("Marginal for VHF and UHF");
+  await expect(page.locator("#band-profile .pf-marginal")).toHaveCount(1);
+  await expect(page.locator("#band-profile .pf-block")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__WCR_BAND.state().terrain)).toMatchObject({ blocked: false, marginal: true });
 });
 
 test("the time slider asks for a later hour and moves the night shading", async ({ page }) => {
