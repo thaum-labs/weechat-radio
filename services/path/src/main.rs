@@ -12,7 +12,8 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use choose::{
-    hf_freqs_mhz, pick_hf, try_close_fm, Card, HfAntenna, DEFAULT_ANTENNA_M, POWER_STEPS,
+    band_of, far_fm, hf_freqs_mhz, pick_hf, try_close_fm, Card, HfAntenna, DEFAULT_ANTENNA_M,
+    POWER_STEPS,
 };
 use chrono::{Datelike, Timelike, Utc};
 use forecast::Forecast;
@@ -56,6 +57,10 @@ struct PathBody {
     /// HF antenna at the user's end. Missing means a dipole.
     #[serde(default)]
     hf_antenna: HfAntenna,
+    /// HF band the user picked by hand ("40m"). The answer then also
+    /// carries `band_card`, the prediction for that band alone.
+    #[serde(default)]
+    band: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -160,7 +165,7 @@ async fn path_handler(
     let tx_r = Region::from_country(&tx_place.country);
     let rx_r = Region::from_country(&rx_place.country);
 
-    let hf = hf_card(
+    let (hf, band_card) = hf_cards(
         &app,
         tx,
         rx,
@@ -170,15 +175,23 @@ async fn path_handler(
         body.hour_utc,
         max_w,
         body.hf_antenna,
+        body.band.as_deref(),
     )
     .await?;
     if let Some(fm) = try_close_fm(tx_r, rx_r, dist, tx_m, rx_m) {
         return Ok(Json(Answer {
             card: fm,
             hf: Some(hf),
+            fm: None,
+            band_card,
         }));
     }
-    Ok(Json(Answer { card: hf, hf: None }))
+    Ok(Json(Answer {
+        card: hf,
+        hf: None,
+        fm: far_fm(tx_r, rx_r, dist, tx_m, rx_m),
+        band_card,
+    }))
 }
 
 #[derive(serde::Serialize)]
@@ -189,9 +202,19 @@ struct Answer {
     /// switches to this if terrain blocks VHF and UHF.
     #[serde(skip_serializing_if = "Option::is_none")]
     hf: Option<Card>,
+    /// 2m FM alternative when the answer is HF only because the path is past
+    /// the smooth-earth horizon. The page switches to this when the real
+    /// terrain leaves a radio line (only blocked paths go to HF).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fm: Option<Card>,
+    /// The prediction for the HF band the user picked by hand.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    band_card: Option<Card>,
 }
 
-async fn hf_card(
+/// The HF pick, plus the pick for `band` alone when the user chose one.
+#[allow(clippy::too_many_arguments)]
+async fn hf_cards(
     app: &App,
     tx: (f64, f64),
     rx: (f64, f64),
@@ -201,12 +224,18 @@ async fn hf_card(
     hour_utc: Option<u8>,
     max_w: u32,
     antenna: HfAntenna,
-) -> Result<Card, (StatusCode, String)> {
+    band: Option<&str>,
+) -> Result<(Card, Option<Card>), (StatusCode, String)> {
     let now = Utc::now();
     let this_hour = now.hour() as u8;
     let hour = hour_utc.unwrap_or(this_hour);
-    let ssn = app.ssn.current().await;
     let freqs = hf_freqs_mhz(tx_r, rx_r);
+    if let Some(b) = band {
+        if !freqs.iter().any(|&f| band_of(f) == Some(b)) {
+            return Err((StatusCode::BAD_REQUEST, format!("no {b} spot on this path")));
+        }
+    }
+    let ssn = app.ssn.current().await;
     let forecast = app.forecast.clone();
     let year = now.year();
     let month = now.month();
@@ -217,7 +246,18 @@ async fn hf_card(
             .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
 
     antenna.apply(&mut cells);
-    let mut card = pick_hf(&cells, hour, hour == this_hour, dist, max_w);
-    antenna.footnote(&mut card);
-    Ok(card)
+    let pick = |cells: &[choose::Cell]| {
+        let mut card = pick_hf(cells, hour, hour == this_hour, dist, max_w);
+        antenna.footnote(&mut card);
+        card
+    };
+    let band_card = band.map(|b| {
+        let only: Vec<_> = cells
+            .iter()
+            .copied()
+            .filter(|c| band_of(c.freq_mhz) == Some(b))
+            .collect();
+        pick(&only)
+    });
+    Ok((pick(&cells), band_card))
 }
