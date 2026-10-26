@@ -14,10 +14,10 @@ pub const DEFAULT_ANTENNA_M: f64 = 10.0;
 
 pub const POWER_STEPS: [u32; 5] = [5, 10, 20, 50, 100];
 
-/// VHF radio horizon in km for antennas `antenna_m` high at both ends
-/// (4/3 earth radius). 10 m gives about 26 km.
-pub fn radio_horizon_km(antenna_m: f64) -> f64 {
-    2.0 * 4.12 * antenna_m.max(0.0).sqrt()
+/// VHF radio horizon in km between a TX antenna `tx_m` and an RX antenna
+/// `rx_m` high (4/3 earth radius). 10 m at both ends gives about 26 km.
+pub fn radio_horizon_km(tx_m: f64, rx_m: f64) -> f64 {
+    4.12 * (tx_m.max(0.0).sqrt() + rx_m.max(0.0).sqrt())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -187,7 +187,7 @@ fn card_shell(
     }
 }
 
-pub fn fm_card(region: Region, distance_km: f64, antenna_m: f64) -> Option<Card> {
+pub fn fm_card(region: Region, distance_km: f64, tx_m: f64, rx_m: f64) -> Option<Card> {
     let spot = match region {
         Region::UkEu => Spot {
             khz: 144_950,
@@ -218,8 +218,8 @@ pub fn fm_card(region: Region, distance_km: f64, antenna_m: f64) -> Option<Card>
         format!(
             "2m FM: {:.0} km is inside the {:.0} km radio horizon for {} antennas.",
             distance_km,
-            radio_horizon_km(antenna_m),
-            antenna_label(antenna_m)
+            radio_horizon_km(tx_m, rx_m),
+            antennas_label(tx_m, rx_m)
         ),
         distance_km.round() as u32,
         None,
@@ -231,6 +231,16 @@ fn antenna_label(antenna_m: f64) -> String {
         format!("{:.0} m", antenna_m)
     } else {
         format!("{:.1} m", antenna_m)
+    }
+}
+
+/// "10 m" when both ends match, "20 m and 1.5 m" (TX first) when not.
+fn antennas_label(tx_m: f64, rx_m: f64) -> String {
+    let (tx, rx) = (antenna_label(tx_m), antenna_label(rx_m));
+    if tx == rx {
+        tx
+    } else {
+        format!("{tx} and {rx}")
     }
 }
 
@@ -443,12 +453,18 @@ pub fn pick_hf(cells: &[Cell], hour_utc: u8, now: bool, distance_km: f64, max_w:
     )
 }
 
-pub fn try_close_fm(tx: Region, rx: Region, distance_km: f64, antenna_m: f64) -> Option<Card> {
-    if distance_km > radio_horizon_km(antenna_m) {
+pub fn try_close_fm(
+    tx: Region,
+    rx: Region,
+    distance_km: f64,
+    tx_m: f64,
+    rx_m: f64,
+) -> Option<Card> {
+    if distance_km > radio_horizon_km(tx_m, rx_m) {
         return None;
     }
     let region = Region::shared_vhf(tx, rx)?;
-    fm_card(region, distance_km, antenna_m)
+    fm_card(region, distance_km, tx_m, rx_m)
 }
 
 #[cfg(test)]
@@ -492,7 +508,7 @@ mod tests {
 
     #[test]
     fn fm_uk() {
-        let c = fm_card(Region::UkEu, 12.0, DEFAULT_ANTENNA_M).unwrap();
+        let c = fm_card(Region::UkEu, 12.0, DEFAULT_ANTENNA_M, DEFAULT_ANTENNA_M).unwrap();
         assert!(!c.ssb);
         assert_eq!(c.mode, "FM");
         assert_eq!(c.frequency_khz, 144_950);
@@ -502,10 +518,10 @@ mod tests {
     #[test]
     fn close_needs_shared_region() {
         let m = DEFAULT_ANTENNA_M;
-        assert!(try_close_fm(Region::UkEu, Region::UkEu, 10.0, m).is_some());
-        assert!(try_close_fm(Region::UkEu, Region::UkEu, 20.0, m).is_some());
-        assert!(try_close_fm(Region::UkEu, Region::UsCa, 10.0, m).is_none());
-        assert!(try_close_fm(Region::UkEu, Region::UkEu, 30.0, m).is_none());
+        assert!(try_close_fm(Region::UkEu, Region::UkEu, 10.0, m, m).is_some());
+        assert!(try_close_fm(Region::UkEu, Region::UkEu, 20.0, m, m).is_some());
+        assert!(try_close_fm(Region::UkEu, Region::UsCa, 10.0, m, m).is_none());
+        assert!(try_close_fm(Region::UkEu, Region::UkEu, 30.0, m, m).is_none());
     }
 
     #[test]
@@ -531,11 +547,21 @@ mod tests {
 
     #[test]
     fn handheld_horizon_is_shorter() {
-        assert!((radio_horizon_km(10.0) - 26.0).abs() < 0.5);
-        assert!(try_close_fm(Region::UkEu, Region::UkEu, 12.0, 1.5).is_none());
-        assert!(try_close_fm(Region::UkEu, Region::UkEu, 8.0, 1.5).is_some());
-        let c = try_close_fm(Region::UkEu, Region::UkEu, 8.0, 1.5).unwrap();
-        assert!(c.why.contains("1.5 m"), "{}", c.why);
+        assert!((radio_horizon_km(10.0, 10.0) - 26.0).abs() < 0.5);
+        assert!(try_close_fm(Region::UkEu, Region::UkEu, 12.0, 1.5, 1.5).is_none());
+        assert!(try_close_fm(Region::UkEu, Region::UkEu, 8.0, 1.5, 1.5).is_some());
+        let c = try_close_fm(Region::UkEu, Region::UkEu, 8.0, 1.5, 1.5).unwrap();
+        assert!(c.why.contains("1.5 m antennas"), "{}", c.why);
+    }
+
+    #[test]
+    fn each_end_has_its_own_height() {
+        // 20 m tower to a 1.5 m handheld: 4.12 * (4.47 + 1.22) = about 23 km.
+        assert!((radio_horizon_km(20.0, 1.5) - 23.5).abs() < 0.5);
+        assert!(try_close_fm(Region::UkEu, Region::UkEu, 20.0, 20.0, 1.5).is_some());
+        assert!(try_close_fm(Region::UkEu, Region::UkEu, 20.0, 1.5, 1.5).is_none());
+        let c = try_close_fm(Region::UkEu, Region::UkEu, 20.0, 20.0, 1.5).unwrap();
+        assert!(c.why.contains("20 m and 1.5 m antennas"), "{}", c.why);
     }
 
     fn cell(hour: u8, freq_mhz: f64, snr: f64) -> Cell {

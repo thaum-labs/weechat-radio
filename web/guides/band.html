@@ -12,7 +12,7 @@
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" />
-  <link rel="stylesheet" href="/styles.css?v=41" />
+  <link rel="stylesheet" href="/styles.css?v=42" />
 </head>
 <body class="page-map page-band">
   <div id="scan"></div>
@@ -68,14 +68,27 @@
           <input id="band-hour" type="range" min="0" max="23" step="1" value="0" aria-label="Hours from now" />
           <b id="band-hour-label">now</b>
         </label>
-        <label>
-          <span>antennas</span>
-          <select id="band-antenna" aria-label="Antenna height at each end">
+        <label class="band-ant">
+          <span>TX antenna</span>
+          <select id="band-tx-ant" aria-label="TX antenna height">
             <option value="1.5">handheld 1.5 m</option>
             <option value="6">roof 6 m</option>
             <option value="10" selected>mast 10 m</option>
             <option value="20">tower 20 m</option>
+            <option value="other">other…</option>
           </select>
+          <input id="band-tx-ant-m" type="number" min="0.5" max="100" step="0.5" inputmode="decimal" aria-label="TX antenna height in metres" hidden /><i hidden>m</i>
+        </label>
+        <label class="band-ant">
+          <span>RX antenna</span>
+          <select id="band-rx-ant" aria-label="RX antenna height">
+            <option value="1.5">handheld 1.5 m</option>
+            <option value="6">roof 6 m</option>
+            <option value="10" selected>mast 10 m</option>
+            <option value="20">tower 20 m</option>
+            <option value="other">other…</option>
+          </select>
+          <input id="band-rx-ant-m" type="number" min="0.5" max="100" step="0.5" inputmode="decimal" aria-label="RX antenna height in metres" hidden /><i hidden>m</i>
         </label>
         <label>
           <span>power</span>
@@ -92,6 +105,7 @@
         <div id="map"></div>
         <div class="band-los-key">
           <span><i class="los-clear"></i>clear</span>
+          <span><i class="los-marginal"></i>marginal</span>
           <span><i class="los-block"></i>blocked</span>
           <span class="band-los-note" id="los-note">terrain along the path</span>
         </div>
@@ -106,6 +120,6 @@
   <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=11"></script>
-  <script src="/guides/band.js?v=10"></script>
+  <script src="/guides/band.js?v=11"></script>
 </body>
 </html>
