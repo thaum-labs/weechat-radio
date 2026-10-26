@@ -1282,8 +1282,7 @@ details.maplibregl-ctrl-attrib:not([open]) {
 .band-hop-chip { color: var(--fg); border: 1px solid var(--line); padding: 1px 6px; }
 .band-credit,
 .band-live-note {
-  margin: 0;
-  padding: 4px 8px;
+  margin: 4px 0 0;
   font-size: 11px;
   color: var(--dim);
   overflow-wrap: anywhere;
@@ -1332,7 +1331,9 @@ details.maplibregl-ctrl-attrib:not([open]) {
 .sky-dot.sky-marginal { background: #ffd60a; }
 .sky-dot.sky-closed { background: #ff3b6b; }
 .band-works-pick.is-closed { opacity: 0.55; }
-.band-map-panel h3.title p:first-child { min-width: 0; overflow-wrap: anywhere; }
+/* One line, cut with an ellipsis: a hint that wraps on a phone moves the
+   map and the card on every recompute (#164). */
+.band-map-panel h3.title p:first-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .band-map-panel .map-tools { flex: none; }
 .band-hint {
   color: var(--dim);

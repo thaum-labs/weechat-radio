@@ -130,6 +130,12 @@ async function mockServices(page: Page, ground: (i: number, n: number) => number
     ];
     // A short path (under about 300 km) gets a low MUF, so 40m skips it.
     const short = Math.abs(body.tx_lat - body.rx_lat) + Math.abs(body.tx_lon - body.rx_lon) < 3;
+    if (short) {
+      // Like Frome to Plymouth on the engine: 40m comes back steeply (no
+      // skip zone), 30m goes through.
+      bands[1] = { ...bands[1], state: "marginal", hops: 1, takeoff_deg: 78, skips: false };
+      bands.splice(2, 0, { band: "30m", frequency_mhz: 10.14, ok: false, power_w: null, state: "closed", hours: hours["20m"], hops: 1, takeoff_deg: 80, skips: true });
+    }
     const sky = short ? { muf_mhz: 6.0, muf_hops: 1, solar_live: true } : { muf_mhz: 11.2, muf_hops: 2, solar_live: true };
     await route.fulfill({ json: { ...card, band_card, bands, sky, confidence: `hour ${body.hour_utc}` } });
   });
@@ -884,12 +890,48 @@ test("a short HF path shows NVIS, the ground wave and the skip zone", async ({ p
   await open(page, "?tx=51.2286,-2.3206&rx=50.3755,-4.1427&band=80m");
   await expect(page.locator(".sky-nvis")).toContainText("no skip zone");
   await expect(page.locator(".sky-skip")).toHaveCount(0);
-  // 40m is above the foF2 the 6 MHz MUF implies, so it has a skip zone.
+  // 40m: the engine says it does not skip (78° take-off), so NVIS and no
+  // skip ring, even though the 6 MHz MUF alone would draw one (#164).
   await page.locator("#band-override").selectOption("40m");
-  await expect(page.locator(".sky-skip")).toContainText("40m skip zone ≈ 30–");
+  await expect(page.locator(".band-freq")).toContainText("7.045");
+  await expect(page.locator(".sky-nvis")).toContainText("no skip zone");
+  await expect(page.locator(".sky-skip")).toHaveCount(0);
+  expect((await page.evaluate(() => window.__WCR_BAND.state().sky!.rings))!.skip).toBe(0);
+  // 30m: the engine says it skips, so a skip line with RX inside the ring,
+  // a red "skips" chip, and no NVIS note.
+  await page.locator("#band-override").selectOption("30m");
+  await expect(page.locator(".sky-skip")).toContainText("30m skips: skip zone ≈ 25–");
+  await expect(page.locator(".sky-nvis")).toHaveCount(0);
+  await expect(page.locator('.band-works-pick[aria-pressed="true"]')).toHaveText("30mskips");
   const rings = await page.evaluate(() => window.__WCR_BAND.state().sky!.rings);
-  expect(rings!.gw).toBe(30);
+  expect(rings!.gw).toBe(25);
   expect(rings!.skip).toBeGreaterThan(159);
+});
+
+test("on a phone, HF and VHF band changes and antenna taps never move the map or the card", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockServices(page, () => 100);
+  await open(page, `${BATH_MADRID}&band=40m`);
+  await expect(page.locator(".band-map-stage")).toHaveClass(/is-sky/);
+  await expect(page.locator("#band-credit")).toBeVisible();
+  const tops = () =>
+    page.evaluate(() =>
+      ["#map", ".band-answer"].map((s) => Math.round(document.querySelector(s)!.getBoundingClientRect().top + scrollY)),
+    );
+  const want = await tops();
+  for (const band of ["2m", "80m", "pmr446", "20m", ""]) {
+    await page.locator("#band-override").selectOption(band);
+    await expect(page.locator("#band-wait")).toBeHidden();
+    await page.waitForTimeout(300);
+    expect(await tops()).toEqual(want);
+  }
+  for (const ant of ["vertical", "endfed", "dipole"]) {
+    await page.locator(`.band-hfant-tiles input[value="${ant}"]`).check({ force: true });
+    // Straight after the tap, while the path is worked out, and once done.
+    expect((await tops())[0]).toBe(want[0]);
+    await page.waitForTimeout(800);
+    expect(await tops()).toEqual(want);
+  }
 });
 
 test("the greyline is the sunrise and sunset line at the planned hour", async ({ page }) => {

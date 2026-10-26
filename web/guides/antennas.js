@@ -600,7 +600,15 @@
     radio.checked = true;
     type = btn.dataset.type;
     buildControls();
-    calcEl.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    // Scroll only the page's own scroller (.page-wrap on desktop, the document on mobile).
+    // scrollIntoView would also nudge the overflow:hidden root, which the user cannot scroll back.
+    const behavior = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+    const wrap = calcEl.closest(".page-wrap");
+    if (wrap && wrap.scrollHeight > wrap.clientHeight && getComputedStyle(wrap).overflowY !== "visible") {
+      wrap.scrollTo({ top: wrap.scrollTop + calcEl.getBoundingClientRect().top - wrap.getBoundingClientRect().top, behavior });
+    } else {
+      window.scrollTo({ top: window.scrollY + calcEl.getBoundingClientRect().top, behavior });
+    }
   });
 
   buildControls();
