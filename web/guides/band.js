@@ -113,8 +113,12 @@
     return planDate().getUTCHours();
   }
   // Each end has a preset list plus "other…", which shows a metres box.
+  // "mobile" is a roof whip on a car: 1.8 m up, 2 dBi (Tobias, #142).
+  const MOBILE_M = 1.8;
+  const MOBILE_DBI = 2;
   function antennaM(sel) {
     if (!sel) return 10;
+    if (sel.value === "mobile") return MOBILE_M;
     const box = sel.parentElement.querySelector("input");
     const v = Number(sel.value === "other" ? box && box.value : sel.value);
     return Number.isFinite(v) && v >= 0.5 && v <= 100 ? v : 10;
@@ -125,7 +129,17 @@
   function rxAntM() {
     return antennaM(rxAntEl);
   }
+  // A link value: metres, or "mobile".
+  function antennaParam(sel) {
+    return sel && sel.value === "mobile" ? "mobile" : String(antennaM(sel));
+  }
   function setAntenna(sel, m) {
+    if (sel && m === "mobile") {
+      sel.value = "mobile";
+      showAntennaBox(sel);
+      return;
+    }
+    m = Number(m);
     if (!sel || !Number.isFinite(m) || m < 0.5 || m > 100) return;
     const hit = [...sel.options].find((o) => Number(o.value) === m);
     sel.value = hit ? hit.value : "other";
@@ -543,8 +557,8 @@
   // well it should really work. Path loss is the larger of free space and
   // plane earth (40 log d, what limits low antennas over flat ground), plus
   // knife-edge loss when the ground pokes above the radio line. A handheld whip
-  // (2 m up or lower) counts as -5 dBi, an antenna on a roof or mast as
-  // 0 dBi after feeder loss. -116 dBm is a clean FM signal; 10 dB above it
+  // (2 m up or lower) counts as -5 dBi, a mobile roof whip as 2 dBi, an
+  // antenna on a roof or mast as 0 dBi after feeder loss. -116 dBm is a clean FM signal; 10 dB above it
   // counts as "should work well". On a marginal path the signal margin sets
   // the headline: 20 dB or more covers the ground crowding the path.
   const FM_FLOOR_DBM = -116;
@@ -553,8 +567,12 @@
   const PLENTY_NOTE = "Ground is close to the signal path in places; you have plenty of signal to cover it.";
   const POWER_STEPS = [5, 10, 20, 50, 100];
 
-  function antGainDbi(m) {
-    return m <= 2 ? -5 : 0;
+  function antGainDbi(sel) {
+    if (sel && sel.value === "mobile") return MOBILE_DBI;
+    return antennaM(sel) <= 2 ? -5 : 0;
+  }
+  function antGainsDbi() {
+    return antGainDbi(txAntEl) + antGainDbi(rxAntEl);
   }
   // ITU-R P.526 single knife edge, nu = sqrt(2) x height above the line / F1.
   function knifeEdgeDb(nu) {
@@ -571,7 +589,7 @@
   }
   function marginDb(t, watts, mhz) {
     const dbm = 10 * Math.log10(watts * 1000);
-    return dbm + antGainDbi(txAntM()) + antGainDbi(rxAntM()) - pathLossDb(t, mhz) - FM_FLOOR_DBM;
+    return dbm + antGainsDbi() - pathLossDb(t, mhz) - FM_FLOOR_DBM;
   }
   // The least power (up to `maxW`) that should work well over the terrain
   // `t` at `mhz`, and a plain verdict for the card. A marginal path asks
@@ -605,7 +623,7 @@
     return knifeEdgeDb(-Math.SQRT2 * margin);
   }
   function sureRangeKm(watts, mhz) {
-    const allowed = 10 * Math.log10(watts * 1000) + antGainDbi(txAntM()) + antGainDbi(rxAntM())
+    const allowed = 10 * Math.log10(watts * 1000) + antGainsDbi()
       - FM_FLOOR_DBM - SOLID_MARGIN_DB;
     const freeKm = 10 ** ((allowed - 32.45 - 20 * Math.log10(mhz)) / 20);
     const planeKm = 10 ** ((allowed + 20 * Math.log10(txAntM()) + 20 * Math.log10(rxAntM())) / 40) / 1000;
@@ -1273,8 +1291,8 @@
     } catch (_) {}
   });
 
-  // Shareable link: ?tx=lat,lon&rx=lat,lon, plus txant=, rxant=, hfant= and w= when
-  // not the defaults. An old ant= sets both ends. Other query keys (e.g.
+  // Shareable link: ?tx=lat,lon&rx=lat,lon, plus txant=, rxant= (metres or
+  // mobile), hfant= and w= when not the defaults. An old ant= sets both ends. Other query keys (e.g.
   // api=) are kept.
   function fmtLL(p) {
     return `${p.lat.toFixed(4)},${p.lon.toFixed(4)}`;
@@ -1291,8 +1309,8 @@
     set("tx", tx ? fmtLL(tx) : null);
     set("rx", rx ? fmtLL(rx) : null);
     set("ant", null);
-    set("txant", txAntM() !== 10 ? String(txAntM()) : null);
-    set("rxant", rxAntM() !== 10 ? String(rxAntM()) : null);
+    set("txant", antennaParam(txAntEl) !== "10" ? antennaParam(txAntEl) : null);
+    set("rxant", antennaParam(rxAntEl) !== "10" ? antennaParam(rxAntEl) : null);
     set("hfant", hfAntenna() !== "dipole" ? hfAntenna() : null);
     set("hfwire", isWireAntenna() && wireOrientation() !== "flat" ? wireOrientation() : null);
     set("band", overrideKey() || null);
@@ -1310,8 +1328,8 @@
   function restoreUrl() {
     const q = new URLSearchParams(location.search);
     const both = q.get("ant");
-    setAntenna(txAntEl, Number(q.get("txant") || both));
-    setAntenna(rxAntEl, Number(q.get("rxant") || both));
+    setAntenna(txAntEl, q.get("txant") || both);
+    setAntenna(rxAntEl, q.get("rxant") || both);
     pickOption(powerEl, q.get("w"));
     const hf = hfAntEls.find((el) => el.value === q.get("hfant"));
     if (hf) hf.checked = true;
