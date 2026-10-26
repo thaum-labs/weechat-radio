@@ -426,22 +426,62 @@ test("a flat marginal path says the ground is close, and stays on FM with handhe
 test("a wire antenna shows how it can be strung, and the link keeps it", async ({ page }) => {
   await mockServices(page, () => 0);
   await open(page, "?tx=51.5,-0.12&rx=40.7,-74");
-  await expect(page.locator("#band-hfwire")).toBeVisible();
+  const pick = page.locator("#band-hfwire");
+  const menu = page.locator("#band-hfwire-menu");
+  await expect(pick).toBeVisible();
+  await expect(pick).toContainText("horizontal");
   await expect(page.locator("#band-hfwire-note")).toContainText("Horizontal:");
+  // A dipole has its own list: no inverted L or vertical.
+  await pick.click();
+  await expect(menu.locator("li")).toHaveText(["horizontal", "inverted V", "sloper"]);
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
   await page.locator(".band-hfant label", { hasText: "end-fed ½λ" }).click();
-  await page.locator("#band-hfwire").selectOption("sloper");
+  await pick.click();
+  await expect(menu.locator("li")).toHaveText(["horizontal", "sloper", "inverted V", "inverted L", "vertical"]);
+  await menu.locator("li", { hasText: "sloper" }).click();
+  await expect(menu).toBeHidden();
+  await expect(pick).toContainText("sloper");
   await expect(page.locator("#band-hfwire-note")).toContainText("Sloper: a common, good setup.");
   await expect(page).toHaveURL(/hfwire=sloper/);
+  // The picker sits under the selected tile.
+  const tileX = await page.locator(".band-hfant label", { hasText: "end-fed ½λ" }).evaluate((e) => e.getBoundingClientRect().left);
+  const pickX = await pick.evaluate((e) => e.getBoundingClientRect().left);
+  expect(Math.abs(pickX - tileX)).toBeLessThan(2);
   await page.reload();
-  await expect(page.locator("#band-hfwire")).toHaveValue("sloper");
+  await expect(pick).toContainText("sloper");
   await expect(page.locator("#band-hfwire-note")).toContainText("Sloper:");
   // The row keeps its space when hidden, so the map below does not move.
   const mapTop = () => page.locator("#map").evaluate((e) => e.getBoundingClientRect().top);
   const top = await mapTop();
   await page.locator(".band-hfant label", { hasText: "vertical" }).first().click();
-  await expect(page.locator("#band-hfwire")).toBeHidden();
+  await expect(pick).toBeHidden();
   await expect(page).not.toHaveURL(/hfwire=/);
   expect(await mapTop()).toBe(top);
+});
+
+test("an old link with a setup the antenna does not have falls back to horizontal", async ({ page }) => {
+  await mockServices(page, () => 0);
+  await open(page, "?tx=51.5,-0.12&rx=40.7,-74&hfwire=vertical");
+  await expect(page.locator("#band-hfwire")).toContainText("horizontal");
+  await page.locator(".band-hfant label", { hasText: "end-fed wire" }).click();
+  await expect(page.locator("#band-hfwire")).toContainText("vertical");
+  await expect(page).toHaveURL(/hfant=endfed&hfwire=vertical|hfwire=vertical.*hfant=endfed/);
+});
+
+test("clear removes both pins and the card without a reload", async ({ page }) => {
+  await mockServices(page, () => 0);
+  await open(page, "?tx=51.5,-0.12&rx=40.7,-74&w=50");
+  await expect(page.locator(".band-freq")).toBeVisible();
+  await page.locator("#band-clear").click();
+  await expect(page.locator(".band-answer")).toHaveCount(0);
+  await expect(page.locator("#band-empty")).toBeVisible();
+  await expect(page.locator(".map-mark-wrap")).toHaveCount(0);
+  await expect(page.locator("#band-hint")).toHaveText("Click where you are");
+  await expect(page).not.toHaveURL(/tx=|rx=/);
+  // Your own power stays.
+  await expect(page).toHaveURL(/w=50/);
+  expect(await page.evaluate(() => window.__WCR_BAND.state().terrain)).toBeNull();
 });
 
 test("a band picked by hand rates the path at that band, shows a banner, and reverts", async ({ page }) => {

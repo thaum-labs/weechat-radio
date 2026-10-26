@@ -1499,23 +1499,69 @@ details.maplibregl-ctrl-attrib:not([open]) {
 .band-hfant label:hover { color: var(--fg); }
 .band-hfant label:has(input:checked) { color: var(--orange); border-color: var(--orange); }
 .band-hfant label:has(input:focus-visible) { outline: 1px solid var(--accent); }
-.band-hfwire select {
+.band-hfwire {
+  position: relative;
+  flex: 1 1 100%;
+  display: flex;
+  margin-top: -2px;
+}
+/* The picker hangs off the selected tile: a notch points up at it. */
+.band-hfwire-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   background: #050508;
-  border: 1px solid var(--line);
+  border: 1px solid var(--orange);
   color: var(--fg);
   font: 12px/1.4 var(--font-mono);
-  padding: 4px 6px;
+  padding: 3px 8px 3px 6px;
+  cursor: pointer;
+  white-space: nowrap;
 }
-.band-hfant label.band-hfwire {
-  flex-direction: row;
-  gap: 6px;
-  padding: 0;
-  border: 0;
-  background: none;
-  font-size: 12px;
-  cursor: default;
+.band-hfwire-btn::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 14px;
+  width: 8px;
+  height: 8px;
+  background: #050508;
+  border-left: 1px solid var(--orange);
+  border-top: 1px solid var(--orange);
+  transform: rotate(45deg);
 }
-.band-hfwire[hidden], .band-hfwire-note[hidden] { display: none; }
+.band-hfwire-btn i { font-style: normal; color: var(--dim); }
+.band-hfwire-btn b { font-weight: normal; color: var(--orange); }
+.band-hfwire-btn b:empty { display: none; }
+.band-hfwire.is-detached .band-hfwire-btn::before { display: none; }
+.band-hfwire-btn:hover i, .band-hfwire-btn[aria-expanded="true"] i { color: var(--orange); }
+.band-hfwire-btn:focus-visible { outline: 1px solid var(--accent); }
+.band-hfwire-btn svg, .band-hfwire-menu svg { width: 18px; height: 18px; color: var(--orange); }
+.band-hfwire-menu {
+  position: absolute;
+  top: 100%;
+  z-index: 20;
+  min-width: 150px;
+  margin: 2px 0 0;
+  padding: 2px 0;
+  list-style: none;
+  background: #050508;
+  border: 1px solid var(--line);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+}
+.band-hfwire-menu[hidden] { display: none; }
+.band-hfwire-menu li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 8px;
+  color: var(--dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.band-hfwire-menu li:hover, .band-hfwire-menu li:focus { color: var(--fg); background: #0d0d14; outline: none; }
+.band-hfwire-menu li[aria-selected="true"] { color: var(--orange); }
 .band-hfwire-note {
   flex: 1 1 100%;
   margin: 0;
