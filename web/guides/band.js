@@ -423,12 +423,59 @@
   }
 
   // "just clips a hill at 12 km" when the ground pokes above the line,
-  // "skims the ground at 12 km" when it only crowds the Fresnel zone.
+  // "skims the ground at 12 km" when it only crowds the Fresnel zone. How
+  // much that matters comes from the signal budget below.
   function marginalText() {
     const w = terrain && terrain.worst;
     if (!w) return "";
     const km = w.dKm >= 10 ? Math.round(w.dKm) : w.dKm.toFixed(1);
-    return `${w.clearance < 0 ? "just clips a hill" : "skims the ground"} at ${km} km, may work with more height or power`;
+    return `${w.clearance < 0 ? "just clips a hill" : "skims the ground"} at ${km} km`;
+  }
+
+  // Rough FM signal budget, so a yellow path or a pair of handhelds says how
+  // well it should really work. Path loss is the larger of free space and
+  // plane earth (40 log d, what limits low antennas over flat ground), plus
+  // knife-edge loss when the ground pokes above the radio line. A handheld whip
+  // (2 m up or lower) counts as -5 dBi, an antenna on a roof or mast as
+  // 0 dBi after feeder loss. -116 dBm is a clean FM signal; 10 dB above it
+  // counts as "should work well".
+  const FM_FLOOR_DBM = -116;
+  const GOOD_MARGIN_DB = 10;
+  const POWER_STEPS = [5, 10, 20, 50, 100];
+
+  function antGainDbi(m) {
+    return m <= 2 ? -5 : 0;
+  }
+  // ITU-R P.526 single knife edge, nu = sqrt(2) x height above the line / F1.
+  function knifeEdgeDb(nu) {
+    if (!(nu > -0.78)) return 0;
+    return 6.9 + 20 * Math.log10(Math.sqrt((nu - 0.1) ** 2 + 1) + nu - 0.1);
+  }
+  function pathLossDb(mhz) {
+    const dKm = Math.max(terrain ? terrain.D : distKm(tx, rx), 0.01);
+    const free = 32.45 + 20 * Math.log10(dKm) + 20 * Math.log10(mhz);
+    const w = terrain && terrain.worst;
+    const edge = w && w.clearance < 0 ? knifeEdgeDb((-Math.SQRT2 * w.clearance) / w.f1) : 0;
+    const plane = 40 * Math.log10(dKm * 1000) - 20 * Math.log10(txAntM()) - 20 * Math.log10(rxAntM());
+    return Math.max(free, plane) + edge;
+  }
+  function marginDb(watts, mhz) {
+    const dbm = 10 * Math.log10(watts * 1000);
+    return dbm + antGainDbi(txAntM()) + antGainDbi(rxAntM()) - pathLossDb(mhz) - FM_FLOOR_DBM;
+  }
+  // The least power (up to what the station has) that should work well,
+  // and a plain verdict for the card.
+  let budget = null;
+  function signalBudget() {
+    const mhz = fresnelMhz();
+    const steps = POWER_STEPS.filter((w) => w <= powerW());
+    const watts = steps.find((w) => marginDb(w, mhz) >= GOOD_MARGIN_DB) || powerW();
+    const margin = Math.round(marginDb(watts, mhz));
+    let text;
+    if (margin >= GOOD_MARGIN_DB) text = `Should work well: about ${margin} dB to spare at ${watts} W.`;
+    else if (margin >= 0) text = `Should work, but may be noisy or drop out as you move: about ${margin} dB to spare at ${watts} W.`;
+    else text = `Unlikely at ${watts} W: about ${-margin} dB short. More antenna height helps most.`;
+    return { watts, margin, text };
   }
 
   function ensureArcLayer() {
@@ -689,6 +736,12 @@
       card.note = `Marginal for VHF and UHF: ${m.charAt(0).toUpperCase()}${m.slice(1)}. ${card.note || ""}`.trim();
     } else if (terrain && card.kind === "fm") {
       card.note = `Clear line of sight for VHF and UHF. ${card.note || ""}`.trim();
+    }
+    budget = null;
+    if (card.kind === "fm" && !(terrain && terrain.blocked)) {
+      budget = signalBudget();
+      card.power_w = budget.watts;
+      card.why = `${card.why || ""} ${budget.text}`.trim();
     }
     renderCard(card);
     setHint("OK", card.confidence || "Ready");
@@ -1136,6 +1189,7 @@
         y0: terrain.y0,
         y1: terrain.y1,
       },
+      budget,
     }),
   };
 })();
