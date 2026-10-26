@@ -285,15 +285,20 @@ pub fn fm_card(region: Region, distance_km: f64, tx_m: f64, rx_m: f64) -> Option
         "vhf-fm",
         "Close path - line of sight on 2m FM.".into(),
         "A hill can still block a short path. SSB stays off.".into(),
-        format!(
-            "2m FM: {:.0} km is inside the {:.0} km radio horizon for {} antennas.",
-            distance_km,
-            radio_horizon_km(tx_m, rx_m),
-            antennas_label(tx_m, rx_m)
-        ),
+        fm_why(distance_km, tx_m, rx_m),
         distance_km.round() as u32,
         None,
     ))
+}
+
+fn fm_why(distance_km: f64, tx_m: f64, rx_m: f64) -> String {
+    let horizon = radio_horizon_km(tx_m, rx_m);
+    let ants = antennas_label(tx_m, rx_m);
+    if distance_km <= horizon {
+        format!("2m FM: {distance_km:.0} km is inside the {horizon:.0} km radio horizon for {ants} antennas.")
+    } else {
+        format!("2m FM: {distance_km:.0} km is past the {horizon:.0} km smooth-earth radio horizon for {ants} antennas, but the ground along this path leaves a radio line.")
+    }
 }
 
 fn antenna_label(antenna_m: f64) -> String {
@@ -523,6 +528,24 @@ pub fn pick_hf(cells: &[Cell], hour_utc: u8, now: bool, distance_km: f64, max_w:
     )
 }
 
+/// The HF band name ("40m") a predicted frequency belongs to.
+pub fn band_of(freq_mhz: f64) -> Option<&'static str> {
+    spot_for(freq_mhz).map(|s| s.band)
+}
+
+/// 2m FM card for a path past the smooth-earth radio horizon. The page uses
+/// it only when the real terrain still leaves a radio line (marginal, not
+/// blocked); a 2m path is never longer than this.
+pub const FM_TERRAIN_MAX_KM: f64 = 150.0;
+
+pub fn far_fm(tx: Region, rx: Region, distance_km: f64, tx_m: f64, rx_m: f64) -> Option<Card> {
+    if distance_km <= radio_horizon_km(tx_m, rx_m) || distance_km > FM_TERRAIN_MAX_KM {
+        return None;
+    }
+    let region = Region::shared_vhf(tx, rx)?;
+    fm_card(region, distance_km, tx_m, rx_m)
+}
+
 pub fn try_close_fm(
     tx: Region,
     rx: Region,
@@ -654,6 +677,26 @@ mod tests {
         assert!(try_close_fm(Region::UkEu, Region::UkEu, 20.0, 1.5, 1.5).is_none());
         let c = try_close_fm(Region::UkEu, Region::UkEu, 20.0, 20.0, 1.5).unwrap();
         assert!(c.why.contains("20 m and 1.5 m antennas"), "{}", c.why);
+    }
+
+    #[test]
+    fn a_path_past_the_horizon_still_offers_fm_for_the_terrain_check() {
+        // Two handhelds 20 km apart: past the 10 km horizon, so HF is the
+        // pick, but the page can keep FM if the terrain leaves a line.
+        assert!(try_close_fm(Region::UkEu, Region::UkEu, 20.0, 1.5, 1.5).is_none());
+        let c = far_fm(Region::UkEu, Region::UkEu, 20.0, 1.5, 1.5).unwrap();
+        assert_eq!(c.band, "2m");
+        assert!(c.why.contains("past the 10 km"), "{}", c.why);
+        assert!(far_fm(Region::UkEu, Region::UkEu, 8.0, 1.5, 1.5).is_none());
+        assert!(far_fm(Region::UkEu, Region::UkEu, 400.0, 10.0, 10.0).is_none());
+        assert!(far_fm(Region::UkEu, Region::UsCa, 20.0, 1.5, 1.5).is_none());
+    }
+
+    #[test]
+    fn band_names_follow_the_spots() {
+        assert_eq!(band_of(7.045), Some("40m"));
+        assert_eq!(band_of(10.14), Some("30m"));
+        assert_eq!(band_of(9.0), None);
     }
 
     fn cell(hour: u8, freq_mhz: f64, snr: f64) -> Cell {
