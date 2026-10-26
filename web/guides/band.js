@@ -342,15 +342,18 @@
   }
 
   // Straight radio line between the antenna tops against ground plus the
-  // 4/3-earth bulge. `byTerrain` means the ground itself is above the line;
-  // otherwise a blocked point is only the curve of the earth.
+  // 4/3-earth bulge. `byCurve` means a smooth earth at the lower pin's ground
+  // height would already block the line (a long path, often over sea), so the
+  // path is beyond line of sight whatever the hills do. `byTerrain` means the
+  // earth's curve alone leaves the line clear and the ground is in the way.
   function lineOfSight(raw, antenna) {
     const samples = raw.map((s) => ({ ...s }));
     const D = samples[samples.length - 1].dKm;
     const y0 = (samples[0].elev || 0) + antenna;
     const y1 = (samples[samples.length - 1].elev || 0) + antenna;
+    const floor = Math.min(samples[0].elev || 0, samples[samples.length - 1].elev || 0);
     let blocked = false;
-    let byTerrain = false;
+    let byCurve = false;
     for (const s of samples) {
       const d1 = s.dKm;
       const d2 = Math.max(0, D - d1);
@@ -364,8 +367,9 @@
       s.clearance = s.line - (s.elev + s.bulge);
       s.blocked = inside && s.clearance < 0;
       if (s.blocked) blocked = true;
-      if (s.blocked && s.line - s.elev < 0) byTerrain = true;
+      if (inside && s.line < floor + s.bulge) byCurve = true;
     }
+    const byTerrain = blocked && !byCurve;
     return { samples, blocked, byTerrain, y0, y1, D };
   }
 
