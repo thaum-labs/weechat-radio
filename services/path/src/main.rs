@@ -12,8 +12,8 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use choose::{
-    band_of, far_fm, hf_freqs_mhz, pick_hf, try_close_fm, Card, HfAntenna, DEFAULT_ANTENNA_M,
-    POWER_STEPS,
+    band_of, far_fm, hf_bands, hf_freqs_mhz, pick_hf, pick_hf_band, try_close_fm, BandWorks, Card,
+    HfAntenna, DEFAULT_ANTENNA_M, POWER_STEPS,
 };
 use chrono::{Datelike, Timelike, Utc};
 use forecast::Forecast;
@@ -58,7 +58,8 @@ struct PathBody {
     #[serde(default)]
     hf_antenna: HfAntenna,
     /// HF band the user picked by hand ("40m"). The answer then also
-    /// carries `band_card`, the prediction for that band alone.
+    /// carries `band_card`, the prediction for that band alone, unless the
+    /// band has no calling spot on this path.
     #[serde(default)]
     band: Option<String>,
 }
@@ -165,7 +166,7 @@ async fn path_handler(
     let tx_r = Region::from_country(&tx_place.country);
     let rx_r = Region::from_country(&rx_place.country);
 
-    let (hf, band_card) = hf_cards(
+    let (hf, band_card, bands) = hf_cards(
         &app,
         tx,
         rx,
@@ -184,6 +185,7 @@ async fn path_handler(
             hf: Some(hf),
             fm: None,
             band_card,
+            bands,
         }));
     }
     Ok(Json(Answer {
@@ -191,6 +193,7 @@ async fn path_handler(
         hf: None,
         fm: far_fm(tx_r, rx_r, dist, tx_m, rx_m),
         band_card,
+        bands,
     }))
 }
 
@@ -210,9 +213,13 @@ struct Answer {
     /// The prediction for the HF band the user picked by hand.
     #[serde(skip_serializing_if = "Option::is_none")]
     band_card: Option<Card>,
+    /// Every HF band on this path and whether it works at this hour and
+    /// power. The page lists the ones that do on every card.
+    bands: Vec<BandWorks>,
 }
 
-/// The HF pick, plus the pick for `band` alone when the user chose one.
+/// The HF pick, the pick for `band` alone when the user chose one, and
+/// which HF bands work on the path.
 #[allow(clippy::too_many_arguments)]
 async fn hf_cards(
     app: &App,
@@ -225,39 +232,40 @@ async fn hf_cards(
     max_w: u32,
     antenna: HfAntenna,
     band: Option<&str>,
-) -> Result<(Card, Option<Card>), (StatusCode, String)> {
+) -> Result<(Card, Option<Card>, Vec<BandWorks>), (StatusCode, String)> {
     let now = Utc::now();
     let this_hour = now.hour() as u8;
     let hour = hour_utc.unwrap_or(this_hour);
     let freqs = hf_freqs_mhz(tx_r, rx_r);
-    if let Some(b) = band {
-        if !freqs.iter().any(|&f| band_of(f) == Some(b)) {
-            return Err((StatusCode::BAD_REQUEST, format!("no {b} spot on this path")));
-        }
-    }
+    // A band with no calling spot here (40m outside a shared plan) gets no
+    // band_card; the page says so.
+    let band = band.filter(|b| freqs.iter().any(|&f| band_of(f) == Some(*b)));
     let ssn = app.ssn.current().await;
     let forecast = app.forecast.clone();
     let year = now.year();
     let month = now.month();
-    let mut cells =
-        tokio::task::spawn_blocking(move || forecast.predict(tx, rx, &freqs, ssn, year, month))
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-            .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+    let predict_freqs = freqs.clone();
+    let mut cells = tokio::task::spawn_blocking(move || {
+        forecast.predict(tx, rx, &predict_freqs, ssn, year, month)
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
 
     antenna.apply(&mut cells);
-    let pick = |cells: &[choose::Cell]| {
-        let mut card = pick_hf(cells, hour, hour == this_hour, dist, max_w);
-        antenna.footnote(&mut card);
-        card
-    };
+    let now = hour == this_hour;
+    let mut card = pick_hf(&cells, hour, now, dist, max_w);
+    antenna.footnote(&mut card);
     let band_card = band.map(|b| {
         let only: Vec<_> = cells
             .iter()
             .copied()
             .filter(|c| band_of(c.freq_mhz) == Some(b))
             .collect();
-        pick(&only)
+        let mut c = pick_hf_band(&only, b, hour, now, dist, max_w);
+        antenna.footnote(&mut c);
+        c
     });
-    Ok((pick(&cells), band_card))
+    let bands = hf_bands(&cells, &freqs, hour, max_w);
+    Ok((card, band_card, bands))
 }

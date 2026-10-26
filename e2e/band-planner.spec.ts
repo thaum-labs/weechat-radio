@@ -11,6 +11,8 @@ declare global {
     __WCR_BAND: {
       setTxLngLat(lon: number, lat: number): void;
       setRxLngLat(lon: number, lat: number): void;
+      zoomTo(z: number): void;
+      pinOffsets(): number[];
       state(): {
         tx: { lat: number; lon: number } | null;
         rx: { lat: number; lon: number } | null;
@@ -95,8 +97,17 @@ async function mockServices(page: Page, ground: (i: number, n: number) => number
     const low = body.tx_antenna_m <= 2 && body.rx_antenna_m <= 2;
     const hf80 = { ...HF, frequency_mhz: "3.580", band: "80m" };
     const card = !near ? HF : low ? { ...hf80, fm: FM } : { ...FM, hf: hf80 };
-    const band_card = body.band ? { ...HF, band: body.band, frequency_mhz: "7.045", why: `${body.band} by hand.` } : undefined;
-    await route.fulfill({ json: { ...card, band_card, confidence: `hour ${body.hour_utc}` } });
+    // Like the service: 60m has no calling spot here, so no band_card.
+    const band_card =
+      body.band && body.band !== "60m"
+        ? { ...HF, band: body.band, frequency_mhz: "7.045", why: `${body.band} by hand.` }
+        : undefined;
+    const bands = [
+      { band: "80m", ok: true, power_w: 20 },
+      { band: "40m", ok: true, power_w: 10 },
+      { band: "20m", ok: false, power_w: null },
+    ];
+    await route.fulfill({ json: { ...card, band_card, bands, confidence: `hour ${body.hour_utc}` } });
   });
   await page.route("http://127.0.0.1:7380/api/path/places?**", async (route) => {
     await new Promise((r) => setTimeout(r, 600));
@@ -218,6 +229,13 @@ test("a near miss is marginal, stays on FM, and is drawn yellow", async ({ page 
   });
   await expect(page.locator("#los-note")).toContainText("marginal: just clips a hill at");
   await expect(page.locator(".band-freq")).toContainText("144.950");
+  // 10 m masts leave over 20 dB to spare, so the margin sets the headline.
+  await expect(page.locator(".band-conf")).toHaveText("Should work well on 2m FM.");
+  await expect(page.locator(".band-note")).toContainText("you have plenty of signal to cover it");
+  // Lower masts leave less than 20 dB: the marginal headline and advice.
+  await page.locator("#band-tx-ant").selectOption("6");
+  await page.locator("#band-rx-ant").selectOption("6");
+  await page.locator("#band-power").selectOption("5");
   await expect(page.locator(".band-note")).toContainText("Marginal: just clips a hill at");
   await expect(page.locator(".band-note")).toContainText("Raise the antennas or add power for a solid link.");
   await expect(page.locator(".band-conf")).toContainText("line of sight is marginal");
@@ -315,10 +333,8 @@ test("a flat marginal path says the ground is close, and stays on FM with handhe
     window.__WCR_BAND.setTxLngLat(6.14, 46.2);
     window.__WCR_BAND.setRxLngLat(6.25, 46.1);
   });
-  await expect(page.locator(".band-note")).toContainText(
-    "Marginal: the ground is close to the signal path. Raise the antennas for a solid link.",
-  );
   await expect(page.locator("#los-note")).toContainText("marginal: the ground is close to the signal path");
+  await expect(page.locator("#band-profile .pf-marginal")).toHaveCount(1);
   // Two handhelds: the service says HF (past the radio horizon), but the
   // terrain is only marginal, so the card keeps 2m FM and says it is unlikely.
   await page.locator("#band-tx-ant").selectOption("1.5");
@@ -326,6 +342,8 @@ test("a flat marginal path says the ground is close, and stays on FM with handhe
   await expect.poll(() => page.evaluate(() => window.__WCR_BAND.state().terrain)).toMatchObject({ blocked: false });
   await expect(page.locator(".band-freq")).toContainText("144.950");
   await expect(page.locator(".band-why")).toContainText("Unlikely at 100 W");
+  await expect(page.locator(".band-note")).toContainText("Marginal:");
+  await expect(page.locator(".band-note")).toContainText("Raise the antennas");
 });
 
 test("a wire antenna shows how it can be strung, and the link keeps it", async ({ page }) => {
@@ -383,5 +401,74 @@ test("an HF band picked by hand comes from the service", async ({ page }) => {
   await expect.poll(() => bodies.at(-1)).toMatchObject({ band: "40m" });
   await expect(page.locator(".band-freq")).toContainText("7.045");
   await expect(page.locator(".band-override-banner")).toContainText("Manual override: 40m (recommended: 30m)");
-  await expect(page.locator(".band-note")).toContainText("HF can still go by the sky");
+  // HF goes by the sky: no VHF line-of-sight line on its card.
+  await expect(page.locator(".band-note")).not.toContainText("line of sight");
+  await expect(page.locator(".band-note")).not.toContainText("Marginal");
+  // A band with no calling spot here still gets the banner and revert.
+  await page.locator("#band-override").selectOption("60m");
+  await expect(page.locator(".band-conf")).toHaveText("60m doesn't work on this path.");
+  await expect(page.locator(".band-override-banner")).toContainText("Manual override: 60m");
+  await page.locator(".band-revert").click();
+  await expect(page.locator(".band-freq")).toContainText("10.140");
+});
+
+test("a blocked band picked by hand says it doesn't work and lists bands that do", async ({ page }) => {
+  // A 900 m ridge in the middle of a 16 km path blocks VHF and UHF.
+  await mockServices(page, (i, n) => (Math.abs(i - n / 2) < 2 ? 900 : 100));
+  await open(page);
+  await page.evaluate(() => {
+    window.__WCR_BAND.setTxLngLat(6.14, 46.2);
+    window.__WCR_BAND.setRxLngLat(6.25, 46.1);
+  });
+  await expect(page.locator(".band-freq")).toContainText("3.580");
+  await page.locator("#band-override").selectOption("pmr446");
+  await expect(page.locator(".band-conf")).toHaveText("PMR446 doesn't work on this path.");
+  await expect(page.locator(".band-conf")).toHaveClass(/band-nogo/);
+  await expect(page.locator(".band-why")).toContainText("Terrain blocks PMR446.");
+  await expect(page.locator(".band-why")).not.toContainText("Should work");
+  await expect(page.locator(".band-stats")).toContainText("none");
+  // Only the HF bands that work; a click picks one, the recommended one reverts.
+  const chips = page.locator(".band-works-pick");
+  await expect(chips).toHaveText(["80m · 20 W", "40m · 10 W"]);
+  await chips.filter({ hasText: "40m" }).click();
+  await expect(page.locator("#band-override")).toHaveValue("40m");
+  await expect(page.locator(".band-freq")).toContainText("7.045");
+  await chips.filter({ hasText: "80m" }).click();
+  await expect(page.locator(".band-override-banner")).toHaveCount(0);
+  await expect(page).not.toHaveURL(/band=/);
+});
+
+test("the list of bands that work is the same whichever band is picked", async ({ page }) => {
+  await mockServices(page, () => 100);
+  await open(page);
+  await page.evaluate(() => {
+    window.__WCR_BAND.setTxLngLat(6.14, 46.2);
+    window.__WCR_BAND.setRxLngLat(6.25, 46.1);
+  });
+  const chips = page.locator(".band-works-pick");
+  await expect(chips.first()).toBeVisible();
+  await expect(page.locator(".band-works")).toContainText("2m");
+  const base = await chips.allTextContents();
+  expect(base.some((t) => t.startsWith("PMR446 · 0.5 W"))).toBe(true);
+  for (const band of ["pmr446", "40m", "cb"]) {
+    await page.locator("#band-override").selectOption(band);
+    await expect(page.locator(".band-override-banner")).toBeVisible();
+    await expect(chips).toHaveText(base);
+  }
+  // A licence-free band is budgeted at its own legal power.
+  await page.locator("#band-override").selectOption("pmr446");
+  await expect(page.locator(".band-stats")).toContainText("0.5 W");
+  await expect(page.locator(".band-why")).toContainText("at 0.5 W");
+});
+
+test("both pins stay on their points when zooming", async ({ page }) => {
+  await mockServices(page, () => 0);
+  await open(page, "?tx=51.2247,-2.3124&rx=51.2846,-2.1986");
+  await expect(page.locator(".band-freq")).toBeVisible();
+  for (const z of [7, 9, 11]) {
+    await page.evaluate((zoom) => window.__WCR_BAND.zoomTo(zoom), z);
+    const off = await page.evaluate(() => window.__WCR_BAND.pinOffsets());
+    expect(off).toHaveLength(2);
+    for (const d of off) expect(d).toBeLessThanOrEqual(2);
+  }
 });
