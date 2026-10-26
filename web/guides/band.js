@@ -591,12 +591,12 @@
 
   // Map and profile colours. The card keeps the strict Fresnel rating above;
   // the track only shows yellow where the path is really pinched. Red stays
-  // for blocked. The worst spot or spots are always yellow. With a solid
-  // budget nothing else is; otherwise anything under 0.3 x F1 or within
-  // 3 dB of the worst obstruction loss is too, except inside the "sure
-  // range" from each end (where even plane-earth loss leaves the solid
-  // margin, about 1 km for PMR446 handhelds) while the ground stays below
-  // the radio line.
+  // for blocked. Inside the "sure range" from each end (where even
+  // plane-earth loss leaves the solid margin, about 1 km for PMR446
+  // handhelds) ground below the radio line is blue and ground clipping it
+  // is yellow (Tobias, #142). Elsewhere the worst spot or spots are always
+  // yellow; with a solid budget nothing else is, otherwise anything under
+  // 0.3 x F1 or within 3 dB of the worst obstruction loss is too.
   const PINCH_MARGIN = 0.3;
   const PINCH_DB = 3;
   const WORST_SPOT = 0.05;
@@ -629,11 +629,12 @@
       return m <= worst.margin + WORST_SPOT && !lower(i - 1) && !lower(i + 1);
     };
     ss.forEach((s, i) => {
-      const nearEnd = Math.min(s.dKm, t.D - s.dKm) <= sure && s.clearance >= 0;
+      const nearEnd = Math.min(s.dKm, t.D - s.dKm) <= sure;
       const pinch = s.margin < PINCH_MARGIN || obstructionDb(s.margin) >= worstDb - PINCH_DB;
       if (s.state === "clear" || s.state === "blocked") s.show = s.state;
+      else if (nearEnd) s.show = s.clearance >= 0 ? "clear" : "marginal";
       else if (spot(i)) s.show = "marginal";
-      else s.show = !solid && !nearEnd && pinch ? "marginal" : "clear";
+      else s.show = !solid && pinch ? "marginal" : "clear";
     });
   }
 
@@ -858,7 +859,7 @@
       terrain = null;
       drawProfile();
       try {
-        const samples = await fetchElevation(tx, rx, signal, () => setLosNote("terrain lookup busy, retrying…"));
+        const samples = await fetchElevation(tx, rx, signal, showTerrainBusy);
         if (signal.aborted) return;
         elevation = { key, samples };
       } catch (e) {
@@ -888,6 +889,7 @@
   }
 
   function judgeTerrain() {
+    waitEl.hidden = true;
     terrain = losAt(fresnelMhz());
     if (terrain) markTrack(terrain, fresnelMhz());
     paintPath();
@@ -1055,6 +1057,17 @@
     }
     renderCard(card, o ? { label: o.label, info: o.info, rec: rec.band } : null);
     setHint("OK", card.confidence || "Ready");
+  }
+
+  // While a busy elevation service is retried, the answer so far ignores
+  // the hills, so the card goes back to waiting until the terrain is in.
+  function showTerrainBusy() {
+    setLosNote("terrain lookup busy, retrying…");
+    cardEl.classList.remove("has-answer");
+    const old = cardEl.querySelector(".band-answer");
+    if (old) old.remove();
+    waitEl.hidden = false;
+    setHint("…", "Terrain lookup busy, retrying");
   }
 
   // Without the terrain the answer could be wrong (an HF card for a path

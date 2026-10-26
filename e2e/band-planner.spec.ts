@@ -336,7 +336,9 @@ test("a flat marginal path says the ground is close, and stays on FM with handhe
     window.__WCR_BAND.setRxLngLat(6.25, 46.1);
   });
   await expect(page.locator("#los-note")).toContainText("marginal: the ground is close to the signal path");
-  await expect(page.locator("#band-profile .pf-marginal")).toHaveCount(1);
+  // The ground never reaches the line and the whole path is in the sure
+  // range at 10 m, so the profile shows no yellow (#142).
+  await expect(page.locator("#band-profile .pf-marginal")).toHaveCount(0);
   // Two handhelds: the service says HF (past the radio horizon), but the
   // terrain is only marginal, so the card keeps 2m FM and says it is unlikely.
   await page.locator("#band-tx-ant").selectOption("1.5");
@@ -479,10 +481,11 @@ test("the track is yellow only where the path is pinched", async ({ page }) => {
   const ridge = (i: number, n: number) => (Math.abs(i - n / 2) < 2 ? 130 : 100);
   const shown = () => page.evaluate(() => window.__WCR_BAND.state().terrain?.shown ?? "");
   // Flat 14 km between 10 m masts: marginal all along by the strict rating,
-  // but 27 dB to spare, so only the one worst spot is yellow.
+  // but the ground stays under the line and the sure range at 10 m covers
+  // the whole path, so it is all blue (#142).
   await mockServices(page, () => 100);
   await open(page, "?tx=46.2,6.14&rx=46.1,6.25&txant=10&rxant=10");
-  await expect.poll(shown).toMatch(/^c+mc+$/);
+  await expect.poll(shown).toMatch(/^c+$/);
   expect((await page.evaluate(() => window.__WCR_BAND.state().terrain))?.strict).toMatch(/^cm+c$/);
   // Two handhelds: short of signal, so the whole pinch is yellow, but the
   // first and last 2 km or so (the sure range) stay blue.
@@ -496,6 +499,21 @@ test("the track is yellow only where the path is pinched", async ({ page }) => {
   await expect(page.locator("#band-profile .pf-marginal")).toHaveCount(1);
 });
 
+test("inside the sure range the track is blue under the line and yellow where it clips", async ({ page }) => {
+  const shown = () => page.evaluate(() => window.__WCR_BAND.state().terrain?.shown ?? "");
+  // 4 km of flat ground, PMR446 handhelds, a bump 0.2 km from TX. Below
+  // the radio line it is the tightest spot on the path, but well inside the
+  // sure range, so it stays blue (#142).
+  await mockServices(page, (i) => (i === 1 ? 101.1 : 100));
+  await open(page, "?tx=46.2,6.14&rx=46.2,6.192&txant=1.5&rxant=1.5&band=pmr446");
+  await expect.poll(shown).toMatch(/^c{6}m+c{6}$/);
+  // Raised to clip the line: yellow, sure range or not (Tobias, #142).
+  await page.unrouteAll();
+  await mockServices(page, (i) => (i === 1 ? 101.6 : 100));
+  await open(page, "?tx=46.2,6.14&rx=46.2,6.192&txant=1.5&rxant=1.5&band=pmr446");
+  await expect.poll(shown).toMatch(/^cmc{4}m+c{6}$/);
+});
+
 test("a busy elevation service is retried, then says so with a Retry button", async ({ page }) => {
   await mockServices(page, () => 100);
   let busy = true;
@@ -507,6 +525,10 @@ test("a busy elevation service is retried, then says so with a Retry button", as
   });
   await open(page, "?tx=46.2,6.14&rx=46.1,6.25");
   await expect(page.locator("#los-note")).toHaveText("terrain lookup busy, retrying…");
+  // While retrying, the card waits rather than showing an answer that
+  // ignores the hills.
+  await expect(page.locator("#band-wait")).toBeVisible();
+  await expect(page.locator(".band-freq")).toHaveCount(0);
   await expect(page.locator(".band-err")).toContainText("Terrain lookup failed", { timeout: 15_000 });
   await expect(page.locator("#los-note")).toHaveText("terrain lookup failed");
   // No answer that ignores the hills.
