@@ -450,9 +450,13 @@ function strokePinLink(s1, s2, color, dash) {
   const dx = s2.x - s1.x;
   const dy = s2.y - s1.y;
   const dist = Math.hypot(dx, dy) || 1;
-  const bulge = Math.min(90, Math.max(28, dist * 0.22));
-  const mx = (s1.x + s2.x) / 2;
-  const my = (s1.y + s2.y) / 2 - bulge;
+  // Bow sideways from the chord (to the left going TX to RX, so up for a
+  // west-to-east link), never along it: a north-south link bowed screen-up
+  // lies on top of its own track. The peak is half the control offset, so
+  // 48 px keeps at least a 24 px bow.
+  const bulge = Math.min(90, Math.max(48, dist * 0.22));
+  const mx = (s1.x + s2.x) / 2 + (dy / dist) * bulge;
+  const my = (s1.y + s2.y) / 2 - (dx / dist) * bulge;
   arcCtx.beginPath();
   arcCtx.moveTo(s1.x, s1.y);
   arcCtx.quadraticCurveTo(mx, my, s2.x, s2.y);

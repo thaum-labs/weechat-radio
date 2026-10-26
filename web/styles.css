@@ -1318,6 +1318,25 @@ details.maplibregl-ctrl-attrib:not([open]) {
   white-space: nowrap;
 }
 .band-locate:hover { color: var(--orange); }
+.band-locate.is-busy {
+  position: relative;
+  color: transparent;
+  cursor: progress;
+}
+.band-locate.is-busy::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  margin: -7px 0 0 -7px;
+  border: 1px solid var(--dim);
+  border-top-color: var(--orange);
+  border-radius: 50%;
+  animation: band-spin 0.8s linear infinite;
+}
+@keyframes band-spin { to { transform: rotate(360deg); } }
 .band-opts {
   display: flex;
   flex-wrap: wrap;
@@ -1433,7 +1452,8 @@ details.maplibregl-ctrl-attrib:not([open]) {
 .band-override-banner p { margin: 0; flex: 1 1 220px; min-width: 0; }
 .band-override-banner b { color: var(--orange); font-weight: 400; }
 .band-override-banner .band-override-info { flex-basis: 100%; color: var(--dim); font-size: 12px; order: 3; }
-.band-revert {
+.band-revert,
+.band-retry {
   border: 1px solid var(--orange);
   background: #07070a;
   color: var(--orange);
@@ -1442,7 +1462,8 @@ details.maplibregl-ctrl-attrib:not([open]) {
   padding: 6px 10px;
   cursor: pointer;
 }
-.band-revert:hover { background: var(--orange); color: #07070a; }
+.band-revert:hover,
+.band-retry:hover { background: var(--orange); color: #07070a; }
 .band-time { flex: 1 1 240px; min-width: 0; }
 .band-time input { flex: 1; min-width: 80px; accent-color: var(--accent); }
 .band-time b {
