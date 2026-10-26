@@ -13,6 +13,7 @@ declare global {
       setRxLngLat(lon: number, lat: number): void;
       zoomTo(z: number): void;
       pinOffsets(): number[];
+      fitBox(): { w: number; h: number; pins: { x: number; y: number }[]; arc: { x: number; y: number } | null };
       state(): {
         tx: { lat: number; lon: number } | null;
         rx: { lat: number; lon: number } | null;
@@ -490,6 +491,44 @@ test("the list of bands that work is the same whichever band is picked", async (
   await expect(page.locator(".band-stats")).toContainText("0.5 W");
   await expect(page.locator(".band-why")).toContainText("at 0.5 W");
 });
+
+// #146: after RX is set (or a link opens) the map shows both pins and the
+// whole arc with a margin, centred on the middle of the path, even when the
+// result card leaves the map short.
+for (const size of [
+  { width: 1280, height: 800 },
+  { width: 390, height: 844 },
+]) {
+  test(`the map fits the whole path at ${size.width}×${size.height}`, async ({ page }) => {
+    await page.setViewportSize(size);
+    await mockServices(page, () => 100);
+    const paths = {
+      "Frome to Bath": "?tx=51.2247,-2.3124&rx=51.3734,-2.3257",
+      "London to Manchester": "?tx=51.5074,-0.1278&rx=53.4808,-2.2426",
+      "London to New York": "?tx=51.5074,-0.1278&rx=40.7128,-74.0060",
+      "1 km PMR": "?tx=51.2247,-2.3124&rx=51.2337,-2.3124",
+      "east to west": "?tx=51.30,-2.10&rx=51.30,-2.60",
+    };
+    for (const [name, query] of Object.entries(paths)) {
+      await open(page, query);
+      await expect(page.locator(".band-freq")).toBeVisible();
+      await expect
+        .poll(async () => {
+          const f = await page.evaluate(() => window.__WCR_BAND.fitBox());
+          const m = 16;
+          const inside = (p: { x: number; y: number }, dx: number, dy: number) =>
+            p.x - dx >= m - 1 && p.x + dx <= f.w - m + 1 && p.y - dy >= m - 1 && p.y + dy <= f.h - m + 1;
+          const [a, b] = f.pins;
+          const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+          const centred = Math.abs(mid.x - f.w / 2) <= f.w * 0.1 && Math.abs(mid.y - f.h / 2) <= f.h * 0.1;
+          // Zoomed in to the path, not a whole-region view.
+          const filled = Math.max(Math.abs(a.x - b.x) / f.w, Math.abs(a.y - b.y) / f.h) >= 0.4;
+          return `${f.pins.every((p) => inside(p, 14, 13)) && inside(f.arc!, 0, 0) && centred && filled}`;
+        }, { message: name })
+        .toBe("true");
+    }
+  });
+}
 
 test("both pins stay on their points when zooming", async ({ page }) => {
   await mockServices(page, () => 0);

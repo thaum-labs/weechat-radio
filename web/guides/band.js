@@ -794,13 +794,49 @@
     requestCard();
   }
 
-  function fitPins() {
+  // Fit the map to the path: both pins, the track and the bowed arc, centred
+  // on the midpoint. The padding is worked out per side from the map's real
+  // size, so a short map (the result card takes most of the height) still
+  // shows the whole path. Until the user pans or zooms, a later size change
+  // (the card appearing) fits again.
+  const FIT_MARGIN = 16;
+  const PIN_HALF_W = 14; // 28 px pin
+  const PIN_HALF_H = 28; // 26 px pin plus the TX/RX label under it
+  const ARC_PEAK = 45; // strokePinLink bows at most 90 / 2 px off the chord
+  let autoFit = false;
+
+  function fitPins(opts) {
     if (!tx || !rx) return;
+    const host = map.getContainer();
+    const w = host.clientWidth;
+    const h = host.clientHeight;
+    if (!w || !h) return;
     const b = new maplibregl.LngLatBounds();
     b.extend([tx.lon, tx.lat]);
     b.extend([rx.lon, rx.lat]);
-    map.fitBounds(b, { padding: 80, maxZoom: 8, duration: reduceMotion ? 0 : 600 });
+    if (terrain && terrain.samples) terrain.samples.forEach((s) => b.extend([s.lon, s.lat]));
+    // The arc bows sideways from the chord, so an east-west path needs room
+    // above and below, a north-south one left and right.
+    const s1 = map.project([tx.lon, tx.lat]);
+    const s2 = map.project([rx.lon, rx.lat]);
+    const dist = Math.hypot(s2.x - s1.x, s2.y - s1.y) || 1;
+    const bowX = (ARC_PEAK * Math.abs(s2.y - s1.y)) / dist;
+    const bowY = (ARC_PEAK * Math.abs(s2.x - s1.x)) / dist;
+    const padX = Math.min(w * 0.4, FIT_MARGIN + Math.max(PIN_HALF_W, bowX));
+    const padY = Math.min(h * 0.4, FIT_MARGIN + Math.max(PIN_HALF_H, bowY));
+    autoFit = true;
+    map.fitBounds(b, {
+      padding: { top: padY, bottom: padY, left: padX, right: padX },
+      maxZoom: 14,
+      duration: reduceMotion || (opts && opts.instant) ? 0 : 600,
+    });
   }
+  map.on("movestart", (e) => {
+    if (e.originalEvent) autoFit = false;
+  });
+  map.on("resize", () => {
+    if (autoFit) fitPins({ instant: true });
+  });
 
   async function requestCard(opts) {
     if (!tx || !rx) return;
@@ -1646,6 +1682,21 @@
       override: overrideKey(),
     }),
     zoomTo: (z) => map.jumpTo({ zoom: z }),
+    // Where the pins and the arc's peak sit on the map, in px (fit checks).
+    fitBox: () => {
+      const host = map.getContainer();
+      const pins = [tx, rx].filter(Boolean).map((p) => map.project([p.lon, p.lat]));
+      let arc = null;
+      if (pins.length === 2) {
+        const [s1, s2] = pins;
+        const dist = Math.hypot(s2.x - s1.x, s2.y - s1.y) || 1;
+        const bulge = Math.min(90, Math.max(48, dist * 0.22));
+        const cx = (s1.x + s2.x) / 2 + ((s2.y - s1.y) / dist) * bulge;
+        const cy = (s1.y + s2.y) / 2 - ((s2.x - s1.x) / dist) * bulge;
+        arc = { x: (s1.x + s2.x) / 4 + cx / 2, y: (s1.y + s2.y) / 4 + cy / 2 };
+      }
+      return { w: host.clientWidth, h: host.clientHeight, pins: pins.map((p) => ({ x: p.x, y: p.y })), arc };
+    },
     // How far each pin's centre sits from its point on the map, in px.
     pinOffsets: () =>
       [txMarker, rxMarker].filter(Boolean).map((m) => {
