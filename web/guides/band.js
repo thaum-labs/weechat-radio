@@ -89,6 +89,9 @@
   const rxAntEl = document.getElementById("band-rx-ant");
   const powerEl = document.getElementById("band-power");
   const profileEl = document.getElementById("band-profile");
+  const overrideEl = document.getElementById("band-override");
+  const wireEl = document.getElementById("band-hfwire");
+  const wireNoteEl = document.getElementById("band-hfwire-note");
 
   let tx = null;
   let rx = null;
@@ -139,6 +142,59 @@
     const hit = hfAntEls.find((el) => el.checked);
     return hit ? hit.value : "dipole";
   }
+  // How a wire antenna is strung up. It does not change the prediction; it
+  // shows a short note so a new user knows their setup is a good one.
+  const WIRE_ANTENNAS = ["dipole", "efhw", "endfed"];
+  const WIRE_NOTES = {
+    flat: "Horizontal: the classic setup. Get it as high and clear as you can; even a few metres up works.",
+    sloper: "Sloper: a common, good setup. Keep the far end out of reach, and put a choke on the coax at the feed.",
+    invl: "Inverted L: a good fit for a small garden. The upright part helps on long paths; put a choke on the coax at the feed.",
+    invv: "Inverted V: a good, easy setup with one support in the middle. Keep the ends out of reach and the angle between the legs wider than 90°.",
+    vertical: "Vertical: a good setup when space is tight, and fine for long paths. Lay a few radials or a counterpoise if you can, and put a choke on the coax at the feed.",
+  };
+  function wireOrientation() {
+    return wireEl && WIRE_NOTES[wireEl.value] ? wireEl.value : "flat";
+  }
+  function isWireAntenna() {
+    return WIRE_ANTENNAS.includes(hfAntenna());
+  }
+  function showWireNote() {
+    if (!wireEl) return;
+    const wire = isWireAntenna();
+    wireEl.parentElement.hidden = !wire;
+    if (wireNoteEl) {
+      wireNoteEl.hidden = !wire;
+      wireNoteEl.textContent = wire ? WIRE_NOTES[wireOrientation()] : "";
+    }
+  }
+
+  // Bands you can pick by hand instead of the recommendation. Nothing is
+  // greyed out for licence rules; `info` is a short note only. Line-of-sight
+  // bands are worked out on the page; HF bands come from the path service.
+  const OVERRIDES = {
+    "2m": { label: "2m", mhz: 145.5, info: "2m needs an amateur licence." },
+    "70cm": { label: "70cm", mhz: 433.5, info: "70cm needs an amateur licence." },
+    cb: { label: "CB", freq: "27.185", mhz: 27.185, info: "CB in the UK: 4 W FM on the 27/81 and CEPT channels. Channel 19 shown." },
+    pmr446: { label: "PMR446", freq: "446.00625", mhz: 446.00625, info: "PMR446 in the UK and EU: 0.5 W, built-in antenna, no licence. Channel 1 shown." },
+    murs: { label: "MURS", freq: "151.820", mhz: 151.82, info: "MURS is US only: 2 W, no licence. Channel 1 shown." },
+    "80m": { label: "80m", mhz: 3.58, hf: true },
+    "60m": { label: "60m", mhz: 5.357, hf: true },
+    "40m": { label: "40m", mhz: 7.045, hf: true },
+    "30m": { label: "30m", mhz: 10.14, hf: true },
+    "20m": { label: "20m", mhz: 14.07, hf: true },
+    "17m": { label: "17m", mhz: 18.1, hf: true },
+    "15m": { label: "15m", mhz: 21.07, hf: true },
+    "12m": { label: "12m", mhz: 24.92, hf: true },
+    "10m": { label: "10m", mhz: 28.12, hf: true },
+  };
+  for (const o of Object.values(OVERRIDES)) if (o.hf) o.info = `${o.label} needs an amateur licence.`;
+  function overrideKey() {
+    return overrideEl && OVERRIDES[overrideEl.value] ? overrideEl.value : "";
+  }
+  function override() {
+    return OVERRIDES[overrideKey()] || null;
+  }
+
   function powerW() {
     const v = powerEl ? Number(powerEl.value) : 100;
     return Number.isFinite(v) && v > 0 ? v : 100;
@@ -428,14 +484,27 @@
     return { samples, blocked, marginal, byTerrain, worst, y0, y1, D, txAnt, rxAnt };
   }
 
-  // "just clips a hill at 12 km" when the ground pokes above the line,
-  // "skims the ground at 12 km" when it only crowds the Fresnel zone. How
-  // much that matters comes from the signal budget below.
-  function marginalText() {
-    const w = terrain && terrain.worst;
-    if (!w) return "";
+  // Why a path is marginal. A hill pokes above the radio line ("clips"),
+  // or stands well above the ground line between the two ends ("passes
+  // close to"); otherwise the path is flat and low antennas leave the
+  // ground too close to the signal. How much that matters comes from the
+  // signal budget below.
+  function marginalCause(t) {
+    const w = t && t.worst;
+    if (!w) return { hill: false, text: "the ground is close to the signal path" };
     const km = w.dKm >= 10 ? Math.round(w.dKm) : w.dKm.toFixed(1);
-    return `${w.clearance < 0 ? "just clips a hill" : "skims the ground"} at ${km} km`;
+    const first = t.samples[0].elev || 0;
+    const last = t.samples[t.samples.length - 1].elev || 0;
+    const groundLine = t.D > 0 ? first + (last - first) * (w.dKm / t.D) : first;
+    if (w.clearance < 0) return { hill: true, text: `just clips a hill at ${km} km` };
+    if (w.elev - groundLine > 15) return { hill: true, text: `passes close to a hill at ${km} km` };
+    return { hill: false, text: "the ground is close to the signal path" };
+  }
+  function marginalLine(t) {
+    const c = marginalCause(t);
+    return c.hill
+      ? `Marginal: ${c.text}. Raise the antennas or add power for a solid link.`
+      : `Marginal: ${c.text}. Raise the antennas for a solid link.`;
   }
 
   // Rough FM signal budget, so a yellow path or a pair of handhelds says how
@@ -654,6 +723,7 @@
           tx_antenna_m: txAntM(),
           rx_antenna_m: rxAntM(),
           hf_antenna: hfAntenna(),
+          band: override() && override().hf ? overrideKey() : undefined,
         }),
         signal,
       });
@@ -708,49 +778,119 @@
     judgeTerrain();
   }
 
-  function fresnelMhz() {
-    const f = answer && answer.kind === "fm" ? Number(answer.frequency_mhz) : NaN;
+  // The frequency the path is judged at: a band picked by hand, else the
+  // FM card's frequency, else 2m calling.
+  function autoMhz() {
+    const fm = answer && (answer.kind === "fm" ? answer : answer.fm);
+    const f = fm ? Number(fm.frequency_mhz) : NaN;
     return Number.isFinite(f) && f > 30 ? f : 145;
+  }
+  function fresnelMhz() {
+    const o = override();
+    return o ? o.mhz : autoMhz();
+  }
+  function losAt(mhz) {
+    return elevation && elevation.key === pathKey() && elevation.samples
+      ? lineOfSight(elevation.samples, txAntM(), rxAntM(), mhz)
+      : null;
   }
 
   function judgeTerrain() {
-    terrain = elevation && elevation.key === pathKey() && elevation.samples
-      ? lineOfSight(elevation.samples, txAntM(), rxAntM(), fresnelMhz())
-      : null;
+    terrain = losAt(fresnelMhz());
     paintPath();
     drawProfile();
+    const o = override();
+    const what = o ? o.label : "VHF and UHF";
     if (!terrain) setLosNote("no terrain data for this path");
-    else if (terrain.byTerrain) setLosNote("terrain blocks VHF and UHF");
-    else if (terrain.blocked) setLosNote("beyond line of sight for VHF and UHF");
-    else if (terrain.marginal) setLosNote(`marginal: ${marginalText()}`);
-    else setLosNote("clear line of sight for VHF and UHF");
+    else if (terrain.byTerrain) setLosNote(`terrain blocks ${what}`);
+    else if (terrain.blocked) setLosNote(`beyond line of sight for ${what}`);
+    else if (terrain.marginal) setLosNote(`marginal: ${marginalCause(terrain).text}`);
+    else setLosNote(`clear line of sight for ${what}`);
     showAnswer();
   }
 
-  // The server answers on distance alone. When it says 2m FM and the ground
-  // or the earth's curve is in the way, switch to the HF card it sent along.
-  function showAnswer() {
-    if (!answer) return;
+  // One line on the direct path for the card, at the band `what`.
+  function losLine(t, what) {
+    if (t.blocked) return t.byTerrain ? `Terrain blocks ${what}.` : `Beyond line of sight for ${what}.`;
+    if (t.marginal) return marginalLine(t);
+    return `Clear line of sight for ${what}.`;
+  }
+
+  // The server answers on distance alone: FM inside the smooth-earth radio
+  // horizon, HF past it. Only a blocked path goes to HF: when the ground or
+  // the earth's curve is in the way, switch to the HF card it sent along;
+  // when the server said HF but the real terrain leaves a line, switch to
+  // the FM card it sent along.
+  function recommendedCard(t) {
     let card = { ...answer };
-    if (terrain && terrain.blocked) {
-      const reason = terrain.byTerrain ? "Terrain blocks VHF and UHF." : "Beyond line of sight for VHF and UHF.";
+    if (t && t.blocked) {
+      const reason = losLine(t, "VHF and UHF");
       if (card.kind === "fm" && card.hf) {
         card = { ...card.hf, why: `${reason} ${card.hf.why || ""}`.trim() };
       }
       card.note = `${reason} ${card.note || ""}`.trim();
-    } else if (terrain && terrain.marginal && card.kind === "fm") {
-      const m = marginalText();
-      card.note = `Marginal for VHF and UHF: ${m.charAt(0).toUpperCase()}${m.slice(1)}. ${card.note || ""}`.trim();
-    } else if (terrain && card.kind === "fm") {
-      card.note = `Clear line of sight for VHF and UHF. ${card.note || ""}`.trim();
+      return card;
     }
+    if (t && card.kind === "hf" && answer.fm) card = { ...answer.fm };
+    if (t && card.kind === "fm") {
+      if (t.marginal) card.confidence = "Close path on 2m FM, but the line of sight is marginal.";
+      card.note = `${losLine(t, "VHF and UHF")} SSB stays off.`;
+    }
+    return card;
+  }
+
+  // A band picked by hand. HF comes from the path service's band_card;
+  // the rest is worked out here from the terrain and the signal budget.
+  function overrideCard(o) {
+    const what = o.label;
+    const los = terrain ? losLine(terrain, what) : "";
+    if (o.hf) {
+      const c = { ...(answer.band_card || answer) };
+      const sky = terrain && terrain.blocked ? " HF can still go by the sky." : "";
+      c.note = `${los}${sky} ${c.note || ""}`.trim();
+      return c;
+    }
+    let freq = o.freq;
+    if (!freq) {
+      const fm = answer.kind === "fm" ? answer : answer.fm;
+      const us = fm && fm.frequency_mhz === "145.010";
+      freq = o.label === "2m" ? (fm ? fm.frequency_mhz : "145.500") : us ? "446.000" : "433.500";
+    }
+    budget = signalBudget();
+    return {
+      kind: "fm",
+      frequency_mhz: freq,
+      band: o.label,
+      ssb: false,
+      mode: "FM",
+      power_w: budget.watts,
+      preset: "vhf-fm",
+      qsy: `/radio qsy ${freq}`,
+      preset_cmd: "/radio preset vhf-fm",
+      confidence: terrain && terrain.blocked ? `${what}: no direct path.` : `${what}, picked by hand.`,
+      why: budget.text,
+      note: `${los} SSB stays off.`.trim(),
+      voice_note: null,
+      footnote: "",
+      distance_km: answer.distance_km,
+    };
+  }
+
+  function showAnswer() {
+    if (!answer) return;
+    const o = override();
     budget = null;
-    if (card.kind === "fm" && !(terrain && terrain.blocked)) {
+    // The recommendation is always judged at its own frequency, so the
+    // banner names what the page would pick without the override.
+    const rec = recommendedCard(o ? losAt(autoMhz()) : terrain);
+    let card = rec;
+    if (o) card = overrideCard(o);
+    else if (card.kind === "fm" && !(terrain && terrain.blocked)) {
       budget = signalBudget();
       card.power_w = budget.watts;
       card.why = `${card.why || ""} ${budget.text}`.trim();
     }
-    renderCard(card);
+    renderCard(card, o ? { label: o.label, info: o.info, rec: rec.band } : null);
     setHint("OK", card.confidence || "Ready");
   }
 
@@ -819,7 +959,7 @@
     return `<button type="button" class="copy-btn band-copy" data-copy="${escapeHtml(text)}">${escapeHtml(label)}</button>`;
   }
 
-  function renderCard(c) {
+  function renderCard(c, manual) {
     const power = c.power_w != null ? `${c.power_w} W` : "over 100 W";
     const ssb = c.ssb ? "on" : "off";
     const voice = c.voice_note ? `<p class="band-voice">${escapeHtml(c.voice_note)}</p>` : "";
@@ -829,6 +969,11 @@
     cardEl.insertAdjacentHTML(
       "beforeend",
       `<div class="band-answer">
+        ${manual ? `<div class="band-override-banner">
+          <p><b>Manual override: ${escapeHtml(manual.label)}</b> (recommended: ${escapeHtml(manual.rec)})</p>
+          ${manual.info ? `<p class="band-override-info">${escapeHtml(manual.info)}</p>` : ""}
+          <button type="button" class="band-revert">Revert to recommended</button>
+        </div>` : ""}
         <div class="band-freq-block">
           <p class="band-freq">${escapeHtml(c.frequency_mhz)}<span> MHz</span></p>
           <p class="band-band">${escapeHtml(c.band)}</p>
@@ -854,6 +999,12 @@
       </div>`
     );
   }
+
+  cardEl.addEventListener("click", (e) => {
+    if (!e.target.closest(".band-revert") || !overrideEl) return;
+    overrideEl.value = "";
+    requestCard({ refit: false });
+  });
 
   cardEl.addEventListener("click", async (e) => {
     const btn = e.target.closest(".band-copy");
@@ -924,6 +1075,8 @@
     set("txant", txAntM() !== 10 ? String(txAntM()) : null);
     set("rxant", rxAntM() !== 10 ? String(rxAntM()) : null);
     set("hfant", hfAntenna() !== "dipole" ? hfAntenna() : null);
+    set("hfwire", isWireAntenna() && wireOrientation() !== "flat" ? wireOrientation() : null);
+    set("band", overrideKey() || null);
     set("w", powerW() !== 100 ? String(powerW()) : null);
     const qs = q.toString().replace(/%2C/g, ",");
     try {
@@ -943,6 +1096,9 @@
     pickOption(powerEl, q.get("w"));
     const hf = hfAntEls.find((el) => el.value === q.get("hfant"));
     if (hf) hf.checked = true;
+    if (wireEl && WIRE_NOTES[q.get("hfwire")]) wireEl.value = q.get("hfwire");
+    showWireNote();
+    if (overrideEl && OVERRIDES[q.get("band")]) overrideEl.value = q.get("band");
     const t = parseLL(q.get("tx"));
     const r = parseLL(q.get("rx"));
     if (t) setTx(t);
@@ -981,7 +1137,24 @@
     });
   }
   if (powerEl) powerEl.addEventListener("change", () => requestCard({ refit: false }));
-  for (const el of hfAntEls) el.addEventListener("change", () => requestCard({ refit: false }));
+  for (const el of hfAntEls) {
+    el.addEventListener("change", () => {
+      showWireNote();
+      requestCard({ refit: false });
+    });
+  }
+  if (wireEl) {
+    wireEl.addEventListener("change", () => {
+      showWireNote();
+      saveUrl();
+    });
+  }
+  if (overrideEl) {
+    overrideEl.addEventListener("change", () => {
+      saveUrl();
+      requestCard({ refit: false });
+    });
+  }
   window.addEventListener("resize", () => drawProfile());
   // Keep "now" honest as the clock rolls over an hour.
   setInterval(showHourLabel, 60000);
@@ -1201,6 +1374,7 @@
         y1: terrain.y1,
       },
       budget,
+      override: overrideKey(),
     }),
   };
 })();

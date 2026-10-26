@@ -38,6 +38,7 @@ type PathBody = {
   tx_antenna_m: number;
   rx_antenna_m: number;
   hf_antenna: string;
+  band?: string;
 };
 
 const HF = {
@@ -89,8 +90,13 @@ async function mockServices(page: Page, ground: (i: number, n: number) => number
     const body = route.request().postDataJSON() as PathBody;
     bodies.push(body);
     const near = Math.abs(body.tx_lat - body.rx_lat) + Math.abs(body.tx_lon - body.rx_lon) < 1;
-    const card = near ? { ...FM, hf: { ...HF, frequency_mhz: "3.580", band: "80m" } } : HF;
-    await route.fulfill({ json: { ...card, confidence: `hour ${body.hour_utc}` } });
+    // Like the service: two handhelds are past the radio horizon, so HF
+    // is the pick with FM sent along for the terrain check.
+    const low = body.tx_antenna_m <= 2 && body.rx_antenna_m <= 2;
+    const hf80 = { ...HF, frequency_mhz: "3.580", band: "80m" };
+    const card = !near ? HF : low ? { ...hf80, fm: FM } : { ...FM, hf: hf80 };
+    const band_card = body.band ? { ...HF, band: body.band, frequency_mhz: "7.045", why: `${body.band} by hand.` } : undefined;
+    await route.fulfill({ json: { ...card, band_card, confidence: `hour ${body.hour_utc}` } });
   });
   await page.route("http://127.0.0.1:7380/api/path/places?**", async (route) => {
     await new Promise((r) => setTimeout(r, 600));
@@ -212,7 +218,9 @@ test("a near miss is marginal, stays on FM, and is drawn yellow", async ({ page 
   });
   await expect(page.locator("#los-note")).toContainText("marginal: just clips a hill at");
   await expect(page.locator(".band-freq")).toContainText("144.950");
-  await expect(page.locator(".band-note")).toContainText("Marginal for VHF and UHF");
+  await expect(page.locator(".band-note")).toContainText("Marginal: just clips a hill at");
+  await expect(page.locator(".band-note")).toContainText("Raise the antennas or add power for a solid link.");
+  await expect(page.locator(".band-conf")).toContainText("line of sight is marginal");
   await expect(page.locator("#band-profile .pf-marginal")).toHaveCount(1);
   await expect(page.locator("#band-profile .pf-block")).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => window.__WCR_BAND.state().terrain)).toMatchObject({ blocked: false, marginal: true });
@@ -282,4 +290,98 @@ test("on air lists stations from the live map and picks one as the other station
   await hit.click();
   await expect.poll(() => page.evaluate(() => window.__WCR_BAND.state().rx)).toEqual({ lat: 51.5, lon: -0.1 });
   await expect(page.locator("#band-search")).toHaveValue("G4QAA");
+});
+
+test("on a phone the page has no sideways scroll", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockServices(page, () => 0);
+  await open(page, "?tx=51.5,-0.12&rx=40.7,-74");
+  await expect(page.locator(".band-freq")).toBeVisible();
+  const widths = await page.evaluate(() => ({
+    page: document.documentElement.scrollWidth,
+    tiles: Math.max(...[...document.querySelectorAll(".band-hfant label")].map((el) => el.getBoundingClientRect().right)),
+    style: document.getElementById("map-style")!.getBoundingClientRect().right,
+  }));
+  expect(widths.page).toBeLessThanOrEqual(390);
+  expect(widths.tiles).toBeLessThanOrEqual(390);
+  expect(widths.style).toBeLessThanOrEqual(390);
+});
+
+test("a flat marginal path says the ground is close, and stays on FM with handhelds", async ({ page }) => {
+  // Flat 16 km path: at 10 m the ground crowds the Fresnel zone.
+  await mockServices(page, () => 100);
+  await open(page);
+  await page.evaluate(() => {
+    window.__WCR_BAND.setTxLngLat(6.14, 46.2);
+    window.__WCR_BAND.setRxLngLat(6.25, 46.1);
+  });
+  await expect(page.locator(".band-note")).toContainText(
+    "Marginal: the ground is close to the signal path. Raise the antennas for a solid link.",
+  );
+  await expect(page.locator("#los-note")).toContainText("marginal: the ground is close to the signal path");
+  // Two handhelds: the service says HF (past the radio horizon), but the
+  // terrain is only marginal, so the card keeps 2m FM and says it is unlikely.
+  await page.locator("#band-tx-ant").selectOption("1.5");
+  await page.locator("#band-rx-ant").selectOption("1.5");
+  await expect.poll(() => page.evaluate(() => window.__WCR_BAND.state().terrain)).toMatchObject({ blocked: false });
+  await expect(page.locator(".band-freq")).toContainText("144.950");
+  await expect(page.locator(".band-why")).toContainText("Unlikely at 100 W");
+});
+
+test("a wire antenna shows how it can be strung, and the link keeps it", async ({ page }) => {
+  await mockServices(page, () => 0);
+  await open(page, "?tx=51.5,-0.12&rx=40.7,-74");
+  await expect(page.locator("#band-hfwire")).toBeVisible();
+  await expect(page.locator("#band-hfwire-note")).toContainText("Horizontal:");
+  await page.locator(".band-hfant label", { hasText: "end-fed ½λ" }).click();
+  await page.locator("#band-hfwire").selectOption("sloper");
+  await expect(page.locator("#band-hfwire-note")).toContainText("Sloper: a common, good setup.");
+  await expect(page).toHaveURL(/hfwire=sloper/);
+  await page.reload();
+  await expect(page.locator("#band-hfwire")).toHaveValue("sloper");
+  await expect(page.locator("#band-hfwire-note")).toContainText("Sloper:");
+  await page.locator(".band-hfant label", { hasText: "vertical" }).first().click();
+  await expect(page.locator("#band-hfwire")).toBeHidden();
+  await expect(page).not.toHaveURL(/hfwire=/);
+});
+
+test("a band picked by hand rates the path at that band, shows a banner, and reverts", async ({ page }) => {
+  // A ridge 15 m above the radio line mid-path: marginal at 2m, so the
+  // recommendation is 2m FM.
+  await mockServices(page, (i, n) => (Math.abs(i - n / 2) < 2 ? 130 : 100));
+  await open(page);
+  await page.evaluate(() => {
+    window.__WCR_BAND.setTxLngLat(6.14, 46.2);
+    window.__WCR_BAND.setRxLngLat(6.25, 46.1);
+  });
+  await expect(page.locator(".band-freq")).toContainText("144.950");
+  await page.locator("#band-override").selectOption("pmr446");
+  await expect(page.locator(".band-override-banner")).toContainText("Manual override: PMR446 (recommended: 2m)");
+  await expect(page.locator(".band-override-banner")).toContainText("0.5 W");
+  await expect(page.locator(".band-freq")).toContainText("446.00625");
+  await expect(page).toHaveURL(/band=pmr446/);
+  // At 446 MHz the Fresnel zone is narrower, so the same ridge reads worse.
+  await expect(page.locator("#los-note")).not.toContainText("for VHF and UHF");
+  await page.locator("#band-override").selectOption("cb");
+  await expect(page.locator(".band-freq")).toContainText("27.185");
+  await expect(page.locator(".band-override-banner")).toContainText("CB in the UK");
+  await page.locator("#band-override").selectOption("murs");
+  await expect(page.locator(".band-freq")).toContainText("151.820");
+  await page.reload();
+  await expect(page.locator("#band-override")).toHaveValue("murs");
+  await expect(page.locator(".band-override-banner")).toContainText("Manual override: MURS");
+  await page.locator(".band-revert").click();
+  await expect(page.locator(".band-override-banner")).toHaveCount(0);
+  await expect(page.locator(".band-freq")).toContainText("144.950");
+  await expect(page).not.toHaveURL(/band=/);
+});
+
+test("an HF band picked by hand comes from the service", async ({ page }) => {
+  const bodies = await mockServices(page, () => 0);
+  await open(page, "?tx=51.5,-0.12&rx=40.7,-74");
+  await page.locator("#band-override").selectOption("40m");
+  await expect.poll(() => bodies.at(-1)).toMatchObject({ band: "40m" });
+  await expect(page.locator(".band-freq")).toContainText("7.045");
+  await expect(page.locator(".band-override-banner")).toContainText("Manual override: 40m (recommended: 30m)");
+  await expect(page.locator(".band-note")).toContainText("HF can still go by the sky");
 });
