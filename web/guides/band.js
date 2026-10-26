@@ -1228,6 +1228,15 @@
   // (what the forecast assumes) stays quiet.
   const BAND_PLAN = "Check your band plan before you transmit.";
 
+  // Colour of the verdict tag: red when the band doesn't work, yellow for
+  // a marginal or later opening, green otherwise.
+  function verdictState(c, nogo) {
+    const t = c.confidence || "";
+    if (nogo || /doesn't work|^Nothing|^Not /.test(t)) return "bad";
+    if (/marginal/i.test(t)) return "warn";
+    return "ok";
+  }
+
   // Three zones, left to right: what to tune, will it work, what to type.
   // The band row on top switches bands and shows a hand-picked band.
   function renderCard(c, manual) {
@@ -1242,6 +1251,9 @@
     const foot = (c.footnote || "").replace(BAND_PLAN, "").replace(/\s+/g, " ").trim();
     const plan = (c.footnote || "").includes(BAND_PLAN) ? `<b>${BAND_PLAN}</b>` : "";
     const works = worksHtml(c, rec);
+    // The licence or legal note goes with the band shown, picked or not.
+    const shown = Object.values(OVERRIDES).find((o) => o.label === c.band);
+    const info = manual ? manual.info : shown && shown.info;
     cardEl.classList.add("has-answer");
     const old = cardEl.querySelector(".band-answer");
     if (old) old.remove();
@@ -1268,7 +1280,7 @@
             </dl>
           </div>
           <div class="band-verdict">
-            <p class="band-conf${nogo ? " band-nogo" : ""}">${escapeHtml(c.confidence || "")}</p>
+            <p class="band-conf band-conf-${verdictState(c, nogo)}${nogo ? " band-nogo" : ""}"><i class="band-led" aria-hidden="true"></i>${escapeHtml(c.confidence || "")}</p>
             ${c.why ? `<p class="band-why">${escapeHtml(c.why)}</p>` : ""}
             ${voice}
             ${note}
@@ -1277,7 +1289,7 @@
             <span class="band-label">set your radio</span>
             ${copyButton(c.qsy)}
             ${copyButton(c.preset_cmd)}
-            ${manual && manual.info ? `<p class="band-override-info">⚠ ${escapeHtml(manual.info)}</p>` : ""}
+            ${info ? `<p class="band-override-info">⚠ ${escapeHtml(info)}</p>` : ""}
             ${manual && manual.antNote ? `<p class="band-override-info band-ant-note">ⓘ ${escapeHtml(manual.antNote)}</p>` : ""}
           </div>
         </div>
