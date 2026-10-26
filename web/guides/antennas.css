@@ -83,6 +83,7 @@
 }
 .ant-types { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .ant-types label, .ant-cut button {
+  position: relative;
   padding: 4px 8px;
   border: 1px solid var(--line);
   background: #050508;
@@ -90,7 +91,7 @@
   font: 12px var(--font-mono);
   cursor: pointer;
 }
-.ant-types input { position: absolute; opacity: 0; pointer-events: none; }
+.ant-types input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; pointer-events: none; }
 .ant-types label:has(input:checked) { color: var(--orange); border-color: var(--orange); }
 .ant-types label:has(input:focus-visible) { outline: 1px solid var(--accent); }
 .ant-cut button:hover, .ant-types label:hover { color: var(--fg); }
