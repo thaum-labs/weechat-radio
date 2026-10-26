@@ -283,3 +283,18 @@ test("on air lists stations from the live map and picks one as the other station
   await expect.poll(() => page.evaluate(() => window.__WCR_BAND.state().rx)).toEqual({ lat: 51.5, lon: -0.1 });
   await expect(page.locator("#band-search")).toHaveValue("G4QAA");
 });
+
+test("on a phone the page has no sideways scroll", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockServices(page, () => 0);
+  await open(page, "?tx=51.5,-0.12&rx=40.7,-74");
+  await expect(page.locator(".band-freq")).toBeVisible();
+  const widths = await page.evaluate(() => ({
+    page: document.documentElement.scrollWidth,
+    tiles: Math.max(...[...document.querySelectorAll(".band-hfant label")].map((el) => el.getBoundingClientRect().right)),
+    style: document.getElementById("map-style")!.getBoundingClientRect().right,
+  }));
+  expect(widths.page).toBeLessThanOrEqual(390);
+  expect(widths.tiles).toBeLessThanOrEqual(390);
+  expect(widths.style).toBeLessThanOrEqual(390);
+});
