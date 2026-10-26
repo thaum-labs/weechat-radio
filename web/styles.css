@@ -1243,6 +1243,7 @@ details.maplibregl-ctrl-attrib:not([open]) {
   border: 1.5px solid;
 }
 .los-clear { border-color: #7d9bff; background: rgba(125, 155, 255, 0.45); }
+.los-marginal { border-color: #ffd60a; background: rgba(255, 214, 10, 0.5); }
 .los-block { border-color: #ff3b6b; background: rgba(255, 59, 107, 0.55); }
 .band-los-note { color: var(--fg); }
 .band-hint {
@@ -1336,6 +1337,15 @@ details.maplibregl-ctrl-attrib:not([open]) {
   font: 12px/1.4 var(--font-mono);
   padding: 4px 6px;
 }
+.band-opts input[type="number"] {
+  width: 5em;
+  background: #050508;
+  border: 1px solid var(--line);
+  color: var(--fg);
+  font: 12px/1.4 var(--font-mono);
+  padding: 4px 6px;
+}
+.band-ant i { font-style: normal; }
 .band-time { flex: 1 1 240px; min-width: 0; }
 .band-time input { flex: 1; min-width: 80px; accent-color: var(--accent); }
 .band-time b {
@@ -1360,6 +1370,7 @@ details.maplibregl-ctrl-attrib:not([open]) {
 .band-profile text { fill: var(--dim); font: 10px var(--font-mono); }
 .band-profile .pf-ground { fill: rgba(125, 155, 255, 0.28); stroke: #7d9bff; stroke-width: 1; }
 .band-profile .pf-curve { fill: none; stroke: var(--purple); stroke-width: 1; stroke-dasharray: 3 3; }
+.band-profile .pf-marginal { fill: none; stroke: #ffd60a; stroke-width: 2.5; }
 .band-profile .pf-block { fill: none; stroke: #ff3b6b; stroke-width: 2.5; }
 .band-profile .pf-line { stroke: #39ff14; stroke-width: 1.5; }
 .band-profile .pf-key-line { fill: #39ff14; }
