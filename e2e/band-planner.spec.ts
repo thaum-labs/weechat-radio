@@ -466,6 +466,28 @@ test("a wire antenna shows how it can be strung, and the link keeps it", async (
   expect(await mapTop()).toBe(top);
 });
 
+test("on a phone, the wire setup row and note never move the map", async ({ page }) => {
+  // A link with a non-wire antenna used to load an empty row, so the first
+  // wire tap pushed the map down; longer notes did the same on a phone.
+  await mockServices(page, () => 0);
+  for (const width of [390, 360]) {
+    await page.setViewportSize({ width, height: 844 });
+    await open(page, "?tx=51.5,-0.12&rx=40.7,-74&hfant=vertical");
+    const mapTop = () => page.locator("#map").evaluate((e) => e.getBoundingClientRect().top);
+    const top = await mapTop();
+    await page.locator(".band-hfant label", { hasText: "dipole" }).click();
+    await expect(page.locator("#band-hfwire")).toBeVisible();
+    expect(await mapTop()).toBe(top);
+    await page.locator(".band-hfant label", { hasText: "end-fed ½λ" }).click();
+    for (const setup of ["inverted V", "inverted L", "vertical", "sloper"]) {
+      await page.locator("#band-hfwire").click();
+      await page.locator("#band-hfwire-menu li", { hasText: setup }).click();
+      await expect(page.locator("#band-hfwire")).toContainText(setup);
+      expect(await mapTop()).toBe(top);
+    }
+  }
+});
+
 test("an old link with a setup the antenna does not have falls back to horizontal", async ({ page }) => {
   await mockServices(page, () => 0);
   await open(page, "?tx=51.5,-0.12&rx=40.7,-74&hfwire=vertical");

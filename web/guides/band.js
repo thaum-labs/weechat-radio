@@ -198,8 +198,25 @@
     const shapes = wireShapes();
     return shapes && shapes[wire] ? wire : "flat";
   }
+  // A vertical or a loop still fills the hidden row with the dipole's
+  // picker, so the row has its full height from the first load.
+  function shownWireShapes() {
+    return wireShapes() || WIRE_SHAPES.dipole;
+  }
   function wireSvg(key) {
-    return `<svg viewBox="0 0 24 24" aria-hidden="true">${wireShapes()[key]}</svg>`;
+    return `<svg viewBox="0 0 24 24" aria-hidden="true">${shownWireShapes()[key]}</svg>`;
+  }
+  // Every note sits in the same grid cell, hidden, under the shown one, so
+  // the note box is always as tall as the longest note and picking a setup
+  // does not move the map on a phone.
+  if (wireNoteEl) {
+    for (const text of Object.values(WIRE_NOTES)) {
+      const sizer = document.createElement("p");
+      sizer.className = "band-hfwire-note band-hfwire-sizer";
+      sizer.setAttribute("aria-hidden", "true");
+      sizer.textContent = text;
+      wireNoteEl.parentElement.append(sizer);
+    }
   }
   // The picker sits under the selected tile, so it reads as that antenna's
   // setting. The rows keep their space when hidden, so picking a vertical or
@@ -211,14 +228,12 @@
     row.style.visibility = show;
     if (wireNoteEl) wireNoteEl.style.visibility = show;
     closeWireMenu();
-    if (!show) {
-      const o = wireOrientation();
-      wireEl.innerHTML = `<b></b>${wireSvg(o)}<span>${WIRE_LABELS[o]}</span><i>▾</i>`;
-      wireMenuEl.innerHTML = Object.keys(wireShapes())
-        .map((k) => `<li role="option" tabindex="-1" data-wire="${k}" aria-selected="${k === o}">${wireSvg(k)}<span>${WIRE_LABELS[k]}</span></li>`)
-        .join("");
-      if (wireNoteEl) wireNoteEl.textContent = WIRE_NOTES[o];
-    }
+    const o = wireOrientation();
+    wireEl.innerHTML = `<b></b>${wireSvg(o)}<span>${WIRE_LABELS[o]}</span><i>▾</i>`;
+    wireMenuEl.innerHTML = Object.keys(shownWireShapes())
+      .map((k) => `<li role="option" tabindex="-1" data-wire="${k}" aria-selected="${k === o}">${wireSvg(k)}<span>${WIRE_LABELS[k]}</span></li>`)
+      .join("");
+    if (wireNoteEl) wireNoteEl.textContent = WIRE_NOTES[o];
     placeWirePicker();
   }
   function placeWirePicker() {
