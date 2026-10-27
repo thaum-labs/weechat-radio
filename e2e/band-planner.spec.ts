@@ -871,8 +871,11 @@ test("a busy elevation service is retried, then says so with a Retry button", as
   await expect(page.locator(".band-freq")).toHaveCount(0);
   await expect(page.locator(".band-err")).toContainText("Terrain lookup failed", { timeout: 15_000 });
   await expect(page.locator("#los-note")).toHaveText("terrain lookup failed");
-  // No answer that ignores the hills.
+  // No answer that ignores the hills, but the HF chips and legend stay:
+  // they go by the sky (#185).
   await expect(page.locator(".band-freq")).toHaveCount(0);
+  await expect(page.locator(".band-works-pick").first()).toBeVisible();
+  await expect(page.locator(".band-legend")).toBeVisible();
   expect(calls).toBeGreaterThanOrEqual(4);
   busy = false;
   await page.locator(".band-retry").click();
@@ -1105,3 +1108,16 @@ for (const width of [1280, 390, 360]) {
     near(mid((await hf.boundingBox())!), mid((await page.locator(beside).boundingBox())!));
   });
 }
+
+test("a direct 2m link keeps the HF chips when the elevation service fails (#185)", async ({ page }) => {
+  await mockServices(page, () => 100);
+  await page.route("https://api.open-meteo.com/**", (route) => route.fulfill({ status: 503, body: "busy" }));
+  await open(page, `${BATH_MADRID}&band=2m`);
+  await expect(page.locator(".band-err")).toContainText("VHF and UHF can't be judged yet", { timeout: 15_000 });
+  await expect(page.locator(".band-retry")).toBeVisible();
+  await expect(page.locator('.band-works-pick[data-band="40m"]')).toBeVisible();
+  await expect(page.locator(".band-legend")).toBeVisible();
+  // A chip still picks its HF band, which needs no terrain.
+  await page.locator('.band-works-pick[data-band="40m"]').click();
+  await expect(page.locator(".band-freq")).toContainText("7.045");
+});

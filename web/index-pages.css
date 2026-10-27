@@ -12,6 +12,9 @@
   display: flex;
   flex-direction: column;
 }
+/* The filter hides cards that don't match; the display rules here would
+   otherwise keep them on screen (#186). */
+.page-index a.guide-card[hidden] { display: none !important; }
 .page-index a.guide-card .tag {
   align-self: flex-start;
   margin-top: auto;
