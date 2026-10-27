@@ -626,6 +626,9 @@ test("a blocked band picked by hand says it doesn't work and lists bands that do
   await expect(page).not.toHaveURL(/band=/);
 });
 
+// #168: the bands that work are the same whichever band is picked. With an
+// HF band picked the sky view also lists the HF bands that are closed or
+// skip (dimmed), so only those extra chips differ.
 test("the list of bands that work is the same whichever band is picked", async ({ page }) => {
   await mockServices(page, () => 100);
   await open(page);
@@ -634,14 +637,25 @@ test("the list of bands that work is the same whichever band is picked", async (
     window.__WCR_BAND.setRxLngLat(6.25, 46.1);
   });
   const chips = page.locator(".band-works-pick");
+  const working = page.locator(".band-works-pick:not(.is-closed)");
+  const closed = page.locator(".band-works-pick.is-closed");
   await expect(chips.first()).toBeVisible();
   await expect(page.locator(".band-works")).toContainText("2m");
   const base = await chips.allTextContents();
   expect(base.some((t) => /^PMR446\s*0.5 W$/.test(t))).toBe(true);
-  for (const band of ["pmr446", "40m", "cb"]) {
+  const picks = [
+    { band: "pmr446", freq: "446.0", sky: false },
+    { band: "40m", freq: "7.045", sky: true },
+    { band: "cb", freq: "27.185", sky: false },
+  ];
+  for (const { band, freq, sky } of picks) {
     await page.locator("#band-override").selectOption(band);
-    await expect(page.locator(".band-override-banner")).toBeVisible();
-    await expect(chips).toHaveText(base);
+    // Wait for the new card, not just the banner: the old chips are still
+    // on screen the moment the select changes.
+    await expect(page.locator(".band-freq")).toContainText(freq);
+    await expect(working).toHaveText(base);
+    if (sky) await expect(closed).toHaveText([/^30m\s*skips$/, /^20m\s*skips$/]);
+    else await expect(closed).toHaveCount(0);
   }
   // A licence-free band is budgeted at its own legal power.
   await page.locator("#band-override").selectOption("pmr446");

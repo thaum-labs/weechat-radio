@@ -799,9 +799,10 @@ async fn heard_someone(port: u16) -> bool {
 /// handover. The station has heard the other one by then, so with
 /// [`beacon_held_a_while`] the beacon waits out carrier sense on the air
 /// queue, where the mail can take it back. A warm-up beacon goes a minute
-/// after the one before, so the wait is at most two of them.
+/// after the one before, so the wait is at most two of them. The deadline
+/// leaves room for a slow runner (msrv CI once gave up at 240 s).
 async fn wait_beacon_pending(pair: &Pair, i: usize) {
-    let deadline = Instant::now() + Duration::from_secs(240);
+    let deadline = Instant::now() + Duration::from_secs(360);
     let mut counting_down = false;
     loop {
         let note = beacon_note(pair.status[i]).await;
