@@ -150,7 +150,7 @@
   }
   .page-index section[data-cat] { scroll-margin-top: calc(var(--topbar-h) + 52px); }
   .page-index .article-section { margin: 18px 0; }
-  .page-index .section-lead { font-size: 13px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .page-index .section-lead { font-size: 13px; line-height: 1.4; }
   .page-index .guide-grid,
   .page-index .start-grid { grid-template-columns: minmax(0, 1fr); gap: 6px; margin-top: 10px; }
   .page-index a.guide-card { padding: 8px 12px; min-height: 0; }

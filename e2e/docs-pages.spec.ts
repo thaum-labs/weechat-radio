@@ -114,6 +114,8 @@ const FILES = ["guides", "docs"].flatMap((dir) =>
     .filter((f) => f.endsWith(".html"))
     .map((f) => `/${dir}/${f}`)
 );
+// Site pages that also have a home category (#176).
+const HOMED = [...FILES, "/why.html"];
 
 test("every guide and doc has exactly one home category across the two indexes", async ({ page }) => {
   const homes: string[] = [];
@@ -130,19 +132,18 @@ test("every guide and doc has exactly one home category across the two indexes",
     expect(await start.count()).toBeLessThanOrEqual(3);
     expect(await page.locator(".index-start a.guide-card:not(.featured)").count()).toBe(0);
   }
-  const articles = homes.filter((h) => h.startsWith("/guides/") || h.startsWith("/docs/"));
-  expect([...articles].sort()).toEqual([...FILES].sort());
+  expect([...homes].sort()).toEqual([...HOMED].sort());
 });
 
 test("the index cards, page titles and h1s match the shared article list", async ({ page }) => {
   await page.goto("/guides.html");
   const { ARTICLES, CATEGORIES } = await articleList(page);
-  expect(ARTICLES.map((a) => a.href).sort()).toEqual([...FILES].sort());
+  expect(ARTICLES.map((a) => a.href).sort()).toEqual([...HOMED].sort());
   for (const index of ["guides", "docs"]) {
     await page.goto(`/${index}.html`);
     for (const c of CATEGORIES.filter((c) => c.index === index)) {
       const want = ARTICLES.filter((a) => a.cat === c.id);
-      const cards = page.locator(`section[data-cat="${c.id}"] a.guide-card[href^="/guides/"], section[data-cat="${c.id}"] a.guide-card[href^="/docs/"]`);
+      const cards = page.locator(`section[data-cat="${c.id}"] a.guide-card`);
       await expect(cards.locator("h2")).toHaveText(want.map((a) => a.title));
       await expect(cards.locator("p")).toHaveText(want.map((a) => a.desc));
       await expect(page.locator(`.jump-bar a[href="#${c.id}"]`)).toHaveText(c.title);
@@ -167,6 +168,9 @@ test("article pages show the breadcrumb and next / previous from the shared list
   await page.locator(".article-next a").click();
   await expect(page).toHaveURL(/antennas-vhf(\.html)?$/);
   await expect(page.locator(".article-next")).toHaveText(/← Previous: HF antennas/);
+  await page.goto("/why.html");
+  await expect(page.locator(".crumb")).toHaveText("docs › How it works › Why WeeChat Radio");
+  await expect(page.locator(".article-next")).toHaveText(/Next in How it works: Common setups →/);
 });
 
 test("the filter finds both antenna guides, shows docs matches, and Escape clears it", async ({ page }) => {
@@ -180,6 +184,8 @@ test("the filter finds both antenna guides, shows docs matches, and Escape clear
   await expect(page.locator(".index-elsewhere")).toBeVisible();
   await expect(page.locator(".index-elsewhere h2")).toHaveText("From docs");
   await expect(page.locator(".index-elsewhere a")).toHaveText(["Compare apps"]);
+  await input.fill("why");
+  await expect(page.locator(".index-elsewhere a")).toHaveText(["Why WeeChat Radio"]);
   await input.fill("zzzz");
   await expect(page.locator(".index-empty")).toBeVisible();
   await input.press("Escape");
@@ -245,6 +251,8 @@ for (const width of [390, 360]) {
       }));
       expect(size.sideways, `${index} sideways scroll`).toBeLessThanOrEqual(0);
       if (width === 390) expect(size.height, `${index} height`).toBeLessThanOrEqual(2400);
+      const cut = await page.$$eval(".section-lead", (ps) => ps.filter((p) => p.scrollWidth > p.clientWidth).map((p) => p.textContent));
+      expect(cut, `${index} section intro lines wrap, not cut`).toEqual([]);
       const rows = await page.$$eval("section[data-cat] a.guide-card", (as) => as.map((a) => a.getBoundingClientRect().height));
       expect(Math.max(...rows), `${index} row height`).toBeLessThanOrEqual(72);
       // A jump chip goes to its section and the bar stays under the top bar.
