@@ -101,30 +101,42 @@
     const jump = page.querySelector(".jump-bar");
     const sections = [...page.querySelectorAll("section[data-cat]")];
 
-    if (jump && "IntersectionObserver" in global) {
+    // The current category: the last one whose heading is above 40% of the
+    // screen, or the last one once the page is scrolled to the bottom (a
+    // short last section never reaches the top).
+    if (jump) {
       const links = new Map([...jump.querySelectorAll("a")].map((a) => [a.getAttribute("href").slice(1), a]));
-      const mark = (id) =>
-        links.forEach((a, key) => {
-          if (key === id) a.setAttribute("aria-current", "true");
-          else a.removeAttribute("aria-current");
-        });
-      const seen = new Set();
-      const io = new IntersectionObserver(
-        (entries) => {
-          for (const e of entries) {
-            if (e.isIntersecting) seen.add(e.target.id);
-            else seen.delete(e.target.id);
-          }
-          const first = sections.find((s) => seen.has(s.id));
-          if (first) mark(first.id);
-        },
-        { rootMargin: "-30% 0px -60% 0px" }
-      );
-      sections.forEach((s) => io.observe(s));
+      const scroller = document.querySelector(".page-wrap");
+      const atBottom = () =>
+        [document.scrollingElement, scroller].every((el) => !el || el.scrollTop + el.clientHeight >= el.scrollHeight - 2) &&
+        (window.scrollY > 0 || (scroller && scroller.scrollTop > 0));
+      let queued = false;
+      // A clicked chip stays current until the reader scrolls by hand.
+      let picked = null;
       jump.addEventListener("click", (e) => {
         const a = e.target.closest("a");
-        if (a) mark(a.getAttribute("href").slice(1));
+        if (a) picked = document.getElementById(a.getAttribute("href").slice(1));
       });
+      for (const ev of ["wheel", "touchstart", "keydown"]) addEventListener(ev, () => (picked = null), { passive: true });
+      const update = () => {
+        queued = false;
+        const shown = sections.filter((s) => !s.hidden);
+        let current = shown.filter((s) => s.getBoundingClientRect().top < innerHeight * 0.4).pop();
+        if (atBottom() && shown.length) current = shown[shown.length - 1];
+        if (picked && !picked.hidden) current = picked;
+        links.forEach((a, id) => {
+          if (current && id === current.id) a.setAttribute("aria-current", "true");
+          else a.removeAttribute("aria-current");
+        });
+      };
+      jump.addEventListener("click", () => requestAnimationFrame(update));
+      const onScroll = () => {
+        if (!queued) requestAnimationFrame(update);
+        queued = true;
+      };
+      addEventListener("scroll", onScroll, { passive: true });
+      if (scroller) scroller.addEventListener("scroll", onScroll, { passive: true });
+      update();
     }
 
     const box = page.querySelector(".index-filter");

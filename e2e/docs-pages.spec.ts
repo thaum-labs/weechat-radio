@@ -189,6 +189,15 @@ test("the filter finds both antenna guides, shows docs matches, and Escape clear
   expect(await shown.count()).toBe(await page.locator("section[data-cat] a.guide-card").count());
 });
 
+test("a jump chip marks its own category, even a short one near the bottom", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/guides.html");
+  const chip = page.locator('.jump-bar a[href="#antennas"]');
+  await chip.click();
+  await expect(chip).toHaveAttribute("aria-current", "true");
+  await expect(page.locator(".jump-bar a[aria-current]")).toHaveCount(1);
+});
+
 test("the skip link is the first Tab stop on both indexes", async ({ page }) => {
   for (const [index, name] of [["/guides.html", "guides"], ["/docs.html", "docs"]]) {
     await page.goto(index);
