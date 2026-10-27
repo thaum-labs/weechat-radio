@@ -126,3 +126,28 @@ test("a tap on the empty part of the phone menu closes it", async ({ page }) => 
   await expect(links.first()).toBeHidden();
   await expect(page).toHaveURL(/\/guides(\.html)?$/);
 });
+
+// #189: keyboard focus moves into the open phone menu and stays there.
+test("the phone menu takes keyboard focus while it is open", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/guides.html");
+  const toggle = page.locator(".nav-toggle");
+  await toggle.focus();
+  await page.keyboard.press("Enter");
+  const focused = () => page.evaluate(() => document.activeElement!.textContent!.trim());
+  expect(await focused()).toBe("why");
+  await page.keyboard.press("Tab");
+  expect(await focused()).toBe("guides");
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Shift+Tab");
+  await expect(toggle).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  expect(await focused()).toBe("download");
+  await page.keyboard.press("Tab");
+  await expect(toggle).toBeFocused();
+  await page.keyboard.press("Tab");
+  expect(await focused()).toBe("why");
+  await page.keyboard.press("Escape");
+  await expect(page.locator("header.topbar nav a").first()).toBeHidden();
+  await expect(toggle).toBeFocused();
+});

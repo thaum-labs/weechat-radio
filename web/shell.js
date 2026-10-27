@@ -206,10 +206,16 @@
         document.body.appendChild(backdrop);
       }
 
+      const links = Array.from(nav.querySelectorAll("a"));
+      const isOpen = () => document.body.classList.contains("nav-open");
       const setOpen = (open) => {
+        const wasOpen = isOpen();
         document.body.classList.toggle("nav-open", open);
         btn.setAttribute("aria-expanded", open ? "true" : "false");
         btn.setAttribute("aria-label", open ? "Close menu" : "Open menu");
+        // Keyboard users land in the menu, and back on the toggle after (#189).
+        if (open && !wasOpen && links[0]) links[0].focus();
+        if (!open && wasOpen && nav.contains(document.activeElement)) btn.focus();
       };
       btn.addEventListener("click", () => {
         setOpen(!document.body.classList.contains("nav-open"));
@@ -220,11 +226,20 @@
       nav.addEventListener("click", (e) => {
         if (e.target === nav) setOpen(false);
       });
-      nav.querySelectorAll("a").forEach((a) => {
+      links.forEach((a) => {
         a.addEventListener("click", () => setOpen(false));
       });
       document.addEventListener("keydown", (e) => {
+        if (!isOpen()) return;
         if (e.key === "Escape") setOpen(false);
+        // Tab cycles through the menu links and the toggle only (#189).
+        if (e.key === "Tab" && btn.offsetParent) {
+          const ring = [...links, btn];
+          const i = ring.indexOf(document.activeElement);
+          const next = i < 0 ? 0 : (i + (e.shiftKey ? -1 : 1) + ring.length) % ring.length;
+          e.preventDefault();
+          ring[next].focus();
+        }
       });
     }
 
