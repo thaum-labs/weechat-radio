@@ -198,10 +198,36 @@ test("the filter finds both antenna guides, shows docs matches, and Escape clear
 test("a jump chip marks its own category, even a short one near the bottom", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/guides.html");
-  const chip = page.locator('.jump-bar a[href="#antennas"]');
+  const chip = page.locator('.jump-bar a[href="#plan-a-contact"]');
   await chip.click();
   await expect(chip).toHaveAttribute("aria-current", "true");
   await expect(page.locator(".jump-bar a[aria-current]")).toHaveCount(1);
+});
+
+test("antennas are the first category on guides, with featured cards (#177)", async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 780 });
+  await page.goto("/guides.html");
+  await expect(page.locator("section[data-cat]").first()).toHaveAttribute("id", "antennas");
+  const chip = page.locator(".jump-bar a").first();
+  await expect(chip).toHaveText("Antennas");
+  // On screen at 360 without swiping the bar.
+  const box = await chip.boundingBox();
+  expect(box!.x + box!.width).toBeLessThanOrEqual(360);
+  await expect(page.locator("#antennas a.guide-card.featured")).toHaveCount(2);
+  await chip.click();
+  await expect(page.locator('#antennas a[href="/guides/antennas-hf.html"]')).toBeInViewport();
+  await expect(page.locator('#antennas a[href="/guides/antennas-vhf.html"]')).toBeInViewport();
+});
+
+test("the radio articles point on to the antenna guides (#177)", async ({ page }) => {
+  for (const [slug, first] of [
+    ["radio", "hf"], ["hf", "hf"], ["radios", "hf"], ["handheld", "vhf"], ["vox", "vhf"], ["vr-n76", "vhf"],
+  ]) {
+    await page.goto(`/guides/${slug}.html`);
+    const links = page.locator(".next-antenna a");
+    await expect(links, slug).toHaveCount(2);
+    await expect(links.first(), slug).toHaveAttribute("href", `/guides/antennas-${first}.html`);
+  }
 });
 
 test("the skip link is the first Tab stop on both indexes", async ({ page }) => {

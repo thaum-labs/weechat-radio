@@ -1863,8 +1863,10 @@
     const vhf = workingBands()
       .filter((b) => VHF_KEYS.includes(b.key))
       .map((b) => ({ key: b.key, label: b.label, power: b.power, state: "works" }));
+    // HF chips run by frequency, low to high (#178).
     const hf = (answer.bands || [])
       .filter((b) => OVERRIDES[b.band])
+      .sort((a, b) => OVERRIDES[a.band].mhz - OVERRIDES[b.band].mhz)
       .map((b) => ({
         key: b.band,
         label: b.band,

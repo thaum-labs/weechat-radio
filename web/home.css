@@ -21,46 +21,8 @@ body.page-home { overflow: auto; }
 
 .home-wrap { max-width: 1240px; margin: 0 auto; padding: 0 24px; }
 
-/* header */
-.home-header {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  border-bottom: 1px solid var(--line);
-  background: rgba(5, 5, 8, 0.92);
-  backdrop-filter: blur(8px);
-}
-.home-header .home-wrap {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 28px;
-  padding-top: 8px;
-  padding-bottom: 8px;
-}
-.home-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 0;
-  font-size: 19px;
-  letter-spacing: -0.06em;
-  text-decoration: none;
-}
-.home-brand svg { width: 30px; height: 28px; color: var(--accent); }
-.home-brand__weechat { color: var(--fg); font-weight: 700; }
-.home-brand__radio { color: var(--accent); }
-.home-brand__sym { color: var(--orange); }
-.home .home-nav {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  margin-left: auto;
-  max-width: 100%;
-  gap: 0 16px;
-}
-.home .home-nav a { font-size: 14px; padding: 12px 4px; text-decoration: none; }
-.home-nav__github { display: inline-flex; align-items: center; gap: 6px; }
+/* The top bar is the shared one from styles.css; it stays on screen here. */
+body.page-home .topbar { position: sticky; top: 0; z-index: 20; }
 
 /* shared section pieces */
 .home-section { border-bottom: 1px solid var(--line); }

@@ -1,11 +1,11 @@
 import { expect, test } from "@playwright/test";
 
-test("homepage links to the map, downloads and docs", async ({ page }) => {
+test("homepage links to the map, download and docs", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("h1")).toBeVisible();
   const nav = page.getByRole("navigation", { name: "Main" });
   await expect(nav.getByRole("link", { name: "map", exact: true })).toHaveAttribute("href", "/map.html");
-  await expect(nav.getByRole("link", { name: "downloads", exact: true })).toHaveAttribute("href", "/downloads.html");
+  await expect(nav.getByRole("link", { name: "download", exact: true })).toHaveAttribute("href", "/downloads.html");
   await expect(nav.getByRole("link", { name: "docs", exact: true })).toHaveAttribute("href", "/docs.html");
 
   await nav.getByRole("link", { name: "map", exact: true }).click();
