@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-// Every guide and doc, in one list (#171). Each article has one home
+// Every guide and doc, plus the Why page, in one list (#171, #176). Each article has one home
 // category on one index page. The index pages carry the same cards as
 // static HTML (an e2e test keeps them in step); this list drives the
 // filter, the "From docs / From guides" matches, the breadcrumb and the
@@ -41,6 +41,7 @@
     { href: "/docs/calling.html", cat: "plan-a-contact", title: "Calling frequencies", desc: "Suggested VHF and HF spots. Check your band plan first.", keywords: "frequency spot dial meet" },
     { href: "/docs/band-plan.html", cat: "plan-a-contact", title: "Band plan", desc: "Every band from 160m to 23cm, plus CB and PMR446, to scale.", keywords: "bands frequency allocation iaru cb pmr446" },
     // docs: How it works
+    { href: "/why.html", cat: "how-it-works", title: "Why WeeChat Radio", desc: "An easier radio app, chat with no radio, and hops between stations.", keywords: "about reasons" },
     { href: "/docs/scenarios.html", cat: "how-it-works", title: "Common setups", desc: "Five everyday setups, animated, from a walkie-talkie to email over radio.", keywords: "scenarios examples gateway animated" },
     { href: "/docs/mixed-band.html", cat: "how-it-works", title: "One group: PMR, CB, 2m, and internet", desc: "How PMR446, CB, 2m and a laptop share one channel through the hub.", keywords: "mixed band pmr446 cb 2m group hub" },
     { href: "/docs/modes.html", cat: "how-it-works", title: "Modes", desc: "What each mode is for: internet, radio, radio-plus and the rest.", keywords: "internet radio radio-plus gateway map" },
