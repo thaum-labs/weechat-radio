@@ -136,7 +136,8 @@ async function mockServices(page: Page, ground: (i: number, n: number) => number
       bands[1] = { ...bands[1], state: "marginal", hops: 1, takeoff_deg: 78, skips: false };
       bands.splice(2, 0, { band: "30m", frequency_mhz: 10.14, ok: false, power_w: null, state: "closed", hours: hours["20m"], hops: 1, takeoff_deg: 80, skips: true });
       // 60m is closed without skipping: a band that won't work (grey chip).
-      bands.splice(1, 0, { band: "60m", frequency_mhz: 5.357, ok: false, power_w: null, state: "closed", hours: hours["20m"], hops: 1, takeoff_deg: 80, skips: false });
+      // The service lists it after 40m; the page sorts chips by frequency (#178).
+      bands.splice(2, 0, { band: "60m", frequency_mhz: 5.357, ok: false, power_w: null, state: "closed", hours: hours["20m"], hops: 1, takeoff_deg: 80, skips: false });
     }
     const sky = short ? { muf_mhz: 6.0, muf_hops: 1, solar_live: true } : { muf_mhz: 11.2, muf_hops: 2, solar_live: true };
     await route.fulfill({ json: { ...card, band_card, bands, sky, confidence: `hour ${body.hour_utc}` } });
@@ -618,7 +619,8 @@ test("a blocked band picked by hand says it doesn't work and lists bands that do
   await expect(page.locator(".band-why")).not.toContainText("Should work");
   await expect(page.locator(".band-stats")).toContainText("none");
   // The HF bands with their colour: green works, yellow skips, grey won't
-  // work; a click picks one, the recommended one reverts.
+  // work; a click picks one, the recommended one reverts. Low to high
+  // frequency, although the service sends 60m after 40m.
   const chips = page.locator(".band-works-pick");
   await expect(chips).toHaveText([/^80m\s*20 W$/, /^60m\s*100 W$/, /^40m\s*10 W$/, /^30m\s*100 W$/, /^20m\s*100 W$/]);
   expect(await chips.evaluateAll((els) => els.map((e) => e.getAttribute("data-state")))).toEqual([
@@ -1078,3 +1080,28 @@ test("on a phone the sky view fits with no sideways scroll", async ({ page }) =>
   const svgW = await page.locator("#band-profile svg.pf-sky").evaluate((e) => e.getBoundingClientRect().width);
   expect(svgW).toBeLessThanOrEqual(390);
 });
+
+// #177: one tap from the antenna pickers to the antenna guides, on a line
+// that is already there, so nothing below moves.
+for (const width of [1280, 390, 360]) {
+  test(`the antenna guide links sit on existing lines at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await mockServices(page, () => 100);
+    await open(page);
+    const hf = page.locator('.band-hfant a.band-ant-guide[href="/guides/antennas-hf.html"]');
+    const vhf = page.locator('.band-opts a.band-ant-guide[href="/guides/antennas-vhf.html"]');
+    for (const link of [hf, vhf]) {
+      await expect(link).toBeVisible();
+      const box = (await link.boundingBox())!;
+      expect(box.height).toBeGreaterThanOrEqual(24);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+    }
+    const mid = (b: { y: number; height: number }) => b.y + b.height / 2;
+    const near = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThanOrEqual(4);
+    // VHF/UHF link: on the TX antenna line. HF link: beside the tiles on a
+    // desktop, beside the "HF antenna" label on a phone.
+    near(mid((await vhf.boundingBox())!), mid((await page.locator("label.band-ant").first().boundingBox())!));
+    const beside = width > 600 ? ".band-hfant-tiles" : ".band-hfant-label";
+    near(mid((await hf.boundingBox())!), mid((await page.locator(beside).boundingBox())!));
+  });
+}

@@ -24,37 +24,30 @@
     /* Old map links used /?api=…; the map now lives at /map.html. */
     if (/[?&]api=/.test(location.search)) location.replace("/map.html" + location.search + location.hash);
   </script>
-  <link rel="stylesheet" href="/styles.css?v=31" />
-  <link rel="stylesheet" href="/home.css?v=2" />
+  <link rel="stylesheet" href="/styles.css?v=56" />
+  <link rel="stylesheet" href="/home.css?v=3" />
 </head>
 <body class="page-home">
   <div id="scan"></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav aria-label="Main">
+      <a href="/why.html">why</a>
+      <a href="/guides.html">guides</a>
+      <a href="/guides/band.html">plan</a>
+      <a href="/map.html">map</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+      <a class="nav-github" href="https://github.com/thaum-labs/weechat-radio" aria-label="WeeChat Radio on GitHub"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-4 1.5-4-2-6-2.5M15 21v-3.5a3 3 0 0 0-.8-2.3c2.7-.3 5.6-1.3 5.6-6a4.7 4.7 0 0 0-1.3-3.2 4.4 4.4 0 0 0-.1-3.2s-1-.3-3.4 1.3a11.6 11.6 0 0 0-6 0C6.6 2.5 5.6 2.8 5.6 2.8a4.4 4.4 0 0 0-.1 3.2A4.7 4.7 0 0 0 4.2 9.2c0 4.6 2.9 5.7 5.6 6a3 3 0 0 0-.8 2.3V21"/></svg><span class="nav-github-text">github</span></a>
+      <a class="nav-cta" href="/downloads.html">download</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
   <div class="home">
-
-    <header class="home-header">
-      <div class="home-wrap">
-        <a class="home-brand" href="/" aria-label="WeeChat Radio home">
-          <svg viewBox="0 0 64 60" fill="none" aria-hidden="true">
-            <path d="M8 20 L20 30 L8 40" stroke="#d8d0e8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-            <rect x="25" y="36" width="15" height="5" rx="1" fill="currentColor"/>
-            <path class="fx-wave-1" d="M40 29 A7 7 0 0 1 47 36" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
-            <path class="fx-wave-2" d="M40 23 A13 13 0 0 1 53 36" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
-            <path class="fx-wave-3" d="M40 17 A19 19 0 0 1 59 36" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
-          </svg>
-          <span><span class="home-brand__weechat">weechat</span><span class="home-brand__radio">radio</span><span class="home-brand__sym">:$</span></span>
-        </a>
-        <nav class="home-nav" aria-label="Main">
-          <a href="/map.html">map</a>
-          <a href="/downloads.html">downloads</a>
-          <a href="/guides/band.html">plan</a>
-          <a href="/docs.html">docs</a>
-          <a class="home-nav__github" href="https://github.com/thaum-labs/weechat-radio" aria-label="WeeChat Radio on GitHub">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-4 1.5-4-2-6-2.5M15 21v-3.5a3 3 0 0 0-.8-2.3c2.7-.3 5.6-1.3 5.6-6a4.7 4.7 0 0 0-1.3-3.2 4.4 4.4 0 0 0-.1-3.2s-1-.3-3.4 1.3a11.6 11.6 0 0 0-6 0C6.6 2.5 5.6 2.8 5.6 2.8a4.4 4.4 0 0 0-.1 3.2A4.7 4.7 0 0 0 4.2 9.2c0 4.6 2.9 5.7 5.6 6a3 3 0 0 0-.8 2.3V21"/></svg>
-            <span class="home-hide-sm">github</span>
-          </a>
-        </nav>
-      </div>
-    </header>
 
     <main>
       <section class="home-hero" id="top">
@@ -423,15 +416,15 @@
         </div>
         <div class="home-footer__bar">
           <nav class="home-footer__nav" aria-label="Footer">
-            <a href="/map.html">map</a>
-            <a href="/downloads.html">downloads</a>
+            <a href="/why.html">why</a>
             <a href="/guides.html">guides</a>
             <a href="/guides/band.html">plan</a>
+            <a href="/map.html">map</a>
             <a href="/docs.html">docs</a>
-            <a href="/why.html">why</a>
             <a href="/status.html">hub</a>
             <a href="/changelog.html">changelog</a>
             <a href="https://github.com/thaum-labs/weechat-radio">github</a>
+            <a href="/downloads.html">download</a>
           </nav>
           <span class="home-footer__credit">Made by Tobias Franklin (M7TJF) at Thaum Labs · free and open source</span>
         </div>
@@ -441,5 +434,6 @@
   </div>
   <script src="/copy.js?v=1"></script>
   <script src="/home.js?v=2"></script>
+  <script src="/shell.js?v=12"></script>
 </body>
 </html>

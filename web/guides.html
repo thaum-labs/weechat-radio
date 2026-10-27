@@ -23,9 +23,9 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=35" />
+  <link rel="stylesheet" href="/styles.css?v=56" />
   <link rel="stylesheet" href="/docs.css?v=5" />
-  <link rel="stylesheet" href="/index-pages.css?v=2" />
+  <link rel="stylesheet" href="/index-pages.css?v=3" />
 </head>
 <body class="page-doc">
   <a class="skip-link" href="#index-main">Skip to guides</a>
@@ -33,15 +33,16 @@
   <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
   <header class="topbar">
     <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
-    <nav>
-      <a href="/map.html">map</a>
-      <a href="/downloads.html">downloads</a>
+    <nav aria-label="Main">
+      <a href="/why.html">why</a>
       <a href="/guides.html">guides</a>
       <a href="/guides/band.html">plan</a>
+      <a href="/map.html">map</a>
       <a href="/docs.html">docs</a>
-      <a href="/why.html">why</a>
       <a href="/status.html">hub</a>
       <a href="/changelog.html">changelog</a>
+      <a class="nav-github" href="https://github.com/thaum-labs/weechat-radio" aria-label="WeeChat Radio on GitHub"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-4 1.5-4-2-6-2.5M15 21v-3.5a3 3 0 0 0-.8-2.3c2.7-.3 5.6-1.3 5.6-6a4.7 4.7 0 0 0-1.3-3.2 4.4 4.4 0 0 0-.1-3.2s-1-.3-3.4 1.3a11.6 11.6 0 0 0-6 0C6.6 2.5 5.6 2.8 5.6 2.8a4.4 4.4 0 0 0-.1 3.2A4.7 4.7 0 0 0 4.2 9.2c0 4.6 2.9 5.7 5.6 6a3 3 0 0 0-.8 2.3V21"/></svg><span class="nav-github-text">github</span></a>
+      <a class="nav-cta" href="/downloads.html">download</a>
     </nav>
     <div class="clock-mod">
       <div id="clock-utc">UTC --:--:--</div>
@@ -72,10 +73,10 @@
         <p class="index-filter-status" aria-live="polite"></p>
       </div>
       <nav class="jump-bar" aria-label="Guides categories">
+          <a href="#antennas">Antennas</a>
           <a href="#get-started">Get started</a>
           <a href="#install">Install on your computer</a>
           <a href="#connect-a-radio">Connect a radio</a>
-          <a href="#antennas">Antennas</a>
           <a href="#plan-a-contact">Plan a contact</a>
       </nav>
 
@@ -96,6 +97,25 @@
             <h2>Downloads</h2>
             <p>Copy one command. Windows, Mac, and Linux.</p>
             <span class="tag">install →</span>
+          </a>
+        </div>
+      </section>
+
+      <section class="article-section" id="antennas" data-cat="antennas" aria-labelledby="antennas-h">
+        <h2 id="antennas-h"><svg class="h2-ico is-radio" aria-hidden="true"><use href="#ico-antenna" /></svg>Antennas</h2>
+        <p class="section-lead">How long, how high, and which bands. Both pages have a calculator.</p>
+        <div class="guide-grid ant-grid">
+          <a class="guide-card featured ant-card" href="/guides/antennas-hf.html" data-keywords="antenna dipole end-fed efhw vertical loop beam mp1 loft calculator">
+            <svg class="ant-pic" viewBox="0 0 64 36" aria-hidden="true"><path d="M4 8 H60 M32 8 V34" /><circle cx="32" cy="8" r="2.5" /><path d="M4 5 V11 M60 5 V11" /></svg>
+            <h2>HF antennas</h2>
+            <p>Dipole, end-fed, vertical, loop or beam: how long, how high, which bands.</p>
+            <span class="tag">calculator →</span>
+          </a>
+          <a class="guide-card featured ant-card" href="/guides/antennas-vhf.html" data-keywords="antenna whip collinear yagi 2m 70cm calculator">
+            <svg class="ant-pic" viewBox="0 0 64 36" aria-hidden="true"><path d="M32 2 V30 M26 34 H38 M32 30 L26 34 M32 30 L38 34" /><path d="M29 12 H35 M29 21 H35" /></svg>
+            <h2>VHF and UHF antennas</h2>
+            <p>From the handheld whip to a collinear on the roof: sizes and range.</p>
+            <span class="tag">calculator →</span>
           </a>
         </div>
       </section>
@@ -173,20 +193,6 @@
         </div>
       </section>
 
-      <section class="article-section" id="antennas" data-cat="antennas" aria-labelledby="antennas-h">
-        <h2 id="antennas-h"><svg class="h2-ico is-radio" aria-hidden="true"><use href="#ico-antenna" /></svg>Antennas</h2>
-        <p class="section-lead">How long, how high, and which bands. Both pages have a calculator.</p>
-        <div class="guide-grid">
-          <a class="guide-card" href="/guides/antennas-hf.html" data-keywords="antenna dipole end-fed efhw vertical loop beam mp1 loft calculator">
-            <h2>HF antennas</h2>
-            <p>Dipole, end-fed, vertical, loop or beam: how long, how high, which bands.</p>
-          </a>
-          <a class="guide-card" href="/guides/antennas-vhf.html" data-keywords="antenna whip collinear yagi 2m 70cm calculator">
-            <h2>VHF and UHF antennas</h2>
-            <p>From the handheld whip to a collinear on the roof: sizes and range.</p>
-          </a>
-        </div>
-      </section>
 
       <section class="article-section" id="plan-a-contact" data-cat="plan-a-contact" aria-labelledby="plan-a-contact-h">
         <h2 id="plan-a-contact-h"><svg class="h2-ico" aria-hidden="true"><use href="#ico-map" /></svg>Plan a contact</h2>
@@ -216,7 +222,7 @@
     </main>
   </div>
   <script src="/copy.js?v=1"></script>
-  <script src="/shell.js?v=11"></script>
-  <script src="/articles.js?v=1"></script>
+  <script src="/shell.js?v=12"></script>
+  <script src="/articles.js?v=3"></script>
 </body>
 </html>

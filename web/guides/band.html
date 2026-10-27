@@ -12,22 +12,23 @@
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" />
-  <link rel="stylesheet" href="/styles.css?v=55" />
+  <link rel="stylesheet" href="/styles.css?v=56" />
 </head>
 <body class="page-map page-band">
   <div id="scan"></div>
   <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
   <header class="topbar">
     <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
-    <nav>
-      <a href="/map.html">map</a>
-      <a href="/downloads.html">downloads</a>
+    <nav aria-label="Main">
+      <a href="/why.html">why</a>
       <a href="/guides.html">guides</a>
       <a href="/guides/band.html">plan</a>
+      <a href="/map.html">map</a>
       <a href="/docs.html">docs</a>
-      <a href="/why.html">why</a>
       <a href="/status.html">hub</a>
       <a href="/changelog.html">changelog</a>
+      <a class="nav-github" href="https://github.com/thaum-labs/weechat-radio" aria-label="WeeChat Radio on GitHub"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-4 1.5-4-2-6-2.5M15 21v-3.5a3 3 0 0 0-.8-2.3c2.7-.3 5.6-1.3 5.6-6a4.7 4.7 0 0 0-1.3-3.2 4.4 4.4 0 0 0-.1-3.2s-1-.3-3.4 1.3a11.6 11.6 0 0 0-6 0C6.6 2.5 5.6 2.8 5.6 2.8a4.4 4.4 0 0 0-.1 3.2A4.7 4.7 0 0 0 4.2 9.2c0 4.6 2.9 5.7 5.6 6a3 3 0 0 0-.8 2.3V21"/></svg><span class="nav-github-text">github</span></a>
+      <a class="nav-cta" href="/downloads.html">download</a>
     </nav>
     <div class="clock-mod">
       <div id="clock-utc">UTC --:--:--</div>
@@ -86,6 +87,7 @@
           </select>
           <input id="band-tx-ant-m" type="number" min="0.5" max="100" step="0.5" inputmode="decimal" aria-label="TX antenna height in metres" hidden /><i hidden>m</i>
         </label>
+        <a class="band-ant-guide" href="/guides/antennas-vhf.html"><span class="band-ant-guide-full">VHF/UHF antenna</span><span class="band-ant-guide-short">V/UHF</span> guide →</a>
         <label class="band-ant">
           <span>RX antenna</span>
           <select id="band-rx-ant" aria-label="RX antenna height">
@@ -146,6 +148,7 @@
           <label title="Yagi or other beam (20m and up)"><input type="radio" name="band-hfant" value="beam" /><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h18M6 4v10M12 5v8M18 6v6M12 9v13"/></svg><span>beam</span></label>
           <label title="Mobile whip or manpack"><input type="radio" name="band-hfant" value="whip" /><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v15"/><rect x="8" y="17" width="8" height="4"/></svg><span>mobile whip</span></label>
         </div>
+        <a class="band-ant-guide" href="/guides/antennas-hf.html">antenna guide →</a>
         <div class="band-hfwire" id="band-hfwire-row">
           <button type="button" id="band-hfwire" class="band-hfwire-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="band-hfwire-menu" aria-label="How your wire antenna is strung up"></button>
           <ul id="band-hfwire-menu" class="band-hfwire-menu" role="listbox" aria-label="How your wire antenna is strung up" hidden></ul>
@@ -177,7 +180,7 @@
   </div>
   <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
   <script src="/copy.js?v=1"></script>
-  <script src="/shell.js?v=11"></script>
-  <script src="/guides/band.js?v=30"></script>
+  <script src="/shell.js?v=12"></script>
+  <script src="/guides/band.js?v=31"></script>
 </body>
 </html>
