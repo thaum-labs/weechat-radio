@@ -24,10 +24,11 @@
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="/styles.css?v=34" />
-  <link rel="stylesheet" href="/docs.css?v=4" />
-  <link rel="stylesheet" href="/index-pages.css?v=1" />
+  <link rel="stylesheet" href="/docs.css?v=5" />
+  <link rel="stylesheet" href="/index-pages.css?v=2" />
 </head>
 <body class="page-doc">
+  <a class="skip-link" href="#index-main">Skip to docs</a>
   <div id="scan"></div>
   <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
   <header class="topbar">
@@ -50,114 +51,138 @@
 
   <!-- Line icons for the section headings. -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
-    <symbol id="ico-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M3 12 H21 M12 3 C8 7 8 17 12 21 C16 17 16 7 12 3" /></symbol>
+    <symbol id="ico-laptop" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="11" /><path d="M2 19 H22" /></symbol>
     <symbol id="ico-app" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" /><path d="M7 10 L10 12.5 L7 15 M12 15 H17" /></symbol>
+    <symbol id="ico-radio" viewBox="0 0 24 24"><rect x="7" y="8" width="10" height="14" rx="1.5" /><path d="M15 8 V2 M10 15 H14 M10 18 H14" /></symbol>
+    <symbol id="ico-antenna" viewBox="0 0 24 24"><path d="M12 8 V22 M4 4 L12 8 L20 4 M8 22 H16" /></symbol>
+    <symbol id="ico-map" viewBox="0 0 24 24"><path d="M3 6 L9 4 L15 6 L21 4 V18 L15 20 L9 18 L3 20 Z M9 4 V18 M15 6 V20" /></symbol>
+    <symbol id="ico-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M3 12 H21 M12 3 C8 7 8 17 12 21 C16 17 16 7 12 3" /></symbol>
+    <symbol id="ico-wave" viewBox="0 0 24 24"><path d="M2 12 C4 6 6 6 8 12 C10 18 12 18 14 12 C16 6 18 6 20 12 L22 12" /></symbol>
+    <symbol id="ico-code" viewBox="0 0 24 24"><path d="M8 7 L3 12 L8 17 M16 7 L21 12 L16 17 M14 5 L10 19" /></symbol>
   </svg>
 
   <div class="page-wrap">
-    <main class="page-panel page-index">
+    <main class="page-panel page-index" id="index-main" data-index="docs" tabindex="-1">
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> docs</h1>
-      <p class="lead">New to radio? Start with the orange card. The other pages are the reference. Hands-on setup is in <a href="/guides.html">guides</a>.</p>
+      <p class="lead">How it works, and the reference. Hands-on setup is in <a href="/guides.html">guides</a>.</p>
 
-      <section class="article-section article-section--first" aria-labelledby="featured">
-        <h2 id="featured">Featured</h2>
-        <div class="guide-grid docs-featured-grid">
-          <a class="guide-card featured is-wide" href="/docs/try.html">
-            <h2>Try it with two computers</h2>
-            <p>No radio, or two cheap walkie-talkies. A speaker and a microphone are enough. Start here if you have never used a radio.</p>
+      <div class="index-filter" hidden>
+        <label for="index-q">Filter guides and docs</label>
+        <input id="index-q" type="search" autocomplete="off" spellcheck="false" placeholder="antenna, Windows, VOX…" />
+        <p class="index-filter-status" aria-live="polite"></p>
+      </div>
+      <nav class="jump-bar" aria-label="Docs categories">
+          <a href="#how-it-works">How it works</a>
+          <a href="#signals-and-modes">Signals and modes</a>
+          <a href="#developers">For developers and hub operators</a>
+      </nav>
+
+      <section class="article-section article-section--first index-start" aria-labelledby="start-h">
+        <h2 id="start-h">Start here</h2>
+        <div class="guide-grid start-grid">
+          <a class="guide-card featured" href="/docs/scenarios.html">
+            <h2>Common setups</h2>
+            <p>Five everyday setups, animated, from a walkie-talkie to email over radio.</p>
             <span class="tag">start here →</span>
           </a>
-          <a class="guide-card featured featured-star" href="/docs/mixed-band.html">
+          <a class="guide-card featured" href="/docs/mixed-band.html">
             <h2>One group: PMR, CB, 2m, and internet</h2>
-            <p>How PMR446, CB, 2m, and a laptop share <code>#field</code>: who sets what, and how a line crosses the hub.</p>
+            <p>How PMR446, CB, 2m and a laptop share one channel through the hub.</p>
             <span class="tag">featured ★</span>
           </a>
-          <a class="guide-card featured featured-star" href="/docs/scenarios.html">
-            <h2>Common setups</h2>
-            <p>Five everyday setups, animated: a walkie-talkie calling a home gateway, HF to HF with no internet, an internet guest, relays with hops, and email over radio.</p>
-            <span class="tag">featured ★</span>
+          <a class="guide-card featured" href="/docs/try.html">
+            <h2>Try it with two computers</h2>
+            <p>No radio, or two cheap walkie-talkies. Hear a message travel as sound.</p>
+            <span class="tag">new to radio →</span>
           </a>
         </div>
       </section>
 
-      <section class="article-section" aria-labelledby="howH">
-        <h2 id="howH"><svg class="h2-ico" aria-hidden="true"><use href="#ico-globe" /></svg>How it works</h2>
+      <section class="article-section" id="how-it-works" data-cat="how-it-works" aria-labelledby="how-it-works-h">
+        <h2 id="how-it-works-h"><svg class="h2-ico" aria-hidden="true"><use href="#ico-globe" /></svg>How it works</h2>
         <p class="section-lead">What each mode does, and how a line reaches people out of range or on other dials.</p>
         <div class="guide-grid">
-          <a class="guide-card" href="/why.html">
+          <a class="guide-card" href="/why.html" data-keywords="about reasons">
             <h2>Why WeeChat Radio</h2>
             <p>An easier radio app, chat with no radio, and hops between stations.</p>
           </a>
-          <a class="guide-card" href="/docs/modes.html">
-            <h2>Modes</h2>
-            <p>What each mode is for. Radio and radio-plus both post map data and never send chat text. A gateway may forward radio-plus only.</p>
+          <a class="guide-card" href="/docs/scenarios.html" data-keywords="scenarios examples gateway animated">
+            <h2>Common setups</h2>
+            <p>Five everyday setups, animated, from a walkie-talkie to email over radio.</p>
           </a>
-          <a class="guide-card" href="/docs/bridging.html">
+          <a class="guide-card" href="/docs/mixed-band.html" data-keywords="mixed band pmr446 cb 2m group hub">
+            <h2>One group: PMR, CB, 2m, and internet</h2>
+            <p>How PMR446, CB, 2m and a laptop share one channel through the hub.</p>
+          </a>
+          <a class="guide-card" href="/docs/modes.html" data-keywords="internet radio radio-plus gateway map">
+            <h2>Modes</h2>
+            <p>What each mode is for: internet, radio, radio-plus and the rest.</p>
+          </a>
+          <a class="guide-card" href="/docs/bridging.html" data-keywords="bridging gateway hub band">
             <h2>Cross-frequency chat</h2>
             <p>Same dial on RF. Different bands via a gateway and the hub.</p>
           </a>
-          <a class="guide-card" href="/docs/hops.html">
+          <a class="guide-card" href="/docs/hops.html" data-keywords="relay repeat range mesh">
             <h2>Hops</h2>
-            <p>One dial, a group that is not all in range. 20m across Europe, 2m around Kyiv, and the same Europe map with internet-radio and internet.</p>
+            <p>One dial, a group that is not all in range: stations relay for each other.</p>
           </a>
-          <a class="guide-card" href="/docs/weak.html">
-            <h2>Weak signals</h2>
-            <p>Retries, slower presets, and what TX / RETRY mean on the bar.</p>
-          </a>
-          <a class="guide-card" href="/docs/email.html">
+          <a class="guide-card" href="/docs/email.html" data-keywords="mail inbox gateway radio-plus">
             <h2>Email</h2>
             <p>Internet mail beside Live Chat. Radio-plus goes through a gateway.</p>
           </a>
         </div>
       </section>
 
-      <section class="article-section" aria-labelledby="refH">
-        <h2 id="refH"><svg class="h2-ico" aria-hidden="true"><use href="#ico-app" /></svg>Reference</h2>
-        <p class="section-lead">Look things up when you need them. Most people never need the hub pages.</p>
+      <section class="article-section" id="signals-and-modes" data-cat="signals-and-modes" aria-labelledby="signals-and-modes-h">
+        <h2 id="signals-and-modes-h"><svg class="h2-ico" aria-hidden="true"><use href="#ico-wave" /></svg>Signals and modes</h2>
+        <p class="section-lead">When the band is hard, and how WeeChat Radio sits next to other modes and apps.</p>
         <div class="guide-grid">
-          <a class="guide-card" href="/guides/troubleshooting.html">
-            <h2>Troubleshooting</h2>
-            <p>Administrator PowerShell, a slow install, a wrong PC clock, and the other first-day stops.</p>
+          <a class="guide-card" href="/docs/weak.html" data-keywords="faint fading retry preset snr">
+            <h2>Weak signals</h2>
+            <p>Retries, slower presets, and what TX / RETRY mean on the bar.</p>
           </a>
-          <a class="guide-card" href="/docs/calling.html">
-            <h2>Calling frequencies</h2>
-            <p>Suggested VHF and HF spots. Check your band plan first.</p>
-          </a>
-          <a class="guide-card" href="/guides/band.html">
-            <h2>Which frequency</h2>
-            <p>Map two stations. One answer: band, USB or FM, and power.</p>
-          </a>
-          <a class="guide-card" href="/docs/band-plan.html">
-            <h2>Band plan</h2>
-            <p>Every band from 160m to 23cm, plus CB and PMR446, with the app's spots marked to scale.</p>
-          </a>
-          <a class="guide-card" href="/docs/apps.html">
-            <h2>Compare apps</h2>
-            <p>WeeChat Radio vs Winlink, Pat, JS8Call, VarAC, Fldigi, FreeDATA, Meshtastic. Ease of use included.</p>
-          </a>
-          <a class="guide-card" href="/docs/compare.html">
+          <a class="guide-card" href="/docs/compare.html" data-keywords="js8 ft8 olivia psk31 aprs digital modes">
             <h2>Compare modes</h2>
             <p>WeeChat Radio HF vs JS8, FT8, Olivia, PSK31, APRS. Sortable scores.</p>
           </a>
-          <a class="guide-card" href="/docs/protocol.html">
+          <a class="guide-card" href="/docs/apps.html" data-keywords="winlink pat js8call varac fldigi freedata meshtastic">
+            <h2>Compare apps</h2>
+            <p>WeeChat Radio vs Winlink, JS8Call, VarAC, Fldigi, Meshtastic and more.</p>
+          </a>
+        </div>
+      </section>
+
+      <section class="article-section" id="developers" data-cat="developers" aria-labelledby="developers-h">
+        <h2 id="developers-h"><svg class="h2-ico" aria-hidden="true"><use href="#ico-code" /></svg>For developers and hub operators</h2>
+        <p class="section-lead">Most people never need these pages.</p>
+        <div class="guide-grid">
+          <a class="guide-card" href="/docs/protocol.html" data-keywords="frame format packet bytes">
             <h2>Wire protocol</h2>
             <p>What a message looks like on radio and on the internet.</p>
           </a>
-          <a class="guide-card" href="/docs/api.html">
+          <a class="guide-card" href="/docs/api.html" data-keywords="api rest json openapi map data">
             <h2>Public API</h2>
             <p>Live map data. No key to read. Writes are signed.</p>
           </a>
-          <a class="guide-card" href="/docs/deploy.html">
+          <a class="guide-card" href="/docs/deploy.html" data-keywords="server hub self-host docker caddy">
             <h2>Deploy the hub</h2>
             <p>For people running the public server. Most users skip this.</p>
           </a>
         </div>
       </section>
 
+      <div class="index-elsewhere" hidden>
+        <h2>From guides</h2>
+        <ul></ul>
+      </div>
+      <p class="index-empty" hidden>No matches — <button type="button">clear filter</button></p>
+      <p class="index-also">Also in guides → <a href="/guides.html#get-started">Get started</a> · <a href="/guides.html#install">Install on your computer</a> · <a href="/guides.html#connect-a-radio">Connect a radio</a> · <a href="/guides.html#antennas">Antennas</a> · <a href="/guides.html#plan-a-contact">Plan a contact</a></p>
+
       <p>Offline, on your computer: <code>wcr help</code></p>
     </main>
   </div>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=11"></script>
+  <script src="/articles.js?v=1"></script>
 </body>
 </html>
