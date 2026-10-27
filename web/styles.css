@@ -1338,7 +1338,6 @@ details.maplibregl-ctrl-attrib:not([open]) {
 .sky-dot.sky-open { background: #39ff14; }
 .sky-dot.sky-marginal { background: #ffd60a; }
 .sky-dot.sky-closed { background: #ff3b6b; }
-.band-works-pick.is-closed { opacity: 0.55; }
 /* One line, cut with an ellipsis: a hint that wraps on a phone moves the
    map and the card on every recompute (#164). */
 .band-map-panel h3.title p:first-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1791,6 +1790,32 @@ p.band-works { border: 0; }
 .band-works-pick:hover { background: rgba(125, 155, 255, 0.12); }
 .band-works-pick[aria-pressed="true"] { background: var(--accent); color: #07070a; }
 .band-works-pick[aria-pressed="true"] small { color: #07070a; opacity: 0.75; }
+/* Chip and legend colours (#170): green works, yellow skips, grey won't work. */
+.band-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 5px;
+  border-radius: 50%;
+  vertical-align: middle;
+  background: #39ff14;
+}
+.is-skips .band-dot { background: #ffd60a; }
+.is-none .band-dot { background: #8a8a99; }
+.band-works-pick.is-works { color: #39ff14; }
+.band-works-pick.is-skips { color: #ffd60a; }
+.band-works-pick.is-none { color: #8a8a99; }
+.band-works-pick.is-skips[aria-pressed="true"],
+.band-works-pick.is-none[aria-pressed="true"] { color: #07070a; }
+.band-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 11px;
+  color: var(--dim);
+}
+.band-legend span { white-space: nowrap; }
 .band-copy {
   display: flex;
   align-items: center;

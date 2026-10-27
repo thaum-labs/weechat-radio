@@ -1849,43 +1849,47 @@
     return `<button type="button" class="band-copy" data-copy="${escapeHtml(text)}"><code>${escapeHtml(text)}</code><em>copy</em></button>`;
   }
 
-  // The bands that work here as one switch row; a click picks that band,
-  // or goes back to the recommendation when it is the recommended band.
+  // Every band chip, built from the path and setup only, so picking a band
+  // never adds, removes or recolours one (#170). Green: works (VHF/UHF that
+  // work, HF bands that work at the hour). Yellow: the HF band skips this
+  // path, it may or may not work. Grey: the HF band won't work. A click
+  // picks that band, or goes back to the recommendation.
+  const CHIP_STATES = [
+    ["works", "works"],
+    ["skips", "skips, may or may not work"],
+    ["none", "won't work"],
+  ];
+  function bandChips() {
+    const vhf = workingBands()
+      .filter((b) => VHF_KEYS.includes(b.key))
+      .map((b) => ({ key: b.key, label: b.label, power: b.power, state: "works" }));
+    const hf = (answer.bands || [])
+      .filter((b) => OVERRIDES[b.band])
+      .map((b) => ({
+        key: b.band,
+        label: b.band,
+        power: b.ok ? b.power_w : powerW(),
+        state: b.ok ? "works" : b.skips ? "skips" : "none",
+      }));
+    return vhf.concat(hf);
+  }
   function worksHtml(c, rec) {
-    if (skyOn()) return skyWorksHtml(c, rec);
     if (!terrain && !(answer.bands || []).length) return "";
-    const list = workingBands();
+    const list = bandChips();
     if (!list.length) return `<p class="band-works">No band works on this path at this hour and power.</p>`;
     const chips = list
       .map((b) => {
         const on = b.label === c.band ? "true" : "false";
         const pick = b.label === rec ? "" : b.key;
         const watts = b.power != null ? `<small>${b.power} W</small>` : "";
-        return `<button type="button" class="band-works-pick" data-band="${escapeHtml(pick)}" aria-pressed="${on}">${escapeHtml(b.label)}${watts}</button>`;
+        return `<button type="button" class="band-works-pick is-${b.state}" data-band="${escapeHtml(pick)}" data-state="${b.state}" aria-pressed="${on}"><span><i class="band-dot" aria-hidden="true"></i>${escapeHtml(b.label)}</span>${watts}</button>`;
       })
       .join("");
-    return `<div class="band-works" role="group" aria-label="Bands that work on this path at this hour">${chips}</div>`;
-  }
-
-  // HF view: every HF band with a dot for the planned hour (closed ones
-  // dimmed, "skips" when above the MUF), after the VHF and UHF bands that
-  // work.
-  function skyWorksHtml(c, rec) {
-    const chip = (key, label, state, sub) => {
-      const on = label === c.band ? "true" : "false";
-      const pick = label === rec ? "" : key;
-      const cls = state === "closed" ? " is-closed" : "";
-      return `<button type="button" class="band-works-pick${cls}" data-band="${escapeHtml(pick)}" data-state="${state}" aria-pressed="${on}"><span><i class="sky-dot sky-${state}" aria-hidden="true"></i>${escapeHtml(label)}</span><small>${escapeHtml(sub)}</small></button>`;
-    };
-    const vhf = workingBands()
-      .filter((b) => VHF_KEYS.includes(b.key))
-      .map((b) => chip(b.key, b.label, "open", b.power != null ? `${b.power} W` : ""));
-    const hf = (answer.bands || [])
-      .filter((b) => OVERRIDES[b.band])
-      .map((b) =>
-        chip(b.band, b.band, b.state || (b.ok ? "open" : "closed"), b.ok ? `${b.power_w} W` : b.skips ? "skips" : "closed")
-      );
-    return `<div class="band-works" role="group" aria-label="HF bands on this path at this hour">${vhf.concat(hf).join("")}</div>`;
+    const legend = CHIP_STATES.map(
+      ([state, text]) => `<span class="is-${state}"><i class="band-dot" aria-hidden="true"></i>${text}</span>`
+    ).join("");
+    return `<div class="band-works" role="group" aria-label="Bands on this path at this hour">${chips}</div>
+          <p class="band-legend">${legend}</p>`;
   }
 
   // The band plan reminder gets its own line; the rest of the footnote
