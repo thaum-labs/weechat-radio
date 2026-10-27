@@ -143,6 +143,27 @@ nav a {
 nav a::before { content: ""; }
 nav a.on, nav a:hover { color: var(--orange); }
 nav a.on::before { content: "▸ "; color: var(--accent); }
+/* Top bar: github with its icon, and download as the one filled button. */
+.topbar nav { align-items: center; }
+.topbar nav .nav-github { display: inline-flex; align-items: center; gap: 5px; }
+.topbar nav .nav-cta {
+  padding: 3px 10px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: #050508;
+  font-weight: 700;
+}
+.topbar nav .nav-cta:hover { background: var(--orange); color: #050508; }
+.topbar nav .nav-cta.on { color: #050508; }
+.topbar nav .nav-cta.on::before { color: #050508; }
+.topbar nav .nav-cta:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+/* Narrow desktops keep every nav item on one line; the local clock gives way. */
+@media (min-width: 961px) and (max-width: 1240px) {
+  .topbar #clock-local { display: none; }
+}
+@media (min-width: 961px) and (max-width: 1100px) {
+  .topbar .nav-github-text { display: none; }
+}
 
 #stats {
   display: flex;
@@ -1471,6 +1492,24 @@ details.maplibregl-ctrl-attrib:not([open]) {
   color: var(--dim);
 }
 .band-hfant-label { white-space: nowrap; }
+/* #177: a clear way from the antenna pickers to the antenna guides. */
+.band-ant-guide {
+  display: inline-block;
+  line-height: 24px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.band-ant-guide:hover { color: var(--orange); }
+.band-ant-guide-short { display: none; }
+/* Phones: each link shares a line that is already there, so nothing below
+   moves. The padding keeps a 24 px tap target without taking more height. */
+@media (max-width: 600px) {
+  .band-ant-guide { line-height: 14px; padding: 5px 0; margin: -5px 0; }
+  .band-ant-guide-full { display: none; }
+  .band-ant-guide-short { display: inline; }
+  .band-hfant-label { order: -2; }
+  .band-hfant .band-ant-guide { order: -1; }
+}
 .band-hfant-tiles {
   display: flex;
   flex-wrap: wrap;
@@ -2075,6 +2114,7 @@ p.band-works { border: 0; }
     background: #050508;
     flex-direction: column;
     flex-wrap: nowrap;
+    align-items: stretch;
     gap: 0;
     padding: 8px max(16px, env(safe-area-inset-left)) calc(24px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-right));
     overflow: auto;
@@ -2098,6 +2138,12 @@ p.band-works { border: 0; }
     padding: 0 4px;
   }
   body.nav-ready .topbar nav a.on::before { content: "▸ "; }
+  body.nav-ready .topbar nav .nav-cta {
+    justify-content: center;
+    margin-top: 16px;
+    border-bottom: 0;
+    padding: 0 16px;
+  }
 }
 
 @media (max-width: 420px) {

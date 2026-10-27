@@ -64,21 +64,28 @@
     if (local) local.textContent = `LCL ${pad(now.getHours())}:${pad(now.getMinutes())}`;
   }
 
+  // One top-bar item is the current page (#177): the page itself if it is in
+  // the bar, otherwise the index its article lives on (articles.js), so the
+  // marker matches the breadcrumb. Home marks nothing.
+  function navSection(path) {
+    const list = global.WCR.articles;
+    const art = list && list.ARTICLES.find((a) => a.href === path || a.href === `${path}.html`);
+    if (art) return `/${list.category(art.cat).index}.html`;
+    if (path.startsWith("/guides/")) return "/guides.html";
+    if (path.startsWith("/docs/")) return "/docs.html";
+    return null;
+  }
+
   function markNav() {
     const path = location.pathname.replace(/\/+$/, "") || "/";
-    document.querySelectorAll("nav a").forEach((a) => {
-      const href = a.getAttribute("href");
-      let on = false;
-      if (href === "/") {
-        on = path === "/" || path.endsWith("/index.html");
-      } else if (href === "/guides.html") {
-        on = path === "/guides.html" || (path.startsWith("/guides/") && !path.endsWith("/band.html"));
-      } else if (href === "/docs.html") {
-        on = path === "/docs.html" || path.startsWith("/docs/");
-      } else {
-        on = path === href || path.endsWith(href);
-      }
-      a.classList.toggle("on", on);
+    const links = [...document.querySelectorAll(".topbar nav a")];
+    const same = (href) => href === path || href === `${path}.html`;
+    const current = links.find((a) => same(a.getAttribute("href"))) ||
+      links.find((a) => a.getAttribute("href") === navSection(path));
+    links.forEach((a) => {
+      a.classList.toggle("on", a === current);
+      if (a === current) a.setAttribute("aria-current", "page");
+      else a.removeAttribute("aria-current");
     });
   }
 

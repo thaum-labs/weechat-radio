@@ -6,10 +6,10 @@
 // next / previous links at the foot of each article.
 (function (global) {
   const CATEGORIES = [
+    { id: "antennas", index: "guides", title: "Antennas" },
     { id: "get-started", index: "guides", title: "Get started" },
     { id: "install", index: "guides", title: "Install on your computer" },
     { id: "connect-a-radio", index: "guides", title: "Connect a radio" },
-    { id: "antennas", index: "guides", title: "Antennas" },
     { id: "plan-a-contact", index: "guides", title: "Plan a contact" },
     { id: "how-it-works", index: "docs", title: "How it works" },
     { id: "signals-and-modes", index: "docs", title: "Signals and modes" },
