@@ -52,7 +52,7 @@
   function horizon(h) {
     const toHandheld = 4.12 * (Math.sqrt(h) + Math.sqrt(1.5));
     const toSame = 8.24 * Math.sqrt(h);
-    return `about ${Math.round(toHandheld)} km to a handheld, ${Math.round(toSame)} km to a station as high as you`;
+    return `about ${Math.round(toHandheld)} km to a handheld, ${Math.round(toSame)} km mast to mast`;
   }
 
   // Each diagram: viewBox 0 0 220 130, ground at y 118. `el` are the
@@ -436,7 +436,7 @@
       calc({ L, h }) {
         const gain = (f) => 2.15 + 10 * Math.log10(Math.max(1, L / (0.625 * lam(f))));
         const rows = BANDS.map(([band, f]) =>
-          band === "6m" ? { band, v: "no", note: "needs its own antenna" } : { band, v: "good", note: `about ${gain(f).toFixed(1)} dBi, ${horizon(h)}` }
+          band === "6m" ? { band, v: "no", note: "needs its own antenna" } : { band, v: "good", note: `${gain(f).toFixed(1)} dBi, ${horizon(h)}` }
         );
         return {
           facts: [
@@ -556,9 +556,11 @@
       .map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd></div>`)
       .join("");
     document.getElementById("ant-bands").innerHTML = r.rows
-      .map((row) => `<li class="is-${row.v}"><b>${row.band}</b><span>${row.v === "good" ? "good" : row.v === "ok" ? "works" : "no"}</span><small>${escapeHtml(row.note)}</small></li>`)
+      .map((row) => `<li class="is-${row.v}"><b>${row.band}</b><span>${row.v === "good" ? "good" : row.v === "ok" ? "works" : "no"}</span><small title="${escapeHtml(row.note)}">${escapeHtml(row.note)}</small></li>`)
       .join("");
-    document.getElementById("ant-term").textContent = r.search;
+    const term = document.getElementById("ant-term");
+    term.textContent = r.search;
+    term.title = r.search;
     document.getElementById("ant-go").href = `https://www.google.com/search?q=${encodeURIComponent(r.search)}`;
   }
 
