@@ -135,6 +135,8 @@ async function mockServices(page: Page, ground: (i: number, n: number) => number
       // skip zone), 30m goes through.
       bands[1] = { ...bands[1], state: "marginal", hops: 1, takeoff_deg: 78, skips: false };
       bands.splice(2, 0, { band: "30m", frequency_mhz: 10.14, ok: false, power_w: null, state: "closed", hours: hours["20m"], hops: 1, takeoff_deg: 80, skips: true });
+      // 60m is closed without skipping: a band that won't work (grey chip).
+      bands.splice(1, 0, { band: "60m", frequency_mhz: 5.357, ok: false, power_w: null, state: "closed", hours: hours["20m"], hops: 1, takeoff_deg: 80, skips: false });
     }
     const sky = short ? { muf_mhz: 6.0, muf_hops: 1, solar_live: true } : { muf_mhz: 11.2, muf_hops: 2, solar_live: true };
     await route.fulfill({ json: { ...card, band_card, bands, sky, confidence: `hour ${body.hour_utc}` } });
@@ -615,9 +617,18 @@ test("a blocked band picked by hand says it doesn't work and lists bands that do
   await expect(page.locator(".band-why")).toContainText("Terrain blocks PMR446.");
   await expect(page.locator(".band-why")).not.toContainText("Should work");
   await expect(page.locator(".band-stats")).toContainText("none");
-  // Only the HF bands that work; a click picks one, the recommended one reverts.
+  // The HF bands with their colour: green works, yellow skips, grey won't
+  // work; a click picks one, the recommended one reverts.
   const chips = page.locator(".band-works-pick");
-  await expect(chips).toHaveText([/^80m\s*20 W$/, /^40m\s*10 W$/]);
+  await expect(chips).toHaveText([/^80m\s*20 W$/, /^60m\s*100 W$/, /^40m\s*10 W$/, /^30m\s*100 W$/, /^20m\s*100 W$/]);
+  expect(await chips.evaluateAll((els) => els.map((e) => e.getAttribute("data-state")))).toEqual([
+    "works",
+    "none",
+    "works",
+    "skips",
+    "skips",
+  ]);
+  await expect(page.locator(".band-legend")).toHaveText(/works.*skips, may or may not work.*won't work/);
   await chips.filter({ hasText: "40m" }).click();
   await expect(page.locator("#band-override")).toHaveValue("40m");
   await expect(page.locator(".band-freq")).toContainText("7.045");
@@ -626,42 +637,74 @@ test("a blocked band picked by hand says it doesn't work and lists bands that do
   await expect(page).not.toHaveURL(/band=/);
 });
 
-// #168: the bands that work are the same whichever band is picked. With an
-// HF band picked the sky view also lists the HF bands that are closed or
-// skip (dimmed), so only those extra chips differ.
-test("the list of bands that work is the same whichever band is picked", async ({ page }) => {
+// #168/#170: the band chips depend only on the path and setup. Picking a
+// band (HF, VHF or UHF) never adds, removes or recolours a chip.
+async function expectSameChipsForEveryPick(page: Page, picks: { band: string; freq: string }[]) {
+  const chips = page.locator(".band-works-pick");
+  await expect(chips.first()).toBeVisible();
+  const states = () => chips.evaluateAll((els) => els.map((e) => `${e.getAttribute("data-state")} ${e.className}`));
+  const base = await chips.allTextContents();
+  const baseStates = await states();
+  for (const { band, freq } of picks) {
+    await page.locator("#band-override").selectOption(band);
+    // Wait for the new card, not just the banner: the old chips are still
+    // on screen the moment the select changes.
+    await expect(page.locator(".band-freq")).toContainText(freq);
+    await expect(chips).toHaveText(base);
+    expect(await states()).toEqual(baseStates);
+  }
+  return base;
+}
+
+test("the band chips are the same whichever band is picked", async ({ page }) => {
   await mockServices(page, () => 100);
   await open(page);
   await page.evaluate(() => {
     window.__WCR_BAND.setTxLngLat(6.14, 46.2);
     window.__WCR_BAND.setRxLngLat(6.25, 46.1);
   });
-  const chips = page.locator(".band-works-pick");
-  const working = page.locator(".band-works-pick:not(.is-closed)");
-  const closed = page.locator(".band-works-pick.is-closed");
-  await expect(chips.first()).toBeVisible();
   await expect(page.locator(".band-works")).toContainText("2m");
-  const base = await chips.allTextContents();
+  const base = await expectSameChipsForEveryPick(page, [
+    { band: "pmr446", freq: "446.0" },
+    { band: "40m", freq: "7.045" },
+    { band: "cb", freq: "27.185" },
+    { band: "2m", freq: "144.950" },
+    { band: "20m", freq: "7.045" },
+    { band: "60m", freq: "5.357" },
+  ]);
   expect(base.some((t) => /^PMR446\s*0.5 W$/.test(t))).toBe(true);
-  const picks = [
-    { band: "pmr446", freq: "446.0", sky: false },
-    { band: "40m", freq: "7.045", sky: true },
-    { band: "cb", freq: "27.185", sky: false },
-  ];
-  for (const { band, freq, sky } of picks) {
-    await page.locator("#band-override").selectOption(band);
-    // Wait for the new card, not just the banner: the old chips are still
-    // on screen the moment the select changes.
-    await expect(page.locator(".band-freq")).toContainText(freq);
-    await expect(working).toHaveText(base);
-    if (sky) await expect(closed).toHaveText([/^30m\s*skips$/, /^20m\s*skips$/]);
-    else await expect(closed).toHaveCount(0);
-  }
+  // No chip says "skips" or "closed": the colour and the legend say it.
+  expect(base.some((t) => /skips|closed/.test(t))).toBe(false);
   // A licence-free band is budgeted at its own legal power.
   await page.locator("#band-override").selectOption("pmr446");
   await expect(page.locator(".band-stats")).toContainText("0.5 W");
   await expect(page.locator(".band-why")).toContainText("at 0.5 W");
 });
+
+test("picking an HF band on a VHF path keeps the same chips", async ({ page }) => {
+  await mockServices(page, () => 100);
+  await open(page, "?tx=51.2247,-2.3124&rx=51.3734,-2.3257");
+  await expect(page.locator(".band-freq")).toContainText("144.950");
+  await expectSameChipsForEveryPick(page, [
+    { band: "40m", freq: "7.045" },
+    { band: "2m", freq: "144.950" },
+    { band: "20m", freq: "7.045" },
+  ]);
+});
+
+for (const width of [390, 360]) {
+  test(`the band legend wraps inside the card at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await mockServices(page, () => 100);
+    await open(page, "?tx=51.2247,-2.3124&rx=51.3734,-2.3257");
+    const legend = page.locator(".band-legend");
+    await expect(legend).toBeVisible();
+    const box = await legend.boundingBox();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+  });
+}
 
 // #146/#150: after RX is set (or a link opens) the map shows both pins and
 // the whole arc with a margin, centred on the middle of the path, even when
@@ -890,11 +933,11 @@ test("the sky view draws hops, a side view and a 24 hour strip, and goes for VHF
   await expect(page.locator(".sky-line")).toContainText("2 hops · ~610 km each · take-off 10° · MUF on path 11.2 MHz");
   await expect(page.locator("#band-profile svg.pf-sky")).toContainText("take-off 10°");
   await expect(page.locator("#band-profile svg.pf-sky")).toContainText("not to scale");
-  // 20m is above the MUF: dimmed, red, "skips", and drawn going through.
+  // 20m is above the MUF: a yellow "skips" chip, and drawn going through.
   const c20 = page.locator('.band-works-pick[data-band="20m"]');
-  await expect(c20).toHaveClass(/is-closed/);
-  await expect(c20).toContainText("skips");
-  await expect(c20.locator(".sky-dot")).toHaveClass(/sky-closed/);
+  await expect(c20).toHaveClass(/is-skips/);
+  await expect(c20).toHaveAttribute("data-state", "skips");
+  await expect(c20).toHaveText(/^20m\s*100 W$/);
   await expect(page.locator("#band-profile .sky-punch")).toHaveCount(1);
   // Strip: 24 cells from now, the planned hour outlined, same verdict as the chip.
   const cells = page.locator(".sky-cell");
@@ -902,9 +945,8 @@ test("the sky view draws hops, a side view and a 24 hour strip, and goes for VHF
   await expect(page.locator(".sky-cell.is-sel")).toHaveAttribute("data-off", "0");
   await page.locator("#band-hour").fill("5");
   await expect(page.locator(".sky-cell.is-sel")).toHaveAttribute("data-off", "5");
-  const hour = (new Date().getUTCHours() + 5) % 24;
-  const want = hour < 7 || hour > 17 ? "open" : "marginal";
-  await expect(page.locator('.band-works-pick[data-band="80m"] .sky-dot')).toHaveClass(new RegExp(`sky-${want}`));
+  // 80m works at every hour (open or marginal), so its chip stays green.
+  await expect(page.locator('.band-works-pick[data-band="80m"]')).toHaveAttribute("data-state", "works");
   await expect(cells.nth(5)).toHaveClass(/sky-open/);
   // A click on a cell sets the slider.
   await cells.nth(9).click();
@@ -934,11 +976,12 @@ test("a short HF path shows NVIS, the ground wave and the skip zone", async ({ p
   await expect(page.locator(".sky-skip")).toHaveCount(0);
   expect((await page.evaluate(() => window.__WCR_BAND.state().sky!.rings))!.skip).toBe(0);
   // 30m: the engine says it skips, so a skip line with RX inside the ring,
-  // a red "skips" chip, and no NVIS note.
+  // a yellow skipping chip, and no NVIS note.
   await page.locator("#band-override").selectOption("30m");
   await expect(page.locator(".sky-skip")).toContainText("30m skips: skip zone ≈ 25–");
   await expect(page.locator(".sky-nvis")).toHaveCount(0);
-  await expect(page.locator('.band-works-pick[aria-pressed="true"]')).toHaveText("30mskips");
+  await expect(page.locator('.band-works-pick[aria-pressed="true"]')).toHaveText("30m100 W");
+  await expect(page.locator('.band-works-pick[aria-pressed="true"]')).toHaveAttribute("data-state", "skips");
   const rings = await page.evaluate(() => window.__WCR_BAND.state().sky!.rings);
   expect(rings!.gw).toBe(25);
   expect(rings!.skip).toBeGreaterThan(159);

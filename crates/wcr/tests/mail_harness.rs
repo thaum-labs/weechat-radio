@@ -288,7 +288,8 @@ impl Pair {
     }
 
     async fn wait_mail(&self) {
-        let deadline = Instant::now() + Duration::from_secs(30);
+        // Room for a slow runner: msrv CI once gave up at 30 s (#170).
+        let deadline = Instant::now() + Duration::from_secs(120);
         while Instant::now() < deadline {
             let mut ok = true;
             for p in self.status {
