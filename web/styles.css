@@ -377,10 +377,18 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   height: 19px;
 }
 .mode-row .mode-name { min-width: 10em; }
-.band-row { cursor: pointer; }
-.band-row.on, .band-row.on .mode-name { color: var(--orange); }
-.band-row .band-freq { color: var(--purple); min-width: 4.5em; }
-.band-row .band-n { margin-left: auto; color: var(--accent); }
+/* Map page BANDS panel: name | frequency | stations on one grid row.
+   Class names are band-row-* so the planner's big .band-freq never leaks in. */
+.band-row {
+  display: grid;
+  grid-template-columns: 6em 1fr 3ch;
+  cursor: pointer;
+}
+.band-row:hover .band-row-name { color: var(--fg); }
+.band-row.on, .band-row.on .band-row-name { color: var(--orange); }
+.band-row-freq { color: var(--purple); font-variant-numeric: tabular-nums; }
+.band-row-unit { color: var(--dim); }
+.band-row-n { text-align: right; color: var(--accent); font-variant-numeric: tabular-nums; }
 .mode-bar {
   flex: 1;
   height: 4px;
