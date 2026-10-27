@@ -82,3 +82,46 @@ for (const size of [SIZES[0], SIZES[1]]) {
     expect(await top()).toBe(before);
   });
 }
+
+// Every band note fits its fixed 3 lines at every slider value (#181).
+// The full text is also in the tooltip, but nothing should need it.
+for (const url of PAGES) {
+  for (const width of [1440, 1280, 900, 390, 360]) {
+    test(`${url} band notes are never cut off at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto(url);
+      await expect(page.locator("#ant-bands li").first()).toBeVisible();
+      await page.evaluate(() => document.fonts.ready);
+      const cut = await page.evaluate(() => {
+        const calc = document.getElementById("ant-calc")!;
+        const found = new Set<string>();
+        const check = () => {
+          // Measure two characters narrower than the chip: fonts render a little
+          // wider on some machines, and QA saw cuts that fit exactly here.
+          for (const s of Array.from(document.querySelectorAll<HTMLElement>("#ant-bands small"))) {
+            s.style.width = `${s.clientWidth - 14}px`;
+            if (s.scrollHeight > s.clientHeight) found.add(s.textContent!.replace(/\d+\.\d+/g, "#"));
+            s.style.width = "";
+          }
+        };
+        for (const radio of Array.from(calc.querySelectorAll<HTMLInputElement>('input[name="ant-type"]'))) {
+          radio.checked = true;
+          radio.dispatchEvent(new Event("change", { bubbles: true }));
+          for (const slider of Array.from(calc.querySelectorAll<HTMLInputElement>('input[type="range"]'))) {
+            const start = slider.value;
+            const step = Number(slider.step);
+            for (let v = Number(slider.min); v <= Number(slider.max) + step / 2; v += step) {
+              slider.value = String(v);
+              slider.dispatchEvent(new Event("input", { bubbles: true }));
+              check();
+            }
+            slider.value = start;
+            slider.dispatchEvent(new Event("input", { bubbles: true }));
+          }
+        }
+        return [...found];
+      });
+      expect(cut).toEqual([]);
+    });
+  }
+}

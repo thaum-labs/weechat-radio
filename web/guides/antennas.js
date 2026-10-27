@@ -44,15 +44,15 @@
   // Take-off angle from height in wavelengths, for horizontal HF wires.
   function angleNote(h, mhz) {
     const x = h / lam(mhz);
-    if (x < 0.2) return `${x.toFixed(2)} λ up: high angle, best within about 600 km (NVIS)`;
-    if (x < 0.45) return `${x.toFixed(2)} λ up: nearby and medium distance`;
-    return `${x.toFixed(2)} λ up: low angle, good for DX`;
+    if (x < 0.2) return `${x.toFixed(2)} λ up: high angle, NVIS to ~600 km`;
+    if (x < 0.45) return `${x.toFixed(2)} λ up: near and mid range`;
+    return `${x.toFixed(2)} λ up: low angle, for DX`;
   }
   // VHF/UHF radio horizon (4/3 earth) from height in metres.
   function horizon(h) {
     const toHandheld = 4.12 * (Math.sqrt(h) + Math.sqrt(1.5));
     const toSame = 8.24 * Math.sqrt(h);
-    return `about ${Math.round(toHandheld)} km to a handheld, ${Math.round(toSame)} km mast to mast`;
+    return `handheld ~${Math.round(toHandheld)} km, mast-mast ~${Math.round(toSame)} km`;
   }
 
   // Each diagram: viewBox 0 0 220 130, ground at y 118. `el` are the
