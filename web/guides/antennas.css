@@ -124,7 +124,7 @@
 }
 .ant-facts div { border-left: 2px solid var(--line); padding-left: 8px; }
 .ant-facts dt { color: var(--dim); font-size: 11px; }
-.ant-facts dd { margin: 0; color: var(--fg); }
+.ant-facts dd { margin: 0; min-height: calc(2 * 1.5em); line-height: 1.5; color: var(--fg); } /* room for a value that wraps (#173) */
 .ant-bands {
   list-style: none;
   display: grid;
@@ -143,7 +143,18 @@
 }
 .ant-bands b { color: var(--fg); font-weight: 400; }
 .ant-bands span { justify-self: end; font-size: 11px; }
-.ant-bands small { grid-column: 1 / -1; color: var(--dim); font-size: 11px; line-height: 1.4; }
+.ant-bands small {
+  /* Fixed 3-line note so the calculator keeps one height while sliders move (#173). */
+  grid-column: 1 / -1;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  height: calc(3 * 1.4em);
+  overflow: hidden;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
 .ant-bands .is-good { border-color: #39ff14; }
 .ant-bands .is-good span { color: #39ff14; }
 .ant-bands .is-ok { border-color: #ffd60a; }
@@ -157,7 +168,15 @@
   margin-top: 12px;
   color: var(--dim);
 }
-.ant-search code { color: var(--fg); overflow-wrap: anywhere; }
+.ant-search code {
+  /* One line with an ellipsis; copy and the title keep the full term (#173). */
+  flex: 1 1 14em;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--fg);
+}
 .ant-search a { color: var(--accent); }
 .ant-search .copy-btn { position: static; }
 .page-panel .ant-cards, .page-panel .ant-bands { margin-left: 0; padding-left: 0; }
