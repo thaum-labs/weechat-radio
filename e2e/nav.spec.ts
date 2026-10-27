@@ -101,3 +101,28 @@ for (const path of ["/", "/guides.html"]) {
     await expect(links.first()).toBeHidden();
   });
 }
+
+// #185: the map's top bar also carries node counts; it stays one line on
+// narrow desktops too.
+test("the map top bar stays one line at 961 to 999 px", async ({ page }) => {
+  await page.route(/unpkg|arcgisonline|cartocdn|7380|7373|open-meteo|kc2g|github\.com\/repos/, (r) => r.abort());
+  for (const width of [961, 970, 985, 999]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto("/map.html");
+    const h = await page.locator("header.topbar").evaluate((el) => el.getBoundingClientRect().height);
+    expect(h, `map top bar at ${width}`).toBeLessThanOrEqual(48);
+  }
+});
+
+// #185: the open menu fills the screen, so a tap on its empty space closes it.
+test("a tap on the empty part of the phone menu closes it", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/guides.html");
+  await page.locator(".nav-toggle").click();
+  const links = page.locator("header.topbar nav a");
+  await expect(links.first()).toBeVisible();
+  const nav = (await page.locator("header.topbar nav").boundingBox())!;
+  await page.mouse.click(nav.x + nav.width / 2, nav.y + nav.height - 20);
+  await expect(links.first()).toBeHidden();
+  await expect(page).toHaveURL(/\/guides(\.html)?$/);
+});

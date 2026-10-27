@@ -164,6 +164,11 @@ nav a.on::before { content: "▸ "; color: var(--accent); }
 @media (min-width: 961px) and (max-width: 1100px) {
   .topbar .nav-github-text { display: none; }
 }
+/* The map's top bar also carries node counts; below 1000 px the clock
+   gives way so the bar stays on one line (#185). */
+@media (min-width: 961px) and (max-width: 999px) {
+  .topbar-end:has(#stats) .clock-mod { display: none; }
+}
 
 #stats {
   display: flex;

@@ -265,3 +265,14 @@ for (const width of [390, 360]) {
     }
   });
 }
+
+// #186: the cards on screen match the "N matches here" count; a matching
+// section doesn't keep its non-matching cards visible.
+for (const [path, word] of [["/guides.html", "vox"], ["/guides.html", "windows"], ["/docs.html", "why"], ["/docs.html", "winlink"]]) {
+  test(`filtering ${path} for "${word}" shows only the matching cards`, async ({ page }) => {
+    await page.goto(path);
+    await page.getByLabel("Filter guides and docs").fill(word);
+    await expect(page.locator(".index-filter-status")).toHaveText(/^1 match here/);
+    await expect(page.locator("section[data-cat] a.guide-card:visible")).toHaveCount(1);
+  });
+}

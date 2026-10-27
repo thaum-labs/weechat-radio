@@ -1765,17 +1765,20 @@
   }
 
   // Without the terrain the answer could be wrong (an HF card for a path
-  // the hills leave open on 2m), so no answer is shown until it loads.
+  // the hills leave open on 2m), so no answer is shown until it loads. The
+  // HF chips go by the sky, not the terrain, so they stay (#185).
   function showTerrainFailed() {
     shownCard = null;
     showSkyKey();
+    waitEl.hidden = true;
     cardEl.classList.add("has-answer");
     const old = cardEl.querySelector(".band-answer");
     if (old) old.remove();
     cardEl.insertAdjacentHTML(
       "beforeend",
-      `<div class="band-answer"><p class="band-err">Terrain lookup failed: the elevation service is busy, so this path can't be judged yet.</p>
-        <button type="button" class="band-retry">Retry</button></div>`
+      `<div class="band-answer"><p class="band-err">Terrain lookup failed: the elevation service is busy, so VHF and UHF can't be judged yet.</p>
+        <button type="button" class="band-retry">Retry</button>
+        ${worksHtml({ band: null }, null)}</div>`
     );
     setHint("ERR", "Terrain lookup failed");
   }

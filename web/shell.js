@@ -215,6 +215,11 @@
         setOpen(!document.body.classList.contains("nav-open"));
       });
       backdrop.addEventListener("click", () => setOpen(false));
+      // The open menu covers the screen, so a tap on its empty space
+      // counts as a tap outside (#185).
+      nav.addEventListener("click", (e) => {
+        if (e.target === nav) setOpen(false);
+      });
       nav.querySelectorAll("a").forEach((a) => {
         a.addEventListener("click", () => setOpen(false));
       });
