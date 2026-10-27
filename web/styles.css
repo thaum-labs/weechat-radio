@@ -1571,13 +1571,18 @@ details.maplibregl-ctrl-attrib:not([open]) {
 }
 .band-hfwire-menu li:hover, .band-hfwire-menu li:focus { color: var(--fg); background: #0d0d14; outline: none; }
 .band-hfwire-menu li[aria-selected="true"] { color: var(--orange); }
-.band-hfwire-note {
+.band-hfwire-notes {
   flex: 1 1 100%;
+  display: grid;
+}
+.band-hfwire-note {
+  grid-area: 1 / 1;
   margin: 0;
   color: var(--fg);
   font-size: 12px;
   line-height: 1.4;
 }
+.band-hfwire-sizer { visibility: hidden; }
 .band-bandbar {
   display: flex;
   flex-wrap: wrap;
