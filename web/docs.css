@@ -990,3 +990,16 @@ body.cmp-page .page-panel { min-width: 0; }
 .bp-plan[data-bp-region="eu"] .bp-regions > [data-groups~="eu"],
 .bp-plan[data-bp-region="na"] .bp-regions > [data-groups~="na"],
 .bp-plan[data-bp-region="anz"] .bp-regions > [data-groups~="anz"] { display: contents; }
+
+/* Article pages: next / previous in the same category. */
+.article-next {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px 20px;
+  margin-top: 36px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+.article-nextlink { margin-left: auto; text-align: right; }
