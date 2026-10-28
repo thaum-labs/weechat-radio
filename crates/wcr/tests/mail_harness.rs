@@ -800,20 +800,29 @@ async fn heard_someone(port: u16) -> bool {
 /// handover. The station has heard the other one by then, so with
 /// [`beacon_held_a_while`] the beacon waits out carrier sense on the air
 /// queue, where the mail can take it back. A warm-up beacon goes a minute
-/// after the one before, so the wait is at most two of them. The deadline
-/// leaves room for a slow runner (msrv CI once gave up at 240 s).
+/// after the one before, so the wait is usually one or two of them. The
+/// first deadline is for hearing the other station (msrv CI once gave up at
+/// 240 s). The two stations' warm-up beacons can collide, and then the
+/// station may first hear the other one after its third warm-up beacon
+/// (ubuntu CI on fa9c996, #194). Its next beacon is the idle one, up to
+/// `BEACON_IDLE_S` plus the jitter and the defer cap later, so once it has
+/// heard the other one the deadline moves out to cover that gap.
 async fn wait_beacon_pending(pair: &Pair, i: usize) {
-    let deadline = Instant::now() + Duration::from_secs(360);
+    let mut deadline = Instant::now() + Duration::from_secs(360);
     let mut counting_down = false;
     loop {
         let note = beacon_note(pair.status[i]).await;
         if note == "pending" && counting_down {
             return;
         }
-        counting_down |= note != "pending" && heard_someone(pair.status[i]).await;
+        if !counting_down && note != "pending" && heard_someone(pair.status[i]).await {
+            counting_down = true;
+            let next_beacon = u64::from(wcr::relay::BEACON_IDLE_S) + 120;
+            deadline = Instant::now() + Duration::from_secs(next_beacon);
+        }
         assert!(
             Instant::now() < deadline,
-            "station {}'s beacon never went",
+            "station {}'s beacon never went (heard the other station: {counting_down})",
             i + 1
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
