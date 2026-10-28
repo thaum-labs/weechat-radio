@@ -215,7 +215,11 @@
         btn.setAttribute("aria-label", open ? "Close menu" : "Open menu");
         // Keyboard users land in the menu, and back on the toggle after (#189).
         if (open && !wasOpen && links[0]) links[0].focus();
-        if (!open && wasOpen && nav.contains(document.activeElement)) btn.focus();
+        // A tap on the menu's empty space blurs the link first, so focus
+        // sitting on <body> also counts as "was in the menu" (#191).
+        const focus = document.activeElement;
+        const focusWasInMenu = !focus || focus === document.body || nav.contains(focus);
+        if (!open && wasOpen && focusWasInMenu) btn.focus();
       };
       btn.addEventListener("click", () => {
         setOpen(!document.body.classList.contains("nav-open"));
