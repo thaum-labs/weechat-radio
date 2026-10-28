@@ -44,12 +44,24 @@ if [ "$OS" = "linux" ]; then ASSET="wcr-linux-${ARCH}.tar.gz"; fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
+# Linux ships sha256sum; stock macOS only has shasum.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    echo "No SHA-256 tool found (need sha256sum or shasum) to verify $1" >&2
+    exit 1
+  fi
+}
+
 verify_sha256() {
   file="$1"
   base_url="$2"
   if curl -fsSL "${base_url}.sha256" -o "$TMP/asset.sha256" 2>/dev/null; then
     expected=$(awk '{print $1}' "$TMP/asset.sha256")
-    got=$(sha256sum "$file" | awk '{print $1}')
+    got=$(sha256_of "$file") || exit 1
     if [ "$got" != "$expected" ]; then
       echo "SHA-256 mismatch for $base_url" >&2
       exit 1
