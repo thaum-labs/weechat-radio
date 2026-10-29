@@ -77,7 +77,7 @@ pub fn mail_status(row: &MailRow, hops: &[Hop], now: i64, online: bool) -> MailS
     // Resend's bad news is a [no], although the row's state is `sent`.
     let mark = match key {
         "bounced" | "spam" | "failed" => "[no]",
-        "delayed" | "keyed" => "[..]",
+        "delayed" | "keyed" | "no_record" => "[..]",
         "received" => "",
         _ => gateway::state_mark(state).trim(),
     }
@@ -233,6 +233,8 @@ mod tests {
         assert_eq!(chip("sent", "complained").label, "Spam");
         assert_eq!(chip("sent", "failed").label, "Failed");
         assert_eq!(chip("sent", "unknown").label, "No record");
+        // No record is not a success.
+        assert_eq!(chip("sent", "unknown").line, "[..] no record");
         assert_eq!(chip("failed", "").label, "Failed");
         assert_eq!(chip("received", "").label, "Received");
         assert_eq!(chip("received", "").mark, "");

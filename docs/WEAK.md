@@ -8,7 +8,7 @@ You do not need to understand the radio maths. Upgrade every station to this bui
 
 ## What you need
 
-- This build of `wcr` (v1.0.3). The hub speaks protocol version 2
+- This build of `wcr` (v1.0.4). The hub speaks protocol version 2
 - A radio path already working on a clear signal (see radio setup)
 - For HF: start with `hf-poor`. Drop to `hf-weak` or `hf-deep` only if frames keep failing
 

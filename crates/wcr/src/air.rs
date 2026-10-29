@@ -418,6 +418,9 @@ struct QueueInner {
     in_flight_beacon: bool,
     /// The channel read congested at the last look.
     congested: bool,
+    /// A gateway hearing another station's mail burst keys no chat or relay
+    /// until then, so it does not go deaf to the rest of the burst.
+    heard_mail_until: Option<Instant>,
 }
 
 impl QueueInner {
@@ -453,6 +456,7 @@ impl AirQueue {
                 in_flight_cancelled: false,
                 in_flight_beacon: false,
                 congested: false,
+                heard_mail_until: None,
             })),
             notify: Arc::new(Notify::new()),
         }
@@ -557,7 +561,10 @@ impl AirQueue {
         if g.paused || g.mail_lease {
             return None;
         }
-        let idx = g.items.iter().position(|x| x.not_before <= now)?;
+        let hearing_mail = g.heard_mail_until.is_some_and(|t| t > now);
+        let idx = g.items.iter().position(|x| {
+            x.not_before <= now && (!hearing_mail || x.class == AirClass::Emergency)
+        })?;
         // The items behind wait too, so a narrow one is never starved.
         if g.narrow_until(&g.items[idx], now).is_some() {
             return None;
@@ -637,6 +644,16 @@ impl AirQueue {
         self.inner.lock().mail_lease
     }
 
+    /// Another station's mail burst is on the air: key nothing but emergency
+    /// traffic for `secs` from now. A later chunk can only extend the hold.
+    pub fn hold_for_heard_mail(&self, secs: f64) {
+        let until = Instant::now() + Duration::from_secs_f64(secs.max(0.0));
+        let mut g = self.inner.lock();
+        if g.heard_mail_until.is_none_or(|t| t < until) {
+            g.heard_mail_until = Some(until);
+        }
+    }
+
     /// Pause chat for a receipt, unless a mail lease holds the radio. Checked
     /// and set together, so a receipt and a lease never both set the modem.
     pub fn pause_for_ack(&self) -> bool {
@@ -655,6 +672,9 @@ impl AirQueue {
         }
         let now = Instant::now();
         if let Some(head) = g.items.iter().find(|x| x.not_before <= now) {
+            if let Some(until) = g.heard_mail_until.filter(|t| *t > now) {
+                return Some(until);
+            }
             if let Some(until) = g.narrow_until(head, now) {
                 return Some(until);
             }
@@ -1441,6 +1461,27 @@ mod tests {
         assert_eq!(drain(&mut rx).await, vec![vec![2]]);
         assert!(!q.chat_in_flight());
         h.abort();
+    }
+
+    /// QA v1.0.3: a gateway keyed a relayed receipt in the middle of a mail
+    /// burst and missed a chunk. While it hears one, only emergency traffic goes.
+    #[tokio::test(start_paused = true)]
+    async fn a_heard_mail_burst_holds_chat_and_relays() {
+        let q = AirQueue::new();
+        q.enqueue(item(AirClass::Relay, 1));
+        let start = Instant::now();
+        q.hold_for_heard_mail(20.0);
+        q.hold_for_heard_mail(5.0);
+        assert!(q.pop_ready().is_none(), "the relay waits for the burst");
+        assert_eq!(
+            q.next_deadline(),
+            Some(start + Duration::from_secs(20)),
+            "a shorter hold does not cut the longer one"
+        );
+        q.enqueue(item(AirClass::Emergency, 2));
+        assert_eq!(q.pop_ready().map(|x| x.msg_id), Some(mid(2)));
+        tokio::time::advance(Duration::from_secs(20)).await;
+        assert_eq!(q.pop_ready().map(|x| x.msg_id), Some(mid(1)));
     }
 
     /// QA v0.1.93: an invite's first copy waited out the stuck carrier sense

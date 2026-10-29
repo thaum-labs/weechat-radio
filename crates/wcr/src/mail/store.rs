@@ -342,9 +342,10 @@ impl MailStore {
             params![id, folder, state],
         )?;
         if state == "tx" {
-            // A new try is keying: the last one's end no longer counts.
+            // A new try is keying: the last one's end no longer counts, and
+            // On air shows when this try started.
             conn.execute(
-                "DELETE FROM mail_hop WHERE id = ?1 AND stage = 'keyed'",
+                "DELETE FROM mail_hop WHERE id = ?1 AND stage IN ('keyed', 'air')",
                 params![id],
             )?;
         }
@@ -695,6 +696,29 @@ mod tests {
         assert_eq!(stages(&store), ["air"]);
         store.note_keyed("m1").unwrap();
         assert_eq!(stages(&store), ["air", "keyed"]);
+    }
+
+    #[test]
+    fn on_air_shows_the_latest_try() {
+        let store = MailStore::open_memory().unwrap();
+        let row = MailRow {
+            id: "m1".into(),
+            folder: "outbox".into(),
+            state: "queued".into(),
+            ..MailRow::default()
+        };
+        store.insert(&row).unwrap();
+        store.set_state("m1", "outbox", "tx").unwrap();
+        // The first try keyed long ago.
+        store
+            .conn
+            .lock()
+            .execute("UPDATE mail_hop SET ts = 5 WHERE id = 'm1'", [])
+            .unwrap();
+        store.set_state("m1", "outbox", "tx").unwrap();
+        let air = store.hops("m1").unwrap();
+        assert_eq!(air.len(), 1);
+        assert!(air[0].ts > 5, "air hop kept the first try's time");
     }
 
     #[test]
