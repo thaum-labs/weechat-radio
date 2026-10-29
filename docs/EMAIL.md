@@ -43,15 +43,45 @@ After Sent the window waits up to 30 s for Resend's delivery report. Without one
 
 Sent means Resend accepted the mail. Delivery is Resend's own report after that. The station asks the hub (`POST /api/v1/mail/status` with its mail id), and the hub asks Resend (`GET /emails/{id}`, its `last_event`), so the Resend key stays on the hub. The hub keeps the answer and asks Resend at most every 10 s per mail; once the answer is final it stops asking.
 
-The station checks each Sent mail every 10 s for its first two minutes, every minute up to 30 minutes, every 15 minutes up to a day, then stops. It also stops once the answer is final. The Sent list and an opened sent mail show the word: `with Resend`, `delayed`, `delivered`, `bounced`, `marked as spam`, `Resend failed to send it`, or `no delivery record` (the hub has nothing for that id, for example mail posted by an older gateway). Radio+ asks the hub over this computer's internet, as copy-to does. Without internet the word stays empty. The station log records `mail delivery <id>: <event>` when it changes.
+The station checks each Sent mail every 10 s for its first two minutes, every minute up to 30 minutes, every 15 minutes up to a day, then stops. It also stops once the answer is final. The Sent list and an opened sent mail show it as a chip (see [Status in the Email tab](#status-in-the-email-tab)). Radio+ asks the hub over this computer's internet, as copy-to does. Without internet the mail says `delivery unknown (offline)`. The station log records `mail delivery <id>: <event>` when it changes.
 
 Every station and gateway sends its mail id with `POST /api/v1/mail/send` (`mail_id`). A gateway sends the id it computed from the RF mail, which is the Radio+ station's own id. The hub lets the station that posted the mail, or the station that wrote it, read its status.
 
 A toast timer does not mark Sent. The compose hint and the send confirm both show the estimated airtime for this message, counted from the WCRM frames the send will key (header included, same split as the body), so one short mail says `1 burst` and a long one matches the chunk count. `POST /api/v1/mail/compose` returns that same hint as `airtime`. A long message says it is not Sent until the gateway accepts it.
 
+## Status in the Email tab
+
+Every mail in the list has one coloured chip:
+
+| Chip | Mark | Meaning |
+| --- | --- | --- |
+| Queued | `[..]` | Waiting for the radio or the hub |
+| On air | `[tx]` | Keyed to the gateway (Radio+) |
+| At gateway | `[gw]` | The gateway has every chunk and is handing it to the hub |
+| Sent | `[ok]` | Resend accepted it. The word after the subject says `with Resend`, `no delivery report` (no final answer a day after Sent), or `delivery unknown (offline)` (the last delivery check could not reach the hub) |
+| Delivered | `[ok]` | Resend says the recipient's mail server took it |
+| Delayed | `[ok]` | Resend is still trying |
+| Bounced | `[ok]` | The recipient's mail server refused it |
+| Spam | `[ok]` | The recipient marked it as spam |
+| Failed | `[no]` | Not sent (the reason is in the opened mail), or Resend could not send it |
+| No record | `[ok]` | The hub has no delivery record for this mail |
+
+Inbox mail shows Received, with an orange dot and brighter text while unread. Radio+ headers not fetched yet show Waiting and the size, in the same layout. Screen readers hear the mark with the chip, for example `[ok] Delivered`.
+
+Times are local; the opened mail shows them with the zone. The opened mail shows the chip, the full reason when something went wrong, and when it reached each hop: created, on air, at gateway, accepted by Resend, then delivered, bounced or another final answer. Inbound mail shows when the sender sent it and when this station fetched it. Mail from before this version shows only the times it reaches from now on.
+
+Failed reasons say where the mail stopped: the gateway never acknowledged it, the gateway has it but the hub refused it (with the hub's reason), the hub refused it, or the hub could not be reached. A hub-path mail that the hub refuses, or that finds the hub down, is Failed at once rather than left Queued.
+
+- **Retry** (Failed mail): the mail goes back to the outbox and is sent again from the start, on the same path and RF pacing as a new send, and the send window follows it.
+- **Re-send** (Bounced, or Resend failed or canceled it): compose opens with the same To, subject and body. Fix the address, then Send. A Radio+ re-send with nothing changed has the same mail id, and the gateway treats it as the mail it already posted.
+
+**No read status.** Mail goes out as plain text with no tracking, so nobody can tell when it is opened, and the Email tab never says "read". Resend's `opened` and `clicked` events count as Delivered.
+
+The local mail API (`/mail/list` and `/mail/open`) returns each row with `status` (`key`, `label`, `mark`, `word`, `reason`, `line` such as `[ok] delivered`, `retry`, `resend`) and `hops` (`stage`, `ts`), so the WeeChat script and other clients can show the same thing. `POST /mail/retry` with `{"id": …}` retries a Failed mail.
+
 ## Log
 
-The station log records `mail keyed`, `mail gateway ack`, `mail at gateway`, `mail accepted`, `mail failed`, and `mail retry`. The gateway records `mail received`, `mail have` (indexes it already holds), `mail posted … resend`, `mail rejected`, and `already accepted; repeating the ack` when the same mail arrives again. Check mail with nothing waiting logs `mail check: no new mail` and the Email tab says the same.
+The station log records `mail keyed`, `mail gateway ack`, `mail at gateway`, `mail accepted`, `mail failed`, `mail retry`, and `mail retry by hand` when Retry is pressed. The gateway records `mail received`, `mail have` (indexes it already holds), `mail posted … resend`, `mail rejected`, and `already accepted; repeating the ack` when the same mail arrives again. Check mail with nothing waiting logs `mail check: no new mail` and the Email tab says the same.
 
 ## On the air
 
