@@ -12,6 +12,9 @@ RUN cargo build --release -p wcr --bin wcr --no-default-features
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build /src/target/release/wcr /usr/local/bin/wcr
+# The commit this image was built from, served at /version.
+ARG GIT_SHA=""
+ENV WCR_COMMIT=$GIT_SHA
 ENV HOME=/data
 VOLUME ["/data"]
 ENTRYPOINT ["wcr"]

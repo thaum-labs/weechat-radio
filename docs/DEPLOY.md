@@ -60,4 +60,5 @@ Copy the archive off the droplet (DO Spaces, `scp`, etc.). To restore, stop the 
 
 - `https://weechatradio.com` shows the homepage, and `/map.html` the map
 - `https://hub.weechatradio.com/healthz` prints `ok`
+- `https://hub.weechatradio.com/version` shows the commit you just pushed
 - `wcr node` on a laptop connects to `wss://hub.weechatradio.com/ws`

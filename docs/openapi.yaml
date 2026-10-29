@@ -22,6 +22,12 @@ paths:
       responses:
         "200":
           description: Plain text `ok`
+  /version:
+    get:
+      summary: Build of the running hub
+      responses:
+        "200":
+          description: JSON `{ "version", "commit" }`. `commit` is the git commit the hub image was built from (empty in a local build).
   /api/v1/stats:
     get:
       summary: Hub counters

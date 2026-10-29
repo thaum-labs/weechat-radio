@@ -1,3 +1,10 @@
+# Container logs rotate at 10 MB, three files each, so they cannot fill the disk.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   hub:
     image: ghcr.io/thaum-labs/wcr:latest
@@ -12,6 +19,7 @@ services:
     environment:
       HOME: /data
     restart: unless-stopped
+    logging: *logging
     expose:
       - "7373"
 
@@ -23,12 +31,14 @@ services:
     environment:
       WCR_PATH_BIND: 0.0.0.0:7380
     restart: unless-stopped
+    logging: *logging
     expose:
       - "7380"
 
   web:
     image: caddy:2-alpine
     restart: unless-stopped
+    logging: *logging
     ports:
       - "80:80"
       - "443:443"
