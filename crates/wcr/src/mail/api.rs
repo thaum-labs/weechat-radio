@@ -1,7 +1,8 @@
 //! SPDX-License-Identifier: Apache-2.0
 //! Local HTTP for the desktop Email tab. Mounted beside `/status`.
 
-use super::store::{CopySettings, MailRow, WaitHeader};
+use super::status::MailView;
+use super::store::{CopySettings, WaitHeader};
 use super::MailHandle;
 use axum::extract::Query;
 use axum::http::StatusCode;
@@ -23,6 +24,7 @@ pub fn router(slot: MailSlot) -> Router {
         .route("/mail/copy", get(copy_get))
         .route("/mail/compose", post(compose))
         .route("/mail/delete", post(delete_one))
+        .route("/mail/retry", post(retry_one))
         .route("/mail/check", post(check))
         .route("/mail/get", post(get_msgs))
         .route("/mail/copy", post(copy_set))
@@ -47,12 +49,14 @@ struct FolderQ {
     folder: String,
 }
 
+/// Every row carries `status` (chip, bracket mark, word, reason) and `hops`.
 async fn list(
     axum::Extension(slot): axum::Extension<MailSlot>,
     Query(q): Query<FolderQ>,
-) -> Result<Json<Vec<MailRow>>, StatusCode> {
+) -> Result<Json<Vec<MailView>>, StatusCode> {
     let h = handle(&slot).await?;
-    h.store.list(&q.folder).map(Json).map_err(store_err)
+    let rows = h.store.list(&q.folder).map_err(store_err)?;
+    Ok(Json(rows.into_iter().map(|r| h.view(r)).collect()))
 }
 
 #[derive(Deserialize)]
@@ -63,11 +67,11 @@ struct IdQ {
 async fn open_one(
     axum::Extension(slot): axum::Extension<MailSlot>,
     Query(q): Query<IdQ>,
-) -> Result<Json<MailRow>, StatusCode> {
+) -> Result<Json<MailView>, StatusCode> {
     let h = handle(&slot).await?;
     let _ = h.store.mark_read(&q.id);
     match h.store.get(&q.id) {
-        Ok(Some(row)) => Ok(Json(row)),
+        Ok(Some(row)) => Ok(Json(h.view(row))),
         Ok(None) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }
@@ -121,6 +125,16 @@ async fn delete_one(
     // A waiting header (Radio+, not fetched yet) is hidden here only.
     let ok = h.store.delete(&b.id).map_err(store_err)?
         | h.store.delete_waiting(&b.id).map_err(store_err)?;
+    Ok(Json(json!({ "ok": ok })))
+}
+
+/// Retry a Failed mail. `ok` is false when it is not Failed.
+async fn retry_one(
+    axum::Extension(slot): axum::Extension<MailSlot>,
+    Json(b): Json<IdBody>,
+) -> Result<Json<Value>, StatusCode> {
+    let h = handle(&slot).await?;
+    let ok = h.retry(&b.id).await.map_err(store_err)?;
     Ok(Json(json!({ "ok": ok })))
 }
 

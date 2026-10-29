@@ -32,6 +32,8 @@ const PURPLE: Color32 = Color32::from_rgb(196, 181, 253);
 const DIM: Color32 = Color32::from_rgb(122, 115, 136);
 const LINE: Color32 = Color32::from_rgb(33, 40, 64);
 const GREEN: Color32 = Color32::from_rgb(57, 255, 20);
+const AMBER: Color32 = Color32::from_rgb(255, 196, 61);
+const RED: Color32 = Color32::from_rgb(255, 77, 109);
 const CODE: Color32 = Color32::from_rgb(18, 18, 24);
 /// Chat input's text margin (egui's default), so the `/` list can match its box.
 const INPUT_MARGIN: egui::Margin = egui::Margin::symmetric(4.0, 2.0);
@@ -378,12 +380,6 @@ fn hair_btn(label: &str, color: Color32) -> egui::Button<'_> {
         .stroke(hairline(color))
 }
 
-fn utc_stamp(ts: i64) -> String {
-    chrono::DateTime::from_timestamp(ts, 0)
-        .map(|t| t.format("%Y-%m-%d %H:%M:%S UTC").to_string())
-        .unwrap_or_else(|| "UTC".into())
-}
-
 fn nav_link(ui: &mut egui::Ui, label: &str) -> egui::Response {
     let font = FontId::monospace(13.0);
     let galley = ui.fonts(|f| f.layout_no_wrap(label.to_string(), font.clone(), FG));
@@ -578,6 +574,9 @@ struct MailSend {
     heard: Instant,
     row: Option<crate::mail::MailRow>,
     step: crate::mail::SendStep,
+    /// A send from compose clears To, subject and body once it succeeds; a
+    /// Retry of an older mail leaves compose alone.
+    from_compose: bool,
 }
 
 /// A Radio+ Get under way: the gateway sends the mail back in chunks.
@@ -677,8 +676,8 @@ struct GuiApp {
     mail_toast: String,
     mail_toast_warn: bool,
     mail_notice: String,
-    mail_open: Option<crate::mail::MailRow>,
-    mail_rows: Vec<crate::mail::MailRow>,
+    mail_open: Option<crate::mail::MailView>,
+    mail_rows: Vec<crate::mail::MailView>,
     mail_waiting: Vec<crate::mail::WaitHeader>,
     mail_get: Option<MailGet>,
     mail_confirm: Option<MailConfirm>,
@@ -3956,7 +3955,13 @@ impl GuiApp {
             &format!("/mail/list?folder={}", self.mail_folder),
             None,
         ) {
-            if let Ok(rows) = serde_json::from_value(list) {
+            if let Ok(rows) = serde_json::from_value::<Vec<crate::mail::MailView>>(list) {
+                // The opened mail follows its row, so its chip and timeline move on.
+                if let Some(open) = self.mail_open.as_mut() {
+                    if let Some(fresh) = rows.iter().find(|r| r.row.id == open.row.id) {
+                        *open = fresh.clone();
+                    }
+                }
                 self.mail_rows = rows;
             }
         }
@@ -4029,7 +4034,7 @@ impl GuiApp {
         send.step = crate::mail::SendStep { fraction, ..next };
         if send.step.done {
             self.mail_hold = false;
-            if send.step.ok {
+            if send.step.ok && send.from_compose {
                 self.mail_to.clear();
                 self.mail_subject.clear();
                 self.mail_body.clear();
@@ -4221,73 +4226,84 @@ impl GuiApp {
         let rows = self.mail_rows.clone();
         let mut open_id = None;
         let mut delete_id = None;
+        // Room for more than a handful of rows; compose stays below.
+        let list_h = (ui.available_height() * 0.45).clamp(180.0, 520.0);
         egui::ScrollArea::vertical()
             .id_salt("mail_rows")
-            .max_height(180.0)
+            .max_height(list_h)
+            .auto_shrink([false, true])
             .show(ui, |ui| {
+                if rows.is_empty()
+                    && !(self.mail_folder == "inbox"
+                        && mode == Mode::RadioPlus
+                        && !self.mail_waiting.is_empty())
+                {
+                    ui.label(RichText::new("Nothing here.").color(DIM).monospace());
+                }
                 if self.mail_folder == "inbox"
                     && mode == Mode::RadioPlus
                     && !self.mail_waiting.is_empty()
                 {
                     for w in &self.mail_waiting {
                         // Only the header is here; the hub holds the body until Get.
-                        let line =
-                            format!("waiting  {}  {}  {} B", w.from_addr, w.subject, w.bytes);
-                        ui.horizontal(|ui| {
-                            if ui
-                                .selectable_label(false, RichText::new(line).monospace().color(FG))
-                                .clicked()
-                            {
-                                self.mail_confirm = Some(MailConfirm {
-                                    kind: "get",
-                                    to: w.from_addr.clone(),
-                                    subject: w.subject.clone(),
-                                    bytes: w.bytes,
-                                    ids: vec![w.id.clone()],
-                                });
-                            }
-                            if ui.add(hair_btn("delete", DIM)).clicked() {
-                                delete_id = Some(w.id.clone());
-                            }
-                        });
+                        let act = mail_list_row(
+                            ui,
+                            &MailListRow {
+                                selected: false,
+                                unread: true,
+                                when: "",
+                                when_full: "Waiting at the hub. Click to Get it.",
+                                key: "waiting",
+                                label: "Waiting",
+                                mark: "",
+                                word: &format!("{} B", w.bytes),
+                                tip: "Only the header is here. Click the line to Get the mail over the radio.",
+                                who: &w.from_addr,
+                                subject: &w.subject,
+                            },
+                        );
+                        if act.opened {
+                            self.mail_confirm = Some(MailConfirm {
+                                kind: "get",
+                                to: w.from_addr.clone(),
+                                subject: w.subject.clone(),
+                                bytes: w.bytes,
+                                ids: vec![w.id.clone()],
+                            });
+                        }
+                        if act.deleted {
+                            delete_id = Some(w.id.clone());
+                        }
                     }
                 }
-                for row in &rows {
-                    let mark = crate::mail::state_mark(&row.state);
-                    let detail = if row.state == "failed" && !row.detail.is_empty() {
-                        format!("  {}", row.detail)
-                    } else if row.state == "gateway" {
-                        "  at gateway".into()
-                    } else if row.folder == "sent" && !row.delivery.is_empty() {
-                        format!("  {}", crate::mail::delivery_word(&row.delivery))
-                    } else {
-                        String::new()
-                    };
-                    let who = if self.mail_folder == "outbox" || self.mail_folder == "sent" {
-                        &row.to_addr
-                    } else {
-                        &row.from_addr
-                    };
-                    let line = format!(
-                        "{}  {mark}  {who}  {}{detail}",
-                        utc_stamp(row.ts),
-                        row.subject
+                let outgoing = self.mail_folder == "outbox" || self.mail_folder == "sent";
+                for view in &rows {
+                    let row = &view.row;
+                    let st = &view.status;
+                    let who = if outgoing { &row.to_addr } else { &row.from_addr };
+                    let act = mail_list_row(
+                        ui,
+                        &MailListRow {
+                            selected: self.mail_open.as_ref().map(|m| m.row.id.as_str())
+                                == Some(row.id.as_str()),
+                            unread: row.folder == "inbox" && row.unread,
+                            when: &local_short(row.ts),
+                            when_full: &local_stamp(row.ts),
+                            key: &st.key,
+                            label: &st.label,
+                            mark: &st.mark,
+                            word: &st.word,
+                            tip: &st.reason,
+                            who,
+                            subject: &row.subject,
+                        },
                     );
-                    ui.horizontal(|ui| {
-                        if ui
-                            .selectable_label(
-                                self.mail_open.as_ref().map(|m| m.id.as_str())
-                                    == Some(row.id.as_str()),
-                                RichText::new(line).monospace().color(FG),
-                            )
-                            .clicked()
-                        {
-                            open_id = Some(row.id.clone());
-                        }
-                        if ui.add(hair_btn("delete", DIM)).clicked() {
-                            delete_id = Some(row.id.clone());
-                        }
-                    });
+                    if act.opened {
+                        open_id = Some(row.id.clone());
+                    }
+                    if act.deleted {
+                        delete_id = Some(row.id.clone());
+                    }
                 }
             });
         if let Some(id) = delete_id {
@@ -4296,41 +4312,24 @@ impl GuiApp {
                 "/mail/delete",
                 Some(&serde_json::json!({ "id": id }).to_string()),
             );
-            self.mail_rows.retain(|r| r.id != id);
+            self.mail_rows.retain(|r| r.row.id != id);
             self.mail_waiting.retain(|w| w.id != id);
-            if self.mail_open.as_ref().map(|m| &m.id) == Some(&id) {
+            if self.mail_open.as_ref().map(|m| &m.row.id) == Some(&id) {
                 self.mail_open = None;
             }
         }
         if let Some(id) = open_id {
             if let Some(v) = mail_http("GET", &format!("/mail/open?id={id}"), None) {
-                if let Ok(row) = serde_json::from_value(v) {
-                    self.mail_open = Some(row);
+                if let Ok(view) = serde_json::from_value::<crate::mail::MailView>(v) {
+                    if let Some(r) = self.mail_rows.iter_mut().find(|r| r.row.id == id) {
+                        r.row.unread = false;
+                    }
+                    self.mail_open = Some(view);
                 }
             }
         }
-        if let Some(open) = &self.mail_open {
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new(format!(
-                    "{}  {} → {}\n{}",
-                    utc_stamp(open.ts),
-                    open.from_addr,
-                    open.to_addr,
-                    open.subject
-                ))
-                .color(ACCENT)
-                .monospace(),
-            );
-            let word = crate::mail::delivery_word(&open.delivery);
-            if open.folder == "sent" && !word.is_empty() {
-                ui.label(
-                    RichText::new(format!("delivery: {word}"))
-                        .color(DIM)
-                        .monospace(),
-                );
-            }
-            ui.label(RichText::new(&open.body).color(FG).monospace());
+        if let Some(open) = self.mail_open.clone() {
+            self.paint_mail_open(ui, &open, preset);
         }
         ui.add_space(8.0);
         ui.separator();
@@ -4429,6 +4428,125 @@ impl GuiApp {
         if let Some(confirm) = self.mail_confirm.clone() {
             self.paint_mail_confirm(ui, &confirm, mode, preset);
         }
+    }
+
+    /// The opened mail: status chip and reason, the time of each hop,
+    /// Retry or Re-send when they apply, then the body.
+    fn paint_mail_open(&mut self, ui: &mut egui::Ui, open: &crate::mail::MailView, preset: Preset) {
+        let row = &open.row;
+        let st = &open.status;
+        ui.add_space(6.0);
+        ui.add(
+            egui::Label::new(
+                RichText::new(format!("{} → {}", row.from_addr, row.to_addr))
+                    .color(ACCENT)
+                    .monospace(),
+            )
+            .truncate(),
+        );
+        ui.add(egui::Label::new(RichText::new(&row.subject).color(ACCENT).monospace()).wrap());
+        ui.horizontal_wrapped(|ui| {
+            mail_chip(ui, &st.label, &st.key, &st.mark);
+            if !st.word.is_empty() {
+                ui.label(RichText::new(&st.word).color(DIM).monospace());
+            }
+        });
+        if !st.reason.is_empty() {
+            let color = if matches!(st.key.as_str(), "failed" | "bounced" | "spam") {
+                ORANGE
+            } else {
+                DIM
+            };
+            ui.add(egui::Label::new(RichText::new(&st.reason).color(color).monospace()).wrap());
+        }
+        let outgoing = row.folder != "inbox";
+        let mut times: Vec<(String, i64)> = Vec::new();
+        times.push((
+            if outgoing {
+                "Created"
+            } else {
+                "Sent by the sender"
+            }
+            .into(),
+            row.ts,
+        ));
+        for hop in &open.hops {
+            // Failed is history once a Retry has moved the mail on.
+            if hop.stage == "failed" && row.state != "failed" {
+                continue;
+            }
+            times.push((hop_name(&hop.stage, &st.label).into(), hop.ts));
+        }
+        egui::Grid::new("mail_hops")
+            .num_columns(2)
+            .spacing([12.0, 2.0])
+            .show(ui, |ui| {
+                for (name, ts) in &times {
+                    ui.label(RichText::new(name).color(DIM).monospace());
+                    ui.label(RichText::new(local_stamp(*ts)).color(FG).monospace());
+                    ui.end_row();
+                }
+            });
+        if st.retry || st.resend {
+            ui.horizontal(|ui| {
+                if st.retry && ui.add(hair_btn("Retry", ORANGE)).clicked() {
+                    self.retry_mail(row, preset);
+                }
+                if st.resend && ui.add(hair_btn("Re-send", ORANGE)).clicked() {
+                    self.mail_to = row.to_addr.clone();
+                    self.mail_subject = row.subject.clone();
+                    self.mail_body = row.body.clone();
+                    self.mail_toast =
+                        "Compose has the mail again. Check the address, then press Send.".into();
+                    self.mail_toast_warn = false;
+                }
+            });
+        }
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(RichText::new(&row.body).color(FG).monospace()).wrap());
+    }
+
+    /// Retry a Failed mail and follow it in the send window, as a new send is.
+    fn retry_mail(&mut self, row: &crate::mail::MailRow, preset: Preset) {
+        let asked = mail_http(
+            "POST",
+            "/mail/retry",
+            Some(&serde_json::json!({ "id": row.id }).to_string()),
+        );
+        if asked.and_then(|v| v.get("ok").and_then(|o| o.as_bool())) != Some(true) {
+            self.mail_toast = "Could not retry: the mail is no longer Failed.".into();
+            self.mail_toast_warn = true;
+            return;
+        }
+        let gateway = self.mail_gateway.trim().to_ascii_uppercase();
+        let preview = crate::mail::AirtimeMail {
+            from: &row.from_addr,
+            to: &row.to_addr,
+            subject: &row.subject,
+            body: &row.body,
+            gateway: &gateway,
+            ack: row.ack,
+        };
+        let (secs, _) = crate::mail::airtime_parts(&preview, preset, 250);
+        self.mail_toast.clear();
+        self.mail_send = Some(MailSend {
+            id: row.id.clone(),
+            to: row.to_addr.clone(),
+            subject: row.subject.clone(),
+            rf: row.ack,
+            airtime: secs,
+            started: Instant::now(),
+            sent_at: None,
+            heard: Instant::now(),
+            row: None,
+            step: crate::mail::SendStep {
+                fraction: 0.0,
+                label: "Starting…".into(),
+                done: false,
+                ok: false,
+            },
+            from_compose: false,
+        });
     }
 
     fn paint_mail_confirm(
@@ -4568,6 +4686,7 @@ impl GuiApp {
                                     done: false,
                                     ok: false,
                                 },
+                                from_compose: true,
                             });
                         } else {
                             self.mail_hold = false;
@@ -4582,6 +4701,173 @@ impl GuiApp {
             });
         });
     }
+}
+
+/// Chip colour for a mail status key.
+fn mail_chip_color(key: &str) -> Color32 {
+    match key {
+        "delivered" => GREEN,
+        "sent" => ACCENT,
+        "tx" => ORANGE,
+        "gateway" | "waiting" => PURPLE,
+        "delayed" => AMBER,
+        "bounced" | "spam" | "failed" => RED,
+        _ => DIM,
+    }
+}
+
+/// Wide enough for "At gateway", so the columns after the chip line up.
+const MAIL_CHIP_W: f32 = 84.0;
+
+/// One status chip. Screen readers hear the bracket mark with the word.
+fn mail_chip(ui: &mut egui::Ui, label: &str, key: &str, mark: &str) -> egui::Response {
+    let color = mail_chip_color(key);
+    let galley = ui.fonts(|f| f.layout_no_wrap(label.to_string(), FontId::monospace(11.0), color));
+    let size = egui::vec2(
+        MAIL_CHIP_W.max(galley.size().x + 12.0),
+        galley.size().y + 4.0,
+    );
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::hover());
+    ui.painter().rect(
+        rect,
+        3.0,
+        color.gamma_multiply(0.15),
+        egui::Stroke::new(1.0_f32, color),
+    );
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, color);
+    let spoken = format!("{mark} {label}").trim().to_string();
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &spoken));
+    resp
+}
+
+struct MailListRow<'a> {
+    selected: bool,
+    unread: bool,
+    when: &'a str,
+    when_full: &'a str,
+    key: &'a str,
+    label: &'a str,
+    mark: &'a str,
+    word: &'a str,
+    /// Hover text on the chip: the reason, when there is one.
+    tip: &'a str,
+    who: &'a str,
+    subject: &'a str,
+}
+
+struct MailRowAct {
+    opened: bool,
+    deleted: bool,
+}
+
+/// One Email list line: unread dot, time, chip, word, sender or recipient
+/// and subject (cut to fit, whole on hover), delete.
+fn mail_list_row(ui: &mut egui::Ui, r: &MailListRow<'_>) -> MailRowAct {
+    let mut act = MailRowAct {
+        opened: false,
+        deleted: false,
+    };
+    ui.horizontal(|ui| {
+        let dot = ui.label(
+            RichText::new(if r.unread { "●" } else { " " })
+                .color(ORANGE)
+                .monospace(),
+        );
+        if r.unread {
+            hover_tip(&dot, "unread");
+        }
+        let when = ui.label(
+            RichText::new(format!("{:<11}", r.when))
+                .color(DIM)
+                .monospace(),
+        );
+        hover_tip(&when, r.when_full);
+        let chip = mail_chip(ui, r.label, r.key, r.mark);
+        if !r.tip.is_empty() {
+            hover_tip(&chip, r.tip);
+        }
+        let delete_w = 64.0;
+        let width = (ui.available_width() - delete_w).max(40.0);
+        let height = ui.spacing().interact_size.y;
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, height),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                // Keep delete in one column, whatever the subject's length.
+                ui.set_min_width(width);
+                let color = if r.selected {
+                    ACCENT
+                } else if r.unread {
+                    Color32::WHITE
+                } else {
+                    FG
+                };
+                // The word (for example "with Resend") trails the subject.
+                let font = egui::TextStyle::Monospace.resolve(ui.style());
+                let fmt = |color| egui::TextFormat::simple(font.clone(), color);
+                let mut text = egui::text::LayoutJob::default();
+                text.append(&format!("{}  {}", r.who, r.subject), 0.0, fmt(color));
+                if !r.word.is_empty() {
+                    text.append(&format!("  · {}", r.word), 0.0, fmt(DIM));
+                }
+                let resp = ui.add(
+                    egui::Label::new(text)
+                        .truncate()
+                        .sense(egui::Sense::click()),
+                );
+                if resp.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                if resp
+                    .on_hover_text(format!("{}\n{}\n{}", r.who, r.subject, r.word).trim_end())
+                    .clicked()
+                {
+                    act.opened = true;
+                }
+            },
+        );
+        if ui.add(hair_btn("delete", DIM)).clicked() {
+            act.deleted = true;
+        }
+    });
+    act
+}
+
+/// The name of a hop in the opened mail's timeline. `report` is Resend's
+/// final answer, which the chip already names.
+fn hop_name<'a>(stage: &str, report: &'a str) -> &'a str {
+    match stage {
+        "air" => "On air",
+        "gateway" => "At gateway",
+        "sent" => "Accepted by Resend",
+        "failed" => "Failed",
+        "fetched" => "Fetched",
+        "report" => report,
+        _ => "",
+    }
+}
+
+/// Local time with the zone, for the opened mail and hover text.
+fn local_stamp(ts: i64) -> String {
+    chrono::DateTime::from_timestamp(ts, 0)
+        .map(|t| {
+            t.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S UTC%:z")
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+/// Short local time for the Email list.
+fn local_short(ts: i64) -> String {
+    chrono::DateTime::from_timestamp(ts, 0)
+        .map(|t| {
+            t.with_timezone(&chrono::Local)
+                .format("%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_default()
 }
 
 struct HardwareProbe {
