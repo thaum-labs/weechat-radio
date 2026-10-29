@@ -129,6 +129,25 @@ pub fn tail_wait_secs(count: u16, highest: u16, spacing_secs: f64) -> f64 {
     (f64::from(left) * spacing_secs).min(MAX_TAIL_WAIT_SECS)
 }
 
+/// A Radio+ sender holds its burst this long after another station's mail
+/// chunk: the rest of that burst, the gateway's quiet gap, its hub post and
+/// its reply. Keying sooner lands on top of them at the gateway.
+pub fn busy_hold_secs(frame_secs: f64) -> f64 {
+    let frame = frame_secs.max(0.0);
+    quiet_gap_secs(frame) + REPLY_SETUP_SECS + frame
+}
+
+/// Longest a sender holds one mail for other stations' mail.
+pub const MAX_BUSY_HOLD_SECS: f64 = MAX_TAIL_WAIT_SECS;
+
+/// Seconds left to hold, or `None` to key now. `since_heard` is the time
+/// since another station's mail chunk, `held_for` how long this mail has
+/// held already.
+pub fn busy_hold_left(since_heard: Option<f64>, held_for: f64, frame_secs: f64) -> Option<f64> {
+    let left = busy_hold_secs(frame_secs) - since_heard?;
+    (left > 0.0 && held_for < MAX_BUSY_HOLD_SECS).then_some(left)
+}
+
 /// A retry with no gateway progress at all. More than this many chunks
 /// still missing, and the sender keys one chunk to ask what the gateway
 /// holds instead of the whole mail again.
@@ -348,6 +367,17 @@ mod tests {
         assert!(!probe_only(1, true, 56));
         assert!(!probe_only(2, false, PROBE_MIN_MISSING));
         assert!(probe_only(2, false, PROBE_MIN_MISSING + 1));
+    }
+
+    #[test]
+    fn a_sender_holds_while_another_station_sends_mail() {
+        let hold = busy_hold_secs(4.0);
+        assert_eq!(hold, 8.0 + REPLY_SETUP_SECS + 4.0);
+        assert_eq!(busy_hold_left(None, 0.0, 4.0), None);
+        assert_eq!(busy_hold_left(Some(hold), 0.0, 4.0), None);
+        assert_eq!(busy_hold_left(Some(2.0), 0.0, 4.0), Some(hold - 2.0));
+        // A channel that never goes quiet does not hold the mail forever.
+        assert_eq!(busy_hold_left(Some(2.0), MAX_BUSY_HOLD_SECS, 4.0), None);
     }
 
     #[test]

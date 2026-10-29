@@ -148,6 +148,8 @@ pub struct MailStore {
     conn: Mutex<Connection>,
     /// Did the last delivery check reach the hub? `None` before the first.
     hub_reach: Mutex<Option<bool>>,
+    /// When another station's mail exchange was last heard here.
+    other_mail: Mutex<Option<std::time::Instant>>,
     notice: Mutex<String>,
     get: Mutex<GetProgress>,
 }
@@ -164,6 +166,7 @@ impl MailStore {
         Ok(Self {
             conn: Mutex::new(conn),
             hub_reach: Mutex::new(None),
+            other_mail: Mutex::new(None),
             notice: Mutex::new(String::new()),
             get: Mutex::new(GetProgress::default()),
         })
@@ -176,6 +179,7 @@ impl MailStore {
         Ok(Self {
             conn: Mutex::new(conn),
             hub_reach: Mutex::new(None),
+            other_mail: Mutex::new(None),
             notice: Mutex::new(String::new()),
             get: Mutex::new(GetProgress::default()),
         })
@@ -264,6 +268,16 @@ impl MailStore {
     /// False only when the last delivery check could not reach the hub.
     pub fn hub_reachable(&self) -> bool {
         self.hub_reach.lock().unwrap_or(true)
+    }
+
+    /// Another station's mail chunk, or the gateway's reply to it, was just heard.
+    pub fn note_other_mail(&self) {
+        *self.other_mail.lock() = Some(std::time::Instant::now());
+    }
+
+    /// Time since another station's mail exchange was heard, if ever.
+    pub fn since_other_mail(&self) -> Option<std::time::Duration> {
+        self.other_mail.lock().map(|t| t.elapsed())
     }
 
     /// Manual Retry of a Failed mail: back to the outbox as a fresh send.

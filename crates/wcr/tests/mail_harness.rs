@@ -1258,3 +1258,243 @@ async fn a_gateway_that_missed_the_first_chunk_still_gets_the_mail() {
         "only the lost first chunk goes again: {keyed:?}\n{trace}"
     );
 }
+
+const SENDER_TWO: &str = "M7TWO";
+
+/// Two Radio+ senders (stations 1 and 3) and the gateway (2), all in earshot
+/// of each other, with the same mock hub.
+struct Trio {
+    log: TimedLog,
+    posts: Arc<Mutex<Vec<serde_json::Value>>>,
+    /// Status ports of station 1, the gateway and station 3.
+    status: [u16; 3],
+    nodes: Vec<tokio::task::JoinHandle<wcr::error::Result<()>>>,
+}
+
+impl Trio {
+    async fn start(opts: TimedOpts, hub_delay: Duration) -> Self {
+        const ATTEMPTS: usize = 3;
+        let mut errors = Vec::new();
+        for attempt in 1..=ATTEMPTS {
+            match Self::try_start(opts, hub_delay).await {
+                Ok(trio) => {
+                    trio.wait_mail().await;
+                    return trio;
+                }
+                Err(e) => {
+                    eprintln!("trio start attempt {attempt}/{ATTEMPTS} failed: {e}");
+                    errors.push(e);
+                }
+            }
+        }
+        panic!("trio never started: {}", errors.join("; "));
+    }
+
+    async fn try_start(opts: TimedOpts, hub_delay: Duration) -> Result<Self, String> {
+        let _setup = setup_lock().lock().await;
+        let air = wcr::sim::SharedAir::new(0.0);
+        let log: TimedLog = Arc::new(Mutex::new(Vec::new()));
+        let posts = Arc::new(Mutex::new(Vec::new()));
+        let hub = mock_hub(posts.clone(), hub_delay).await;
+        let hub_url = format!("ws://127.0.0.1:{hub}/ws");
+        let ports = reserve_ports(6).await;
+        let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
+        let mut nodes = Vec::new();
+        let stations = [
+            (SENDER, Mode::RadioPlus),
+            (GATEWAY, Mode::InternetRadio),
+            (SENDER_TWO, Mode::RadioPlus),
+        ];
+        for (i, (call, mode)) in stations.into_iter().enumerate() {
+            let me = i as u64 + 1;
+            let hear = (1..=3u64).filter(|s| *s != me).collect();
+            let (kiss, ctrl) = wcr::sim::mock_modem73_timed(
+                air.clone(),
+                me,
+                hear,
+                Some(drop_rx.clone()),
+                opts,
+                log.clone(),
+            )
+            .await
+            .unwrap();
+            let home = scratch(call);
+            let cfg = station_cfg(
+                call,
+                &home,
+                mode,
+                kiss,
+                ctrl,
+                ports[i * 2],
+                ports[i * 2 + 1],
+                &hub_url,
+            );
+            nodes.push(tokio::spawn(async move {
+                wcr::node::run_node(cfg, false).await
+            }));
+        }
+        let status = [ports[1], ports[3], ports[5]];
+        for (i, p) in status.into_iter().enumerate() {
+            if let Err(e) = wait_listening(p, &mut nodes[i], 60).await {
+                for n in &nodes {
+                    n.abort();
+                }
+                return Err(e);
+            }
+        }
+        Ok(Self {
+            log,
+            posts,
+            status,
+            nodes,
+        })
+    }
+
+    async fn wait_mail(&self) {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while Instant::now() < deadline {
+            let mut ok = true;
+            for p in self.status {
+                let r = reqwest::get(format!("http://127.0.0.1:{p}/mail/tab")).await;
+                ok &= r.is_ok_and(|r| r.status().is_success());
+            }
+            if ok {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        panic!("mail never started");
+    }
+
+    /// `i` is 0 for station 1 and 2 for station 3.
+    async fn compose(&self, i: usize, subject: &str, body: &str) -> String {
+        let v: serde_json::Value = reqwest::Client::new()
+            .post(format!("http://127.0.0.1:{}/mail/compose", self.status[i]))
+            .json(&serde_json::json!({
+                "to": "operator@example.com",
+                "subject": subject,
+                "body": body,
+            }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        v.get("id").and_then(|x| x.as_str()).unwrap().to_string()
+    }
+
+    async fn state(&self, i: usize, id: &str) -> String {
+        for folder in ["outbox", "sent"] {
+            let Ok(r) = reqwest::get(format!(
+                "http://127.0.0.1:{}/mail/list?folder={folder}",
+                self.status[i]
+            ))
+            .await
+            else {
+                continue;
+            };
+            let rows: Vec<serde_json::Value> = r.json().await.unwrap_or_default();
+            if let Some(row) = rows
+                .iter()
+                .find(|r| r.get("id").and_then(|x| x.as_str()) == Some(id))
+            {
+                return row
+                    .get("state")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
+            }
+        }
+        String::new()
+    }
+
+    fn stop(self) {
+        for n in self.nodes {
+            n.abort();
+        }
+    }
+}
+
+fn is_done(state: &str) -> bool {
+    state == "sent" || state == "failed"
+}
+
+/// Two stations send a mail through the same gateway, the second a few
+/// seconds after the first, at real hf-poor airtime with collisions on. The
+/// gateway must keep the two mails apart, post each body once, and both
+/// outbox rows must reach Sent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_senders_a_few_seconds_apart_both_get_through() {
+    let trio = Trio::start(
+        TimedOpts {
+            frame_ms: 4_000,
+            count_tx: false,
+            collide: true,
+            csma_stuck_ms: 0,
+            rung_airtime: true,
+            noise_pct: 0,
+            rx_after_decode: false,
+        },
+        Duration::from_secs(2),
+    )
+    .await;
+    let mut report = long_body();
+    report.truncate(800);
+    let one = report.trim().to_string();
+    let two = "Second station here: all quiet, battery at 80 percent, back on at six. "
+        .repeat(10)
+        .trim_end()
+        .to_string();
+    let t0 = Instant::now();
+    let id_one = trio.compose(0, "from one", &one).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let id_two = trio.compose(2, "from two", &two).await;
+
+    let deadline = Instant::now() + Duration::from_secs(900);
+    let (mut s1, mut s2) = (String::new(), String::new());
+    while Instant::now() < deadline {
+        s1 = trio.state(0, &id_one).await;
+        s2 = trio.state(2, &id_two).await;
+        if is_done(&s1) && is_done(&s2) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    let mut trace = String::new();
+    for k in trio.log.lock().unwrap().iter() {
+        let what = match chunk_of(&k.payload) {
+            Some((op, idx, count)) => format!("WCRM op{op} {}/{count}", idx + 1),
+            None if k.payload.starts_with(b"WCRP\t") => "WCRP slice".to_string(),
+            None => format!("chat {} B", k.payload.len()),
+        };
+        trace.push_str(&format!(
+            "{:7.1}s st{} {what}\n",
+            k.at.saturating_duration_since(t0).as_secs_f64(),
+            k.station,
+        ));
+    }
+    eprintln!("{trace}");
+    eprintln!(
+        "station 1 {s1}, station 3 {s2} after {:.0} s",
+        t0.elapsed().as_secs_f64()
+    );
+    let posts = trio.posts.lock().unwrap().clone();
+    trio.stop();
+
+    assert_eq!(s1, "sent", "station 1's mail\n{trace}");
+    assert_eq!(s2, "sent", "station 3's mail\n{trace}");
+    let bodies: Vec<&str> = posts
+        .iter()
+        .filter_map(|p| p.get("body").and_then(|x| x.as_str()))
+        .collect();
+    assert_eq!(bodies.len(), 2, "gateway posts: {posts:?}");
+    assert!(
+        bodies.contains(&one.as_str()),
+        "station 1's body: {posts:?}"
+    );
+    assert!(
+        bodies.contains(&two.as_str()),
+        "station 3's body: {posts:?}"
+    );
+}

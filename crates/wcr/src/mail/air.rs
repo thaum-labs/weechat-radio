@@ -173,12 +173,16 @@ struct TxCtx {
     checks: Mutex<u64>,
     quiet: Mutex<u64>,
     gets: Mutex<u64>,
+    /// Mail id → when it first held for another station's mail.
+    holds: Mutex<HashMap<String, std::time::Instant>>,
 }
 
 struct Assembler {
     slices: HashMap<String, Vec<Option<String>>>,
     /// op+mail id → index → wire. One mail is one bucket. The header total is not a key.
     buckets: HashMap<String, HashMap<u16, MailWire>>,
+    /// op+mail id → when a chunk new to that bucket last arrived.
+    fresh: HashMap<String, std::time::Instant>,
     from: HashMap<String, String>,
     to: HashMap<String, String>,
     /// Complete messages waiting out the quiet gap before the gateway keys.
@@ -198,6 +202,7 @@ impl Assembler {
         Self {
             slices: HashMap::new(),
             buckets: HashMap::new(),
+            fresh: HashMap::new(),
             from: HashMap::new(),
             to: HashMap::new(),
             ready: Vec::new(),
@@ -232,10 +237,15 @@ impl Assembler {
         self.buckets
             .iter()
             .filter(|(key, _)| key.starts_with("Data:") || key.starts_with("VoxData:"))
-            .filter_map(|(_, slot)| {
+            .filter_map(|(key, slot)| {
                 let count = slot.values().map(|w| w.count).min()?;
                 let highest = *slot.keys().filter(|i| **i < count).max()?;
-                Some(gateway::tail_wait_secs(count, highest, spacing))
+                // Counted from the last chunk new here. A repeat the gateway
+                // holds already (a probe) does not start the wait again, or a
+                // burst cut short by a clash keeps it waiting for chunks that
+                // never come while the sender gives up.
+                let since = self.fresh.get(key)?.elapsed().as_secs_f64();
+                Some(gateway::tail_wait_secs(count, highest, spacing) - since)
             })
             .fold(0.0, f64::max)
     }
@@ -265,6 +275,7 @@ pub(super) fn spawn(
         checks: Mutex::new(0),
         quiet: Mutex::new(0),
         gets: Mutex::new(0),
+        holds: Mutex::new(HashMap::new()),
     };
     tokio::spawn(run(rx, ctx));
 }
@@ -492,6 +503,11 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
     let vox = cfg.modem.is_vox();
     let rung = mail_rung(preset, row.retries);
     let mtu = rung.payload_bytes() as usize;
+    let frame_secs = keyed_airtime_secs(preset, std::iter::once(mtu), cfg.rf.turnaround_ms);
+    if let Some(wait) = busy_hold(ctx, &row.id, frame_secs) {
+        hold_send(ctx, &row.id, wait);
+        return Ok(());
+    }
     let planned = AirtimeMail {
         from: &row.from_addr,
         to: &row.to_addr,
@@ -540,7 +556,6 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
     );
     arm_tx_stuck(ctx, &row.id, gateway::tx_stuck_after_secs(planned_secs));
     let cap = gateway::mail_attempt_cap(cfg.rf.max_retries);
-    let frame_secs = keyed_airtime_secs(preset, std::iter::once(mtu), cfg.rf.turnaround_ms);
     let started = std::time::Instant::now();
     // A have-report can land while the lease waits for the channel. Key only
     // what the gateway still lacks at that moment, not what it lacked when
@@ -552,6 +567,15 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
         };
         if gateway::is_finished(&now.state) {
             return KeyPlan::default();
+        }
+        // Checked again here, after the lease waited for the channel: a
+        // burst that started meanwhile is only heard once its first frame
+        // has decoded.
+        if let Some(wait) = busy_hold(ctx, &id, frame_secs) {
+            return KeyPlan {
+                held: Some(wait),
+                ..KeyPlan::default()
+            };
         }
         let still = missing_chunk_idxs(total, &now.got);
         let mut keyed = KeyPlan::default();
@@ -599,6 +623,13 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
             return Err(e);
         }
     };
+    if let Some(wait) = keyed.held {
+        // Nothing keyed: back to Queued, and the stuck-at-tx timer is off.
+        silence_wait(ctx, &row.id);
+        ctx.store.set_state(&row.id, "outbox", "queued")?;
+        hold_send(ctx, &row.id, wait);
+        return Ok(());
+    }
     if keyed.chunks.is_empty() {
         let state = ctx.store.get(&row.id)?.map(|r| r.state).unwrap_or_default();
         if gateway::is_finished(&state) {
@@ -637,6 +668,37 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
     let wait = gateway::retry_after_secs(airtime, spent, row.retries, frame_secs);
     arm_wait(ctx, &row.id, Duration::from_secs_f64(wait.max(1.0)));
     Ok(())
+}
+
+/// Another station is keying mail: wait out its burst and the gateway's
+/// reply rather than key over them. Waiting here, not in the lease, keeps
+/// the mail task free to take the gateway's reports meanwhile.
+fn busy_hold(ctx: &TxCtx, id: &str, frame_secs: f64) -> Option<f64> {
+    let mut holds = ctx.holds.lock();
+    let held_for = holds
+        .get(id)
+        .map(|t| t.elapsed().as_secs_f64())
+        .unwrap_or(0.0);
+    let since = ctx.store.since_other_mail().map(|d| d.as_secs_f64());
+    let left = gateway::busy_hold_left(since, held_for, frame_secs);
+    if left.is_some() {
+        holds
+            .entry(id.to_string())
+            .or_insert_with(std::time::Instant::now);
+    } else {
+        holds.remove(id);
+    }
+    left
+}
+
+fn hold_send(ctx: &TxCtx, id: &str, wait: f64) {
+    tracing::info!("mail {id} held {wait:.0} s: another station is sending mail");
+    let tx = ctx.cmd_tx.clone();
+    let id = id.to_string();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs_f64(wait)).await;
+        let _ = tx.send(MailCmd::Send { id }).await;
+    });
 }
 
 fn silence_wait(ctx: &TxCtx, id: &str) {
@@ -782,6 +844,9 @@ impl Drop for ClearKeying {
 struct KeyPlan {
     chunks: Vec<u16>,
     frames: Vec<Vec<u8>>,
+    /// Keyed nothing: another station is sending mail. Try again after this
+    /// many seconds.
+    held: Option<f64>,
 }
 
 impl KeyPlan {
@@ -789,6 +854,7 @@ impl KeyPlan {
         move || KeyPlan {
             chunks: Vec::new(),
             frames: frames.clone(),
+            held: None,
         }
     }
 }
@@ -952,8 +1018,9 @@ async fn on_incoming(ctx: &TxCtx, asm: &mut Assembler, incoming: Incoming, durin
                 wire.idx + 1,
                 wire.count
             );
-            asm.buckets
-                .remove(&format!("{:?}:{}", wire.op, wire.mail_id));
+            let key = format!("{:?}:{}", wire.op, wire.mail_id);
+            asm.buckets.remove(&key);
+            asm.fresh.remove(&key);
             asm.reack.insert(wire.mail_id, origin);
             arm_quiet(ctx, asm);
             return;
@@ -1036,7 +1103,10 @@ fn absorb(asm: &mut Assembler, wire: MailWire) -> Absorb {
     }
     let mail_id = wire.mail_id.clone();
     let key = format!("{:?}:{}", wire.op, wire.mail_id);
-    let slot = asm.buckets.entry(key).or_default();
+    let slot = asm.buckets.entry(key.clone()).or_default();
+    if !slot.contains_key(&wire.idx) {
+        asm.fresh.insert(key, std::time::Instant::now());
+    }
     match proto::put_chunk(slot, wire) {
         proto::ChunkPut::Rejected => Absorb::Rejected {
             mail_id,
