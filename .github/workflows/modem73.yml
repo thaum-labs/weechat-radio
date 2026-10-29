@@ -47,7 +47,7 @@ jobs:
         run: |
           set -euo pipefail
           git apply ../third_party/modem73/patches/network-audio.patch
-          make -f packaging/Makefile.pkg ARCH_FLAGS="${{ matrix.arch_flags }}" VERSION="${MODEM73_TAG#v}+wcr" -j"$(nproc)"
+          make -f packaging/Makefile.pkg ARCH_FLAGS="${{ matrix.arch_flags }}" VERSION="${MODEM73_TAG#v}-wcr" -j"$(nproc)"
       - name: check
         working-directory: m73
         run: |
@@ -90,7 +90,7 @@ jobs:
         run: |
           set -euo pipefail
           git apply ../third_party/modem73/patches/network-audio.patch
-          make ARCHFLAGS="${{ matrix.arch_flags }}" VERSION="${MODEM73_TAG#v}+wcr" -j"$(sysctl -n hw.ncpu)"
+          make ARCHFLAGS="${{ matrix.arch_flags }}" VERSION="${MODEM73_TAG#v}-wcr" -j"$(sysctl -n hw.ncpu)"
       # Same layout as upstream's macOS tarball: modem73 next to libs/.
       - name: bundle libraries
         working-directory: m73
@@ -143,7 +143,7 @@ jobs:
         run: |
           set -euo pipefail
           git apply ../third_party/modem73/patches/network-audio-win.patch
-          make -j"$(nproc)" CXX=x86_64-w64-mingw32-g++-posix CC=x86_64-w64-mingw32-gcc-posix VERSION="${MODEM73_WIN_TAG#v}+wcr"
+          make -j"$(nproc)" CXX=x86_64-w64-mingw32-g++-posix CC=x86_64-w64-mingw32-gcc-posix VERSION="${MODEM73_WIN_TAG#v}-wcr"
       - name: check
         working-directory: m73
         run: |
