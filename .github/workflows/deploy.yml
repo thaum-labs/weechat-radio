@@ -23,6 +23,7 @@ jobs:
           file: deploy/Dockerfile
           push: true
           tags: ghcr.io/thaum-labs/wcr:latest
+          build-args: GIT_SHA=${{ github.sha }}
       - uses: docker/build-push-action@v6
         with:
           context: services/path
@@ -58,7 +59,17 @@ jobs:
             if [ -n "${RESEND_WEBHOOK_SECRET:-}" ]; then printf 'RESEND_WEBHOOK_SECRET=%s\n' "$RESEND_WEBHOOK_SECRET" >> "$tmp"; fi
             mv "$tmp" .env
             chmod 600 .env
+            echo "== disk before"; df -h /; docker system df
+            # Make room for the new images: images no container uses, and build
+            # cache. Never volumes (wcr-data, caddy-data, caddy-config).
+            docker image prune -af
+            docker builder prune -af
+            sudo -n journalctl --vacuum-size=200M || true
             docker compose -f deploy/docker-compose.yml pull
             # Recreate web/path so bind-mounted Caddyfile routes (e.g. /api/path) reload.
             docker compose -f deploy/docker-compose.yml up -d --no-build --force-recreate path web
             docker compose -f deploy/docker-compose.yml up -d --no-build
+            # The images the old containers ran are unused now.
+            docker image prune -af
+            echo "== disk after"; df -h /; docker system df
+            docker compose -f deploy/docker-compose.yml ps

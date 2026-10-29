@@ -138,6 +138,7 @@ pub async fn run_hub(
             post(crate::net::hub_mail::resend_webhook),
         )
         .route("/healthz", get(|| async { "ok" }))
+        .route("/version", get(|| async { axum::Json(version_json()) }))
         .layer(CorsLayer::permissive())
         .with_state(state);
     let addr: SocketAddr = bind
@@ -423,6 +424,15 @@ pub(crate) fn verify_inbound(
         return false;
     };
     verify_envelope(env, &vk).is_ok()
+}
+
+/// `/version`: the release and the commit the hub image was built from, so
+/// a deploy can be checked from outside. The commit is empty in a local build.
+fn version_json() -> serde_json::Value {
+    serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "commit": std::env::var("WCR_COMMIT").unwrap_or_default(),
+    })
 }
 
 fn unix_ts() -> u64 {
@@ -744,6 +754,14 @@ pub fn hub_report_id(bind: &str, domain: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn version_names_the_release() {
+        let v = version_json();
+        assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
+        assert!(v["commit"].is_string());
+    }
+
     use super::*;
     use crate::proto::{Callsign, Envelope, Flags, IdentityKeys, MsgType};
 

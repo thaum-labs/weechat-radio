@@ -54,6 +54,7 @@ Body is JSON metadata only. Never send message text.
 - `GET /api/v1/stats` — totals
 - `GET /ws/live` — WebSocket firehose of the same events
 - `GET /healthz` — `ok`
+- `GET /version` — `{"version", "commit"}` of the running hub (`commit` is empty in a local build)
 
 ## How you know it worked
 
