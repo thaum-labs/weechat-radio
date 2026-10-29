@@ -137,6 +137,12 @@ pub fn busy_hold_secs(frame_secs: f64) -> f64 {
     quiet_gap_secs(frame) + REPLY_SETUP_SECS + frame
 }
 
+/// A gateway hearing chunk `idx` of `count` keys no chat or relay for this
+/// long: the rest of the burst, then the same hold a sender keeps.
+pub fn heard_mail_hold_secs(count: u16, idx: u16, frame_secs: f64) -> f64 {
+    tail_wait_secs(count, idx, frame_secs) + busy_hold_secs(frame_secs)
+}
+
 /// Longest a sender holds one mail for other stations' mail.
 pub const MAX_BUSY_HOLD_SECS: f64 = MAX_TAIL_WAIT_SECS;
 
@@ -311,6 +317,9 @@ mod tests {
         assert!((retry_after_secs(5.0, 9.0, 1, 4.0) - 34.0).abs() < 0.01);
         assert!((quiet_gap_secs(3.6) - 7.2).abs() < 0.01);
         assert!((quiet_gap_secs(1.0) - 3.0).abs() < 0.01);
+        // Chunk 1 of 3 heard: two more chunks, then the sender's hold.
+        assert!((heard_mail_hold_secs(3, 0, 4.0) - (8.0 + busy_hold_secs(4.0))).abs() < 0.01);
+        assert!((heard_mail_hold_secs(3, 2, 4.0) - busy_hold_secs(4.0)).abs() < 0.01);
         assert!((quiet_gap_heard_secs(4.0, 0.0) - 8.0).abs() < 0.01);
         assert!((quiet_gap_heard_secs(4.0, 7.5) - 11.25).abs() < 0.01);
         assert!((quiet_gap_heard_secs(4.0, 60.0) - MAX_QUIET_GAP_SECS).abs() < 0.01);

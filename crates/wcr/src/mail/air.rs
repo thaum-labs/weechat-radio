@@ -548,13 +548,11 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
     if widest > mtu {
         return Err(Error::protocol("mail frame wider than the rung"));
     }
-    ctx.store.set_state(&row.id, "outbox", "tx")?;
     let planned_secs = keyed_airtime_secs(
         preset,
         chunks.iter().flat_map(|(_, f)| f.iter().map(Vec::len)),
         cfg.rf.turnaround_ms,
     );
-    arm_tx_stuck(ctx, &row.id, gateway::tx_stuck_after_secs(planned_secs));
     let cap = gateway::mail_attempt_cap(cfg.rf.max_retries);
     let started = std::time::Instant::now();
     // A have-report can land while the lease waits for the channel. Key only
@@ -582,6 +580,12 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
         for (idx, frames) in chunks.iter().filter(|(i, _)| still.contains(i)) {
             keyed.chunks.push(*idx);
             keyed.frames.extend(frames.iter().cloned());
+        }
+        // On air only once this try really keys: a held or empty try stays
+        // Queued, and the `air` hop gets this try's time.
+        if !keyed.frames.is_empty() {
+            let _ = ctx.store.set_state(&id, "outbox", "tx");
+            arm_tx_stuck(ctx, &id, gateway::tx_stuck_after_secs(planned_secs));
         }
         keyed
     };

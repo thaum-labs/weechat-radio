@@ -241,6 +241,19 @@ fn note_complete_ack(store: &store::MailStore, us: &str, incoming: &Incoming) ->
     store.set_outcome(&w.mail_id, "sent", "sent", "").is_ok()
 }
 
+/// Seconds a gateway holds its chat and relays after hearing `incoming`,
+/// or `None` when it is not part of another station's mail burst. Our own
+/// frames are never heard, so every chunk or slice is someone else's.
+pub fn heard_mail_hold_secs(incoming: &Incoming, frame_secs: f64) -> Option<f64> {
+    match incoming {
+        Incoming::Wire(w) if matches!(w.op, proto::MailOp::Data | proto::MailOp::VoxData) => {
+            Some(gateway::heard_mail_hold_secs(w.count, w.idx, frame_secs))
+        }
+        Incoming::Slice { .. } => Some(gateway::busy_hold_secs(frame_secs)),
+        Incoming::Wire(_) => None,
+    }
+}
+
 pub async fn on_rf(mail: &MailHandle, incoming: Incoming) {
     let us = mail.cfg.lock().callsign.to_ascii_uppercase();
     let _ = note_have_report(&mail.store, &us, &incoming);

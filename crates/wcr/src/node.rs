@@ -1279,6 +1279,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     rt.heard_on_air.store(true, std::sync::atomic::Ordering::Relaxed);
                     if let Some(incoming) = crate::mail::try_decode(&payload) {
                         note_exchange(&rt, None, Some(&incoming));
+                        hold_air_for_heard_mail(&rt, &incoming);
                         crate::mail::on_rf(&rt.mail, incoming).await;
                     } else if crate::mail::looks_like_mail(&payload) {
                         tracing::info!(
@@ -1985,6 +1986,28 @@ fn is_line(env: &Envelope) -> bool {
 
 /// A chat or mail frame keyed or heard here, as part of an exchange a due
 /// beacon waits for.
+/// A gateway that keys a chat line or a relayed receipt in the middle of
+/// another station's mail burst misses the chunks under it (QA v1.0.3).
+fn hold_air_for_heard_mail(rt: &Runtime, incoming: &crate::mail::Incoming) {
+    let (mode, preset) = {
+        let cfg = rt.cfg.lock();
+        (
+            cfg.mode,
+            Preset::parse(&cfg.modem.preset).unwrap_or(Preset::VhfFm),
+        )
+    };
+    if mode != Mode::InternetRadio {
+        return;
+    }
+    let frame_secs = air::ack_listen_window(preset).as_secs_f64();
+    if let (Some(secs), Some(air)) = (
+        crate::mail::heard_mail_hold_secs(incoming, frame_secs),
+        rt.air(),
+    ) {
+        air.hold_for_heard_mail(secs);
+    }
+}
+
 fn note_exchange(rt: &Runtime, env: Option<&Envelope>, mail: Option<&crate::mail::Incoming>) {
     let step = match (env, mail) {
         (Some(env), _) => relay::exchange_step(env),

@@ -65,7 +65,7 @@ Every mail in the list has one coloured chip:
 | Bounced | `[no]` | The recipient's mail server refused it |
 | Spam | `[no]` | The recipient marked it as spam |
 | Failed | `[no]` | Not sent (the reason is in the opened mail), or Resend could not send it |
-| No record | `[ok]` | The hub has no delivery record for this mail |
+| No record | `[..]` | The hub has no delivery record for this mail |
 
 Inbox mail always shows Received (also mail an older version stored), with an orange dot and brighter text while unread. Radio+ headers not fetched yet show Waiting and the size, in the same layout. Screen readers hear the mark with the chip, for example `[ok] Delivered`.
 

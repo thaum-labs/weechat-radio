@@ -4065,6 +4065,13 @@ impl GuiApp {
             return;
         };
         let step = send.step.clone();
+        // The compose hint sits behind this window while it is open, so the
+        // window says it too.
+        let hold_note = if send.rf {
+            "On the air. To, subject and body stay until TX finishes."
+        } else {
+            "Sending via the hub. To, subject and body stay until the hub answers."
+        };
         // Sent, but Resend's answer is bad news (Bounced, Spam, Failed).
         let bad = send
             .row
@@ -4136,6 +4143,7 @@ impl GuiApp {
                         }
                     });
                 } else {
+                    ui.label(RichText::new(hold_note).color(DIM).small().monospace());
                     ui.label(
                         RichText::new("Stay on this screen until the send finishes.")
                             .color(DIM)
