@@ -80,8 +80,11 @@ jobs:
           PRE=""
           case "$TAG" in *-rc*) PRE="--prerelease" ;; esac
           gh release create "$TAG" --repo "${GITHUB_REPOSITORY}" --verify-tag --draft $PRE --title "$TAG" --notes-file release-notes.md
+  # modem73 with our network-audio patch, built from source (modem73.yml).
+  modem73:
+    uses: ./.github/workflows/modem73.yml
   build:
-    needs: notes
+    needs: [notes, modem73]
     strategy:
       fail-fast: false
       matrix:
@@ -92,27 +95,22 @@ jobs:
             target: x86_64-unknown-linux-gnu
             asset: wcr-linux-x86_64.tar.gz
             modem_asset: modem73-linux-x86_64
-            modem_deb: modem73_*_ubuntu-24.04_amd64.deb
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             asset: wcr-linux-aarch64.tar.gz
             modem_asset: modem73-linux-aarch64
-            modem_deb: modem73_*_ubuntu-24.04_arm64.deb
           - os: macos-latest
             target: x86_64-apple-darwin
             asset: wcr-macos-x86_64.tar.gz
             modem_asset: modem73-macos-x86_64.tar.gz
-            modem_deb: ""
           - os: macos-latest
             target: aarch64-apple-darwin
             asset: wcr-macos-aarch64.tar.gz
             modem_asset: modem73-macos-aarch64.tar.gz
-            modem_deb: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             asset: wcr-windows-x86_64.zip
             modem_asset: modem73-windows-x86_64.exe
-            modem_deb: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -124,54 +122,32 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - name: fetch modem73
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.modem_asset }}
       - name: bundle modem73 linux
-        if: runner.os == 'Linux' && matrix.modem_deb != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p dist
-          gh release download --repo RFnexus/modem73 --pattern "${{ matrix.modem_deb }}" --dir /tmp/m73
-          dpkg-deb -x /tmp/m73/*.deb /tmp/m73/unpack
-          find /tmp/m73/unpack -type f -name modem73 -exec cp {} dist/modem73 \;
-          test -s dist/modem73
-          chmod +x dist/modem73
-          cp dist/modem73 "${{ matrix.modem_asset }}"
-          cp third_party/modem73/NOTICE dist/MODEM73-NOTICE
-      - name: bundle modem73 macos
-        if: runner.os == 'macOS' && matrix.modem_asset != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: runner.os == 'Linux'
         run: |
           set -euo pipefail
-          mkdir -p dist/libs /tmp/m73/out
-          case "${{ matrix.target }}" in
-            aarch64-apple-darwin) PATTERN="modem73_*_macos-arm64.tar.gz" ;;
-            *) PATTERN="modem73_*_macos-x86_64.tar.gz" ;;
-          esac
-          gh release download --repo RFnexus/modem73 --pattern "$PATTERN" --dir /tmp/m73
-          tar -xzf /tmp/m73/modem73_*_macos*.tar.gz -C /tmp/m73/out
-          find /tmp/m73/out -type f -name modem73 -exec cp {} dist/modem73 \;
-          test -s dist/modem73
-          chmod +x dist/modem73
-          LIBS="$(find /tmp/m73/out -type d -name libs | head -n 1)"
-          test -n "$LIBS"
-          cp -R "$LIBS"/. dist/libs/
-          test -n "$(ls -A dist/libs)"
-          tar -czf "${{ matrix.modem_asset }}" -C dist modem73 libs
+          mkdir -p dist
+          cp "${{ matrix.modem_asset }}" dist/modem73
+          chmod +x dist/modem73 "${{ matrix.modem_asset }}"
           cp third_party/modem73/NOTICE dist/MODEM73-NOTICE
-          if [ -f /tmp/m73/out/modem73/LICENSE ]; then cp /tmp/m73/out/modem73/LICENSE dist/MODEM73-LICENSE; fi
+      - name: bundle modem73 macos
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          tar -xzf "${{ matrix.modem_asset }}" -C dist
+          test -s dist/modem73
+          test -n "$(ls -A dist/libs)"
+          cp third_party/modem73/NOTICE dist/MODEM73-NOTICE
       - name: bundle modem73 windows
         if: runner.os == 'Windows'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir dist
-          gh release download --repo RFnexus/modem73-win --pattern "modem73_*_win64.zip" --dir m73
-          Expand-Archive -Path (Get-ChildItem m73\modem73_*_win64.zip).FullName -DestinationPath m73\out -Force
-          if (-not (Test-Path m73\out\modem73.exe)) { throw "modem73.exe missing from upstream zip" }
-          Copy-Item m73\out\modem73.exe dist\modem73.exe
-          Copy-Item m73\out\modem73.exe ${{ matrix.modem_asset }}
-          if (Test-Path m73\out\LICENSE) { Copy-Item m73\out\LICENSE dist\MODEM73-LICENSE }
+          Copy-Item ${{ matrix.modem_asset }} dist\modem73.exe
           Copy-Item third_party\modem73\NOTICE dist\MODEM73-NOTICE
       # The fallback download in this wcr build (crates/wcr/src/modem/ensure.rs)
       # fetches modem73 from this release's own tag and checks it against the
@@ -243,7 +219,7 @@ jobs:
           $h = (Get-FileHash -Algorithm SHA256 "${{ matrix.asset }}").Hash.ToLower()
           Set-Content -Path "${{ matrix.asset }}.sha256" -Value $h -NoNewline
       - name: refuse unix archive without modem73
-        if: (runner.os == 'Linux' || runner.os == 'macOS') && matrix.modem_asset != ''
+        if: runner.os == 'Linux' || runner.os == 'macOS'
         run: |
           set -euo pipefail
           tar -tzf "${{ matrix.asset }}" | grep -E '(^|/)modem73$'

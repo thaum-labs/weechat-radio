@@ -1,0 +1,158 @@
+# Builds the modem73 that ships inside WeeChat Radio: upstream RFnexus/modem73
+# (modem73-win on Windows) at a pinned tag, plus our network-audio patch
+# (third_party/modem73/patches). Network audio lets wcr feed modem73 the
+# radio's Bluetooth audio (VR-N76 / VR-N7600) with no sound card.
+#
+# Each job uploads one artifact named after the release asset it makes,
+# holding exactly that file. release.yml calls this workflow and bundles them.
+name: modem73
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - third_party/modem73/**
+      - .github/workflows/modem73.yml
+permissions:
+  contents: read
+env:
+  # Bump together with the patches when upstream moves.
+  MODEM73_TAG: v2.4.8
+  MODEM73_WIN_TAG: v2.4.2
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Same image as the wcr Linux build: binaries need its glibc.
+          - os: ubuntu-24.04
+            asset: modem73-linux-x86_64
+            arch_flags: -march=x86-64-v2
+          - os: ubuntu-24.04-arm
+            asset: modem73-linux-aarch64
+            arch_flags: -march=armv8-a
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: RFnexus/modem73
+          ref: ${{ env.MODEM73_TAG }}
+          path: m73
+      - name: build deps
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential pkg-config libncurses-dev libhidapi-dev libhamlib-dev
+      - name: patch and build
+        working-directory: m73
+        run: |
+          set -euo pipefail
+          git apply ../third_party/modem73/patches/network-audio.patch
+          make -f packaging/Makefile.pkg ARCH_FLAGS="${{ matrix.arch_flags }}" VERSION="${MODEM73_TAG#v}+wcr" -j"$(nproc)"
+      - name: check
+        working-directory: m73
+        run: |
+          set -euo pipefail
+          readelf -d modem73 | grep -q hidapi || { echo "::error::no hidapi (CM108 PTT)"; exit 1; }
+          readelf -d modem73 | grep -q hamlib || { echo "::error::no hamlib PTT"; exit 1; }
+          ./modem73 --help > help.txt 2>&1 || true
+          grep -q "tcp:HOST:PORT" help.txt || { echo "::error::network audio missing"; cat help.txt; exit 1; }
+          cp modem73 "../${{ matrix.asset }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Homebrew libraries are per-architecture, so each Mac type builds on its own runner.
+          - os: macos-15
+            asset: modem73-macos-aarch64.tar.gz
+            arch_flags: ""
+          - os: macos-15-intel
+            asset: modem73-macos-x86_64.tar.gz
+            arch_flags: -march=x86-64-v2
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: RFnexus/modem73
+          ref: ${{ env.MODEM73_TAG }}
+          path: m73
+      - name: build deps
+        run: brew install pkgconf ncurses hidapi hamlib dylibbundler
+      - name: patch and build
+        working-directory: m73
+        run: |
+          set -euo pipefail
+          git apply ../third_party/modem73/patches/network-audio.patch
+          make ARCHFLAGS="${{ matrix.arch_flags }}" VERSION="${MODEM73_TAG#v}+wcr" -j"$(sysctl -n hw.ncpu)"
+      # Same layout as upstream's macOS tarball: modem73 next to libs/.
+      - name: bundle libraries
+        working-directory: m73
+        run: |
+          set -euo pipefail
+          mkdir -p dist/libs
+          cp modem73 dist/
+          dylibbundler -od -b -x dist/modem73 -d dist/libs/ -p @executable_path/libs/
+          codesign --force -s - dist/libs/*.dylib dist/modem73
+          if otool -L dist/modem73 dist/libs/*.dylib | grep -E "/opt/homebrew|/usr/local/(Cellar|opt|lib)"; then
+            echo "::error::a Homebrew library was not bundled"
+            exit 1
+          fi
+          otool -L dist/modem73 | grep -q hamlib || { echo "::error::no hamlib PTT"; exit 1; }
+          ./dist/modem73 --help > help.txt 2>&1 || true
+          grep -q "tcp:HOST:PORT" help.txt || { echo "::error::network audio missing"; cat help.txt; exit 1; }
+          tar -czf "../${{ matrix.asset }}" -C dist modem73 libs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+  windows:
+    # Cross-compiled with MinGW, as upstream modem73-win does.
+    runs-on: ubuntu-24.04
+    env:
+      ASSET: modem73-windows-x86_64.exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: RFnexus/modem73-win
+          ref: ${{ env.MODEM73_WIN_TAG }}
+          path: m73
+      - name: build deps
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 make
+      - name: cache hamlib
+        id: hamlib
+        uses: actions/cache@v4
+        with:
+          path: m73/deps/hamlib
+          key: hamlib-win-${{ hashFiles('m73/build-hamlib-win.sh') }}-mingw-w64-ubuntu-24.04
+      - name: build hamlib
+        if: steps.hamlib.outputs.cache-hit != 'true'
+        working-directory: m73
+        run: ./build-hamlib-win.sh
+      - name: patch and build
+        working-directory: m73
+        run: |
+          set -euo pipefail
+          git apply ../third_party/modem73/patches/network-audio-win.patch
+          make -j"$(nproc)" CXX=x86_64-w64-mingw32-g++-posix CC=x86_64-w64-mingw32-gcc-posix VERSION="${MODEM73_WIN_TAG#v}+wcr"
+      - name: check
+        working-directory: m73
+        run: |
+          set -euo pipefail
+          strings modem73.exe | grep -q "Hamlib" || { echo "::error::no hamlib PTT"; exit 1; }
+          strings modem73.exe | grep -q "tcp:HOST:PORT" || { echo "::error::network audio missing"; exit 1; }
+          cp modem73.exe "../$ASSET"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ASSET }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error

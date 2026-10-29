@@ -4,11 +4,16 @@ https://github.com/RFnexus/modem73
 Windows binaries come from the experimental Win32 port:
 https://github.com/RFnexus/modem73-win
 
-Release archives include the upstream binary as-is so a station can be
-installed with no extra download. That binary is not Apache-2.0.
+Release archives include a modem73 built from the upstream source at a
+pinned tag (.github/workflows/modem73.yml) with one patch added:
+`patches/network-audio.patch` (`patches/network-audio-win.patch` for the
+Windows port). It adds network audio (`-d tcp:HOST:PORT`), which WeeChat
+Radio uses to carry a Bluetooth radio's audio (VR-N76 / VR-N7600) into
+modem73 with no sound card. Both patches are offered upstream; once
+upstream ships network audio the patch goes away. The patch is under the
+same Unlicense as modem73. That binary is not Apache-2.0.
 macOS archives also include the `libs/` folder (`@executable_path/libs`).
-See the Unlicense at the upstream repository, and MODEM73-LICENSE in the
-release zip when present.
+See the Unlicense at the upstream repository.
 
 `wcr` downloads a missing modem73 from its **own** WeeChat Radio release
 tag, never from `/releases/latest`. The release workflow hashes the modem73

@@ -244,6 +244,12 @@ fn version_in(bytes: &[u8]) -> Option<String> {
     None
 }
 
+/// Our patched modem73 (third_party/modem73/patches) takes `-d tcp:HOST:PORT`;
+/// its help text says so.
+pub fn has_network_audio(binary: &Path) -> bool {
+    std::fs::read(binary).is_ok_and(|b| find(&b, b"tcp:HOST:PORT").is_some())
+}
+
 /// modem73 2.4.2 added `--robust-enhanced-retry`. Older builds refuse
 /// unknown options and exit, so only newer ones get it.
 pub fn has_robust_retry(version: &str) -> bool {
@@ -521,5 +527,17 @@ mod tests {
         assert_eq!(super::version_in(&bin).as_deref(), Some("2.4.2"));
         assert_eq!(super::version_in(b"\0 vdev\0"), None);
         assert_eq!(super::version_in(b"nothing here"), None);
+    }
+
+    #[test]
+    fn network_audio_is_spotted_in_the_help_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let ours = dir.path().join("ours");
+        std::fs::write(&ours, b"\0  DEV tcp:HOST:PORT (use -d)\0").unwrap();
+        let stock = dir.path().join("stock");
+        std::fs::write(&stock, b"\0 v2.4.8\0").unwrap();
+        assert!(super::has_network_audio(&ours));
+        assert!(!super::has_network_audio(&stock));
+        assert!(!super::has_network_audio(&dir.path().join("missing")));
     }
 }

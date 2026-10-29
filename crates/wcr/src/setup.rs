@@ -13,6 +13,8 @@ use std::io::Write;
 
 /// Setup path for a supported CAT radio ([`Radio::setup_path`]).
 const SUPPORTED_CAT: usize = 6;
+/// Setup path for modem73 over a radio's Bluetooth audio channel.
+const BT_AUDIO: usize = 7;
 
 pub fn run_wizard() -> Result<Config> {
     if !console::Term::stdout().is_term() {
@@ -197,14 +199,16 @@ pub fn run_wizard() -> Result<Config> {
             println!("  Start rigctld for your radio before `wcr node`.");
             println!("  If that fails, you can switch PTT to VOX later with /radio ptt vox");
         }
-        4 => {
+        4 | BT_AUDIO => {
             let radio = radio.unwrap_or(&RADIOS[0]);
             radio.apply(&mut cfg);
             println!("  On the radio: {}", radio.radio_side);
             if !radio.cable.is_empty() {
                 println!("  Cable: {}", radio.cable);
             }
-            println!("  Close the radio's phone app (one Bluetooth client at a time).");
+            if path == 4 {
+                println!("  Close the radio's phone app (one Bluetooth client at a time).");
+            }
             let _ = std::io::stdout().flush();
             bluetooth_pick(&theme, &mut cfg)?;
         }
@@ -240,7 +244,12 @@ pub fn run_wizard() -> Result<Config> {
     }
 
     if path != 0 && !cfg.modem.uses_tnc() {
-        let presets: Vec<&str> = Preset::all().iter().map(|p| p.as_str()).collect();
+        // Over Bluetooth audio, only the presets that survive the link.
+        let offered: Vec<Preset> = Preset::all()
+            .into_iter()
+            .filter(|&p| !cfg.modem.is_bt_audio() || crate::btaudio::preset_allowed(p))
+            .collect();
+        let presets: Vec<&str> = offered.iter().map(|p| p.as_str()).collect();
         let idx = Select::with_theme(&theme)
             .with_prompt(ui_style::step(
                 4,
@@ -249,14 +258,14 @@ pub fn run_wizard() -> Result<Config> {
             ))
             .items(&presets)
             .default(match path {
-                _ if radio.is_some() => preset_index(&cfg.modem.preset),
+                _ if radio.is_some() => preset_index(&offered, &cfg.modem.preset),
                 1 => 0,
                 2 => 4,
                 3 => 1,
                 _ => 0,
             })
             .interact()?;
-        cfg.modem.preset = Preset::all()[idx].as_str().into();
+        cfg.modem.preset = offered[idx].as_str().into();
         let cat = matches!(path, 3 | SUPPORTED_CAT);
         let default_mhz = match radio {
             Some(r) => format!("{:.3}", r.dial_khz as f64 / 1000.0),
@@ -281,22 +290,24 @@ pub fn run_wizard() -> Result<Config> {
                 ))
             );
         }
-        cfg.modem.audio_input = pick_audio_device(
-            &theme,
-            5,
-            total_steps,
-            "Audio in (decode — radio speaker / interface capture)",
-            crate::discover::list_audio_inputs(),
-            radio,
-        )?;
-        cfg.modem.audio_output = pick_audio_device(
-            &theme,
-            6,
-            total_steps,
-            "Audio out (transmit — radio mic / interface playback)",
-            crate::discover::list_audio_outputs(),
-            radio,
-        )?;
+        if !cfg.modem.is_bt_audio() {
+            cfg.modem.audio_input = pick_audio_device(
+                &theme,
+                5,
+                total_steps,
+                "Audio in (decode — radio speaker / interface capture)",
+                crate::discover::list_audio_inputs(),
+                radio,
+            )?;
+            cfg.modem.audio_output = pick_audio_device(
+                &theme,
+                6,
+                total_steps,
+                "Audio out (transmit — radio mic / interface playback)",
+                crate::discover::list_audio_outputs(),
+                radio,
+            )?;
+        }
         if !cfg.modem.audio_input.is_empty() || !cfg.modem.audio_output.is_empty() {
             println!(
                 "  {}",
@@ -554,8 +565,8 @@ fn bluetooth_pick(theme: &dyn dialoguer::theme::Theme, cfg: &mut Config) -> Resu
     Ok(())
 }
 
-fn preset_index(preset: &str) -> usize {
-    Preset::all()
+fn preset_index(offered: &[Preset], preset: &str) -> usize {
+    offered
         .iter()
         .position(|p| p.as_str() == preset)
         .unwrap_or(0)

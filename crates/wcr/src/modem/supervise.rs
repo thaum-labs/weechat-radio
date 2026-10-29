@@ -136,13 +136,20 @@ impl ModemProcess {
                     cfg.modem.cm108_gpio.to_string(),
                 ]);
             }
-            "rigctl" => {
+            // `bluetooth`: the rigctl and audio addresses are the bridge's.
+            "rigctl" | "bluetooth" => {
                 args.extend(["--rigctl".into(), cfg.modem.rigctl.clone()]);
             }
             "hamlib" => args.extend(hamlib_args(&cfg.modem)),
             _ => {}
         }
         let binary = ensure::ensure_binary(&cfg.modem.binary).await?;
+        if cfg.modem.is_bt_audio() && !ensure::has_network_audio(&binary) {
+            return Err(Error::Modem(format!(
+                "{} has no network audio, which a Bluetooth audio radio needs. Use the modem73 that comes with WeeChat Radio.",
+                binary.display()
+            )));
+        }
         ensure::strip_quarantine(&binary);
         if let Some(parent) = binary.parent() {
             ensure::strip_quarantine(&parent.join("libs"));

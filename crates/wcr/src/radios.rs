@@ -11,6 +11,9 @@ use crate::presets::Preset;
 pub enum Link {
     /// The radio has its own KISS TNC over Bluetooth (no modem73, no cable).
     BluetoothTnc { bt_name: &'static str },
+    /// modem73 hears and keys the radio over its Bluetooth audio channel
+    /// (`crate::btaudio`): modem73's modes, still no cable.
+    BluetoothAudio { bt_name: &'static str },
     /// modem73 plays the tones through the radio's sound card and keys the
     /// radio over CAT with its built-in Hamlib. No rigctld to install or start.
     Cat { hamlib_model: u32, baud: u32 },
@@ -47,6 +50,8 @@ const HAMLIB_X5105: u32 = 3089;
 const HAMLIB_QDX: u32 = 2052;
 const HAMLIB_TRUSDX: u32 = 2055;
 
+const BT_AUDIO_RADIO_SIDE: &str = "Squelch low (1 or 2), KISS TNC and Digital Mode off, then Menu → Pairing. Close the HT phone app: the radio takes one Bluetooth client at a time.";
+
 const G90_CABLE: &str =
     "Xiegu DE-19, or the Digirig Xiegu G90 Cables Set: https://digirig.net/product/xiegu-g90-cables/";
 
@@ -71,6 +76,28 @@ pub const RADIOS: &[Radio] = &[
         radio_side: "Turn KISS TNC on in the radio menu, then put it in Bluetooth pairing mode.",
         cable: "",
         preset: Preset::Afsk1200,
+        dial_khz: 144950,
+    },
+    Radio {
+        name: "VR-N76 / UV-PRO / GA-5WB (Bluetooth audio, modem73)",
+        link: Link::BluetoothAudio { bt_name: "VR-N76" },
+        port_hints: &[],
+        audio_hints: &[],
+        radio_side: BT_AUDIO_RADIO_SIDE,
+        cable: "",
+        preset: Preset::VhfFm,
+        dial_khz: 144950,
+    },
+    Radio {
+        name: "VR-N7600 (Bluetooth audio, modem73)",
+        link: Link::BluetoothAudio {
+            bt_name: "VR-N7600",
+        },
+        port_hints: &[],
+        audio_hints: &[],
+        radio_side: BT_AUDIO_RADIO_SIDE,
+        cable: "",
+        preset: Preset::VhfFm,
         dial_khz: 144950,
     },
     Radio {
@@ -220,13 +247,22 @@ pub const RADIOS: &[Radio] = &[
 
 impl Radio {
     /// The setup path this radio uses (see `setup.rs`): 1 Digirig, 2 VOX,
-    /// 4 Bluetooth TNC, 6 CAT.
+    /// 4 Bluetooth TNC, 6 CAT, 7 Bluetooth audio.
     pub fn setup_path(&self) -> usize {
         match self.link {
             Link::Digirig => 1,
             Link::Vox => 2,
             Link::BluetoothTnc { .. } => 4,
             Link::Cat { .. } => 6,
+            Link::BluetoothAudio { .. } => 7,
+        }
+    }
+
+    /// The Bluetooth name to look for, for radios reached over Bluetooth.
+    pub fn bt_name(&self) -> Option<&'static str> {
+        match self.link {
+            Link::BluetoothTnc { bt_name } | Link::BluetoothAudio { bt_name } => Some(bt_name),
+            _ => None,
         }
     }
 
@@ -241,6 +277,12 @@ impl Radio {
                 cfg.modem.backend = "bluetooth".into();
                 cfg.modem.manage = false;
                 cfg.modem.ptt = "tnc".into();
+                cfg.tnc.bt_name = bt_name.into();
+            }
+            Link::BluetoothAudio { bt_name } => {
+                cfg.modem.backend = "modem73".into();
+                cfg.modem.manage = true;
+                cfg.modem.ptt = "bluetooth".into();
                 cfg.tnc.bt_name = bt_name.into();
             }
             Link::Cat { hamlib_model, baud } => {
@@ -318,6 +360,38 @@ mod tests {
         assert_eq!(cfg.modem.preset, "hf-poor");
         assert!(cfg.rig.enabled);
         assert_eq!(from_config(&cfg), Some(radio("Xiegu X6100")));
+    }
+
+    #[test]
+    fn bluetooth_audio_radio_runs_modem73_over_bluetooth() {
+        let mut cfg = Config::default();
+        radio("VR-N7600 (Bluetooth audio").apply(&mut cfg);
+        assert_eq!(cfg.modem.backend, "modem73");
+        assert_eq!(cfg.modem.ptt, "bluetooth");
+        assert!(cfg.modem.manage);
+        assert!(cfg.modem.is_bt_audio());
+        assert_eq!(cfg.modem.preset, "vhf-fm");
+        assert_eq!(cfg.tnc.bt_name, "VR-N7600");
+        assert_eq!(radio("VR-N7600 (Bluetooth audio").setup_path(), 7);
+        assert_eq!(from_config(&cfg), Some(radio("VR-N7600 (Bluetooth audio")));
+    }
+
+    #[test]
+    fn bluetooth_audio_keeps_to_presets_that_survive_the_link() {
+        let mut cfg = Config::default();
+        radio("VR-N76 / UV-PRO / GA-5WB (Bluetooth audio").apply(&mut cfg);
+        for (asked, kept) in [
+            ("hf-poor", "hf-poor"),
+            ("hf-weak", "hf-weak"),
+            ("hf-deep", "hf-deep"),
+            ("hf-good", "vhf-fm"),
+            ("vox-safe", "vhf-fm"),
+            ("afsk-1200", "vhf-fm"),
+        ] {
+            cfg.modem.preset = asked.into();
+            cfg.normalize();
+            assert_eq!(cfg.modem.preset, kept, "{asked}");
+        }
     }
 
     #[test]

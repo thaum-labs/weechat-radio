@@ -1,11 +1,15 @@
 //! SPDX-License-Identifier: Apache-2.0
 //! Embed the accent app icon into Windows binaries.
+//! Embed an Info.plist into macOS binaries so macOS allows Bluetooth access.
 //! Copy map page assets when `web/` is in the checkout (hub Docker omits it).
 
 fn main() {
     embed_map_assets();
     println!("cargo:rerun-if-changed=assets/icon.ico");
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if os == "macos" {
+        embed_info_plist();
+    }
     if os != "windows" {
         return;
     }
@@ -32,4 +36,16 @@ fn embed_map_assets() {
             std::fs::write(&dst, []).expect("stub missing map asset");
         }
     }
+}
+
+/// macOS refuses Bluetooth to a binary without a usage description; a bare
+/// executable carries its Info.plist in the __TEXT,__info_plist section.
+fn embed_info_plist() {
+    let manifest = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let plist = manifest.join("assets/Info.plist");
+    println!("cargo:rerun-if-changed={}", plist.display());
+    println!(
+        "cargo:rustc-link-arg=-Wl,-sectcreate,__TEXT,__info_plist,{}",
+        plist.display()
+    );
 }
