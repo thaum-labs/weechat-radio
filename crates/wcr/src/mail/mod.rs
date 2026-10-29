@@ -245,6 +245,22 @@ pub async fn on_rf(mail: &MailHandle, incoming: Incoming) {
     let us = mail.cfg.lock().callsign.to_ascii_uppercase();
     let _ = note_have_report(&mail.store, &us, &incoming);
     let _ = note_complete_ack(&mail.store, &us, &incoming);
+    // Our own frames are never heard here, so a data chunk or a slice is
+    // another station's burst, and a report not for us is the gateway
+    // answering one. Noted now: the mail task may be busy keying.
+    let other = match &incoming {
+        Incoming::Wire(w) => match w.op {
+            proto::MailOp::Data | proto::MailOp::VoxData => true,
+            proto::MailOp::ChunkAck | proto::MailOp::CompleteAck => {
+                !w.meta.dest.is_empty() && !w.meta.dest.eq_ignore_ascii_case(&us)
+            }
+            _ => false,
+        },
+        Incoming::Slice { .. } => true,
+    };
+    if other {
+        mail.store.note_other_mail();
+    }
     let during_burst = mail.keying.load(Ordering::Acquire);
     let _ = mail
         .cmd
