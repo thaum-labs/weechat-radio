@@ -1,0 +1,509 @@
+//! SPDX-License-Identifier: Apache-2.0
+//! `wcr web`: the station's own web page, for a phone or laptop on the same
+//! LAN as a headless station (a Raspberry Pi gateway, for example).
+//!
+//! It runs the station as its child (see [`station`]) and reads it over the
+//! same loopback HTTP the desktop app uses, so the station itself is
+//! unchanged. HTTPS only, behind one password, and only for LAN addresses
+//! unless `[web] allow_public` is set.
+
+mod auth;
+mod station;
+mod tls;
+
+use crate::config::Config;
+use crate::error::{Error, Result};
+use axum::body::Body;
+use axum::extract::{ConnectInfo, Form, State};
+use axum::http::{header, HeaderMap, Request, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::net::{IpAddr, SocketAddr};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+pub use auth::{hash_password, MIN_PASSWORD};
+pub use station::Station;
+
+const LOGIN_PAGE: &str = include_str!("assets/login.html");
+const GATEWAY_PAGE: &str = include_str!("assets/gateway.html");
+const STYLE: &str = include_str!("assets/station.css");
+const GATEWAY_JS: &str = include_str!("assets/gateway.js");
+
+#[derive(Clone)]
+struct Web {
+    cfg_path: PathBuf,
+    password_hash: String,
+    allow_public: bool,
+    sessions: Arc<auth::Sessions>,
+    station: Arc<Station>,
+    /// The station's loopback HTTP (`/status`, `/mail/*`).
+    local: String,
+    http: reqwest::Client,
+}
+
+/// Run the page and the station until `stop` resolves, then stop the station
+/// (which ends modem73) before returning.
+pub async fn run(cfg_path: &Path, stop: impl std::future::Future<Output = ()>) -> Result<()> {
+    let cfg = Config::load(cfg_path)?;
+    if cfg.web.password_hash.trim().is_empty() {
+        return Err(Error::config(
+            "Set a password for the web page first: wcr web password",
+        ));
+    }
+    let (cert, key) = tls::cert_paths(&cfg.web);
+    if tls::ensure_self_signed(&cert, &key)? {
+        println!("made a self-signed certificate: {}", cert.display());
+    }
+    let tls_cfg = tls::server_config(&cert, &key)?;
+    let tcp = tokio::net::TcpListener::bind(&cfg.web.bind)
+        .await
+        .map_err(|e| Error::config(format!("[web] bind {}: {e}", cfg.web.bind)))?;
+    let listener = tls::TlsListener::new(tcp, tls_cfg)?;
+    let station = Station::new(cfg_path.to_path_buf());
+    let web = Web {
+        cfg_path: cfg_path.to_path_buf(),
+        password_hash: cfg.web.password_hash.clone(),
+        allow_public: cfg.web.allow_public,
+        sessions: Arc::new(auth::Sessions::default()),
+        station: station.clone(),
+        local: local_base(&cfg.status.bind),
+        http: reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .no_proxy()
+            .build()
+            .map_err(|e| Error::Msg(e.to_string()))?,
+    };
+    println!(
+        "web page: https://{}:{} (LAN only{})",
+        hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .map(|h| format!("{h}.local"))
+            .unwrap_or_else(|| "this-computer".into()),
+        listener_port(&cfg.web.bind),
+        if cfg.web.allow_public {
+            "; allow_public is on"
+        } else {
+            ""
+        }
+    );
+    station.start().await;
+    tokio::spawn(station.clone().supervise());
+    let app = router(web).into_make_service_with_connect_info::<Peer>();
+    tokio::select! {
+        r = axum::serve(listener, app) => r.map_err(|e| Error::Msg(e.to_string()))?,
+        _ = stop => {}
+    }
+    station.stop().await;
+    Ok(())
+}
+
+/// The browser's address, for the LAN check.
+#[derive(Clone, Copy, Debug)]
+struct Peer(SocketAddr);
+
+impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, tls::TlsListener>>
+    for Peer
+{
+    fn connect_info(stream: axum::serve::IncomingStream<'_, tls::TlsListener>) -> Self {
+        Peer(*stream.remote_addr())
+    }
+}
+
+fn router(web: Web) -> Router {
+    let private = Router::new()
+        .route("/", get(|| async { Html(GATEWAY_PAGE) }))
+        .route(
+            "/gateway.js",
+            get(|| async { asset("text/javascript", GATEWAY_JS) }),
+        )
+        .route("/api/gateway", get(gateway))
+        .route("/api/station/start", post(start))
+        .route("/api/station/stop", post(stop))
+        .route("/logout", post(logout))
+        .layer(middleware::from_fn_with_state(web.clone(), require_login));
+    Router::new()
+        .route("/login", get(|| async { login_page("") }).post(login))
+        .route("/station.css", get(|| async { asset("text/css", STYLE) }))
+        .merge(private)
+        .layer(middleware::from_fn_with_state(web.clone(), lan_only))
+        .layer(middleware::from_fn(security_headers))
+        .with_state(web)
+}
+
+fn login_page(note: &str) -> Html<String> {
+    Html(LOGIN_PAGE.replace("<!--NOTE-->", note))
+}
+
+fn asset(kind: &'static str, body: &'static str) -> Response {
+    ([(header::CONTENT_TYPE, kind)], body).into_response()
+}
+
+async fn security_headers(request: Request<Body>, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    let h = response.headers_mut();
+    let set = |h: &mut HeaderMap, k: &'static str, v: &'static str| {
+        h.insert(k, header::HeaderValue::from_static(v));
+    };
+    set(h, "strict-transport-security", "max-age=31536000");
+    set(h, "x-content-type-options", "nosniff");
+    set(h, "x-frame-options", "DENY");
+    set(h, "referrer-policy", "no-referrer");
+    set(h, "cache-control", "no-store");
+    set(
+        h,
+        "content-security-policy",
+        "default-src 'self'; frame-ancestors 'none'; form-action 'self'",
+    );
+    response
+}
+
+async fn lan_only(
+    State(web): State<Web>,
+    ConnectInfo(peer): ConnectInfo<Peer>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    if web.allow_public || is_lan(peer.0.ip()) {
+        return next.run(request).await;
+    }
+    (
+        StatusCode::FORBIDDEN,
+        "This station's web page answers only on its local network.",
+    )
+        .into_response()
+}
+
+/// Loopback, private, link-local and unique-local addresses.
+pub fn is_lan(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_lan(IpAddr::V4(v4));
+            }
+            let first = v6.segments()[0];
+            v6.is_loopback() || (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+fn session(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(auth::cookie_token)
+}
+
+async fn require_login(State(web): State<Web>, request: Request<Body>, next: Next) -> Response {
+    let ok = session(request.headers()).is_some_and(|t| web.sessions.check(t));
+    if ok {
+        return next.run(request).await;
+    }
+    if request.uri().path().starts_with("/api/") {
+        return (StatusCode::UNAUTHORIZED, "log in again").into_response();
+    }
+    Redirect::to("/login").into_response()
+}
+
+#[derive(Deserialize)]
+struct LoginForm {
+    password: String,
+}
+
+async fn login(State(web): State<Web>, Form(form): Form<LoginForm>) -> Response {
+    let hash = web.password_hash.clone();
+    let ok = tokio::task::spawn_blocking(move || auth::password_ok(&form.password, &hash))
+        .await
+        .unwrap_or(false);
+    if !ok {
+        // Slows guessing; the page says why it is back.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        web.station.note("a login failed");
+        return (StatusCode::UNAUTHORIZED, login_page("Wrong password.")).into_response();
+    }
+    let token = web.sessions.open();
+    let cookie = format!(
+        "{}={token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age={}",
+        auth::COOKIE,
+        auth::SESSION_IDLE.as_secs()
+    );
+    ([(header::SET_COOKIE, cookie)], Redirect::to("/")).into_response()
+}
+
+async fn logout(State(web): State<Web>, headers: HeaderMap) -> Response {
+    if let Some(t) = session(&headers) {
+        web.sessions.close(t);
+    }
+    let gone = format!(
+        "{}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0",
+        auth::COOKIE
+    );
+    ([(header::SET_COOKIE, gone)], Redirect::to("/login")).into_response()
+}
+
+async fn start(State(web): State<Web>) -> Json<Value> {
+    web.station.note("start pressed on the web page");
+    web.station.start().await;
+    Json(json!({ "ok": true }))
+}
+
+async fn stop(State(web): State<Web>) -> Json<Value> {
+    web.station.note("stop pressed on the web page");
+    web.station.stop().await;
+    Json(json!({ "ok": true }))
+}
+
+/// Everything the gateway view shows, in one answer.
+async fn gateway(State(web): State<Web>) -> Json<Value> {
+    let state = web.station.state().await;
+    let get = |path: &str| {
+        let url = format!("{}{path}", web.local);
+        let http = web.http.clone();
+        async move {
+            let r = http.get(url).send().await.ok()?;
+            r.json::<Value>().await.ok()
+        }
+    };
+    let (status, relay, outbox) = if state.running {
+        tokio::join!(
+            get("/status"),
+            get("/mail/list?folder=relay"),
+            get("/mail/list?folder=outbox")
+        )
+    } else {
+        (None, None, None)
+    };
+    let status = status.unwrap_or(Value::Null);
+    let pick = |rows: Option<Value>, n: usize| -> Vec<Value> {
+        rows.and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .take(n)
+            .map(|r| {
+                json!({
+                    "ts": r["ts"],
+                    "from": r["from_addr"],
+                    "to": r["to_addr"],
+                    "subject": r["subject"],
+                    "status": r["status"],
+                })
+            })
+            .collect()
+    };
+    let internet = internet_up(&web.cfg_path).await;
+    Json(json!({
+        "station": state,
+        "answering": !status.is_null(),
+        "internet": internet,
+        "status": status,
+        "relay_mail": pick(relay, 20),
+        "outbox": pick(outbox, 20),
+        "errors": web.station.errors(20),
+        "log": web.station.log_tail(60),
+        "now": chrono::Utc::now().timestamp(),
+    }))
+}
+
+/// Can this computer resolve the hub's name? A cheap stand-in for "the
+/// internet is up" that does not wait on the hub itself.
+async fn internet_up(cfg_path: &Path) -> bool {
+    let Ok(cfg) = Config::load(cfg_path) else {
+        return false;
+    };
+    let Some(host) = url::Url::parse(&cfg.hub.url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| format!("{h}:443")))
+    else {
+        return false;
+    };
+    tokio::time::timeout(Duration::from_secs(2), tokio::net::lookup_host(host))
+        .await
+        .is_ok_and(|r| r.is_ok_and(|mut a| a.next().is_some()))
+}
+
+fn local_base(bind: &str) -> String {
+    let port = listener_port(bind);
+    format!("http://127.0.0.1:{port}")
+}
+
+fn listener_port(bind: &str) -> &str {
+    bind.rsplit(':').next().unwrap_or("8074")
+}
+
+/// `wcr web password`: ask twice, save the hash in `[web]`.
+pub fn set_password(cfg_path: &Path) -> Result<()> {
+    let mut cfg = Config::load(cfg_path)?;
+    let password = dialoguer::Password::new()
+        .with_prompt(format!(
+            "Web page password (at least {MIN_PASSWORD} characters)"
+        ))
+        .with_confirmation("Again", "The two did not match")
+        .interact()
+        .map_err(|e| Error::Msg(e.to_string()))?;
+    cfg.web.password_hash = hash_password(&password).map_err(Error::Msg)?;
+    cfg.save(cfg_path)?;
+    println!("saved in {}", cfg_path.display());
+    Ok(())
+}
+
+/// The systemd unit for a headless station: starts at boot, comes back
+/// after a crash, runs as `user` with that user's config.
+pub fn systemd_unit(exe: &Path, user: &str, cfg_path: &Path) -> String {
+    format!(
+        "[Unit]\n\
+         Description=WeeChat Radio station and web page\n\
+         Wants=network-online.target\n\
+         After=network-online.target sound.target\n\n\
+         [Service]\n\
+         User={user}\n\
+         SupplementaryGroups=audio dialout\n\
+         ExecStart={} -c {} web\n\
+         Restart=always\n\
+         RestartSec=5\n\n\
+         [Install]\n\
+         WantedBy=multi-user.target\n",
+        exe.display(),
+        cfg_path.display()
+    )
+}
+
+pub const UNIT_PATH: &str = "/etc/systemd/system/wcr-web.service";
+
+/// `sudo wcr web install`: write and start the system service for the user
+/// who ran sudo.
+#[cfg(target_os = "linux")]
+pub fn install(cfg_path: &Path) -> Result<()> {
+    let user = std::env::var("SUDO_USER")
+        .ok()
+        .filter(|u| !u.is_empty() && u != "root")
+        .ok_or_else(|| {
+            Error::config("Run it with sudo from your own account: sudo wcr web install")
+        })?;
+    // sudo gives root's home, so the default config path points into /root.
+    let cfg_path = match user_home(&user) {
+        Some(home) => under_home(cfg_path, Path::new("/root"), &home),
+        None => cfg_path.to_path_buf(),
+    };
+    if !cfg_path.exists() {
+        return Err(Error::config(format!(
+            "no config at {}. Run `wcr setup` first (without sudo).",
+            cfg_path.display()
+        )));
+    }
+    let exe = std::env::current_exe()?;
+    std::fs::write(UNIT_PATH, systemd_unit(&exe, &user, &cfg_path))
+        .map_err(|e| Error::Msg(format!("{UNIT_PATH}: {e} (run it with sudo)")))?;
+    for args in [
+        &["daemon-reload"][..],
+        &["enable", "--now", "wcr-web.service"][..],
+    ] {
+        let ok = std::process::Command::new("systemctl")
+            .args(args)
+            .status()
+            .is_ok_and(|s| s.success());
+        if !ok {
+            return Err(Error::Msg(format!("systemctl {} failed", args.join(" "))));
+        }
+    }
+    println!("installed {UNIT_PATH}; it starts at boot and restarts after a crash");
+    Ok(())
+}
+
+/// `path` moved from `from` to `to` when it lies under `from`.
+pub fn under_home(path: &Path, from: &Path, to: &Path) -> PathBuf {
+    match path.strip_prefix(from) {
+        Ok(rest) => to.join(rest),
+        Err(_) => path.to_path_buf(),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn user_home(user: &str) -> Option<PathBuf> {
+    let name = std::ffi::CString::new(user).ok()?;
+    // SAFETY: getpwnam returns a pointer into static storage or null; the
+    // home directory is copied out before anything else calls it.
+    unsafe {
+        let pw = libc::getpwnam(name.as_ptr());
+        if pw.is_null() || (*pw).pw_dir.is_null() {
+            return None;
+        }
+        let dir = std::ffi::CStr::from_ptr((*pw).pw_dir).to_str().ok()?;
+        Some(PathBuf::from(dir))
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn install(_cfg_path: &Path) -> Result<()> {
+    Err(Error::config(
+        "wcr web install is for Linux (Raspberry Pi OS). Elsewhere, run `wcr web` yourself.",
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_lan_addresses_count_as_lan() {
+        for ip in [
+            "127.0.0.1",
+            "10.0.0.5",
+            "172.16.4.1",
+            "192.168.1.20",
+            "169.254.3.3",
+            "::1",
+            "fd12::1",
+            "fe80::1",
+            "::ffff:192.168.1.2",
+        ] {
+            assert!(is_lan(ip.parse().unwrap()), "{ip}");
+        }
+        for ip in ["8.8.8.8", "172.32.0.1", "2001:db8::1", "::ffff:1.1.1.1"] {
+            assert!(!is_lan(ip.parse().unwrap()), "{ip}");
+        }
+    }
+
+    #[test]
+    fn the_unit_restarts_and_starts_at_boot() {
+        let unit = systemd_unit(
+            Path::new("/usr/local/bin/wcr"),
+            "pi",
+            Path::new("/home/pi/.config/wcr/wcr.toml"),
+        );
+        assert!(unit.contains("User=pi\n"));
+        assert!(
+            unit.contains("ExecStart=/usr/local/bin/wcr -c /home/pi/.config/wcr/wcr.toml web\n")
+        );
+        assert!(unit.contains("Restart=always\n"));
+        assert!(unit.contains("WantedBy=multi-user.target\n"));
+    }
+
+    #[test]
+    fn sudo_config_paths_move_to_the_users_home() {
+        let moved = under_home(
+            Path::new("/root/.config/wcr/wcr.toml"),
+            Path::new("/root"),
+            Path::new("/home/pi"),
+        );
+        assert_eq!(moved, Path::new("/home/pi/.config/wcr/wcr.toml"));
+        let kept = under_home(
+            Path::new("/srv/wcr.toml"),
+            Path::new("/root"),
+            Path::new("/home/pi"),
+        );
+        assert_eq!(kept, Path::new("/srv/wcr.toml"));
+    }
+
+    #[test]
+    fn the_station_is_read_on_loopback() {
+        assert_eq!(local_base("127.0.0.1:8074"), "http://127.0.0.1:8074");
+        assert_eq!(local_base("0.0.0.0:9000"), "http://127.0.0.1:9000");
+    }
+}

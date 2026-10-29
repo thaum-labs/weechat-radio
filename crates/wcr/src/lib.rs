@@ -41,6 +41,7 @@ pub mod tui;
 pub mod ui_style;
 pub mod update;
 pub mod weather;
+pub mod web;
 pub mod weechat_app;
 
 pub use error::{Error, Result};
