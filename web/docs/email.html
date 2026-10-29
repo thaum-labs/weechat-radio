@@ -229,6 +229,27 @@
         <p>A toast timer does not mark Sent.</p>
       </section>
 
+      <section class="article-section" aria-labelledby="statusH">
+        <h2 id="statusH">Status of each mail</h2>
+        <p class="section-lead">Every mail in the list has one coloured chip. Screen readers hear the mark with it, for example <code>[ok] Delivered</code>.</p>
+        <dl class="mark-list">
+          <div><dt><code>[..]</code></dt><dd><strong>Queued.</strong> Waiting for the radio or the hub.</dd></div>
+          <div><dt><code>[tx]</code></dt><dd><strong>On air.</strong> Keying to the gateway (Radio+).</dd></div>
+          <div><dt><code>[..]</code></dt><dd><strong>Waiting for gateway.</strong> The burst is done; the gateway has not answered yet (Radio+).</dd></div>
+          <div><dt><code>[gw]</code></dt><dd><strong>At gateway.</strong> The gateway has every chunk and is handing it to the hub.</dd></div>
+          <div><dt><code>[ok]</code></dt><dd><strong>Sent.</strong> Resend accepted it. The word after the subject says <em>with Resend</em>, <em>no delivery report</em> (no final answer a day after Sent) or <em>delivery unknown (offline)</em>.</dd></div>
+          <div><dt><code>[ok]</code></dt><dd><strong>Delivered.</strong> The recipient's mail server took it.</dd></div>
+          <div><dt><code>[..]</code></dt><dd><strong>Delayed.</strong> Resend is still trying.</dd></div>
+          <div><dt><code>[no]</code></dt><dd><strong>Bounced.</strong> The recipient's mail server refused it.</dd></div>
+          <div><dt><code>[no]</code></dt><dd><strong>Spam.</strong> The recipient marked it as spam.</dd></div>
+          <div><dt><code>[no]</code></dt><dd><strong>Failed.</strong> Not sent, or Resend could not send it. The opened mail says where it stopped.</dd></div>
+          <div><dt><code>[ok]</code></dt><dd><strong>No record.</strong> The hub has no delivery record for it.</dd></div>
+        </dl>
+        <p>Inbox mail shows Received. Open a mail to see the full reason and a timeline in local time: created, on air, burst done, at gateway, accepted by Resend, then the final answer.</p>
+        <p><strong>Retry</strong> on Failed mail sends it again from the start. <strong>Re-send</strong> on Bounced mail opens compose with the same To, subject and body, so you can fix the address.</p>
+        <p><strong>No read status.</strong> Mail goes out as plain text with no tracking, so nobody can tell when it is opened. The Email tab never says "read".</p>
+      </section>
+
       <section class="article-section" aria-labelledby="recvH">
         <h2 id="recvH">Receive — pull, not push</h2>
         <p>On radio-plus, Check mail asks the gateway for a short list (from, subject, size). You fetch a message and confirm the radio step. Nothing arrives on the radio until you ask.</p>

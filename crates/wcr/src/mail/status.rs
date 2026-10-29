@@ -15,8 +15,8 @@ pub const NO_REPORT_AFTER_SECS: i64 = 24 * 60 * 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct MailStatus {
-    /// `queued`, `tx`, `gateway`, `sent`, `delivered`, `delayed`, `bounced`,
-    /// `spam`, `failed`, `no_record` or `received`.
+    /// `queued`, `tx`, `keyed`, `gateway`, `sent`, `delivered`, `delayed`,
+    /// `bounced`, `spam`, `failed`, `no_record` or `received`.
     pub key: String,
     /// The chip text: Queued, On air, At gateway, Sent, Delivered, …
     pub label: String,
@@ -47,9 +47,22 @@ pub struct MailView {
 
 /// `online` is false when the last delivery check could not reach the hub.
 pub fn mail_status(row: &MailRow, hops: &[Hop], now: i64, online: bool) -> MailStatus {
-    let mark = gateway::state_mark(&row.state).trim().to_string();
-    let (key, label, word, reason) = match row.state.as_str() {
+    // Inbound mail is Received whatever state an older version stored.
+    let state = if row.folder == "inbox" {
+        "received"
+    } else {
+        row.state.as_str()
+    };
+    let (key, label, word, reason) = match state {
         "queued" => ("queued", "Queued", "", String::new()),
+        // The burst has finished keying; the gateway has not answered yet.
+        "tx" if hops.iter().any(|h| h.stage == "keyed") => (
+            "keyed",
+            "Waiting for gateway",
+            "",
+            "The burst is done. Waiting for the gateway to hand it to the hub and answer."
+                .to_string(),
+        ),
         "tx" => ("tx", "On air", "", String::new()),
         "gateway" => (
             "gateway",
@@ -61,6 +74,14 @@ pub fn mail_status(row: &MailRow, hops: &[Hop], now: i64, online: bool) -> MailS
         "sent" => sent_status(row, hops, now, online),
         _ => ("received", "Received", "", String::new()),
     };
+    // Resend's bad news is a [no], although the row's state is `sent`.
+    let mark = match key {
+        "bounced" | "spam" | "failed" => "[no]",
+        "delayed" | "keyed" => "[..]",
+        "received" => "",
+        _ => gateway::state_mark(state).trim(),
+    }
+    .to_string();
     let tail = if word.is_empty() {
         label.to_ascii_lowercase()
     } else {
@@ -74,8 +95,8 @@ pub fn mail_status(row: &MailRow, hops: &[Hop], now: i64, online: bool) -> MailS
         word: word.into(),
         reason,
         line,
-        retry: row.state == "failed",
-        resend: row.state == "sent"
+        retry: state == "failed",
+        resend: state == "sent"
             && matches!(row.delivery.as_str(), "bounced" | "failed" | "canceled"),
     }
 }
@@ -198,6 +219,11 @@ mod tests {
             |state: &str, delivery: &str| mail_status(&row(state, delivery), &[], 1_010, true);
         assert_eq!(chip("queued", "").label, "Queued");
         assert_eq!(chip("tx", "").label, "On air");
+        let keyed = mail_status(&row("tx", ""), &[hop("air", 1), hop("keyed", 9)], 10, true);
+        assert_eq!(
+            (keyed.label.as_str(), keyed.line.as_str()),
+            ("Waiting for gateway", "[..] waiting for gateway")
+        );
         assert_eq!(chip("gateway", "").label, "At gateway");
         assert_eq!(chip("sent", "").label, "Sent");
         assert_eq!(chip("sent", "delivered").label, "Delivered");
@@ -241,6 +267,27 @@ mod tests {
             mail_status(&r, &hops, 1_000 + day, true).word,
             "with Resend"
         );
+    }
+
+    #[test]
+    fn bad_news_from_resend_is_a_no() {
+        let mark = |delivery: &str| mail_status(&row("sent", delivery), &[], 1_010, true);
+        assert_eq!(mark("bounced").line, "[no] bounced");
+        assert_eq!(mark("complained").mark, "[no]");
+        assert_eq!(mark("failed").mark, "[no]");
+        assert_eq!(mark("canceled").mark, "[no]");
+        assert_eq!(mark("delivery_delayed").mark, "[..]");
+        assert_eq!(mark("delivered").mark, "[ok]");
+    }
+
+    #[test]
+    fn inbox_mail_is_always_received() {
+        // An older version stored inbound mail with state `sent`.
+        let mut r = row("sent", "");
+        r.folder = "inbox".into();
+        let s = mail_status(&r, &[], 1_000 + NO_REPORT_AFTER_SECS, true);
+        assert_eq!((s.label.as_str(), s.mark.as_str()), ("Received", ""));
+        assert!(!s.retry && !s.resend);
     }
 
     #[test]

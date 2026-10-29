@@ -280,6 +280,16 @@ impl MailStore {
         self.other_mail.lock().map(|t| t.elapsed())
     }
 
+    /// This try's burst has finished keying: the mail now waits for the
+    /// gateway's answer.
+    pub fn note_keyed(&self, id: &str) -> Result<()> {
+        self.conn.lock().execute(
+            "INSERT OR REPLACE INTO mail_hop(id, stage, ts) VALUES(?1, 'keyed', ?2)",
+            params![id, chrono::Utc::now().timestamp()],
+        )?;
+        Ok(())
+    }
+
     /// Manual Retry of a Failed mail: back to the outbox as a fresh send.
     /// Returns false unless the mail is Failed.
     pub fn reset_for_retry(&self, id: &str) -> Result<bool> {
@@ -289,7 +299,17 @@ impl MailStore {
             params![id],
         )?;
         if n == 1 {
-            conn.execute("DELETE FROM mail_hop WHERE id = ?1", params![id])?;
+            // The last failed try stays in the timeline as `failed_try`. The
+            // stages the new try reaches again start over after `retry`.
+            conn.execute(
+                "UPDATE OR REPLACE mail_hop SET stage = 'failed_try' WHERE id = ?1 AND stage = 'failed'",
+                params![id],
+            )?;
+            conn.execute(
+                "DELETE FROM mail_hop WHERE id = ?1 AND stage != 'failed_try'",
+                params![id],
+            )?;
+            add_hop(&conn, id, "retry", chrono::Utc::now().timestamp())?;
         }
         Ok(n == 1)
     }
@@ -321,6 +341,13 @@ impl MailStore {
             "UPDATE mail SET folder = ?2, state = ?3, unread = CASE WHEN ?2 = 'inbox' THEN 1 ELSE unread END WHERE id = ?1",
             params![id, folder, state],
         )?;
+        if state == "tx" {
+            // A new try is keying: the last one's end no longer counts.
+            conn.execute(
+                "DELETE FROM mail_hop WHERE id = ?1 AND stage = 'keyed'",
+                params![id],
+            )?;
+        }
         if let Some(stage) = hop_for_state(state) {
             add_hop(&conn, id, stage, chrono::Utc::now().timestamp())?;
         }
@@ -643,6 +670,34 @@ mod tests {
     }
 
     #[test]
+    fn keyed_marks_only_the_latest_try() {
+        let store = MailStore::open_memory().unwrap();
+        let row = MailRow {
+            id: "m1".into(),
+            folder: "outbox".into(),
+            state: "queued".into(),
+            ..MailRow::default()
+        };
+        store.insert(&row).unwrap();
+        let stages = |store: &MailStore| -> Vec<String> {
+            store
+                .hops("m1")
+                .unwrap()
+                .into_iter()
+                .map(|h| h.stage)
+                .collect()
+        };
+        store.set_state("m1", "outbox", "tx").unwrap();
+        store.note_keyed("m1").unwrap();
+        assert_eq!(stages(&store), ["air", "keyed"]);
+        // The retry keys again: waiting starts over once its burst ends.
+        store.set_state("m1", "outbox", "tx").unwrap();
+        assert_eq!(stages(&store), ["air"]);
+        store.note_keyed("m1").unwrap();
+        assert_eq!(stages(&store), ["air", "keyed"]);
+    }
+
+    #[test]
     fn inbound_mail_records_when_it_was_fetched() {
         let store = MailStore::open_memory().unwrap();
         store
@@ -679,7 +734,18 @@ mod tests {
             ),
             ("outbox", "queued", 0, "")
         );
-        assert!(store.hops("m1").unwrap().is_empty());
+        // The failed try stays in the timeline; the new try starts after it.
+        let stages = |store: &MailStore| -> Vec<String> {
+            store
+                .hops("m1")
+                .unwrap()
+                .into_iter()
+                .map(|h| h.stage)
+                .collect()
+        };
+        assert_eq!(stages(&store), ["failed_try", "retry"]);
+        store.set_state("m1", "outbox", "tx").unwrap();
+        assert_eq!(stages(&store), ["failed_try", "retry", "air"]);
     }
 
     #[test]

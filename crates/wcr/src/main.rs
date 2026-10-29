@@ -93,13 +93,11 @@ async fn real_main() -> Result<()> {
             let applied = wcr::update::apply(rc).await?;
             println!("{}", applied.message);
             if !applied.restarted {
-                if let Ok(cfg) = load_cfg(&cfg_path) {
-                    let bind = &cfg.status.bind;
-                    if let Some(note) =
-                        wcr::update::running_station_note(bind, &applied.version).await
-                    {
-                        println!("{note}");
-                    }
+                let bind = load_cfg(&cfg_path)
+                    .map(|cfg| cfg.status.bind)
+                    .unwrap_or_else(|_| wcr::config::StatusConfig::default().bind);
+                for note in wcr::update::running_station_notes(&bind, &applied.version).await {
+                    println!("{note}");
                 }
             }
         }

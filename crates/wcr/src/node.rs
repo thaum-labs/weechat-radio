@@ -386,6 +386,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     match tokio::net::TcpListener::bind(&status_bind).await {
         Ok(listener) => {
             tracing::info!("status HTTP on {status_bind}");
+            crate::update::note_running_station(&status_bind);
             let snap_s = snap.clone();
             let slot = mail_slot.clone();
             tokio::spawn(async move {
