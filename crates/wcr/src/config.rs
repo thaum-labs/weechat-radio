@@ -35,6 +35,7 @@ pub struct Config {
     pub tnc: TncConfig,
     pub mail: MailConfig,
     pub gps: GpsConfig,
+    pub web: WebConfig,
 }
 
 impl Default for Config {
@@ -59,6 +60,35 @@ impl Default for Config {
             tnc: TncConfig::default(),
             mail: MailConfig::default(),
             gps: GpsConfig::default(),
+            web: WebConfig::default(),
+        }
+    }
+}
+
+/// `wcr web`: the station's web page for other devices on the LAN (a
+/// Raspberry Pi gateway, for example). HTTPS only, behind a password.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WebConfig {
+    pub bind: String,
+    /// Argon2 hash of the password. Empty: `wcr web` refuses to start.
+    /// Set with `wcr web password`.
+    pub password_hash: String,
+    /// Answer browsers outside the LAN too. Off unless set on purpose.
+    pub allow_public: bool,
+    /// PEM certificate and key. Empty: a self-signed pair in the data folder.
+    pub cert: String,
+    pub key: String,
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        Self {
+            bind: "0.0.0.0:8443".into(),
+            password_hash: String::new(),
+            allow_public: false,
+            cert: String::new(),
+            key: String::new(),
         }
     }
 }

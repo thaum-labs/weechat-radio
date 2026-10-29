@@ -1,0 +1,139 @@
+// SPDX-License-Identifier: Apache-2.0
+// Gateway view: one poll of /api/gateway every few seconds, drawn as text.
+"use strict";
+
+const POLL_MS = 3000;
+const $ = (id) => document.getElementById(id);
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function ago(secs) {
+  if (secs < 60) return `${secs}s`;
+  if (secs < 3600) return `${Math.floor(secs / 60)}m`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
+  return `${Math.floor(secs / 86400)}d ${Math.floor((secs % 86400) / 3600)}h`;
+}
+
+function clock(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  if (d.toDateString() === new Date().toDateString()) return time;
+  return `${d.toLocaleDateString([], { day: "numeric", month: "short" })} ${time}`;
+}
+
+function light(label, state) {
+  const word = state === true ? "up" : state === false ? "down" : "idle";
+  const e = el("span", `light ${word}`, `${label} ${word === "idle" ? "—" : word}`);
+  return e;
+}
+
+function fill(list, items, draw, none) {
+  list.replaceChildren();
+  if (!items.length) {
+    list.append(el("li", "empty", none));
+    return;
+  }
+  for (const item of items) list.append(draw(item));
+}
+
+function mailRow(m) {
+  const li = el("li");
+  const st = m.status || {};
+  const chip = el("span", `chip ${st.key || "queued"}`, st.label || "?");
+  chip.title = st.reason || st.line || "";
+  chip.setAttribute("aria-label", `${st.mark || ""} ${st.label || ""}`.trim());
+  const what = el("span", "what");
+  what.append(el("span", "subject", m.subject || "(no subject)"), el("span", "who", `${m.from} → ${m.to}`));
+  what.title = `${m.subject}\n${m.from} → ${m.to}${st.reason ? `\n${st.reason}` : ""}`;
+  li.append(el("span", "when", clock(m.ts)), chip, what);
+  return li;
+}
+
+function draw(d) {
+  const s = d.status || {};
+  const running = d.station.running;
+  $("call").textContent = s.callsign || "";
+  $("lights").replaceChildren(
+    light("station", running),
+    light("internet", d.internet),
+    light("hub", running ? !!s.hub_ok : null),
+    // Internet mode has no radio, so the light stays grey.
+    light("radio", running && s.mode !== "internet" ? radioUp(s) : null),
+  );
+  const facts = [
+    ["uptime", running ? ago(d.station.uptime_secs) : "stopped"],
+    ["frequency", s.frequency ? `${s.frequency}${s.band ? ` (${s.band})` : ""}` : "—"],
+    ["mode", s.mode || "—"],
+    ["preset", s.preset ? `${s.preset}${s.tx_rung ? ` · ${s.tx_rung}` : ""}` : "—"],
+    ["modem", s.tnc || (s.modem73 ? `modem73 ${s.modem73}` : "—")],
+    ["forwarded", s.relayed !== undefined ? `${s.relayed} frames (${s.relayed_unique} messages)` : "—"],
+    ["restarts", String(d.station.restarts)],
+  ];
+  if (d.station.last_exit) facts.push(["last stop", d.station.last_exit]);
+  const dl = $("facts");
+  dl.replaceChildren();
+  for (const [k, v] of facts) dl.append(el("dt", "", k), el("dd", "", v));
+  $("start").disabled = running;
+  $("stop").disabled = !running;
+  fill($("relay"), d.relay_mail, mailRow, running ? "No mail through this gateway yet." : "Station stopped.");
+  fill($("outbox"), d.outbox, mailRow, "Empty.");
+  const heard = (s.heard || []).slice().sort((a, b) => (b.last_heard || 0) - (a.last_heard || 0));
+  fill($("heard"), heard, (h) => {
+    const li = el("li");
+    const snr = h.snr === null || h.snr === undefined ? "" : ` ${h.snr.toFixed(0)} dB`;
+    const age = h.last_heard ? ago(Math.max(0, d.now - h.last_heard)) : "";
+    li.append(
+      el("span", "when", age),
+      el("span", "what", `${h.callsign}${h.gateway ? " (gateway)" : ""}  ${h.band || h.medium || ""}${snr}`),
+    );
+    return li;
+  }, running ? "Nobody heard yet." : "Station stopped.");
+  $("errors").textContent = d.errors.length ? d.errors.join("\n") : "None.";
+  const log = $("log");
+  const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+  log.textContent = d.log.join("\n");
+  if (atEnd) log.scrollTop = log.scrollHeight;
+  $("updated").textContent = `Updated ${new Date().toLocaleTimeString()}${d.answering || !running ? "" : " · the station is not answering yet"}`;
+}
+
+function radioUp(s) {
+  if (s.tnc) return !!s.tnc_ok;
+  return !!s.modem73 && s.audio_label !== "" && s.audio_label !== "no audio";
+}
+
+async function poll() {
+  try {
+    const r = await fetch("/api/gateway", { cache: "no-store" });
+    if (r.status === 401) { location.href = "/login"; return; }
+    draw(await r.json());
+  } catch (e) {
+    $("updated").textContent = `Cannot reach the station's page: ${e.message}`;
+  }
+}
+
+async function act(what) {
+  const freq = $("facts").querySelector("dd:nth-of-type(2)")?.textContent || "";
+  const ask = what === "start"
+    ? `Start the station? It will transmit on ${freq || "its set frequency"} (beacons and gateway replies). You are the control operator.`
+    : "Stop the station? The gateway stops until Start is pressed.";
+  if (!confirm(ask)) return;
+  $("action").textContent = what === "start" ? "Starting…" : "Stopping…";
+  $("start").disabled = $("stop").disabled = true;
+  try {
+    await fetch(`/api/station/${what}`, { method: "POST" });
+  } finally {
+    $("action").textContent = "";
+    poll();
+  }
+}
+
+$("start").addEventListener("click", () => act("start"));
+$("stop").addEventListener("click", () => act("stop"));
+poll();
+setInterval(poll, POLL_MS);

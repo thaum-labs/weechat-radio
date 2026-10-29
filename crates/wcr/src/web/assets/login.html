@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WeeChat Radio station</title>
+<link rel="stylesheet" href="/station.css">
+</head>
+<body class="login">
+<main>
+  <h1><span class="brand">weechat</span> radio</h1>
+  <p class="dim">This station's web page. Enter the password set with <code>wcr web password</code>.</p>
+  <form method="post" action="/login">
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+    <button type="submit">Log in</button>
+    <p class="warn" role="alert"><!--NOTE--></p>
+  </form>
+</main>
+</body>
+</html>

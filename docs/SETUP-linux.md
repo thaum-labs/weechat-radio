@@ -6,6 +6,8 @@ On the web: https://weechatradio.com/guides/linux.html
 
 - A current Linux (Debian, Ubuntu, Fedora, Arch, Raspberry Pi OS)
 
+For a headless Raspberry Pi gateway with a web page you open from your phone, see [PI-GATEWAY.md](PI-GATEWAY.md).
+
 The install command is the same as macOS. Then run setup, then the window.
 
 ## Steps

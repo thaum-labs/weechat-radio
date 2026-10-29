@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WeeChat Radio gateway</title>
+<link rel="stylesheet" href="/station.css">
+<script src="/gateway.js" defer></script>
+</head>
+<body>
+<header>
+  <h1><span class="brand">weechat</span> radio <span id="call" class="call"></span></h1>
+  <form method="post" action="/logout"><button class="quiet" type="submit">Log out</button></form>
+</header>
+<main>
+  <section class="card" aria-labelledby="h-state">
+    <h2 id="h-state">Station</h2>
+    <div id="lights" class="lights" aria-live="polite"></div>
+    <dl id="facts" class="facts"></dl>
+    <div class="row">
+      <button id="start" type="button">Start</button>
+      <button id="stop" type="button" class="danger">Stop</button>
+      <span id="action" class="dim" role="status"></span>
+    </div>
+  </section>
+  <section class="card" aria-labelledby="h-mail">
+    <h2 id="h-mail">Mail through this gateway</h2>
+    <ul id="relay" class="list"></ul>
+    <h3>This station's outbox</h3>
+    <ul id="outbox" class="list"></ul>
+  </section>
+  <section class="card" aria-labelledby="h-heard">
+    <h2 id="h-heard">Heard stations</h2>
+    <ul id="heard" class="list"></ul>
+  </section>
+  <section class="card" aria-labelledby="h-errors">
+    <h2 id="h-errors">Errors</h2>
+    <pre id="errors" class="log"></pre>
+  </section>
+  <section class="card" aria-labelledby="h-log">
+    <h2 id="h-log">Log</h2>
+    <pre id="log" class="log"></pre>
+  </section>
+  <p id="updated" class="dim small"></p>
+</main>
+</body>
+</html>

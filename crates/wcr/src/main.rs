@@ -2,7 +2,7 @@
 
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
-use wcr::cli::{Cli, Command, HubAdmin, ServiceAction};
+use wcr::cli::{Cli, Command, HubAdmin, ServiceAction, WebAction};
 use wcr::config::Config;
 use wcr::error::Result;
 
@@ -126,6 +126,11 @@ async fn real_main() -> Result<()> {
             wcr::ui_style::panel("WEECHAT RADIO", "WEECHAT");
             wcr::weechat_app::run(configure, &cfg_path)?;
         }
+        Command::Web { action } => match action {
+            None => wcr::web::run(&cfg_path, stop_signal()).await?,
+            Some(WebAction::Password) => wcr::web::set_password(&cfg_path)?,
+            Some(WebAction::Install) => wcr::web::install(&cfg_path)?,
+        },
         Command::Tnc { action } => {
             wcr::ui_style::panel("WEECHAT RADIO", "TNC");
             wcr::tnc::cli::run(action, &cfg_path)?;

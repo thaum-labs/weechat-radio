@@ -55,6 +55,11 @@ pub enum Command {
         #[arg(long)]
         configure: bool,
     },
+    /// Station web page for other devices on the LAN (HTTPS, password). Runs the station too.
+    Web {
+        #[command(subcommand)]
+        action: Option<WebAction>,
+    },
     /// Radios with a built-in KISS TNC (VR-N76, UV-PRO, GA-5WB) over Bluetooth
     Tnc {
         #[command(subcommand)]
@@ -89,6 +94,14 @@ pub enum TncAction {
         #[arg(long)]
         tx: bool,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum WebAction {
+    /// Set the web page password
+    Password,
+    /// Linux: start `wcr web` at boot as a system service (run with sudo)
+    Install,
 }
 
 #[derive(Subcommand, Debug)]
