@@ -644,6 +644,8 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
         return Ok(());
     }
     note_mail(ctx, &cfg.callsign, &gateway_cs);
+    // The burst has drained: the Email tab says Waiting for gateway.
+    let _ = ctx.store.note_keyed(&row.id);
     if probe {
         tracing::info!(
             "mail keyed {} to {gateway_cs} (probe chunk {}/{total}, {})",

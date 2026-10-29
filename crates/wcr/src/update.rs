@@ -343,7 +343,7 @@ pub async fn apply(rc: bool) -> Result<Applied> {
     let removed_mintty = remove_stray_minttyrc(&exe);
     let restarted = crate::service::restart_if_installed();
     Ok(Applied {
-        message: update_success_message(&info.version, &exe, restarted, removed_mintty),
+        message: update_success_message(&info.version, &exe, &replaced, restarted, removed_mintty),
         version: info.version.clone(),
         restarted,
     })
@@ -375,8 +375,8 @@ fn backup_path(dest: &Path) -> PathBuf {
 }
 
 /// Put each replaced file's backup back in place. Returns the files that
-/// could not be restored. Windows only keeps a backup when the file was in
-/// use, and an older `.bak` may be left there, so it restores nothing.
+/// could not be restored. On Windows `wcr.exe.bak` is this running process,
+/// so it restores nothing there.
 fn restore_backups(replaced: &[PathBuf]) -> Vec<String> {
     replaced
         .iter()
@@ -402,29 +402,87 @@ fn rollback_message(version: &str, why: &str, not_restored: &[String]) -> String
     msg
 }
 
-/// A station started by hand keeps running the old code after `wcr update`
-/// (only a service is restarted), while `wcr --version` already shows the new
-/// one. Ask the running station at `status_bind` which version it runs.
-pub async fn running_station_note(status_bind: &str, installed: &str) -> Option<String> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(2))
-        .build()
-        .ok()?;
-    let snap: serde_json::Value = client
-        .get(format!("http://{status_bind}/status"))
-        .send()
-        .await
-        .ok()?
-        .json()
-        .await
-        .ok()?;
-    stale_station_note(snap.get("version")?.as_str()?, installed)
+/// Each running station leaves its status port here, so `wcr update` can
+/// ask every station on this machine, not only the one in its own config
+/// (QA v1.0.2: stations with their own `WCR_HOME` were missed).
+fn station_marks_dir() -> PathBuf {
+    std::env::temp_dir().join("wcr-stations")
 }
 
-fn stale_station_note(running: &str, installed: &str) -> Option<String> {
+fn status_port(bind: &str) -> &str {
+    bind.rsplit(':').next().unwrap_or("8074")
+}
+
+/// Called once the station's status HTTP is listening on `bind`.
+pub fn note_running_station(bind: &str) {
+    let dir = station_marks_dir();
+    if fs::create_dir_all(&dir).is_ok() {
+        let _ = fs::write(dir.join(status_port(bind)), bind);
+    }
+}
+
+/// The status ports to ask after an update: this config's, then every
+/// station that noted itself, without repeats.
+fn station_ports(own_bind: &str, marks: &Path) -> Vec<String> {
+    let mut ports = vec![status_port(own_bind).to_string()];
+    if let Ok(entries) = fs::read_dir(marks) {
+        let mut noted: Vec<String> = entries
+            .flatten()
+            .filter_map(|e| e.file_name().to_str().map(str::to_string))
+            .filter(|name| name.parse::<u16>().is_ok())
+            .collect();
+        noted.sort();
+        for port in noted {
+            if !ports.contains(&port) {
+                ports.push(port);
+            }
+        }
+    }
+    ports
+}
+
+/// A station started by hand keeps running the old code after `wcr update`
+/// (only a service is restarted), while `wcr --version` already shows the new
+/// one. Ask each running station which version it runs. A port that no
+/// longer answers has stopped, so its mark is dropped.
+pub async fn running_station_notes(own_bind: &str, installed: &str) -> Vec<String> {
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+    else {
+        return Vec::new();
+    };
+    let marks = station_marks_dir();
+    let mut notes = Vec::new();
+    for port in station_ports(own_bind, &marks) {
+        let res = client
+            .get(format!("http://127.0.0.1:{port}/status"))
+            .send()
+            .await;
+        let snap: Option<serde_json::Value> = match res {
+            Ok(r) => r.json().await.ok(),
+            Err(e) => {
+                if e.is_connect() {
+                    let _ = fs::remove_file(marks.join(&port));
+                }
+                None
+            }
+        };
+        let running = snap
+            .as_ref()
+            .and_then(|s| s.get("version"))
+            .and_then(|v| v.as_str());
+        if let Some(note) = running.and_then(|r| stale_station_note(&port, r, installed)) {
+            notes.push(note);
+        }
+    }
+    notes
+}
+
+fn stale_station_note(port: &str, running: &str, installed: &str) -> Option<String> {
     (running.trim_start_matches('v') != installed.trim_start_matches('v')).then(|| {
         format!(
-            "the station still running is {running}: stop it and start it again to run {installed}"
+            "the station on status port {port} still runs {running}: stop it and start it again to run {installed}"
         )
     })
 }
@@ -432,6 +490,7 @@ fn stale_station_note(running: &str, installed: &str) -> Option<String> {
 fn update_success_message(
     version: &str,
     exe: &Path,
+    replaced: &[PathBuf],
     restarted: bool,
     removed_mintty: bool,
 ) -> String {
@@ -446,28 +505,21 @@ fn update_success_message(
             exe.display()
         )
     };
-    if let Some(dir) = exe.parent() {
-        msg.push_str(&kept_backup_sentence(&present_backups(dir)));
-    }
+    msg.push_str(&kept_backup_sentence(&fresh_backups(replaced)));
     if removed_mintty {
         msg.push_str(". Removed minttyrc (only used on Windows)");
     }
     msg
 }
 
-fn backup_file_names() -> &'static [&'static str] {
-    if cfg!(windows) {
-        &["wcr.exe.bak", "wcr-gui.exe.bak", "modem73.exe.bak"]
-    } else {
-        &["wcr.bak", "wcr-gui.bak", "modem73.bak"]
-    }
-}
-
-fn present_backups(dir: &Path) -> Vec<String> {
-    backup_file_names()
+/// QA v1.0.2: name only the backups this update made, not an older `.bak`
+/// left beside a file the new package did not replace.
+fn fresh_backups(replaced: &[PathBuf]) -> Vec<String> {
+    replaced
         .iter()
-        .filter(|name| dir.join(name).is_file())
-        .map(|name| (*name).to_string())
+        .map(|dest| backup_path(dest))
+        .filter(|bak| bak.is_file())
+        .filter_map(|bak| bak.file_name().map(|n| n.to_string_lossy().into_owned()))
         .collect()
 }
 
@@ -702,23 +754,28 @@ fn install_binary(dest: &Path, src: &Path) -> Result<()> {
 }
 
 /// Windows will not overwrite a running .exe, but it will rename one.
-/// Move the current file aside, then copy the new one into place.
+/// Move the current file aside as `.exe.bak` (every time, like Unix, so
+/// the backup is always this update's), then copy the new one into place.
 #[cfg(windows)]
 fn replace_windows_exe(dest: &Path, src: &Path) -> Result<()> {
-    if fs::copy(src, dest).is_ok() {
-        return Ok(());
-    }
     if !dest.exists() {
-        return Err(Error::Msg(format!("could not write {}", dest.display())));
+        return fs::copy(src, dest)
+            .map(|_| ())
+            .map_err(|e| Error::Msg(format!("could not write {}: {e}", dest.display())));
     }
     let bak = dest.with_extension("exe.bak");
     let _ = fs::remove_file(&bak);
-    fs::rename(dest, &bak).map_err(|e| {
-        Error::Msg(format!(
+    if let Err(e) = fs::rename(dest, &bak) {
+        // An older .exe.bak still running cannot be moved: write over the
+        // file in place (no backup this time), as long as it is not running.
+        if fs::copy(src, dest).is_ok() {
+            return Ok(());
+        }
+        return Err(Error::Msg(format!(
             "could not replace {} ({e}). Close WeeChat Radio and retry, or run: irm https://weechatradio.com/install.ps1 | iex",
             dest.display()
-        ))
-    })?;
+        )));
+    }
     if let Err(e) = fs::copy(src, dest) {
         let _ = fs::rename(&bak, dest);
         return Err(Error::Msg(format!(
@@ -792,10 +849,26 @@ mod tests {
 
     #[test]
     fn a_station_left_on_the_old_version_is_named() {
-        assert_eq!(stale_station_note("0.1.92", "0.1.92"), None);
-        assert_eq!(stale_station_note("0.1.92", "v0.1.92"), None);
-        let note = stale_station_note("0.1.91", "0.1.92").unwrap();
+        assert_eq!(stale_station_note("8074", "0.1.92", "0.1.92"), None);
+        assert_eq!(stale_station_note("8074", "0.1.92", "v0.1.92"), None);
+        let note = stale_station_note("28303", "0.1.91", "0.1.92").unwrap();
         assert!(note.contains("0.1.91") && note.contains("start it again"));
+        assert!(note.contains("28303"), "{note}");
+    }
+
+    #[test]
+    fn every_noted_station_is_asked_once() {
+        let marks = tempfile::tempdir().unwrap();
+        for port in ["28304", "28303", "8074"] {
+            fs::write(marks.path().join(port), format!("127.0.0.1:{port}")).unwrap();
+        }
+        fs::write(marks.path().join("junk.txt"), "x").unwrap();
+        assert_eq!(
+            station_ports("0.0.0.0:8074", marks.path()),
+            vec!["8074", "28303", "28304"]
+        );
+        let none = marks.path().join("missing");
+        assert_eq!(station_ports("127.0.0.1:28301", &none), vec!["28301"]);
     }
 
     fn asset(name: &str) -> Asset {
@@ -930,8 +1003,10 @@ mod tests {
             assert!(removed);
             assert!(!dir.join("minttyrc").exists());
         }
-        let msg = update_success_message("0.1.81", &exe, false, removed);
+        let msg = update_success_message("0.1.81", &exe, &[exe.clone()], false, removed);
         assert!(msg.contains(bak), "{msg}");
+        // The GUI was not replaced this time, so its older backup is not named.
+        assert!(!msg.contains("wcr-gui"), "{msg}");
         assert!(msg.contains("wcr --version"), "{msg}");
         if removed {
             assert!(msg.contains("Removed minttyrc"), "{msg}");

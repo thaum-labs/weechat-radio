@@ -678,6 +678,9 @@ struct GuiApp {
     mail_notice: String,
     mail_open: Option<crate::mail::MailView>,
     mail_rows: Vec<crate::mail::MailView>,
+    /// The folder `mail_rows` was fetched for. Another folder's rows never
+    /// show under a tab.
+    mail_rows_folder: String,
     mail_waiting: Vec<crate::mail::WaitHeader>,
     mail_get: Option<MailGet>,
     mail_confirm: Option<MailConfirm>,
@@ -791,6 +794,7 @@ impl GuiApp {
             mail_notice: String::new(),
             mail_open: None,
             mail_rows: Vec::new(),
+            mail_rows_folder: String::new(),
             mail_waiting: Vec::new(),
             mail_get: None,
             mail_confirm: None,
@@ -3957,12 +3961,19 @@ impl GuiApp {
         ) {
             if let Ok(rows) = serde_json::from_value::<Vec<crate::mail::MailView>>(list) {
                 // The opened mail follows its row, so its chip and timeline move on.
+                // A Retry moves it to another folder: then ask for it by id.
                 if let Some(open) = self.mail_open.as_mut() {
                     if let Some(fresh) = rows.iter().find(|r| r.row.id == open.row.id) {
                         *open = fresh.clone();
+                    } else if let Some(fresh) =
+                        mail_http("GET", &format!("/mail/open?id={}", open.row.id), None)
+                            .and_then(|v| serde_json::from_value(v).ok())
+                    {
+                        *open = fresh;
                     }
                 }
                 self.mail_rows = rows;
+                self.mail_rows_folder = self.mail_folder.clone();
             }
         }
         if let Some(wait) = mail_http("GET", "/mail/waiting", None) {
@@ -4054,6 +4065,13 @@ impl GuiApp {
             return;
         };
         let step = send.step.clone();
+        // Sent, but Resend's answer is bad news (Bounced, Spam, Failed).
+        let bad = send
+            .row
+            .as_ref()
+            .filter(|_| step.done && step.ok)
+            .map(|row| crate::mail::mail_status(row, &[], 0, true))
+            .filter(|st| st.mark == "[no]");
         let screen = ctx.screen_rect();
         egui::Area::new(egui::Id::new("mail_send_block"))
             .order(egui::Order::Foreground)
@@ -4065,53 +4083,77 @@ impl GuiApp {
             });
         ctx.memory_mut(|m| m.stop_text_input());
         let mut close = false;
-        egui::Window::new(if step.done {
-            if step.ok {
-                "Success"
-            } else {
-                "Not sent"
-            }
-        } else {
-            "Sending email"
-        })
-        .id(egui::Id::new("mail_send_window"))
-        .order(egui::Order::Tooltip)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .frame(chrome(TOPBAR))
-        .show(ctx, |ui| {
-            ui.set_min_width(420.0);
-            ui.label(
-                RichText::new(format!("{}  {}", send.to, send.subject))
-                    .color(ACCENT)
-                    .monospace(),
-            );
-            ui.add_space(6.0);
-            let color = if step.done && !step.ok { ORANGE } else { GREEN };
-            ui.add(
-                egui::ProgressBar::new(step.fraction)
-                    .desired_width(420.0)
-                    .fill(color)
-                    .show_percentage(),
-            );
-            ui.add_space(4.0);
-            ui.label(RichText::new(&step.label).color(FG).monospace());
-            if step.done {
-                ui.add_space(8.0);
-                if ui.add(hair_btn("OK", ORANGE)).clicked() {
-                    close = true;
-                }
-            } else {
+        let mut resend = false;
+        let title = match &bad {
+            Some(st) => st.label.clone(),
+            None if step.done && step.ok => "Success".into(),
+            None if step.done => "Not sent".into(),
+            None => "Sending email".into(),
+        };
+        egui::Window::new(title)
+            .id(egui::Id::new("mail_send_window"))
+            .order(egui::Order::Tooltip)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .frame(chrome(TOPBAR))
+            .show(ctx, |ui| {
+                ui.set_min_width(420.0);
                 ui.label(
-                    RichText::new("Stay on this screen until the send finishes.")
-                        .color(DIM)
-                        .small()
+                    RichText::new(format!("{}  {}", send.to, send.subject))
+                        .color(ACCENT)
                         .monospace(),
                 );
+                ui.add_space(6.0);
+                let color = if bad.is_some() {
+                    RED
+                } else if step.done && !step.ok {
+                    ORANGE
+                } else {
+                    GREEN
+                };
+                ui.add(
+                    egui::ProgressBar::new(step.fraction)
+                        .desired_width(420.0)
+                        .fill(color)
+                        .show_percentage(),
+                );
+                ui.add_space(4.0);
+                ui.label(RichText::new(&step.label).color(FG).monospace());
+                if let Some(st) = &bad {
+                    ui.label(RichText::new(&st.reason).color(RED).monospace());
+                }
+                if step.done {
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.add(hair_btn("OK", ORANGE)).clicked() {
+                            close = true;
+                        }
+                        if bad.as_ref().is_some_and(|st| st.resend)
+                            && ui.add(hair_btn("Re-send", ORANGE)).clicked()
+                        {
+                            resend = true;
+                        }
+                    });
+                } else {
+                    ui.label(
+                        RichText::new("Stay on this screen until the send finishes.")
+                            .color(DIM)
+                            .small()
+                            .monospace(),
+                    );
+                }
+            });
+        if resend {
+            if let Some(row) = self.mail_send.take().and_then(|s| s.row) {
+                self.mail_to = row.to_addr;
+                self.mail_subject = row.subject;
+                self.mail_body = row.body;
+                self.mail_toast =
+                    "Compose has the mail again. Check the address, then press Send.".into();
+                self.mail_toast_warn = false;
             }
-        });
-        if close {
+        } else if close {
             self.mail_send = None;
         } else {
             ctx.request_repaint_after(Duration::from_millis(250));
@@ -4206,6 +4248,8 @@ impl GuiApp {
                     self.mail_folder = id.into();
                     self.mail_open = None;
                     self.mail_toast.clear();
+                    // Fetch the new tab's list on the next frame.
+                    self.last_mail_poll = Instant::now() - Duration::from_secs(5);
                 }
             }
             if mode == Mode::RadioPlus {
@@ -4223,7 +4267,12 @@ impl GuiApp {
             }
         });
         ui.add_space(6.0);
-        let rows = self.mail_rows.clone();
+        let loading = self.mail_rows_folder != self.mail_folder;
+        let rows = if loading {
+            Vec::new()
+        } else {
+            self.mail_rows.clone()
+        };
         let mut open_id = None;
         let mut delete_id = None;
         // Room for more than a handful of rows; compose stays below.
@@ -4238,7 +4287,8 @@ impl GuiApp {
                         && mode == Mode::RadioPlus
                         && !self.mail_waiting.is_empty())
                 {
-                    ui.label(RichText::new("Nothing here.").color(DIM).monospace());
+                    let empty = if loading { "Loading…" } else { "Nothing here." };
+                    ui.label(RichText::new(empty).color(DIM).monospace());
                 }
                 if self.mail_folder == "inbox"
                     && mode == Mode::RadioPlus
@@ -4364,7 +4414,13 @@ impl GuiApp {
             ack: matches!(crate::mail::gateway_path(mode), crate::mail::SendPath::Rf),
         };
         let hint = if self.mail_hold {
-            "On the air — To, subject and body stay until TX finishes".to_string()
+            match crate::mail::gateway_path(mode) {
+                crate::mail::SendPath::Hub => {
+                    "Sending via the hub — To, subject and body stay until the hub answers"
+                }
+                _ => "On the air — To, subject and body stay until TX finishes",
+            }
+            .to_string()
         } else {
             crate::mail::hint_line(&preview, mode, preset, 250)
         };
@@ -4471,10 +4527,6 @@ impl GuiApp {
             row.ts,
         ));
         for hop in &open.hops {
-            // Failed is history once a Retry has moved the mail on.
-            if hop.stage == "failed" && row.state != "failed" {
-                continue;
-            }
             times.push((hop_name(&hop.stage, &st.label).into(), hop.ts));
         }
         egui::Grid::new("mail_hops")
@@ -4709,7 +4761,7 @@ fn mail_chip_color(key: &str) -> Color32 {
         "delivered" => GREEN,
         "sent" => ACCENT,
         "tx" => ORANGE,
-        "gateway" | "waiting" => PURPLE,
+        "gateway" | "waiting" | "keyed" => PURPLE,
         "delayed" => AMBER,
         "bounced" | "spam" | "failed" => RED,
         _ => DIM,
@@ -4803,11 +4855,34 @@ fn mail_list_row(ui: &mut egui::Ui, r: &MailListRow<'_>) -> MailRowAct {
                 } else {
                     FG
                 };
-                // The word (for example "with Resend") trails the subject.
+                // The address gets at most 40% of the row and is cut first,
+                // so the subject stays readable in a narrow window. A cut
+                // label shows its full text on hover by itself.
                 let font = egui::TextStyle::Monospace.resolve(ui.style());
+                let who = format!("{}  ", r.who);
+                let who_full =
+                    ui.fonts(|f| f.layout_no_wrap(who.clone(), font.clone(), color).size().x);
+                let who_w = who_full.min(width * 0.4);
+                let who_resp = ui
+                    .allocate_ui_with_layout(
+                        egui::vec2(who_w, height),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.set_max_width(who_w);
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(who).color(color).font(font.clone()),
+                                )
+                                .truncate()
+                                .sense(egui::Sense::click()),
+                            )
+                        },
+                    )
+                    .inner;
+                // The word (for example "with Resend") trails the subject.
                 let fmt = |color| egui::TextFormat::simple(font.clone(), color);
                 let mut text = egui::text::LayoutJob::default();
-                text.append(&format!("{}  {}", r.who, r.subject), 0.0, fmt(color));
+                text.append(r.subject, 0.0, fmt(color));
                 if !r.word.is_empty() {
                     text.append(&format!("  · {}", r.word), 0.0, fmt(DIM));
                 }
@@ -4816,14 +4891,13 @@ fn mail_list_row(ui: &mut egui::Ui, r: &MailListRow<'_>) -> MailRowAct {
                         .truncate()
                         .sense(egui::Sense::click()),
                 );
-                if resp.hovered() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                }
-                if resp
-                    .on_hover_text(format!("{}\n{}\n{}", r.who, r.subject, r.word).trim_end())
-                    .clicked()
-                {
-                    act.opened = true;
+                for resp in [&who_resp, &resp] {
+                    if resp.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                    if resp.clicked() {
+                        act.opened = true;
+                    }
                 }
             },
         );
@@ -4839,9 +4913,12 @@ fn mail_list_row(ui: &mut egui::Ui, r: &MailListRow<'_>) -> MailRowAct {
 fn hop_name<'a>(stage: &str, report: &'a str) -> &'a str {
     match stage {
         "air" => "On air",
+        "keyed" => "Burst done, waiting for gateway",
         "gateway" => "At gateway",
         "sent" => "Accepted by Resend",
         "failed" => "Failed",
+        "failed_try" => "Failed (earlier try)",
+        "retry" => "Retried",
         "fetched" => "Fetched",
         "report" => report,
         _ => "",

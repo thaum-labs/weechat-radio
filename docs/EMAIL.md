@@ -56,19 +56,20 @@ Every mail in the list has one coloured chip:
 | Chip | Mark | Meaning |
 | --- | --- | --- |
 | Queued | `[..]` | Waiting for the radio or the hub |
-| On air | `[tx]` | Keyed to the gateway (Radio+) |
+| On air | `[tx]` | Keying to the gateway (Radio+) |
+| Waiting for gateway | `[..]` | The burst is done; the gateway has not answered yet (Radio+) |
 | At gateway | `[gw]` | The gateway has every chunk and is handing it to the hub |
 | Sent | `[ok]` | Resend accepted it. The word after the subject says `with Resend`, `no delivery report` (no final answer a day after Sent), or `delivery unknown (offline)` (the last delivery check could not reach the hub) |
 | Delivered | `[ok]` | Resend says the recipient's mail server took it |
-| Delayed | `[ok]` | Resend is still trying |
-| Bounced | `[ok]` | The recipient's mail server refused it |
-| Spam | `[ok]` | The recipient marked it as spam |
+| Delayed | `[..]` | Resend is still trying |
+| Bounced | `[no]` | The recipient's mail server refused it |
+| Spam | `[no]` | The recipient marked it as spam |
 | Failed | `[no]` | Not sent (the reason is in the opened mail), or Resend could not send it |
 | No record | `[ok]` | The hub has no delivery record for this mail |
 
-Inbox mail shows Received, with an orange dot and brighter text while unread. Radio+ headers not fetched yet show Waiting and the size, in the same layout. Screen readers hear the mark with the chip, for example `[ok] Delivered`.
+Inbox mail always shows Received (also mail an older version stored), with an orange dot and brighter text while unread. Radio+ headers not fetched yet show Waiting and the size, in the same layout. Screen readers hear the mark with the chip, for example `[ok] Delivered`.
 
-Times are local; the opened mail shows them with the zone. The opened mail shows the chip, the full reason when something went wrong, and when it reached each hop: created, on air, at gateway, accepted by Resend, then delivered, bounced or another final answer. Inbound mail shows when the sender sent it and when this station fetched it. Mail from before this version shows only the times it reaches from now on.
+Times are local; the opened mail shows them with the zone. The opened mail shows the chip, the full reason when something went wrong, and when it reached each hop: created, on air, burst done, at gateway, accepted by Resend, then delivered, bounced or another final answer. After a Retry the earlier failure stays as "Failed (earlier try)", followed by "Retried" and the new try's times. Inbound mail shows when the sender sent it and when this station fetched it. Mail from before this version shows only the times it reaches from now on.
 
 Failed reasons say where the mail stopped: the gateway never acknowledged it, the gateway has it but the hub refused it (with the hub's reason), the hub refused it, or the hub could not be reached. A hub-path mail that the hub refuses, or that finds the hub down, is Failed at once rather than left Queued.
 
