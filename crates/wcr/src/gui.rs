@@ -877,12 +877,19 @@ impl GuiApp {
                 r.apply(&mut cfg);
                 cfg.modem.hamlib_device = self.cat_port.trim().to_string();
             }
-            4 => {
+            4 | BT_AUDIO => {
                 cfg.mode = Mode::InternetRadio;
-                cfg.modem.backend = "bluetooth".into();
-                cfg.modem.manage = false;
-                cfg.modem.ptt = "tnc".into();
-                cfg.modem.preset = Preset::Afsk1200.as_str().into();
+                if self.path == BT_AUDIO {
+                    cfg.modem.backend = "modem73".into();
+                    cfg.modem.manage = true;
+                    cfg.modem.ptt = "bluetooth".into();
+                    cfg.modem.preset = Preset::VhfFm.as_str().into();
+                } else {
+                    cfg.modem.backend = "bluetooth".into();
+                    cfg.modem.manage = false;
+                    cfg.modem.ptt = "tnc".into();
+                    cfg.modem.preset = Preset::Afsk1200.as_str().into();
+                }
                 match &self.bt_found {
                     Some(dev) => {
                         cfg.tnc.bt_name = dev.short_name();
@@ -1864,7 +1871,7 @@ impl eframe::App for GuiApp {
                             );
                         });
                     }
-                    if self.path == 4 {
+                    if matches!(self.path, 4 | BT_AUDIO) {
                         self.bluetooth_setup_ui(ui);
                     }
                     if self.path == 5 {
@@ -4918,6 +4925,8 @@ fn load_form() -> Form {
             RADIOS[i].setup_path()
         } else if cfg.modem.is_bluetooth() {
             4
+        } else if cfg.modem.is_bt_audio() {
+            BT_AUDIO
         } else if cfg.modem.uses_tnc() {
             5
         } else {
@@ -4983,6 +4992,8 @@ impl GuiApp {
 
 /// Setup path for a supported CAT radio ([`crate::radios::Radio::setup_path`]).
 const SUPPORTED_CAT: usize = 6;
+/// Setup path for modem73 over a radio's Bluetooth audio channel.
+const BT_AUDIO: usize = 7;
 
 impl GuiApp {
     /// Pick a supported radio: set the path and fill what the probe can find.
@@ -4990,7 +5001,7 @@ impl GuiApp {
         let r = &RADIOS[i];
         self.radio = Some(i);
         self.path = r.setup_path();
-        if let crate::radios::Link::BluetoothTnc { bt_name } = r.link {
+        if let Some(bt_name) = r.bt_name() {
             if self.bt_name != bt_name {
                 self.bt_name = bt_name.into();
                 self.bt_found = None;
@@ -5191,9 +5202,11 @@ impl GuiApp {
             ui.add_space(20.0);
             ui.add(
                 egui::Label::new(
-                    RichText::new(
-                        "On the radio: General Settings → KISS TNC → Enable, Digital Mode off. Close the HT phone app — the radio takes one Bluetooth client at a time.",
-                    )
+                    RichText::new(if self.path == BT_AUDIO {
+                        "On the radio: squelch low (1 or 2), KISS TNC and Digital Mode off. Close the HT phone app — the radio takes one Bluetooth client at a time."
+                    } else {
+                        "On the radio: General Settings → KISS TNC → Enable, Digital Mode off. Close the HT phone app — the radio takes one Bluetooth client at a time."
+                    })
                     .color(DIM)
                     .font(FontId::monospace(11.0)),
                 )

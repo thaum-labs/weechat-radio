@@ -4,6 +4,7 @@
 pub mod air;
 pub mod audio_meter;
 pub mod band;
+pub mod btaudio;
 pub mod cli;
 pub mod config;
 pub mod discover;

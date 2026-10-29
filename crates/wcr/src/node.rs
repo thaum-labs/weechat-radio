@@ -3712,7 +3712,7 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
     if rt.kiss().is_some() {
         return Ok(());
     }
-    let cfg = rt.cfg.lock().clone();
+    let mut cfg = rt.cfg.lock().clone();
     let radio_tnc = cfg.modem.uses_tnc();
     let sense = Arc::new(if radio_tnc {
         ModemSense::passive()
@@ -3739,6 +3739,15 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
         kiss = Some(k);
         kiss_rx = Some(rx);
     } else {
+        if cfg.modem.is_bt_audio() {
+            // modem73 hears and keys the radio through wcr's Bluetooth bridge.
+            let ports = crate::btaudio::ensure_started(&cfg, rt.snap.clone())
+                .map_err(|e| crate::error::Error::Modem(format!("Bluetooth audio bridge: {e}")))?;
+            cfg.modem.audio_input = ports.audio_device();
+            cfg.modem.audio_output = ports.audio_device();
+            cfg.modem.rigctl = ports.rigctl_addr();
+            rt.snap.lock().ptt = "bluetooth".into();
+        }
         let kiss_addr = format!("{}:{}", cfg.modem.host, cfg.modem.kiss_port);
         let already = KissClient::connect(&kiss_addr).await.ok();
         {
@@ -4027,6 +4036,12 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                         .into();
                 }
                 if let Some(pr) = Preset::parse(p) {
+                    if cfg.lock().modem.is_bt_audio() && !crate::btaudio::preset_allowed(pr) {
+                        return format!(
+                            "{} does not survive the radio's Bluetooth audio. Use vhf-fm, hf-poor, hf-weak or hf-deep.",
+                            pr.as_str()
+                        );
+                    }
                     cfg.lock().modem.preset = pr.as_str().into();
                     snap.lock().preset = pr.as_str().into();
                     persist_cfg(&cfg.lock());

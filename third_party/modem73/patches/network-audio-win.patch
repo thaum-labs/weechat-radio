@@ -1,0 +1,394 @@
+diff --git a/kiss_tnc.cc b/kiss_tnc.cc
+index 0f52944..fae23b6 100644
+--- a/kiss_tnc.cc
++++ b/kiss_tnc.cc
+@@ -2959,6 +2959,9 @@ void print_help(const char* prog) {
+               << "  -d, --device DEV        Audio device for both capture and playback\n"
+               << "      --input-device DEV  Audio capture device\n"
+               << "      --output-device DEV Audio playback device\n"
++              << "                          DEV tcp:HOST:PORT (use -d) = network audio: mono\n"
++              << "                          s16le PCM over TCP; the peer sends capture samples\n"
++              << "                          and gets the same number of playback samples back\n"
+               << "      --tx-level PCT      TX audio output level, 5-100 (default: 100)\n"
+               << "\nModem:\n"
+               << "  -c, --callsign CALL     Callsign (default: N0CALL)\n"
+diff --git a/miniaudio_audio.hh b/miniaudio_audio.hh
+index d19b4cd..65f49ab 100644
+--- a/miniaudio_audio.hh
++++ b/miniaudio_audio.hh
+@@ -20,6 +20,8 @@
+ #include <thread>
+ #include <chrono>
+ 
++#include "net_audio.hh"
++
+ class MiniAudio {
+ public:
+     static std::vector<std::pair<std::string, std::string>> list_capture_devices() {
+@@ -231,6 +233,7 @@ public:
+                playback_open_.load(std::memory_order_acquire) &&
+                !capture_stopped_.load(std::memory_order_acquire) &&
+                !playback_stopped_.load(std::memory_order_acquire) &&
++               !(net_in_use_.load() && !net_.alive()) &&
+                consecutive_read_failures_.load() < 3 &&
+                consecutive_write_failures_.load() < 3;
+     }
+@@ -365,8 +368,49 @@ private:
+         return false;
+     }
+ 
++    // Shared by capture and playback: both must name the same tcp: device,
++    // and one connection carries both directions.
++    bool open_net_locked(bool capture) {
++        if (capture_device_id_ != playback_device_id_) {
++            log_msg("(!) Network audio needs the same tcp: address for input and output");
++            return false;
++        }
++        if (!net_.alive()) {
++            std::string err;
++            bool ok = net_.open(
++                capture_device_id_,
++                [this](const float* in, size_t n) { push_capture(in, (ma_uint32)n); },
++                [this](float* out, size_t n) { pull_playback(out, (ma_uint32)n); },
++                &err);
++            if (!ok) {
++                log_msg("(!) Network audio " + capture_device_id_ + ": " + err);
++                return false;
++            }
++        }
++        net_in_use_.store(true);
++        if (capture) {
++            capture_on_net_.store(true);
++            capture_stopped_.store(false, std::memory_order_release);
++            capture_open_.store(true, std::memory_order_release);
++            log_msg("Capture: network audio " + capture_device_id_);
++        } else {
++            playback_on_net_.store(true);
++            playback_stopped_.store(false, std::memory_order_release);
++            playback_open_.store(true, std::memory_order_release);
++            log_msg("Playback: network audio " + playback_device_id_);
++        }
++        return true;
++    }
++
++    // Any close stops the shared connection; reconnect() reopens both sides.
++    void close_net_locked() {
++        if (!net_in_use_.exchange(false)) return;
++        net_.close();
++    }
++
+     bool open_playback_locked() {
+         if (playback_open_.load(std::memory_order_acquire)) return true;
++        if (NetAudioLink::is_net_device(playback_device_id_)) return open_net_locked(false);
+         if (!ensure_context()) return false;
+ 
+         ma_device_config config = ma_device_config_init(ma_device_type_playback);
+@@ -407,6 +451,7 @@ private:
+ 
+     bool open_capture_locked() {
+         if (capture_open_.load(std::memory_order_acquire)) return true;
++        if (NetAudioLink::is_net_device(capture_device_id_)) return open_net_locked(true);
+         if (!ensure_context()) return false;
+ 
+         ma_device_config config = ma_device_config_init(ma_device_type_capture);
+@@ -447,8 +492,10 @@ private:
+ 
+     void close_playback_locked() {
+         bool was_open = playback_open_.exchange(false, std::memory_order_acq_rel);
++        bool was_net = playback_on_net_.exchange(false);
++        close_net_locked();
+         std::unique_lock<std::shared_mutex> lock(playback_rw_);
+-        if (was_open) {
++        if (was_open && !was_net) {
+             ma_device_uninit(&playback_device_);
+         }
+         playback_read_pos_ = 0;
+@@ -458,8 +505,10 @@ private:
+ 
+     void close_capture_locked() {
+         bool was_open = capture_open_.exchange(false, std::memory_order_acq_rel);
++        bool was_net = capture_on_net_.exchange(false);
++        close_net_locked();
+         std::unique_lock<std::shared_mutex> lock(capture_rw_);
+-        if (was_open) {
++        if (was_open && !was_net) {
+             ma_device_uninit(&capture_device_);
+         }
+         capture_read_pos_ = 0;
+@@ -486,56 +535,64 @@ private:
+         (void)input;
+         MiniAudio* self = static_cast<MiniAudio*>(device->pUserData);
+         float* out = static_cast<float*>(output);
++        self->pull_playback(out, frame_count);
++    }
+ 
+-        size_t read_pos = self->playback_read_pos_.load();
+-        size_t write_pos = self->playback_write_pos_.load();
++    static void capture_callback(ma_device* device, void* output, const void* input, ma_uint32 frame_count) {
++        (void)output;
++        MiniAudio* self = static_cast<MiniAudio*>(device->pUserData);
++        const float* in = static_cast<const float*>(input);
++        self->push_capture(in, frame_count);
++    }
++
++    // Fill out with queued playback samples, silence once the queue is empty.
++    void pull_playback(float* out, ma_uint32 frame_count) {
++        size_t read_pos = playback_read_pos_.load();
++        size_t write_pos = playback_write_pos_.load();
+         size_t available = (write_pos - read_pos + RING_BUFFER_SIZE) % RING_BUFFER_SIZE;
+ 
+         ma_uint32 to_read = std::min((ma_uint32)available, frame_count);
+ 
+         for (ma_uint32 i = 0; i < to_read; i++) {
+-            out[i] = self->playback_buffer_[(read_pos + i) % RING_BUFFER_SIZE];
++            out[i] = playback_buffer_[(read_pos + i) % RING_BUFFER_SIZE];
+         }
+         for (ma_uint32 i = to_read; i < frame_count; i++) {
+             out[i] = 0.0f;
+         }
+ 
+-        self->playback_read_pos_ = (read_pos + to_read) % RING_BUFFER_SIZE;
++        playback_read_pos_ = (read_pos + to_read) % RING_BUFFER_SIZE;
+     }
+ 
+-    static void capture_callback(ma_device* device, void* output, const void* input, ma_uint32 frame_count) {
+-        (void)output;
+-        MiniAudio* self = static_cast<MiniAudio*>(device->pUserData);
+-        const float* in = static_cast<const float*>(input);
+-
+-        size_t read_pos = self->capture_read_pos_.load();
+-        size_t write_pos = self->capture_write_pos_.load();
++    // Queue captured samples for read() and track the level for CSMA.
++    void push_capture(const float* in, ma_uint32 frame_count) {
++        size_t read_pos = capture_read_pos_.load();
++        size_t write_pos = capture_write_pos_.load();
+         size_t used = (write_pos - read_pos + CAPTURE_RING_SIZE) % CAPTURE_RING_SIZE;
+         size_t available = CAPTURE_RING_SIZE - 1 - used;
+ 
+         ma_uint32 to_write = std::min((ma_uint32)available, frame_count);
+ 
+         for (ma_uint32 i = 0; i < to_write; i++) {
+-            self->capture_buffer_[(write_pos + i) % CAPTURE_RING_SIZE] = in[i];
++            capture_buffer_[(write_pos + i) % CAPTURE_RING_SIZE] = in[i];
+         }
+ 
+-        self->capture_write_pos_ = (write_pos + to_write) % CAPTURE_RING_SIZE;
++        capture_write_pos_ = (write_pos + to_write) % CAPTURE_RING_SIZE;
+ 
+         float sum_sq = 0.0f;
+         for (ma_uint32 i = 0; i < frame_count; i++) {
+             sum_sq += in[i] * in[i];
+         }
+-        self->capture_energy_.store(self->capture_energy_.load() + sum_sq);
+-        self->capture_samples_.store(self->capture_samples_.load() + frame_count);
++        capture_energy_.store(capture_energy_.load() + sum_sq);
++        capture_samples_.store(capture_samples_.load() + frame_count);
+ 
+         if (frame_count > 0) {
+-            uint64_t seq = self->block_seq_.load(std::memory_order_relaxed);
+-            self->block_msq_[seq % LEVEL_RING].store(sum_sq / frame_count,
++            uint64_t seq = block_seq_.load(std::memory_order_relaxed);
++            block_msq_[seq % LEVEL_RING].store(sum_sq / frame_count,
+                                                      std::memory_order_relaxed);
+-            self->block_frames_[seq % LEVEL_RING].store(frame_count,
++            block_frames_[seq % LEVEL_RING].store(frame_count,
+                                                         std::memory_order_relaxed);
+-            self->block_seq_.store(seq + 1, std::memory_order_release);
+-            self->last_block_ms_.store(steady_ms(), std::memory_order_relaxed);
++            block_seq_.store(seq + 1, std::memory_order_release);
++            last_block_ms_.store(steady_ms(), std::memory_order_relaxed);
+         }
+     }
+ 
+@@ -584,4 +641,9 @@ private:
+     std::atomic<uint32_t> block_frames_[LEVEL_RING] = {};
+     std::atomic<uint64_t> block_seq_{0};
+     std::atomic<int64_t> last_block_ms_{0};
++
++    NetAudioLink net_;
++    std::atomic<bool> net_in_use_{false};
++    std::atomic<bool> capture_on_net_{false};
++    std::atomic<bool> playback_on_net_{false};
+ };
+diff --git a/net_audio.hh b/net_audio.hh
+new file mode 100644
+index 0000000..bbee646
+--- /dev/null
++++ b/net_audio.hh
+@@ -0,0 +1,176 @@
++#pragma once
++
++// Network audio: raw PCM over a TCP socket instead of a sound card.
++//
++// Select it by giving the same "tcp:HOST:PORT" as both --input-device and
++// --output-device. modem73 connects to HOST:PORT. The peer is the audio clock:
++// it streams mono signed 16-bit little-endian capture samples at the modem's
++// sample rate, and for every block it sends, modem73 answers with the same
++// number of playback samples (silence while idle). This lets another program
++// carry the modem's audio over a link that is not a sound card, such as a
++// radio's Bluetooth audio channel.
++
++#include <algorithm>
++#include <atomic>
++#include <cstdint>
++#include <functional>
++#include <string>
++#include <thread>
++#include <vector>
++
++#ifdef _WIN32
++#include <winsock2.h>
++#include <ws2tcpip.h>
++#undef IN
++#undef OUT
++#else
++#include <netdb.h>
++#include <netinet/in.h>
++#include <netinet/tcp.h>
++#include <sys/socket.h>
++#include <unistd.h>
++#endif
++
++class NetAudioLink {
++public:
++    using CaptureSink = std::function<void(const float*, size_t)>;
++    using PlaybackSource = std::function<void(float*, size_t)>;
++
++    static constexpr const char* PREFIX = "tcp:";
++
++    static bool is_net_device(const std::string& device) {
++        return device.rfind(PREFIX, 0) == 0;
++    }
++
++    ~NetAudioLink() { close(); }
++
++    // Connect and start the pump thread. On failure returns false and sets err.
++    bool open(const std::string& device, CaptureSink capture, PlaybackSource playback,
++              std::string* err) {
++        close();
++        std::string spec = device.substr(std::string(PREFIX).size());
++        size_t colon = spec.rfind(':');
++        if (colon == std::string::npos || colon == 0 || colon + 1 == spec.size()) {
++            if (err) *err = "expected tcp:HOST:PORT";
++            return false;
++        }
++        std::string host = spec.substr(0, colon);
++        std::string port = spec.substr(colon + 1);
++
++        addrinfo hints{};
++        hints.ai_family = AF_UNSPEC;
++        hints.ai_socktype = SOCK_STREAM;
++        addrinfo* res = nullptr;
++        if (getaddrinfo(host.c_str(), port.c_str(), &hints, &res) != 0 || !res) {
++            if (err) *err = "cannot resolve " + host;
++            return false;
++        }
++        Socket s = INVALID;
++        for (addrinfo* a = res; a; a = a->ai_next) {
++            s = ::socket(a->ai_family, a->ai_socktype, a->ai_protocol);
++            if (s == INVALID) continue;
++            if (::connect(s, a->ai_addr, (int)a->ai_addrlen) == 0) break;
++            close_socket(s);
++            s = INVALID;
++        }
++        freeaddrinfo(res);
++        if (s == INVALID) {
++            if (err) *err = "nothing listening on " + host + ":" + port;
++            return false;
++        }
++        int one = 1;
++        setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof(one));
++
++        sock_ = s;
++        capture_ = std::move(capture);
++        playback_ = std::move(playback);
++        stop_.store(false);
++        alive_.store(true);
++        thread_ = std::thread([this] { pump(); });
++        return true;
++    }
++
++    void close() {
++        stop_.store(true);
++        if (sock_ != INVALID) shutdown_socket(sock_);
++        if (thread_.joinable()) thread_.join();
++        if (sock_ != INVALID) close_socket(sock_);
++        sock_ = INVALID;
++        alive_.store(false);
++    }
++
++    // True while the peer is connected and the pump is running.
++    bool alive() const { return alive_.load(); }
++
++private:
++#ifdef _WIN32
++    using Socket = SOCKET;
++    static constexpr Socket INVALID = INVALID_SOCKET;
++    static void close_socket(Socket s) { closesocket(s); }
++    static void shutdown_socket(Socket s) { ::shutdown(s, SD_BOTH); }
++#else
++    using Socket = int;
++    static constexpr Socket INVALID = -1;
++    static void close_socket(Socket s) { ::close(s); }
++    static void shutdown_socket(Socket s) { ::shutdown(s, SHUT_RDWR); }
++#endif
++
++    bool send_all(const char* data, size_t len) {
++#ifdef MSG_NOSIGNAL
++        const int flags = MSG_NOSIGNAL;
++#else
++        const int flags = 0;
++#endif
++        while (len > 0) {
++            int n = ::send(sock_, data, (int)len, flags);
++            if (n <= 0) return false;
++            data += n;
++            len -= (size_t)n;
++        }
++        return true;
++    }
++
++    void pump() {
++        std::vector<char> bytes(8192);
++        size_t have = 0;
++        std::vector<float> in;
++        std::vector<float> out;
++        std::vector<char> wire;
++        while (!stop_.load()) {
++            int n = ::recv(sock_, bytes.data() + have, (int)(bytes.size() - have), 0);
++            if (n <= 0) break;
++            have += (size_t)n;
++            size_t frames = have / 2;
++            if (frames == 0) continue;
++
++            in.resize(frames);
++            for (size_t i = 0; i < frames; i++) {
++                int16_t v = (int16_t)((uint8_t)bytes[2 * i] | ((uint8_t)bytes[2 * i + 1] << 8));
++                in[i] = v / 32768.0f;
++            }
++            if (have % 2) bytes[0] = bytes[have - 1];
++            have %= 2;
++
++            capture_(in.data(), frames);
++            out.assign(frames, 0.0f);
++            playback_(out.data(), frames);
++
++            wire.resize(frames * 2);
++            for (size_t i = 0; i < frames; i++) {
++                float v = std::max(-1.0f, std::min(1.0f, out[i]));
++                uint16_t u = (uint16_t)(int16_t)(v * 32767.0f);
++                wire[2 * i] = (char)(u & 0xff);
++                wire[2 * i + 1] = (char)(u >> 8);
++            }
++            if (!send_all(wire.data(), wire.size())) break;
++        }
++        alive_.store(false);
++    }
++
++    Socket sock_ = INVALID;
++    std::thread thread_;
++    std::atomic<bool> stop_{false};
++    std::atomic<bool> alive_{false};
++    CaptureSink capture_;
++    PlaybackSource playback_;
++};

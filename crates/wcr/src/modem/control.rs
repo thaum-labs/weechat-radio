@@ -252,7 +252,7 @@ impl ControlClient {
                 .ok();
                 Ok(())
             }
-            "rigctl" => {
+            "rigctl" | "bluetooth" => {
                 self.set_config(serde_json::json!({
                     "ptt": "rigctl",
                     "rigctl": cfg.rigctl

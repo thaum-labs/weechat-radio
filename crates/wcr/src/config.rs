@@ -107,7 +107,9 @@ pub struct ModemConfig {
     pub control_port: u16,
     pub manage: bool,
     pub binary: String,
-    /// vox | digirig | cm108 | rigctl | hamlib | tnc | none
+    /// vox | digirig | cm108 | rigctl | hamlib | bluetooth | tnc | none
+    /// (`bluetooth`: modem73 audio and PTT over the radio's Bluetooth audio
+    /// channel, see `crate::btaudio`).
     pub ptt: String,
     /// Supported radio picked in setup, by its setup name; empty for the
     /// "Other" setups.
@@ -178,6 +180,12 @@ impl ModemConfig {
     /// VOX keys the radio (or speakers) for every RF burst, including beacons.
     pub fn is_vox(&self) -> bool {
         self.ptt.trim().eq_ignore_ascii_case("vox")
+    }
+
+    /// modem73's audio and PTT go over the radio's Bluetooth audio channel
+    /// (VR-N76, VR-N7600 and the other Benshi radios), no cable.
+    pub fn is_bt_audio(&self) -> bool {
+        !self.uses_tnc() && self.ptt.trim().eq_ignore_ascii_case("bluetooth")
     }
 }
 
@@ -672,6 +680,16 @@ impl Config {
             self.modem.preset = crate::presets::Preset::Afsk1200.as_str().into();
             if self.modem.ptt == "none" || self.modem.ptt.is_empty() {
                 self.modem.ptt = "tnc".into();
+            }
+        }
+        if self.modem.is_bt_audio() {
+            // wcr runs modem73 against its own Bluetooth bridge. 8PSK and
+            // faster fail over the radio's FM + SBC audio path (#202).
+            self.modem.manage = true;
+            if !crate::presets::Preset::parse(&self.modem.preset)
+                .is_some_and(crate::btaudio::preset_allowed)
+            {
+                self.modem.preset = crate::presets::Preset::VhfFm.as_str().into();
             }
         }
     }

@@ -64,6 +64,28 @@ The preset is fixed at `afsk-1200` (the radio modulates); the robustness ladder 
 - **Frame size.** Stay under ~200 bytes of payload. The app fragments longer messages automatically.
 - **macOS** creates `/dev/cu.VR-N76` on pairing but some versions never deliver data on it. Use `backend = "serial"` with that path, or a Linux/Windows machine.
 
+## Bluetooth audio mode (VR-N76, VR-N7600)
+
+The second way to use these radios: WeeChat Radio sends **modem73 audio** over the radio's Bluetooth link instead of using the 1200 bd TNC. Same no-cable setup, but you get the modem73 modes (faster, and the robustness ladder works).
+
+1. On the radio: **squelch low (1 or 2)**, **KISS TNC off**, **Digital Mode off**, then **Menu → Pairing**. Close the HT phone app.
+2. In setup choose **VR-N76 / UV-PRO / GA-5WB (Bluetooth audio, modem73)** or **VR-N7600 (Bluetooth audio, modem73)**, press **Find radio** (macOS: pair the radio in System Settings → Bluetooth first), then **Save and start**.
+3. **RADIO** reads `VR-N76 linked` in green, or `lost, reconnecting…` in red; the app reconnects by itself every 5 s.
+
+Presets: `vhf-fm` (default), `hf-poor`, `hf-weak` and `hf-deep`. `hf-good` is refused: the radio's Bluetooth audio codec (SBC) breaks 8PSK.
+
+```toml
+[modem]
+backend = "modem73"
+ptt = "bluetooth"       # modem73 keys the radio through wcr's Bluetooth bridge
+preset = "vhf-fm"
+
+[tnc]
+bt_name = "VR-N76"      # or bt_addr = "38:D2:00:01:03:49"
+```
+
+This needs the modem73 that comes with WeeChat Radio (it adds network audio); a stock modem73 is refused with a clear message.
+
 ## Linux
 
 Pair once, then the app connects by address:
