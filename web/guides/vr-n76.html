@@ -247,6 +247,26 @@
         </ul>
       </section>
 
+      <section class="article-section" aria-labelledby="btAudioH">
+        <h2 id="btAudioH">Bluetooth audio mode (VR-N76, VR-N7600)</h2>
+        <p>The second way to use these radios: the app sends <strong>modem73</strong> audio over the radio’s Bluetooth link instead of using the 1200 bd TNC. Still no cable or sound card, but you get the faster modem73 modes and the robustness ladder.</p>
+        <ol class="steps">
+          <li>
+            <strong class="step-title">On the radio</strong>
+            <p>Squelch low (1 or 2), <strong>KISS TNC off</strong>, <strong>Digital Mode off</strong>, then <strong>Menu → Pairing</strong>. Close the HT phone app.</p>
+          </li>
+          <li>
+            <strong class="step-title">In setup</strong>
+            <p>Choose <strong>VR-N76 / UV-PRO / GA-5WB (Bluetooth audio, modem73)</strong> or <strong>VR-N7600 (Bluetooth audio, modem73)</strong>, press <strong>Find radio</strong>, then <strong>Save and start</strong>. On a Mac, pair the radio in System Settings → Bluetooth first and allow Bluetooth when macOS asks.</p>
+          </li>
+          <li>
+            <strong class="step-title">Check RADIO</strong>
+            <p><strong>RADIO</strong> reads <code>VR-N76 linked</code> in green, or <code>lost, reconnecting…</code> in red; the app reconnects by itself.</p>
+          </li>
+        </ol>
+        <p>Presets: <code>vhf-fm</code> (default), <code>hf-poor</code>, <code>hf-weak</code>, <code>hf-deep</code>. <code>hf-good</code> is refused: the radio’s Bluetooth codec breaks 8PSK. This needs the modem73 that comes with WeeChat Radio 1.0.2 or newer.</p>
+      </section>
+
       <p class="next">Other paths: <a href="/guides/handheld.html">handheld + Digirig</a> · <a href="/guides/vox.html">VOX cable</a> · <a href="/guides/hf.html">HF + CAT</a>. Frequencies: <a href="/docs/calling.html">calling</a>.</p>
       <p class="next next-antenna"><strong>Next: put up an antenna →</strong> <a href="/guides/antennas-vhf.html">VHF and UHF antennas</a> · <a href="/guides/antennas-hf.html">HF antennas</a></p>
     </main>

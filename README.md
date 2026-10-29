@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.89-DEA584?logo=rust&logoColor=white" alt="Rust 1.89" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="Apache-2.0" /></a>
-  <img src="https://img.shields.io/badge/version-1.0.1-7d9bff" alt="Version 1.0.1" />
+  <img src="https://img.shields.io/badge/version-1.0.2-7d9bff" alt="Version 1.0.2" />
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6" alt="Windows, macOS and Linux" />
   <br/>
   <a href="https://weechat.org/"><img src="https://img.shields.io/badge/WeeChat-IRC-00A7E0" alt="WeeChat" /></a>
@@ -151,8 +151,9 @@ You need a valid licence, a radio, and audio into the PC. [modem73](https://gith
 
 | Path | What you need |
 |------|----------------|
-| Supported radio | Pick it by name in setup: VR-N76 / UV-PRO / GA-5WB, VR-N7600 (Bluetooth); Xiegu X6100, X6200, G90, G106, X5105, Yaesu FT-710, QRP Labs QDX, (tr)uSDX (CAT); AnyTone AT-5555N, Retevis RT95 (Digirig); IC-980 Pro (VOX cable). Setup fills in the rest; you confirm the port and sound card. CAT radios need no Hamlib install: modem73 talks to the radio itself |
+| Supported radio | Pick it by name in setup: VR-N76 / UV-PRO / GA-5WB, VR-N7600 (Bluetooth TNC or Bluetooth audio); Xiegu X6100, X6200, G90, G106, X5105, Yaesu FT-710, QRP Labs QDX, (tr)uSDX (CAT); AnyTone AT-5555N, Retevis RT95 (Digirig); IC-980 Pro (VOX cable). Setup fills in the rest; you confirm the port and sound card. CAT radios need no Hamlib install: modem73 talks to the radio itself |
 | VR-N76 / UV-PRO (Bluetooth) | Vero VR-N76, BTECH UV-PRO or Radioddity GA-5WB — built-in KISS TNC, no cable; the app pairs and connects (`wcr tnc find`) |
+| VR-N76 / VR-N7600 (Bluetooth audio) | Same radios, modem73 instead of the built-in TNC: wcr carries the audio and PTT over Bluetooth, no cable or sound card. Presets vhf-fm, hf-poor, hf-weak, hf-deep |
 | KISS TNC on a serial port | Mobilinkd, `/dev/rfcomm0`, or any KISS TNC on a COM port |
 | Handheld + Digirig | VHF/UHF HT and a [Digirig](https://digirig.net/) (or AIOC) USB cable |
 | VOX cable | Any radio that keys on VOX, plus a 3.5 mm audio cable |
