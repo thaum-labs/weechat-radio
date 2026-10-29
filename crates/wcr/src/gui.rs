@@ -4215,9 +4215,7 @@ impl GuiApp {
                 }
             }
         });
-        ui.add_space(4.0);
-        paint_mail_key(ui);
-        ui.add_space(4.0);
+        ui.add_space(6.0);
         let rows = self.mail_rows.clone();
         let mut open_id = None;
         let mut delete_id = None;
@@ -4736,51 +4734,6 @@ fn mail_chip(ui: &mut egui::Ui, label: &str, key: &str, mark: &str) -> egui::Res
     resp
 }
 
-/// What each chip means, for the Email tab's status key.
-const MAIL_KEY: &[(&str, &str, &str)] = &[
-    ("queued", "Queued", "waiting for the radio or the hub"),
-    ("tx", "On air", "keyed to the gateway"),
-    ("gateway", "At gateway", "the gateway has every chunk"),
-    ("sent", "Sent", "Resend accepted it"),
-    ("delivered", "Delivered", "the recipient's server took it"),
-    ("delayed", "Delayed", "Resend is still trying"),
-    ("bounced", "Bounced", "the recipient's server refused it"),
-    ("spam", "Spam", "the recipient marked it as spam"),
-    ("failed", "Failed", "not sent; the reason is in the mail"),
-    ("no_record", "No record", "the hub has no delivery record"),
-];
-
-fn paint_mail_key(ui: &mut egui::Ui) {
-    egui::CollapsingHeader::new(RichText::new("status key").color(DIM).monospace().small())
-        .id_salt("mail_status_key")
-        .show(ui, |ui| {
-            egui::Grid::new("mail_key_grid")
-                .num_columns(2)
-                .spacing([8.0, 2.0])
-                .show(ui, |ui| {
-                    for (key, label, meaning) in MAIL_KEY {
-                        let mark = crate::mail::state_mark(match *key {
-                            "queued" | "tx" | "gateway" | "failed" => key,
-                            _ => "sent",
-                        })
-                        .trim();
-                        mail_chip(ui, label, key, mark);
-                        ui.label(RichText::new(*meaning).color(DIM).monospace().small());
-                        ui.end_row();
-                    }
-                });
-            ui.label(
-                RichText::new(format!(
-                    "Times are local ({}). There is no read status: mail goes out as plain text.",
-                    local_zone()
-                ))
-                .color(DIM)
-                .monospace()
-                .small(),
-            );
-        });
-}
-
 struct MailListRow<'a> {
     selected: bool,
     unread: bool,
@@ -4886,10 +4839,6 @@ fn hop_name<'a>(stage: &str, report: &'a str) -> &'a str {
         "report" => report,
         _ => "",
     }
-}
-
-fn local_zone() -> String {
-    chrono::Local::now().format("UTC%:z").to_string()
 }
 
 /// Local time with the zone, for the opened mail and hover text.

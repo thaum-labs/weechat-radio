@@ -51,7 +51,7 @@ A toast timer does not mark Sent. The compose hint and the send confirm both sho
 
 ## Status in the Email tab
 
-Every mail in the list has one coloured chip, and **status key** under the folder tabs explains them:
+Every mail in the list has one coloured chip:
 
 | Chip | Mark | Meaning |
 | --- | --- | --- |
@@ -68,7 +68,7 @@ Every mail in the list has one coloured chip, and **status key** under the folde
 
 Inbox mail shows Received, with an orange dot and brighter text while unread. Radio+ headers not fetched yet show Waiting and the size, in the same layout. Screen readers hear the mark with the chip, for example `[ok] Delivered`.
 
-Times are local, with the zone in the status key and in the opened mail. The opened mail shows the chip, the full reason when something went wrong, and when it reached each hop: created, on air, at gateway, accepted by Resend, then delivered, bounced or another final answer. Inbound mail shows when the sender sent it and when this station fetched it. Mail from before this version shows only the times it reaches from now on.
+Times are local; the opened mail shows them with the zone. The opened mail shows the chip, the full reason when something went wrong, and when it reached each hop: created, on air, at gateway, accepted by Resend, then delivered, bounced or another final answer. Inbound mail shows when the sender sent it and when this station fetched it. Mail from before this version shows only the times it reaches from now on.
 
 Failed reasons say where the mail stopped: the gateway never acknowledged it, the gateway has it but the hub refused it (with the hub's reason), the hub refused it, or the hub could not be reached. A hub-path mail that the hub refuses, or that finds the hub down, is Failed at once rather than left Queued.
 
