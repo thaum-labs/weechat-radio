@@ -8,6 +8,7 @@ mod hub;
 mod lease;
 mod progress;
 mod proto;
+mod status;
 mod store;
 
 use crate::config::Config;
@@ -26,10 +27,11 @@ pub fn airtime_parts(mail: &AirtimeMail<'_>, preset: Preset, turnaround_ms: u32)
 }
 use parking_lot::Mutex;
 use serde_json::{json, Value};
+pub use status::{mail_status, MailStatus, MailView};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-pub use store::{GetProgress, MailRow, WaitHeader};
+pub use store::{GetProgress, Hop, MailRow, WaitHeader};
 use tokio::sync::{broadcast, mpsc};
 
 pub use api::{router, MailSlot};
@@ -327,6 +329,29 @@ impl MailHandle {
         Ok(json!({ "id": id, "path": path, "airtime": airtime }))
     }
 
+    /// The row with its status and hop times, for the local mail API.
+    pub fn view(&self, row: MailRow) -> MailView {
+        let hops = self.store.hops(&row.id).unwrap_or_default();
+        let online = self.cfg.lock().hub.enabled() && self.store.hub_reachable();
+        let now = chrono::Utc::now().timestamp();
+        MailView {
+            status: mail_status(&row, &hops, now, online),
+            row,
+            hops,
+        }
+    }
+
+    /// Retry a Failed mail: back to the outbox and sent again from the start,
+    /// on the same path and RF pacing as a new send.
+    pub async fn retry(&self, id: &str) -> Result<bool> {
+        if !self.store.reset_for_retry(id)? {
+            return Ok(false);
+        }
+        tracing::info!("mail retry by hand {id}");
+        let _ = self.cmd.send(MailCmd::Send { id: id.to_string() }).await;
+        Ok(true)
+    }
+
     pub async fn check_list(&self) -> Result<()> {
         let _ = self.cmd.send(MailCmd::CheckList).await;
         Ok(())
@@ -405,15 +430,16 @@ impl MailHandle {
         if cfg.hub.enabled() {
             let base = hub::http_base_from_hub(&cfg.hub.url);
             let body = json!({ "mail_id": id });
-            if let Ok((status, text)) = hub::signed_post_raw(
+            let answer = hub::signed_post_raw(
                 &base,
                 "/api/v1/mail/status",
                 &self.keys,
                 &cfg.callsign,
                 &body,
             )
-            .await
-            {
+            .await;
+            self.store.note_hub_reach(answer.is_ok());
+            if let Ok((status, text)) = answer {
                 let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
                 if (200..300).contains(&status) {
                     let state = v.get("state").and_then(|s| s.as_str()).unwrap_or("");

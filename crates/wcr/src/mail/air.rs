@@ -439,7 +439,10 @@ fn note_mail(ctx: &TxCtx, origin: &str, dest: &str) {
 async fn hub_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
     let cfg = ctx.cfg.lock().clone();
     if !ctx.snap.lock().hub_ok {
-        return Err(Error::Net("Hub is down.".into()));
+        // Failed, not left Queued: the Email tab offers Retry.
+        let err = "The hub is down. Retry when it is back.";
+        ctx.store.set_outcome(&row.id, "outbox", "failed", err)?;
+        return Err(Error::Net(err.into()));
     }
     let base = hub::http_base_from_hub(&cfg.hub.url);
     let copy = ctx.store.copy(&cfg.callsign)?;
@@ -456,7 +459,16 @@ async fn hub_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
         bcc.as_deref(),
         &row.id,
     );
-    let v = hub::signed_post(&base, "/api/v1/mail/send", &ctx.keys, &cfg.callsign, &body).await?;
+    let v =
+        match hub::signed_post(&base, "/api/v1/mail/send", &ctx.keys, &cfg.callsign, &body).await {
+            Ok(v) => v,
+            Err(e) => {
+                let err = gateway::hub_send_error(&e.to_string());
+                ctx.store.set_outcome(&row.id, "outbox", "failed", &err)?;
+                tracing::info!("mail failed {}: {err}", row.id);
+                return Err(e);
+            }
+        };
     if gateway::resend_accepted(v.get("ok").and_then(|x| x.as_bool()).unwrap_or(false)) {
         ctx.store.set_outcome(&row.id, "sent", "sent", "")?;
         tracing::info!("mail accepted {}", row.id);

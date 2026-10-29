@@ -26,6 +26,12 @@ CREATE TABLE IF NOT EXISTS mail (
     delivery TEXT NOT NULL DEFAULT '',
     delivery_ts INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS mail_hop (
+    id TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    ts INTEGER NOT NULL,
+    PRIMARY KEY (id, stage)
+);
 CREATE TABLE IF NOT EXISTS mail_wait (
     id TEXT PRIMARY KEY,
     from_addr TEXT NOT NULL,
@@ -67,6 +73,26 @@ pub struct MailRow {
     /// `bounced`, `delivery_delayed`, … Empty until the first check.
     #[serde(default)]
     pub delivery: String,
+}
+
+/// When a mail reached one stage: `air`, `gateway`, `sent` (Resend
+/// accepted it), `failed`, `report` (Resend's final answer) or `fetched`
+/// (an inbound mail arrived here). The first time counts.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Hop {
+    pub stage: String,
+    pub ts: i64,
+}
+
+/// The hop a state change reaches, if any.
+fn hop_for_state(state: &str) -> Option<&'static str> {
+    match state {
+        "tx" => Some("air"),
+        "gateway" => Some("gateway"),
+        "sent" => Some("sent"),
+        "failed" => Some("failed"),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -120,6 +146,8 @@ impl GetProgress {
 
 pub struct MailStore {
     conn: Mutex<Connection>,
+    /// Did the last delivery check reach the hub? `None` before the first.
+    hub_reach: Mutex<Option<bool>>,
     notice: Mutex<String>,
     get: Mutex<GetProgress>,
 }
@@ -135,6 +163,7 @@ impl MailStore {
         migrate(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
+            hub_reach: Mutex::new(None),
             notice: Mutex::new(String::new()),
             get: Mutex::new(GetProgress::default()),
         })
@@ -146,6 +175,7 @@ impl MailStore {
         migrate(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
+            hub_reach: Mutex::new(None),
             notice: Mutex::new(String::new()),
             get: Mutex::new(GetProgress::default()),
         })
@@ -204,7 +234,50 @@ impl MailStore {
                 row.delivery,
             ],
         )?;
+        // A new row (or the same mail composed again) starts a new timeline.
+        conn.execute("DELETE FROM mail_hop WHERE id = ?1", params![row.id])?;
+        if row.folder == "inbox" {
+            add_hop(&conn, &row.id, "fetched", chrono::Utc::now().timestamp())?;
+        }
         Ok(())
+    }
+
+    /// Times this mail reached each stage, in the order it reached them.
+    pub fn hops(&self, id: &str) -> Result<Vec<Hop>> {
+        let conn = self.conn.lock();
+        let mut stmt =
+            conn.prepare("SELECT stage, ts FROM mail_hop WHERE id = ?1 ORDER BY rowid ASC")?;
+        let rows = stmt.query_map(params![id], |r| {
+            Ok(Hop {
+                stage: r.get(0)?,
+                ts: r.get(1)?,
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Error::from)
+    }
+
+    pub fn note_hub_reach(&self, reached: bool) {
+        *self.hub_reach.lock() = Some(reached);
+    }
+
+    /// False only when the last delivery check could not reach the hub.
+    pub fn hub_reachable(&self) -> bool {
+        self.hub_reach.lock().unwrap_or(true)
+    }
+
+    /// Manual Retry of a Failed mail: back to the outbox as a fresh send.
+    /// Returns false unless the mail is Failed.
+    pub fn reset_for_retry(&self, id: &str) -> Result<bool> {
+        let conn = self.conn.lock();
+        let n = conn.execute(
+            "UPDATE mail SET folder = 'outbox', state = 'queued', retries = 0, detail = '' WHERE id = ?1 AND state = 'failed'",
+            params![id],
+        )?;
+        if n == 1 {
+            conn.execute("DELETE FROM mail_hop WHERE id = ?1", params![id])?;
+        }
+        Ok(n == 1)
     }
 
     pub fn get(&self, id: &str) -> Result<Option<MailRow>> {
@@ -234,6 +307,9 @@ impl MailStore {
             "UPDATE mail SET folder = ?2, state = ?3, unread = CASE WHEN ?2 = 'inbox' THEN 1 ELSE unread END WHERE id = ?1",
             params![id, folder, state],
         )?;
+        if let Some(stage) = hop_for_state(state) {
+            add_hop(&conn, id, stage, chrono::Utc::now().timestamp())?;
+        }
         Ok(())
     }
 
@@ -250,6 +326,9 @@ impl MailStore {
             "UPDATE mail SET folder = ?2, state = ?3, detail = ?4, unread = CASE WHEN ?2 = 'inbox' THEN 1 ELSE unread END WHERE id = ?1",
             params![id, folder, state, detail],
         )?;
+        if let Some(stage) = hop_for_state(state) {
+            add_hop(&conn, id, stage, chrono::Utc::now().timestamp())?;
+        }
         Ok(())
     }
 
@@ -288,10 +367,14 @@ impl MailStore {
 
     /// Save the hub's delivery answer and when it was asked.
     pub fn set_delivery(&self, id: &str, delivery: &str, now: i64) -> Result<()> {
-        self.conn.lock().execute(
+        let conn = self.conn.lock();
+        conn.execute(
             "UPDATE mail SET delivery = ?2, delivery_ts = ?3 WHERE id = ?1",
             params![id, delivery, now],
         )?;
+        if super::progress::delivery_final(delivery) {
+            add_hop(&conn, id, "report", now)?;
+        }
         Ok(())
     }
 
@@ -334,10 +417,9 @@ impl MailStore {
     }
 
     pub fn delete(&self, id: &str) -> Result<bool> {
-        let n = self
-            .conn
-            .lock()
-            .execute("DELETE FROM mail WHERE id = ?1", params![id])?;
+        let conn = self.conn.lock();
+        let n = conn.execute("DELETE FROM mail WHERE id = ?1", params![id])?;
+        conn.execute("DELETE FROM mail_hop WHERE id = ?1", params![id])?;
         Ok(n == 1)
     }
 
@@ -515,6 +597,77 @@ mod tests {
         assert_eq!(store.get_progress().got, 6);
     }
 
+    fn out_row(id: &str) -> MailRow {
+        MailRow {
+            id: id.into(),
+            folder: "outbox".into(),
+            state: "queued".into(),
+            ts: 100,
+            ack: true,
+            ..MailRow::default()
+        }
+    }
+
+    #[test]
+    fn each_stage_keeps_its_first_time_and_a_report_ends_the_timeline() {
+        let store = MailStore::open_memory().unwrap();
+        store.insert(&out_row("m1")).unwrap();
+        assert!(store.hops("m1").unwrap().is_empty());
+        store.set_state("m1", "outbox", "tx").unwrap();
+        store.set_state("m1", "outbox", "tx").unwrap();
+        store.set_outcome("m1", "outbox", "gateway", "").unwrap();
+        store.set_outcome("m1", "sent", "sent", "").unwrap();
+        store.set_delivery("m1", "sent", 500).unwrap();
+        store.set_delivery("m1", "delivered", 600).unwrap();
+        store.set_delivery("m1", "delivered", 700).unwrap();
+        let hops = store.hops("m1").unwrap();
+        let stages: Vec<&str> = hops.iter().map(|h| h.stage.as_str()).collect();
+        assert_eq!(stages, ["air", "gateway", "sent", "report"]);
+        assert_eq!(hops[3].ts, 600);
+        assert!(store.delete("m1").unwrap());
+        assert!(store.hops("m1").unwrap().is_empty());
+    }
+
+    #[test]
+    fn inbound_mail_records_when_it_was_fetched() {
+        let store = MailStore::open_memory().unwrap();
+        store
+            .insert(&MailRow {
+                folder: "inbox".into(),
+                state: "received".into(),
+                unread: true,
+                ..out_row("in1")
+            })
+            .unwrap();
+        let hops = store.hops("in1").unwrap();
+        assert_eq!(hops.len(), 1);
+        assert_eq!(hops[0].stage, "fetched");
+    }
+
+    #[test]
+    fn retry_takes_only_failed_mail_back_to_the_outbox_as_a_fresh_send() {
+        let store = MailStore::open_memory().unwrap();
+        store.insert(&out_row("m1")).unwrap();
+        store.set_state("m1", "outbox", "tx").unwrap();
+        assert!(!store.reset_for_retry("m1").unwrap());
+        store.bump_retry("m1").unwrap();
+        store
+            .set_outcome("m1", "outbox", "failed", "Gateway did not acknowledge.")
+            .unwrap();
+        assert!(store.reset_for_retry("m1").unwrap());
+        let row = store.get("m1").unwrap().unwrap();
+        assert_eq!(
+            (
+                row.folder.as_str(),
+                row.state.as_str(),
+                row.retries,
+                row.detail.as_str()
+            ),
+            ("outbox", "queued", 0, "")
+        );
+        assert!(store.hops("m1").unwrap().is_empty());
+    }
+
     #[test]
     fn a_fetched_mail_clears_its_waiting_header_and_a_header_can_be_deleted() {
         let store = MailStore::open_memory().unwrap();
@@ -536,6 +689,15 @@ mod tests {
         assert!(store.delete_waiting("h2").unwrap());
         assert!(store.waiting().unwrap().is_empty());
     }
+}
+
+/// The first time a mail reaches a stage is kept.
+fn add_hop(conn: &Connection, id: &str, stage: &str, ts: i64) -> Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO mail_hop(id, stage, ts) VALUES(?1, ?2, ?3)",
+        params![id, stage, ts],
+    )?;
+    Ok(())
 }
 
 fn map_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<MailRow> {

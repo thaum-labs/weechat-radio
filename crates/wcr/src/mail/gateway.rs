@@ -201,6 +201,24 @@ pub fn check_notice(waiting: usize) -> &'static str {
     }
 }
 
+/// The Failed reason when posting to the hub went wrong: the hub's own
+/// error when it answered (`hub mail 502: {"error":"…"}`), else unreachable.
+pub fn hub_send_error(err: &str) -> String {
+    let Some(rest) = err.strip_prefix("hub mail ") else {
+        return "The hub could not be reached. Retry when it is back.".into();
+    };
+    let (_, text) = rest.split_once(": ").unwrap_or(("", rest));
+    let why = serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_string))
+        .unwrap_or_else(|| text.trim().to_string());
+    if why.is_empty() {
+        "The hub refused it.".into()
+    } else {
+        format!("The hub refused it: {why}")
+    }
+}
+
 /// `None` when this CompleteAck means Resend accepted the message.
 pub fn failure_text(payload: &str) -> Option<String> {
     let text = payload.trim();
@@ -229,6 +247,22 @@ pub fn state_mark(state: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hub_send_error_names_the_hubs_reason() {
+        assert_eq!(
+            hub_send_error(r#"hub mail 502: {"error":"resend: invalid key"}"#),
+            "The hub refused it: resend: invalid key"
+        );
+        assert_eq!(
+            hub_send_error("hub mail 400: bad"),
+            "The hub refused it: bad"
+        );
+        assert_eq!(
+            hub_send_error("error sending request"),
+            "The hub could not be reached. Retry when it is back."
+        );
+    }
 
     #[test]
     fn local_tx_is_not_accepted_and_a_missed_ack_fails() {
