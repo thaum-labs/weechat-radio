@@ -1,7 +1,8 @@
 //! SPDX-License-Identifier: Apache-2.0
 //! `wcr web` runs the station (`wcr node`) as its child, as the desktop app
 //! does, so the page can stop and start it and stays up while it is down.
-//! The child's log lines are kept for the page's log tail.
+//! The child's log lines are kept for the page's log tail and also written
+//! to our own stderr, so `journalctl -u wcr-web` has them.
 
 use parking_lot::Mutex;
 use std::collections::VecDeque;
@@ -54,6 +55,7 @@ impl Station {
     }
 
     pub fn note(&self, line: &str) {
+        eprintln!("web: {line}");
         push_line(&self.log, &format!("web: {line}"));
     }
 
@@ -66,13 +68,15 @@ impl Station {
             .collect()
     }
 
-    /// The last `n` warnings and errors, oldest first.
+    /// The last `n` warnings and errors, newest first, so the latest one
+    /// is at the top of the page's box.
     pub fn errors(&self, n: usize) -> Vec<String> {
         let log = self.log.lock();
-        let bad: Vec<&String> = log.iter().filter(|l| is_problem(l)).collect();
-        bad[bad.len().saturating_sub(n)..]
-            .iter()
-            .map(|s| s.to_string())
+        log.iter()
+            .rev()
+            .filter(|l| is_problem(l))
+            .take(n)
+            .cloned()
             .collect()
     }
 
@@ -172,6 +176,7 @@ type Log = Arc<Mutex<VecDeque<String>>>;
 async fn read_lines(pipe: impl tokio::io::AsyncRead + Unpin, log: Log) {
     let mut lines = BufReader::new(pipe).lines();
     while let Ok(Some(line)) = lines.next_line().await {
+        eprintln!("{line}");
         push_line(&log, &line);
     }
 }
@@ -238,8 +243,19 @@ mod tests {
         let s = Station::new(PathBuf::from("wcr.toml"));
         push_line(&s.log, "2026-10-29T15:00:00Z  INFO hub up");
         push_line(&s.log, "2026-10-29T15:00:01Z  WARN hub down");
-        assert_eq!(s.log_tail(5).len(), 2);
-        assert_eq!(s.errors(5), vec!["2026-10-29T15:00:01Z  WARN hub down"]);
+        push_line(&s.log, "2026-10-29T15:00:02Z  WARN modem73 exited");
+        assert_eq!(s.log_tail(5).len(), 3);
+        assert_eq!(
+            s.errors(5),
+            vec![
+                "2026-10-29T15:00:02Z  WARN modem73 exited",
+                "2026-10-29T15:00:01Z  WARN hub down"
+            ]
+        );
+        assert_eq!(
+            s.errors(1),
+            vec!["2026-10-29T15:00:02Z  WARN modem73 exited"]
+        );
     }
 
     #[test]

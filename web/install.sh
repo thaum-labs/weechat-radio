@@ -74,11 +74,17 @@ verify_sha256() {
 
 URL="https://github.com/${REPO}/releases/latest/download/${ASSET}"
 echo "Downloading $URL"
-curl -fsSL "$URL" -o "$TMP/wcr.tgz" || {
-  echo "No release asset yet. Build from source:"
-  echo "  git clone https://github.com/${REPO} && cd weechat-radio && cargo install --path crates/wcr"
+CURL_RC=0
+curl -fsSL "$URL" -o "$TMP/wcr.tgz" || CURL_RC=$?
+if [ "$CURL_RC" = 22 ]; then
+  # curl -f: the server answered with an error (404: no build for this system).
+  echo "No release asset for this system yet. Build from source:" >&2
+  echo "  git clone https://github.com/${REPO} && cd weechat-radio && cargo install --path crates/wcr" >&2
   exit 1
-}
+elif [ "$CURL_RC" != 0 ]; then
+  echo "The download failed (network error, curl code $CURL_RC). Check the connection and run the installer again." >&2
+  exit 1
+fi
 verify_sha256 "$TMP/wcr.tgz" "$URL"
 tar -xzf "$TMP/wcr.tgz" -C "$TMP"
 BIN="$TMP/wcr"
@@ -127,6 +133,39 @@ elif [ -n "$MODEM" ]; then
   chmod +x "$MODEM"
   mv "$MODEM" "$PREFIX/modem73"
   echo "Installed $PREFIX/modem73"
+fi
+# Libraries a program needs that this system lacks (Linux only).
+missing_libs() {
+  ldd "$1" 2>/dev/null | awk '/not found/ {print $1}' | tr '\n' ' '
+}
+
+# modem73 needs ncurses, hidapi and hamlib, which Raspberry Pi OS Lite and
+# other minimal Debian systems do not have. Debian 13 and Ubuntu 24.04 call
+# hamlib libhamlib4t64; older releases call it libhamlib4.
+if [ "$OS" = "linux" ] && [ -n "$(missing_libs "$PREFIX/modem73")" ] && command -v apt-get >/dev/null 2>&1; then
+  echo "modem73 (radio sound) needs a few libraries. Installing them with apt. sudo may ask for your password."
+  sudo apt-get update -y || true
+  sudo apt-get install -y libncurses6 libhidapi-hidraw0 libhamlib4t64 \
+    || sudo apt-get install -y libncurses6 libhidapi-hidraw0 libhamlib4 \
+    || true
+fi
+if [ "$OS" = "linux" ]; then
+  # Fail here, loudly, rather than leave a station that cannot start.
+  if ! "$PREFIX/wcr" --version >/dev/null 2>&1; then
+    echo "" >&2
+    echo "Installed $PREFIX/wcr, but it does not start on this system." >&2
+    echo "Missing libraries: $(missing_libs "$PREFIX/wcr")" >&2
+    echo "Report it at https://github.com/${REPO}/issues with the line above." >&2
+    exit 1
+  fi
+  MODEM_MISSING=$(missing_libs "$PREFIX/modem73")
+  if [ -n "$MODEM_MISSING" ]; then
+    echo "" >&2
+    echo "Installed $PREFIX/modem73, but it cannot start: missing $MODEM_MISSING" >&2
+    echo "On Debian or Raspberry Pi OS: sudo apt-get install libncurses6 libhidapi-hidraw0 libhamlib4t64" >&2
+    echo "Then run the installer again." >&2
+    exit 1
+  fi
 fi
 RADIO=""
 if [ -f "$TMP/radio.py" ]; then RADIO="$TMP/radio.py"; fi
@@ -217,7 +256,7 @@ if [ "${WCR_SKIP_WEECHAT:-}" != "1" ]; then
     elif command -v apt-get >/dev/null 2>&1; then
       echo "WeeChat is the chat program this station connects to."
       echo "Installing it with apt. sudo may ask for your password."
-      sudo apt-get update -y && sudo apt-get install -y weechat-curses weechat-python || true
+      sudo apt-get update -y && sudo apt-get install -y weechat-curses weechat-headless weechat-python || true
       WEECHAT_TRIED="apt"
     elif command -v dnf >/dev/null 2>&1; then
       echo "WeeChat is the chat program this station connects to."

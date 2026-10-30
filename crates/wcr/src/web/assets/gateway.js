@@ -71,7 +71,7 @@ function draw(d) {
     ["frequency", s.frequency ? `${s.frequency}${s.band ? ` (${s.band})` : ""}` : "—"],
     ["mode", s.mode || "—"],
     ["preset", s.preset ? `${s.preset}${s.tx_rung ? ` · ${s.tx_rung}` : ""}` : "—"],
-    ["modem", s.tnc || (s.modem73 ? `modem73 ${s.modem73}` : "—")],
+    ["modem", s.tnc || (s.modem73 ? `modem73 ${s.modem73}${running && !radioUp(s) ? " (not running)" : ""}` : "—")],
     ["forwarded", s.relayed !== undefined ? `${s.relayed} frames (${s.relayed_unique} messages)` : "—"],
     ["restarts", String(d.station.restarts)],
   ];
@@ -79,6 +79,7 @@ function draw(d) {
   const dl = $("facts");
   dl.replaceChildren();
   for (const [k, v] of facts) dl.append(el("dt", "", k), el("dd", "", v));
+  setFreq = d.frequency || "";
   $("start").disabled = running;
   $("stop").disabled = !running;
   fill($("relay"), d.relay_mail, mailRow, running ? "No mail through this gateway yet." : "Station stopped.");
@@ -102,9 +103,12 @@ function draw(d) {
   $("updated").textContent = `Updated ${new Date().toLocaleTimeString()}${d.answering || !running ? "" : " · the station is not answering yet"}`;
 }
 
+// The node sets audio_label to "no modem" or "no audio" while modem73 is not
+// running or has no sound card, and to a level (or "—") once it is attached.
+// s.modem73 is only the installed version, not a sign that it runs.
 function radioUp(s) {
   if (s.tnc) return !!s.tnc_ok;
-  return !!s.modem73 && s.audio_label !== "" && s.audio_label !== "no audio";
+  return !["", "no modem", "no audio"].includes(s.audio_label || "");
 }
 
 async function poll() {
@@ -117,10 +121,12 @@ async function poll() {
   }
 }
 
+// The frequency from wcr.toml, known while the station is stopped too.
+let setFreq = "";
+
 async function act(what) {
-  const freq = $("facts").querySelector("dd:nth-of-type(2)")?.textContent || "";
   const ask = what === "start"
-    ? `Start the station? It will transmit on ${freq || "its set frequency"} (beacons and gateway replies). You are the control operator.`
+    ? `Start the station? It will transmit on ${setFreq || "its set frequency"} (beacons and gateway replies). You are the control operator.`
     : "Stop the station? The gateway stops until Start is pressed.";
   if (!confirm(ask)) return;
   $("action").textContent = what === "start" ? "Starting…" : "Stopping…";

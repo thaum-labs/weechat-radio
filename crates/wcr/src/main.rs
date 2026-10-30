@@ -112,12 +112,24 @@ async fn real_main() -> Result<()> {
             {
                 wcr::gui::run()?;
             }
+            // The Linux release `wcr` is headless (it must start on a Pi
+            // without GTK), so it hands over to `wcr-gui` next to it.
             #[cfg(not(feature = "desktop"))]
             {
-                return Err(wcr::Error::Msg(
-                    "this build has no desktop GUI; install the official binary or build with --features desktop"
-                        .into(),
-                ));
+                let gui = std::env::current_exe()
+                    .map(|p| p.with_file_name(format!("wcr-gui{}", std::env::consts::EXE_SUFFIX)))
+                    .ok()
+                    .filter(|p| p.is_file());
+                let Some(gui) = gui else {
+                    return Err(wcr::Error::Msg(
+                        "this build has no desktop GUI and no wcr-gui next to it; install the official release or build with --features desktop"
+                            .into(),
+                    ));
+                };
+                let status = std::process::Command::new(&gui).status()?;
+                if !status.success() {
+                    std::process::exit(status.code().unwrap_or(1));
+                }
             }
         }
         Command::Weechat { configure } => {

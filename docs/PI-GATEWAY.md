@@ -22,7 +22,7 @@ On the Pi, logged in as your own user (not root):
    curl -fsSL https://weechatradio.com/install.sh | sh
    ```
 
-   On a 64-bit Pi this fetches the `linux-aarch64` build of `wcr` and `modem73` into `~/.local/bin`.
+   On a 64-bit Pi this fetches the `linux-aarch64` build of `wcr` and `modem73` into `~/.local/bin`. It also installs, with apt, the few libraries `modem73` needs (`libncurses6`, `libhidapi-hidraw0`, `libhamlib4t64`) and WeeChat. `wcr` itself needs no desktop libraries, so Raspberry Pi OS Lite is enough. If anything is still missing, the installer stops with an error that names it.
 
 2. Let your user reach the serial port and sound card:
 
@@ -38,7 +38,7 @@ On the Pi, logged in as your own user (not root):
    wcr setup
    ```
 
-   Choose `internet-radio` mode (this station is the gateway). Choose the preset for the band, the Digirig or sound card, the PTT, and the dial frequency the radio stays on.
+   Choose the preset for the band, the Digirig or sound card, the PTT, and the dial frequency the radio stays on. Setup puts a station with both a radio and the internet in `internet-radio` mode by itself; that is the mode a gateway needs. Without a desktop it ends by pointing you at the next two steps.
 
 4. Choose a password for the web page (at least 8 characters):
 
@@ -52,7 +52,7 @@ On the Pi, logged in as your own user (not root):
    sudo ~/.local/bin/wcr web install
    ```
 
-   This writes `/etc/systemd/system/wcr-web.service`, which runs as your user, and starts it. Check it with `systemctl status wcr-web` and read its log with `journalctl -u wcr-web -f`.
+   This writes `/etc/systemd/system/wcr-web.service`, which runs as your user, and starts it. Check it with `systemctl status wcr-web` and read its log with `journalctl -u wcr-web -f`. The journal has the station's own log too, including modem73 problems (modem73's full log is `~/.local/share/wcr/modem73.log`).
 
 ## The web page
 
@@ -69,7 +69,9 @@ The **gateway view** shows:
 - frames forwarded for other stations
 - mail through this gateway, with its delivery status, and this station's own outbox
 - stations heard
-- recent errors and a log tail
+- recent errors (newest first) and a log tail
+
+The radio light is up only while modem73 is running and has its sound card. If it is down, the Errors box says why.
 
 **Stop** and **Start** stop and start the station. The page stays up while the station is stopped. Start asks first, because the station then transmits: beacons and gateway replies.
 
