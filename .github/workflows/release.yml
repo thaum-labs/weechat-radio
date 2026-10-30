@@ -165,7 +165,29 @@ jobs:
           fi
           echo "$ASSET sha256 $SUM"
           echo "WCR_MODEM73_SHA256=$SUM" >> "$GITHUB_ENV"
-      - run: cargo build --release --target ${{ matrix.target }} -p wcr
+      - name: build
+        if: runner.os != 'Linux'
+        run: cargo build --release --target ${{ matrix.target }} -p wcr
+      # Linux: `wcr` is built without the desktop feature so it starts on a
+      # headless system (Raspberry Pi OS Lite has no GTK or libxdo). The
+      # desktop app is `wcr-gui`, and `wcr gui` hands over to it. wcr-gui
+      # goes first: the second build is the one that writes `wcr`.
+      - name: build linux
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          cargo build --release --target ${{ matrix.target }} -p wcr --bin wcr-gui
+          cargo build --release --target ${{ matrix.target }} -p wcr --bin wcr --no-default-features --features setup-probe
+      - name: refuse a linux wcr that needs desktop libraries
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          F="target/${{ matrix.target }}/release/wcr"
+          readelf -d "$F" | grep NEEDED
+          if readelf -d "$F" | grep -E 'NEEDED.*(gtk|gdk|xdo|cairo|pango)'; then
+            echo "::error::wcr links a desktop library; it would not start on Raspberry Pi OS Lite"
+            exit 1
+          fi
       - name: refuse linux binaries that need glibc newer than 2.39
         if: runner.os == 'Linux'
         run: |

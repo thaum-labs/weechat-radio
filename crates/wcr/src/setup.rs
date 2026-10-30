@@ -359,12 +359,27 @@ pub fn run_wizard() -> Result<Config> {
             println!("  Re-run the official installer, or use `wcr tui`.");
         }
     }
-    println!("  Next:  wcr gui   or   wcr tui");
+    if headless() {
+        // A Pi gateway over SSH: the browser page is the way in.
+        println!("  Next (headless gateway):  wcr web password   then   sudo ~/.local/bin/wcr web install");
+        println!(
+            "  Guide: https://github.com/thaum-labs/weechat-radio/blob/main/docs/PI-GATEWAY.md"
+        );
+    } else {
+        println!("  Next:  wcr gui   or   wcr tui");
+    }
     println!("  With WeeChat:  wcr node   then   wcr weechat");
     println!("  How you know it worked: the status bar shows your callsign and mode.");
     ui_style::rule();
     let _ = std::io::stdout().flush();
     Ok(cfg)
+}
+
+/// Linux with no desktop session (an SSH login on a Pi, for example).
+fn headless() -> bool {
+    cfg!(target_os = "linux")
+        && std::env::var_os("DISPLAY").is_none()
+        && std::env::var_os("WAYLAND_DISPLAY").is_none()
 }
 
 fn read_callsign_uppercase(theme: &dyn dialoguer::theme::Theme, prompt: String) -> Result<String> {

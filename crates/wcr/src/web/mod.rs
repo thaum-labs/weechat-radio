@@ -298,7 +298,14 @@ async fn gateway(State(web): State<Web>) -> Json<Value> {
             .collect()
     };
     let internet = internet_up(&web.cfg_path).await;
+    // The set frequency, for the Start question while the station is down.
+    let frequency = Config::load(&web.cfg_path)
+        .map(|c| c.rf.frequency_khz)
+        .ok()
+        .filter(|&k| k > 0)
+        .map(crate::band::describe);
     Json(json!({
+        "frequency": frequency,
         "station": state,
         "answering": !status.is_null(),
         "internet": internet,

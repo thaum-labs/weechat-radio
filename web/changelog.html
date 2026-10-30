@@ -52,6 +52,15 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v1.0.5</p>
+          <p>Fri, 30 Oct 2026</p>
+        </h3>
+        <pre>Raspberry Pi gateway: the Linux wcr no longer needs desktop libraries, so it starts on Raspberry Pi OS Lite (the desktop app is wcr-gui, and wcr gui hands over to it). The installer adds the libraries modem73 needs and stops with a clear error if a program still cannot start, or if the download itself failed.
+
+Gateway web page: the radio light is down while modem73 is not running, errors are listed newest first, and Start names the set frequency even while the station is stopped. The station's log now also goes to journalctl -u wcr-web.</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>v1.0.4</p>
           <p>Thu, 29 Oct 2026</p>
         </h3>
