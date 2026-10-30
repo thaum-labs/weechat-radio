@@ -1,12 +1,12 @@
 {
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "WeeChat Radio \u2014 chat over internet and HF/VHF with store-and-forward",
   "homepage": "https://weechatradio.com",
   "license": "Apache-2.0",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/thaum-labs/weechat-radio/releases/download/v1.0.4/wcr-windows-x86_64.zip",
-      "hash": "6f8d62d65599e713831ec35adecc32fba3fcf3cca91906e1b0d803a88f8ed8bb",
+      "url": "https://github.com/thaum-labs/weechat-radio/releases/download/v1.0.5/wcr-windows-x86_64.zip",
+      "hash": "2a372890174a1d6ac025800dcaedf1106b55a2e1d94353c7cd575ef2174499f1",
       "bin": [
         "wcr.exe",
         "wcr-gui.exe",
