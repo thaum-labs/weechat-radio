@@ -8,15 +8,17 @@
 //! unless `[web] allow_public` is set.
 
 mod auth;
+mod chat;
 mod station;
 mod tls;
 
 use crate::config::Config;
 use crate::error::{Error, Result};
 use axum::body::Body;
-use axum::extract::{ConnectInfo, Form, State};
+use axum::extract::{ConnectInfo, Form, Query, State};
 use axum::http::{header, HeaderMap, Request, StatusCode};
 use axum::middleware::{self, Next};
+use axum::response::sse::{Event, Sse};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -34,6 +36,8 @@ const LOGIN_PAGE: &str = include_str!("assets/login.html");
 const GATEWAY_PAGE: &str = include_str!("assets/gateway.html");
 const STYLE: &str = include_str!("assets/station.css");
 const GATEWAY_JS: &str = include_str!("assets/gateway.js");
+const APP_PAGE: &str = include_str!("assets/app.html");
+const APP_JS: &str = include_str!("assets/app.js");
 
 #[derive(Clone)]
 struct Web {
@@ -48,6 +52,8 @@ struct Web {
     /// modem73's control port, for the waterfall.
     modem_addr: String,
     modem: Arc<tokio::sync::Mutex<Option<crate::modem::control::ControlClient>>>,
+    /// Live Chat, as one more IRC client of the station.
+    chat: Arc<chat::Chat>,
 }
 
 /// Run the page and the station until `stop` resolves, then stop the station
@@ -90,6 +96,11 @@ pub async fn run(cfg_path: &Path, stop: impl std::future::Future<Output = ()>) -
             .map_err(|e| Error::Msg(e.to_string()))?,
         modem_addr: modem_control_addr(&cfg.modem.host, cfg.modem.control_port),
         modem: Arc::new(tokio::sync::Mutex::new(None)),
+        chat: chat::Chat::start(
+            loopback_addr(&cfg.irc.bind),
+            cfg.callsign.clone(),
+            cfg_path.with_file_name("web-chat.json"),
+        ),
     };
     println!(
         "web page: https://{}:{} (LAN only{})",
@@ -139,6 +150,21 @@ fn router(web: Web) -> Router {
         .route("/api/spectrum", get(spectrum))
         .route("/api/station/start", post(start))
         .route("/api/station/stop", post(stop))
+        .route("/app", get(|| async { Html(APP_PAGE) }))
+        .route(
+            "/app.js",
+            get(|| async { asset("text/javascript", APP_JS) }),
+        )
+        .route("/api/events", get(events))
+        .route("/api/chat/send", post(chat_send))
+        .route("/api/chat/join", post(chat_join))
+        .route("/api/stations", get(stations))
+        .route("/api/mail", get(mail_list))
+        .route("/api/mail/open", get(mail_open))
+        .route("/api/mail/send", post(mail_send))
+        .route("/api/mail/retry", post(mail_retry))
+        .route("/api/mail/check", post(mail_check))
+        .route("/api/mail/get", post(mail_get))
         .route("/logout", post(logout))
         .layer(middleware::from_fn_with_state(web.clone(), require_login));
     Router::new()
@@ -329,6 +355,216 @@ async fn gateway(State(web): State<Web>) -> Json<Value> {
         "log": web.station.log_tail(60),
         "now": chrono::Utc::now().timestamp(),
     }))
+}
+
+/// The page's live feed: a snapshot of the chat, then each new or changed
+/// line, as Server-Sent Events. It ends when the login does.
+async fn events(State(web): State<Web>, headers: HeaderMap) -> Response {
+    use futures_util::stream;
+    let token = session(&headers).unwrap_or_default().to_string();
+    let rx = web.chat.subscribe();
+    let first = Some(web.chat.snapshot());
+    let feed = stream::unfold(
+        (rx, first, web, token),
+        |(mut rx, first, web, token)| async move {
+            if let Some(hello) = first {
+                let ev = Event::default().data(hello.to_string());
+                return Some((
+                    Ok::<_, std::convert::Infallible>(ev),
+                    (rx, None, web, token),
+                ));
+            }
+            if !web.sessions.alive(&token) {
+                return None;
+            }
+            let ev = match tokio::time::timeout(KEEP_ALIVE, rx.recv()).await {
+                Ok(Ok(v)) => Event::default().data(v.to_string()),
+                // Too far behind: start the page over.
+                Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {
+                    Event::default().data(web.chat.snapshot().to_string())
+                }
+                Ok(Err(_)) => return None,
+                Err(_) => Event::default().comment("still here"),
+            };
+            Some((Ok(ev), (rx, None, web, token)))
+        },
+    );
+    Sse::new(feed).into_response()
+}
+
+/// How often a quiet event stream says it is still there.
+const KEEP_ALIVE: Duration = Duration::from_secs(15);
+
+#[derive(Deserialize)]
+struct SendBody {
+    to: String,
+    text: String,
+}
+
+async fn chat_send(State(web): State<Web>, Json(b): Json<SendBody>) -> Response {
+    match web.chat.send(&b.to, &b.text) {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct JoinBody {
+    channel: String,
+}
+
+async fn chat_join(State(web): State<Web>, Json(b): Json<JoinBody>) -> Response {
+    match web.chat.join(&b.channel) {
+        Ok(ch) => Json(json!({ "ok": true, "channel": ch })).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
+    }
+}
+
+/// Stations heard, newest first, from the station's own status.
+async fn stations(State(web): State<Web>) -> Json<Value> {
+    let status = web
+        .local_get("/status")
+        .await
+        .ok()
+        .and_then(|(_, v)| serde_json::from_str::<Value>(&v).ok())
+        .unwrap_or(Value::Null);
+    let mut heard = status["heard"].as_array().cloned().unwrap_or_default();
+    heard.sort_by_key(|h| std::cmp::Reverse(h["last_heard"].as_u64().unwrap_or(0)));
+    Json(json!({
+        "me": status["callsign"],
+        "mode": status["mode"],
+        "heard": heard,
+        "now": chrono::Utc::now().timestamp(),
+    }))
+}
+
+#[derive(Deserialize)]
+struct FolderQ {
+    folder: String,
+}
+
+/// The station's mail folders, for the Mail tab. Only the folders the page
+/// shows are passed on.
+async fn mail_list(State(web): State<Web>, Query(q): Query<FolderQ>) -> Response {
+    if !matches!(q.folder.as_str(), "inbox" | "outbox" | "sent") {
+        return (StatusCode::BAD_REQUEST, "unknown folder").into_response();
+    }
+    let path = format!("/mail/list?folder={}", q.folder);
+    let (code, mut body) = match web.local_get(&path).await {
+        Ok(r) => r,
+        Err(r) => return r,
+    };
+    // Radio+ headers waiting at the gateway sit at the top of the inbox.
+    if q.folder == "inbox" && code.is_success() {
+        if let Ok((_, waiting)) = web.local_get("/mail/waiting").await {
+            body = json!({
+                "rows": serde_json::from_str::<Value>(&body).unwrap_or(Value::Null),
+                "waiting": serde_json::from_str::<Value>(&waiting).unwrap_or(Value::Null),
+            })
+            .to_string();
+            return json_response(code, body);
+        }
+    }
+    json_response(
+        code,
+        json!({ "rows": serde_json::from_str::<Value>(&body).unwrap_or(Value::Null) }).to_string(),
+    )
+}
+
+#[derive(Deserialize)]
+struct IdQ {
+    id: String,
+}
+
+async fn mail_open(State(web): State<Web>, Query(q): Query<IdQ>) -> Response {
+    let path = format!(
+        "/mail/open?id={}",
+        url::form_urlencoded::byte_serialize(q.id.as_bytes()).collect::<String>()
+    );
+    match web.local_get(&path).await {
+        Ok((code, body)) => json_response(code, body),
+        Err(r) => r,
+    }
+}
+
+async fn mail_send(State(web): State<Web>, Json(b): Json<Value>) -> Response {
+    let body = json!({ "to": b["to"], "subject": b["subject"], "body": b["body"] });
+    web.local_post("/mail/compose", body).await
+}
+
+async fn mail_retry(State(web): State<Web>, Json(b): Json<Value>) -> Response {
+    web.local_post("/mail/retry", json!({ "id": b["id"] }))
+        .await
+}
+
+async fn mail_check(State(web): State<Web>) -> Response {
+    web.local_post("/mail/check", json!({})).await
+}
+
+async fn mail_get(State(web): State<Web>, Json(b): Json<Value>) -> Response {
+    web.local_post("/mail/get", b).await
+}
+
+fn json_response(code: reqwest::StatusCode, body: String) -> Response {
+    let code = StatusCode::from_u16(code.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    (code, [(header::CONTENT_TYPE, "application/json")], body).into_response()
+}
+
+fn station_down() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({ "error": "the station is not running" })),
+    )
+        .into_response()
+}
+
+impl Web {
+    /// GET on the station's loopback HTTP: status and body, or a reply
+    /// saying the station is down.
+    async fn local_get(
+        &self,
+        path: &str,
+    ) -> std::result::Result<(reqwest::StatusCode, String), Response> {
+        let r = self
+            .http
+            .get(format!("{}{path}", self.local))
+            .send()
+            .await
+            .map_err(|_| station_down())?;
+        let code = r.status();
+        Ok((code, r.text().await.unwrap_or_default()))
+    }
+
+    /// POST to the station's loopback mail API, with its answer passed on
+    /// (an error is plain text there; it goes to the page as `error`).
+    async fn local_post(&self, path: &str, body: Value) -> Response {
+        let Ok(r) = self
+            .http
+            .post(format!("{}{path}", self.local))
+            .json(&body)
+            .send()
+            .await
+        else {
+            return station_down();
+        };
+        let code = r.status();
+        let text = r.text().await.unwrap_or_default();
+        if code.is_success() {
+            json_response(code, text)
+        } else {
+            let why = if text.trim().is_empty() {
+                code.canonical_reason().unwrap_or("failed").to_string()
+            } else {
+                text
+            };
+            json_response(code, json!({ "error": why }).to_string())
+        }
+    }
+}
+
+/// A loopback listener's address as seen from this computer.
+fn loopback_addr(bind: &str) -> String {
+    format!("127.0.0.1:{}", listener_port(bind))
 }
 
 /// modem73's control port as seen from this computer: `0.0.0.0` (opened
