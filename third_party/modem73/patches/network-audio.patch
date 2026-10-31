@@ -1,5 +1,48 @@
+diff --git a/control_port.hh b/control_port.hh
+index 2b40c05..16e0684 100644
+--- a/control_port.hh
++++ b/control_port.hh
+@@ -100,6 +100,7 @@ public:
+         std::function<bool()> send_beacon;
+         std::function<bool()> reconnect_audio;
+         std::function<std::vector<RxFrameInfo>(size_t limit, uint64_t since_seq)> rx_frame_history;
++        std::function<cJSON*()> get_spectrum;  // wcr: waterfall on the web page
+     };
+ 
+     ControlPort(int port, const std::string& bind_address, TNCInterface iface)
+@@ -341,6 +342,8 @@ private:
+             handle_reconnect_audio(client_fd);
+         } else if (strcmp(cmd_str, "rx_frame_history") == 0) {
+             handle_rx_frame_history(client_fd, request);
++        } else if (strcmp(cmd_str, "get_spectrum") == 0) {
++            handle_get_spectrum(client_fd);
+         } else {
+             send_error(client_fd, "unknown command");
+         }
+@@ -348,6 +351,21 @@ private:
+         cJSON_Delete(request);
+     }
+ 
++    void handle_get_spectrum(int client_fd) {
++        if (!iface_.get_spectrum) {
++            send_error(client_fd, "get_spectrum not available");
++            return;
++        }
++        cJSON* response = iface_.get_spectrum();
++        if (response) {
++            cJSON_AddBoolToObject(response, "ok", 1);
++            send_json(client_fd, response);
++            cJSON_Delete(response);
++        } else {
++            send_error(client_fd, "get_spectrum failed");
++        }
++    }
++
+     void handle_get_status(int client_fd) {
+         if (!iface_.get_status) {
+             send_error(client_fd, "get_status not available");
 diff --git a/kiss_tnc.cc b/kiss_tnc.cc
-index f3fe696..c15785a 100644
+index f3fe696..d6aeb92 100644
 --- a/kiss_tnc.cc
 +++ b/kiss_tnc.cc
 @@ -288,6 +288,9 @@ void print_help(const char* prog) {
@@ -12,7 +55,7 @@ index f3fe696..c15785a 100644
                << "      --audio-backend B   Audio backend: auto, alsa, pulse, jack (default: auto)\n"
                << "                          Place before --list-audio to list that backend's devices\n"
                << "      --tx-level PCT      TX audio output level, 5-100 (default: 100)\n"
-@@ -1303,6 +1306,14 @@ int main(int argc, char** argv) {
+@@ -1303,12 +1306,33 @@ int main(int argc, char** argv) {
                  cJSON_AddNumberToObject(j, "client_count", tnc.get_client_count());
                  cJSON_AddBoolToObject(j, "rigctl_connected", tnc.is_rigctl_connected());
                  cJSON_AddBoolToObject(j, "audio_connected", tnc.is_audio_healthy());
@@ -27,6 +70,133 @@ index f3fe696..c15785a 100644
                  cJSON_AddNumberToObject(j, "population", tnc.channel_population());
                  cJSON_AddNumberToObject(j, "occupancy_pct", tnc.channel_occupancy());
  
+                 return j;
+             };
+ 
++            // wcr: audio spectrum for the web page's waterfall. Whole dB
++            // keep the answer small; an empty list means "warming up".
++            ctrl_iface.get_spectrum = [&tnc]() -> cJSON* {
++                cJSON* j = cJSON_CreateObject();
++                std::vector<float> db = tnc.get_spectrum();
++                cJSON* bins = cJSON_AddArrayToObject(j, "bins");
++                for (float v : db)
++                    cJSON_AddItemToArray(bins, cJSON_CreateNumber(std::round(std::max(-140.0f, v))));
++                cJSON_AddNumberToObject(j, "hz_per_bin", tnc.spectrum_hz_per_bin());
++                cJSON_AddBoolToObject(j, "tx", tnc.is_transmitting());
++                return j;
++            };
++
+             ctrl_iface.get_config = [&tnc]() -> cJSON* {
+                 cJSON* j = cJSON_CreateObject();
+                 TNCConfig cfg = tnc.get_config();
+diff --git a/kiss_tnc_impl.hh b/kiss_tnc_impl.hh
+index b721d8a..92791d7 100644
+--- a/kiss_tnc_impl.hh
++++ b/kiss_tnc_impl.hh
+@@ -39,6 +39,9 @@
+ #include "csma.hh"
+ #include "tone_dcd.hh"
+ #include "miniaudio_audio.hh"
++#include <array>
++#include <complex>
++#include "fft.hh"
+ #include "rigctl_ptt.hh"
+ #include "hamlib_ptt.hh"
+ #include "serial_ptt.hh"
+@@ -1664,6 +1667,7 @@ private:
+             if (n > 0) {
+                 if (rx_tap) rx_tap(buffer.data(), n);
+                 bool blanking = tx_blanking_active_.load();
++                if (!blanking) push_spectrum_audio(buffer.data(), n);  // wcr
+ 
+                 {
+                     int64_t now_ms = steady_now_ms();
+@@ -2532,6 +2536,85 @@ public:
+         return tx_on_air_.load() || tx_blanking_active_.load();
+     }
+ 
++    // wcr: audio spectrum for the web page's waterfall. Samples are kept
++    // only while someone asked in the last few seconds, so it costs
++    // nothing while no page is open.
++    static constexpr int SPEC_FFT = 256;
++    static constexpr int SPEC_RATE = 6000;  // decimated, so the bins span 0-3 kHz
++    static constexpr int SPEC_RING = 2048;
++    static constexpr int64_t SPEC_IDLE_MS = 5000;
++    std::atomic<int64_t> spec_asked_ms_{0};
++    std::mutex spec_mutex_;
++    float spec_ring_[SPEC_RING] = {};
++    int spec_wpos_ = 0;
++    uint32_t spec_written_ = 0;
++    float spec_acc_ = 0.0f;
++    int spec_acc_n_ = 0;
++    DSP::RealToHalfComplexTransform<SPEC_FFT, std::complex<float>> spec_fft_;
++
++    void push_spectrum_audio(const float* s, int n) {
++        if (steady_now_ms() - spec_asked_ms_.load(std::memory_order_relaxed) > SPEC_IDLE_MS)
++            return;
++        const int decim = std::max(1, config_.sample_rate / SPEC_RATE);
++        std::lock_guard<std::mutex> lock(spec_mutex_);
++        for (int i = 0; i < n; i++) {
++            spec_acc_ += s[i];
++            if (++spec_acc_n_ >= decim) {
++                spec_ring_[spec_wpos_] = spec_acc_ / spec_acc_n_;
++                spec_wpos_ = (spec_wpos_ + 1) % SPEC_RING;
++                spec_written_++;
++                spec_acc_ = 0.0f;
++                spec_acc_n_ = 0;
++            }
++        }
++    }
++
++    // Level per bin in dB below full scale (a full-scale sine reads 0), for
++    // SPEC_FFT/2 bins across 0-3 kHz, over the last ~0.15 s of audio. Empty
++    // until enough audio has come in since the first ask.
++    std::vector<float> get_spectrum() {
++        const int64_t now = steady_now_ms();
++        const int64_t last = spec_asked_ms_.exchange(now);
++        static constexpr int SEGS = 6;
++        static constexpr int HOP = SPEC_FFT / 2;
++        static constexpr int SPAN = SPEC_FFT + HOP * (SEGS - 1);
++        float tdom[SPAN];
++        {
++            std::lock_guard<std::mutex> lock(spec_mutex_);
++            if (now - last > SPEC_IDLE_MS) {
++                spec_written_ = 0;  // old audio from before the page closed
++                return {};
++            }
++            if (spec_written_ < (uint32_t)SPAN) return {};
++            for (int i = 0; i < SPAN; i++)
++                tdom[i] = spec_ring_[(spec_wpos_ + SPEC_RING - SPAN + i) % SPEC_RING];
++        }
++        static const auto window = [] {
++            std::array<float, SPEC_FFT> w{};
++            for (int i = 0; i < SPEC_FFT; i++)
++                w[i] = 0.5f - 0.5f * std::cos(2.0f * (float)M_PI * i / SPEC_FFT);
++            return w;
++        }();
++        float pwr[SPEC_FFT / 2] = {};
++        float seg[SPEC_FFT];
++        std::complex<float> fdom[SPEC_FFT / 2 + 1];
++        for (int k = 0; k < SEGS; k++) {
++            for (int i = 0; i < SPEC_FFT; i++)
++                seg[i] = tdom[k * HOP + i] * window[i];
++            spec_fft_(fdom, seg);
++            for (int i = 0; i < SPEC_FFT / 2; i++)
++                pwr[i] += std::norm(fdom[i]);
++        }
++        // Hann window: a sine of amplitude A peaks at A * SPEC_FFT / 4.
++        const float full = (SPEC_FFT / 4.0f) * (SPEC_FFT / 4.0f) * SEGS;
++        std::vector<float> db(SPEC_FFT / 2);
++        for (int i = 0; i < SPEC_FFT / 2; i++)
++            db[i] = 10.0f * std::log10(pwr[i] / full + 1e-12f);
++        return db;
++    }
++
++    float spectrum_hz_per_bin() const { return (float)SPEC_RATE / SPEC_FFT; }
++
+     void unkey() {
+         set_ptt(false);
+         tx_on_air_ = false;
 diff --git a/miniaudio_audio.hh b/miniaudio_audio.hh
 index f95bf69..9c5df01 100644
 --- a/miniaudio_audio.hh

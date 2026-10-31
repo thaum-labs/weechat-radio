@@ -41,7 +41,7 @@ interval_secs = 30
 rf_egress = true
 third_party = "deny"
 # internet-radio only: tower pin and dial frequency on the public map
-tower = false
+tower = true
 
 [store]
 max_age_hours = 72

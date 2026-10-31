@@ -311,6 +311,7 @@ pub struct GatewayConfig {
     /// allow | deny
     pub third_party: String,
     /// Internet-radio only: public map draws a tower and the dial frequency.
+    /// On by default: a gateway shows as a tower (Tobias, #220).
     pub tower: bool,
 }
 
@@ -319,7 +320,7 @@ impl Default for GatewayConfig {
         Self {
             rf_egress: true,
             third_party: "deny".into(),
-            tower: false,
+            tower: true,
         }
     }
 }
@@ -916,17 +917,19 @@ mod tests {
         assert_eq!(back.modem.audio_input, "");
         assert_eq!(back.modem.audio_output, "");
         assert_eq!(back.tnc.bt_name, "VR-N76");
-        assert!(!back.gateway.tower);
+        assert!(back.gateway.tower);
     }
 
     #[test]
-    fn gateway_tower_defaults_off_when_missing() {
+    fn gateway_tower_defaults_on_when_missing() {
         let cfg: Config =
             toml::from_str("callsign = \"G4ABC\"\n[gateway]\nrf_egress = true\n").unwrap();
-        assert!(!cfg.gateway.tower);
-        assert!(!cfg.gateway.show_tower(Mode::InternetRadio));
-        let mut on = cfg;
-        on.gateway.tower = true;
+        assert!(cfg.gateway.tower);
+        assert!(cfg.gateway.show_tower(Mode::InternetRadio));
+        let mut off = cfg.clone();
+        off.gateway.tower = false;
+        assert!(!off.gateway.show_tower(Mode::InternetRadio));
+        let on = cfg;
         assert!(on.gateway.show_tower(Mode::InternetRadio));
         assert!(!on.gateway.show_tower(Mode::Radio));
         assert!(!on.gateway.show_tower(Mode::Internet));

@@ -637,8 +637,8 @@ startup_hold_s = 120</pre>
       <pre class="plain">[gateway]
 rf_egress = true          # put internet traffic on the air
 third_party = "deny"      # guest (~nick) traffic on RF: allow or deny
-tower = false             # internet-radio only</pre>
-      <p>In internet-radio the station panel has a <strong>TOWER</strong> switch (<code>/tower on</code> or <code>/tower off</code>). On draws that station as a small tower on the public map, with the dial frequency beside the icon. Other modes keep the station mark. The switch does not change what goes on the air.</p>
+tower = true              # internet-radio only</pre>
+      <p>In internet-radio the station panel has a <strong>TOWER</strong> switch (<code>/tower on</code> or <code>/tower off</code>). It is on by default, and a gateway run by <code>wcr web</code> (a Pi) always turns it on. On draws that station as a small tower on the public map, with the dial frequency beside the icon. Other modes keep the station mark. The switch does not change what goes on the air.</p>
       <p>Stations on different frequencies use two gateways and the hub. Diagrams: <a href="/docs/bridging.html">cross-frequency chat</a>.</p>
       </section>
 

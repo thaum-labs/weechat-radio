@@ -23,6 +23,12 @@
       <span id="action" class="dim" role="status"></span>
     </div>
   </section>
+  <section class="card" id="wf-card" aria-labelledby="h-wf" hidden>
+    <h2 id="h-wf">Waterfall <small id="wf-note" class="dim"></small></h2>
+    <canvas id="wf" class="wf" height="160" role="img" aria-label="Live audio spectrum from the radio, newest at the top"></canvas>
+    <div class="wf-axis dim small" aria-hidden="true"><span>0</span><span>1</span><span>2</span><span>3 kHz</span></div>
+    <p class="dim small wf-key"><span class="wf-sw quiet"></span>squelched <span class="wf-sw noise"></span>noise <span class="wf-sw sig"></span>signal <span class="wf-sw tx"></span>our TX</p>
+  </section>
   <section class="card" aria-labelledby="h-mail">
     <h2 id="h-mail">Mail through this gateway</h2>
     <ul id="relay" class="list"></ul>

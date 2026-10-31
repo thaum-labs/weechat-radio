@@ -138,10 +138,10 @@ In `wcr.toml`:
 [gateway]
 rf_egress = true          # put internet traffic on the air
 third_party = "deny"      # guest (~nick) traffic on RF: allow or deny
-tower = false             # internet-radio only
+tower = true              # internet-radio only
 ```
 
-In internet-radio the station panel has a **TOWER** switch (`/tower on` or `/tower off`). On draws that station as a small tower on the public map, with the dial frequency beside the icon. Other modes keep the station mark. The switch does not change what goes on the air.
+In internet-radio the station panel has a **TOWER** switch (`/tower on` or `/tower off`). It is on by default, and a gateway run by `wcr web` (a Pi) always turns it on. On draws that station as a small tower on the public map, with the dial frequency beside the icon. Other modes keep the station mark. The switch does not change what goes on the air.
 
 Cross-frequency diagrams: [bridging](https://weechatradio.com/docs/bridging.html). Offline: `wcr help bridging`.
 

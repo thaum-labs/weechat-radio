@@ -45,12 +45,22 @@ struct Web {
     /// The station's loopback HTTP (`/status`, `/mail/*`).
     local: String,
     http: reqwest::Client,
+    /// modem73's control port, for the waterfall.
+    modem_addr: String,
+    modem: Arc<tokio::sync::Mutex<Option<crate::modem::control::ControlClient>>>,
 }
 
 /// Run the page and the station until `stop` resolves, then stop the station
 /// (which ends modem73) before returning.
 pub async fn run(cfg_path: &Path, stop: impl std::future::Future<Output = ()>) -> Result<()> {
-    let cfg = Config::load(cfg_path)?;
+    let mut cfg = Config::load(cfg_path)?;
+    // A gateway run by `wcr web` always shows as a tower on the map
+    // (Tobias, #220). Saved before the station starts, so it reads it.
+    if cfg.mode.is_gateway() && !cfg.gateway.tower {
+        cfg.gateway.tower = true;
+        cfg.save(cfg_path)?;
+        println!("map: this gateway shows as a tower ([gateway] tower = true)");
+    }
     if cfg.web.password_hash.trim().is_empty() {
         return Err(Error::config(
             "Set a password for the web page first: wcr web password",
@@ -78,6 +88,8 @@ pub async fn run(cfg_path: &Path, stop: impl std::future::Future<Output = ()>) -
             .no_proxy()
             .build()
             .map_err(|e| Error::Msg(e.to_string()))?,
+        modem_addr: modem_control_addr(&cfg.modem.host, cfg.modem.control_port),
+        modem: Arc::new(tokio::sync::Mutex::new(None)),
     };
     println!(
         "web page: https://{}:{} (LAN only{})",
@@ -124,6 +136,7 @@ fn router(web: Web) -> Router {
             get(|| async { asset("text/javascript", GATEWAY_JS) }),
         )
         .route("/api/gateway", get(gateway))
+        .route("/api/spectrum", get(spectrum))
         .route("/api/station/start", post(start))
         .route("/api/station/stop", post(stop))
         .route("/logout", post(logout))
@@ -318,6 +331,55 @@ async fn gateway(State(web): State<Web>) -> Json<Value> {
     }))
 }
 
+/// modem73's control port as seen from this computer: `0.0.0.0` (opened
+/// to the network on purpose) is reached on loopback.
+fn modem_control_addr(host: &str, port: u16) -> String {
+    let host = match host.trim() {
+        "" | "0.0.0.0" => "127.0.0.1",
+        h => h,
+    };
+    format!("{host}:{port}")
+}
+
+/// One row of the waterfall: modem73's audio spectrum, read over its
+/// loopback control port and passed on behind the page's password. The
+/// page asks only while it is open and visible, and modem73 stops keeping
+/// audio for it a few seconds after the last ask.
+///
+/// `bins` is dB below full scale across 0–3 kHz; empty with a `why` when
+/// there is nothing to show (`stopped`, `no modem`, `old modem`).
+async fn spectrum(State(web): State<Web>) -> Json<Value> {
+    let empty = |why: &str| Json(json!({ "bins": [], "why": why }));
+    if !web.station.state().await.running {
+        return empty("stopped");
+    }
+    let mut slot = web.modem.lock().await;
+    if slot.is_none() {
+        match crate::modem::control::ControlClient::connect(&web.modem_addr).await {
+            // Frame events are not needed here; dropping their receiver is fine.
+            Ok((client, _events)) => *slot = Some(client),
+            Err(_) => return empty("no modem"),
+        }
+    }
+    let Some(client) = slot.as_ref() else {
+        return empty("no modem");
+    };
+    let ask = client.request(json!({ "cmd": "get_spectrum" }));
+    match tokio::time::timeout(Duration::from_secs(1), ask).await {
+        Ok(Ok(v)) if v["bins"].is_array() => Json(json!({
+            "bins": v["bins"],
+            "hz_per_bin": v["hz_per_bin"],
+            "tx": v["tx"],
+        })),
+        // A modem73 without the wcr patch answers "unknown command".
+        Ok(Ok(_)) => empty("old modem"),
+        _ => {
+            *slot = None;
+            empty("no modem")
+        }
+    }
+}
+
 /// Can this computer resolve the hub's name? A cheap stand-in for "the
 /// internet is up" that does not wait on the hub itself.
 async fn internet_up(cfg_path: &Path) -> bool {
@@ -456,6 +518,14 @@ pub fn install(_cfg_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_waterfall_reaches_modem73_on_loopback() {
+        assert_eq!(modem_control_addr("127.0.0.1", 8073), "127.0.0.1:8073");
+        assert_eq!(modem_control_addr("0.0.0.0", 8073), "127.0.0.1:8073");
+        assert_eq!(modem_control_addr("", 9000), "127.0.0.1:9000");
+        assert_eq!(modem_control_addr("192.168.1.9", 8073), "192.168.1.9:8073");
+    }
 
     #[test]
     fn only_lan_addresses_count_as_lan() {
