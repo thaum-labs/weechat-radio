@@ -1,5 +1,5 @@
 diff --git a/kiss_tnc.cc b/kiss_tnc.cc
-index f3fe696..03e553c 100644
+index f3fe696..c15785a 100644
 --- a/kiss_tnc.cc
 +++ b/kiss_tnc.cc
 @@ -288,6 +288,9 @@ void print_help(const char* prog) {
@@ -12,6 +12,21 @@ index f3fe696..03e553c 100644
                << "      --audio-backend B   Audio backend: auto, alsa, pulse, jack (default: auto)\n"
                << "                          Place before --list-audio to list that backend's devices\n"
                << "      --tx-level PCT      TX audio output level, 5-100 (default: 100)\n"
+@@ -1303,6 +1306,14 @@ int main(int argc, char** argv) {
+                 cJSON_AddNumberToObject(j, "client_count", tnc.get_client_count());
+                 cJSON_AddBoolToObject(j, "rigctl_connected", tnc.is_rigctl_connected());
+                 cJSON_AddBoolToObject(j, "audio_connected", tnc.is_audio_healthy());
++                // wcr: live capture level, so wcr needs no second capture
++                // stream on a card modem73 holds. Below 0 dB only: 0 means
++                // "no recent audio", and -100 means capture is down.
++                {
++                    float level = tnc.get_audio_level();
++                    if (level < 0.0f && level > -100.0f)
++                        cJSON_AddNumberToObject(j, "audio_in_db", level);
++                }
+                 cJSON_AddNumberToObject(j, "population", tnc.channel_population());
+                 cJSON_AddNumberToObject(j, "occupancy_pct", tnc.channel_occupancy());
+ 
 diff --git a/miniaudio_audio.hh b/miniaudio_audio.hh
 index f95bf69..9c5df01 100644
 --- a/miniaudio_audio.hh

@@ -72,6 +72,7 @@ function draw(d) {
     ["mode", s.mode || "—"],
     ["preset", s.preset ? `${s.preset}${s.tx_rung ? ` · ${s.tx_rung}` : ""}` : "—"],
     ["modem", s.tnc || (s.modem73 ? `modem73 ${s.modem73}${running && !radioUp(s) ? " (not running)" : ""}` : "—")],
+    ["audio in", running && s.mode !== "internet" ? audioIn(s) : "—"],
     ["forwarded", s.relayed !== undefined ? `${s.relayed} frames (${s.relayed_unique} messages)` : "—"],
     ["restarts", String(d.station.restarts)],
   ];
@@ -109,6 +110,16 @@ function draw(d) {
 function radioUp(s) {
   if (s.tnc) return !!s.tnc_ok;
   return !["", "no modem", "no audio"].includes(s.audio_label || "");
+}
+
+// Capture level from the radio. modem73 holds the sound card, so the level
+// comes from modem73; "—" means nothing measures it (an older modem73).
+function audioIn(s) {
+  if (s.tnc) return "—";
+  const label = s.audio_label || "";
+  if (["", "no modem", "no audio"].includes(label)) return label || "—";
+  if (label === "—") return "not measured";
+  return `${Math.round(s.audio_in_db)} dBFS (${label})`;
 }
 
 async function poll() {

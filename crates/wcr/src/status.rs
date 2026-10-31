@@ -33,6 +33,11 @@ pub struct StatusSnapshot {
     /// Playback (PC → radio) level in dBFS.
     #[serde(default = "crate::presets::default_audio_db")]
     pub audio_out_db: f32,
+    /// True while wcr's own capture meter (audio_meter.rs) has the sound
+    /// card open. On Linux modem73 usually holds the card, so this stays
+    /// false and the level has to come from modem73 (QA #220).
+    #[serde(skip)]
+    pub local_in_meter: bool,
     pub queue_out: u64,
     pub queue_hold: u64,
     pub hub_ok: bool,
@@ -199,7 +204,7 @@ impl StatusSnapshot {
             return;
         }
         if let Some(db) = st.audio_in_db {
-            self.audio_in_db = db;
+            self.audio_in_db = db.max(crate::presets::AUDIO_FLOOR_DB);
         } else if cfg!(windows) && !st.channel_state.eq_ignore_ascii_case("rx") {
             // No live capture meter on Windows (that glitched MFSK). Fall
             // toward empty so the last decode does not leave IN stuck.
@@ -214,7 +219,14 @@ impl StatusSnapshot {
             self.audio_out_db = crate::presets::decay_audio_db(self.audio_out_db);
         }
         self.audio_db = self.audio_in_db;
-        self.audio_label = crate::presets::audio_level_label(self.audio_in_db).into();
+        // Nothing measures the capture live (old modem73, and wcr's meter
+        // could not open the card): say so instead of showing -80 dB as "low".
+        let measured = st.audio_in_db.is_some() || self.local_in_meter || cfg!(windows);
+        self.audio_label = if measured {
+            crate::presets::audio_level_label(self.audio_in_db).into()
+        } else {
+            "—".into()
+        };
     }
 
     pub fn prio_for_channel(&self, channel: &str) -> &str {
@@ -357,6 +369,7 @@ impl Default for StatusSnapshot {
             audio_db: crate::presets::AUDIO_FLOOR_DB,
             audio_in_db: crate::presets::AUDIO_FLOOR_DB,
             audio_out_db: crate::presets::AUDIO_FLOOR_DB,
+            local_in_meter: false,
             queue_out: 0,
             queue_hold: 0,
             hub_ok: false,
@@ -565,6 +578,34 @@ mod tests {
         } else {
             assert_eq!(s.audio_in_db, -12.0);
         }
+    }
+
+    #[test]
+    fn unmeasured_capture_is_not_called_low() {
+        let mut s = StatusSnapshot::default();
+        let idle = ModemStatus {
+            audio_connected: true,
+            channel_state: "idle".into(),
+            ..Default::default()
+        };
+        s.apply_modem_audio(&idle);
+        if cfg!(windows) {
+            assert_eq!(s.audio_label, "low");
+        } else {
+            assert_eq!(s.audio_label, "—");
+        }
+        // modem73 reports the live level: a real label again.
+        s.apply_modem_audio(&ModemStatus {
+            audio_in_db: Some(-20.0),
+            ..idle.clone()
+        });
+        assert_eq!(s.audio_label, "good");
+        s.apply_modem_audio(&ModemStatus {
+            audio_in_db: Some(-100.0),
+            ..idle
+        });
+        assert_eq!(s.audio_in_db, AUDIO_FLOOR_DB);
+        assert_eq!(s.audio_label, "low");
     }
 
     #[test]

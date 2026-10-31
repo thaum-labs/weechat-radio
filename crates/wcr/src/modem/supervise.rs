@@ -44,6 +44,25 @@ fn set_csma_threshold(args: &mut Vec<String>, db: i16) {
     args.extend(["--csma-threshold".into(), db.to_string()]);
 }
 
+/// Address modem73 listens on, for KISS and its control port. modem73's own
+/// KISS default is 0.0.0.0, which let anyone on the LAN key the radio with no
+/// password (QA #220). wcr talks to it on `modem.host`, so listen there when
+/// that is an IPv4 address (`0.0.0.0` is the opt-in for LAN access), and on
+/// 127.0.0.1 otherwise (`localhost`, a host name).
+fn listen_ip(host: &str) -> String {
+    match host.trim().parse::<std::net::Ipv4Addr>() {
+        Ok(ip) => ip.to_string(),
+        Err(_) => "127.0.0.1".into(),
+    }
+}
+
+/// `--bind` / `--control-bind`, both on the command line so a modem73
+/// settings file cannot widen them again.
+fn bind_args(host: &str) -> Vec<String> {
+    let ip = listen_ip(host);
+    vec!["--bind".into(), ip.clone(), "--control-bind".into(), ip]
+}
+
 /// modem73 keys the radio over CAT with its built-in Hamlib.
 fn hamlib_args(m: &crate::config::ModemConfig) -> Vec<String> {
     vec![
@@ -103,6 +122,7 @@ impl ModemProcess {
             "--control-port".into(),
             cfg.modem.control_port.to_string(),
         ];
+        args.extend(bind_args(&cfg.modem.host));
         args.extend(preset.modem73_args());
         if cfg.modem.is_vox() {
             set_csma_threshold(&mut args, Preset::VOX_CSMA_THRESHOLD_DB);
@@ -250,6 +270,18 @@ mod tests {
         assert_eq!(modem_callsign("~ABCDEFGHIJK").as_deref(), Some("ABCDEFGHI"));
         assert_eq!(modem_callsign("~"), None);
         assert_eq!(modem_callsign(""), None);
+    }
+
+    #[test]
+    fn kiss_and_control_listen_on_loopback_by_default() {
+        let d = crate::config::ModemConfig::default();
+        assert_eq!(
+            bind_args(&d.host).join(" "),
+            "--bind 127.0.0.1 --control-bind 127.0.0.1"
+        );
+        assert_eq!(listen_ip("localhost"), "127.0.0.1");
+        assert_eq!(listen_ip(""), "127.0.0.1");
+        assert_eq!(listen_ip(" 0.0.0.0 "), "0.0.0.0");
     }
 
     #[test]
