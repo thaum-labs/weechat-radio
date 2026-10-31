@@ -127,6 +127,9 @@ function onEvent(ev) {
 }
 
 function drawConvs() {
+  let total = 0;
+  for (const n of chat.unread.values()) total += n;
+  document.title = total ? `(${total}) WeeChat Radio` : "WeeChat Radio";
   const ul = $("convs");
   ul.replaceChildren();
   for (const id of chat.order) {
@@ -141,11 +144,22 @@ function drawConvs() {
   }
 }
 
+// `when` is the station's local "YYYY-MM-DD HH:MM:SS": the time today,
+// the date and time on older lines.
+function lineWhen(when) {
+  if (!when) return "";
+  const [day, time] = when.split(" ");
+  const t = (time || "").slice(0, 5);
+  const d = new Date(`${day}T00:00:00`);
+  const today = new Date();
+  if (isNaN(d) || d.toDateString() === today.toDateString()) return t;
+  return `${d.toLocaleDateString([], { day: "numeric", month: "short" })} ${t}`;
+}
+
 function lineNode(l) {
   const li = el("li", l.sys ? "sys" : l.mine ? "mine" : "");
   li.dataset.seq = l.seq;
-  const when = (l.when || "").slice(11, 16);
-  li.append(el("span", "when", when));
+  li.append(el("span", "when", lineWhen(l.when)));
   if (!l.sys) li.append(el("span", "nick", l.nick));
   li.append(el("span", "text", l.text));
   const marks = [];

@@ -68,12 +68,13 @@ main.wide { max-width: 1100px; }
 .tabs .light { margin-left: auto; }
 textarea, select { font: inherit; color: var(--fg); background: #0b0b12; border: 1px solid var(--line); border-radius: 4px; padding: 10px; }
 textarea { width: 100%; resize: vertical; margin: 6px 0 12px; }
-.chat { display: grid; grid-template-columns: 220px 1fr; gap: 12px; align-items: start; }
+.chat { display: grid; grid-template-columns: 260px 1fr; gap: 12px; align-items: start; }
 .convs-list li { padding: 0; }
 .conv-btn { width: 100%; text-align: left; border: 0; color: var(--fg); padding: 8px 6px; min-height: 40px; display: flex; justify-content: space-between; }
-.convs-list li.active .conv-btn { color: var(--orange); }
+.convs-list li.active .conv-btn { color: var(--orange); background: #1d1d2a; border-radius: 4px; }
+.conv-btn:hover { background: #1a1a25; }
 .badge { color: var(--bg); background: var(--orange); border-radius: 8px; padding: 0 6px; font-size: 12px; }
-.open-form { flex-wrap: nowrap; }
+.open-form { flex-wrap: nowrap; margin-top: 8px; }
 .open-form input { margin: 0; min-width: 0; }
 .conv { display: flex; flex-direction: column; height: calc(100vh - 130px); height: calc(100dvh - 130px); min-height: 320px; }
 .conv-head { display: flex; align-items: center; gap: 8px; }
@@ -90,6 +91,8 @@ textarea { width: 100%; resize: vertical; margin: 6px 0 12px; }
 .lines .marks { color: var(--purple); margin-left: 6px; font-size: 12px; white-space: nowrap; }
 .lines .marks.ok { color: var(--green); } .lines .marks.no { color: var(--red); }
 .compose { display: flex; gap: 8px; align-items: flex-end; }
+.note { margin: 6px 0 0; min-height: 0; }
+.note:empty { display: none; }
 .compose textarea { margin: 0; flex: 1; min-height: 44px; }
 .mail-bar select { min-height: 40px; }
 .mail-list li { cursor: pointer; }
@@ -100,7 +103,7 @@ textarea { width: 100%; resize: vertical; margin: 6px 0 12px; }
 .block { display: block; margin-top: 4px; }
 label { display: block; }
 @media (max-width: 700px) {
-  header { flex-wrap: wrap; }
+  .app .convs h2 { display: none; }
   .chat { grid-template-columns: 1fr; }
   .app .conv { display: none; }
   .app.in-conv .conv { display: flex; }
@@ -109,3 +112,15 @@ label { display: block; }
   .conv { height: calc(100dvh - 150px); }
 }
 .mail-list { margin-top: 8px; }
+/* Phones: one header row. */
+@media (max-width: 480px) {
+  header { padding: 8px 12px; gap: 6px; }
+  h1 { font-size: 16px; white-space: nowrap; }
+  h1 .name { display: none; }
+  .call { margin-left: 0; }
+  .views a { padding: 4px 8px; }
+  header button.quiet { padding: 4px 8px; font-size: 13px; }
+  .tabs { padding: 8px 12px 0; gap: 4px; }
+  .tabs [role="tab"] { padding: 4px 10px; }
+  main { padding: 10px 12px 20px; }
+}
