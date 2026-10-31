@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+<title>WeeChat Radio</title>
+<link rel="stylesheet" href="/station.css">
+<script src="/app.js" defer></script>
+</head>
+<body class="app">
+<header>
+  <h1><span class="name"><span class="brand">weechat</span> radio</span> <span id="call" class="call"></span></h1>
+  <nav class="views" aria-label="View">
+    <a href="/app" aria-current="page">App</a><a href="/">Gateway</a>
+  </nav>
+  <form method="post" action="/logout"><button class="quiet" type="submit">Log out</button></form>
+</header>
+<nav class="tabs" role="tablist" aria-label="App">
+  <button type="button" role="tab" id="tab-chat" aria-selected="true" aria-controls="chat">Chat</button>
+  <button type="button" role="tab" id="tab-mail" aria-selected="false" aria-controls="mail">Mail</button>
+  <button type="button" role="tab" id="tab-stations" aria-selected="false" aria-controls="stations">Stations</button>
+  <span id="link" class="light idle" role="status">station —</span>
+</nav>
+<main class="wide">
+  <section id="chat" role="tabpanel" aria-labelledby="tab-chat" class="chat">
+    <div class="convs card" id="convs-pane">
+      <h2>Conversations</h2>
+      <ul id="convs" class="list convs-list"></ul>
+      <form id="open-form" class="row open-form">
+        <input id="open-to" placeholder="#channel or call" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Open a channel or callsign">
+        <button type="submit" class="quiet">Open</button>
+      </form>
+    </div>
+    <div class="conv card" id="conv-pane">
+      <div class="conv-head">
+        <button type="button" id="back" class="quiet back" aria-label="Back to conversations">‹</button>
+        <h2 id="conv-title">#bulletin</h2>
+        <details class="key"><summary class="dim small">marks</summary>
+          <dl class="facts small">
+            <dt>[..]</dt><dd>waiting to go out</dd>
+            <dt>[tx]</dt><dd>sent on air, no receipt yet</dd>
+            <dt>[x2]</dt><dd>how many times it was keyed</dd>
+            <dt>[rl]</dt><dd>heard again on the radio, not a receipt</dd>
+            <dt>[gw]</dt><dd>a gateway put it on the hub</dd>
+            <dt>[ok]</dt><dd>delivered, they sent a receipt</dd>
+            <dt>[all]</dt><dd>every member of the room got it</dd>
+            <dt>[no]</dt><dd>refused, or no receipt after the last try</dd>
+            <dt>[rf] [net] [lan]</dt><dd>how a line reached you</dd>
+          </dl>
+        </details>
+      </div>
+      <ol id="lines" class="lines" aria-live="polite"></ol>
+      <form id="compose" class="compose">
+        <textarea id="text" rows="2" maxlength="1200" placeholder="Message" aria-label="Message"></textarea>
+        <button type="submit" id="send">Send</button>
+      </form>
+      <p id="chat-note" class="warn small note" role="status"></p>
+    </div>
+  </section>
+
+  <section id="mail" role="tabpanel" aria-labelledby="tab-mail" hidden>
+    <div class="card">
+      <div class="row mail-bar">
+        <select id="folder" aria-label="Folder">
+          <option value="inbox">Inbox</option>
+          <option value="outbox">Outbox</option>
+          <option value="sent">Sent</option>
+        </select>
+        <button type="button" id="new-mail">New mail</button>
+        <button type="button" id="check-mail" class="quiet" hidden>Check mail</button>
+      </div>
+      <ul id="mail-list" class="list mail-list"></ul>
+    </div>
+    <div class="card" id="mail-view" hidden>
+      <div class="row"><button type="button" id="mail-close" class="quiet">‹ Back</button>
+        <button type="button" id="mail-reply" class="quiet">Reply</button>
+        <button type="button" id="mail-retry" class="quiet" hidden>Retry</button></div>
+      <h2 id="mv-subject"></h2>
+      <p class="dim small" id="mv-who"></p>
+      <p id="mv-status"></p>
+      <ol id="mv-hops" class="hops dim small"></ol>
+      <pre id="mv-body" class="mail-body"></pre>
+    </div>
+    <form class="card" id="mail-form" hidden>
+      <h2>New mail</h2>
+      <label class="small dim" for="m-to">To (email address)</label>
+      <input id="m-to" type="email" autocomplete="off" spellcheck="false" required>
+      <label class="small dim" for="m-subject">Subject</label>
+      <input id="m-subject" autocomplete="off">
+      <label class="small dim" for="m-body">Message</label>
+      <textarea id="m-body" rows="6"></textarea>
+      <div class="row"><button type="submit">Send</button><button type="button" id="m-cancel" class="quiet">Cancel</button></div>
+      <p id="m-note" class="warn small note" role="status"></p>
+    </form>
+  </section>
+
+  <section id="stations" role="tabpanel" aria-labelledby="tab-stations" hidden>
+    <div class="card">
+      <h2>Stations heard</h2>
+      <ul id="heard" class="list"></ul>
+    </div>
+  </section>
+</main>
+</body>
+</html>
