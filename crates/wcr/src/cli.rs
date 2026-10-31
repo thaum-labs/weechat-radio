@@ -60,6 +60,19 @@ pub enum Command {
         #[command(subcommand)]
         action: Option<WebAction>,
     },
+    /// Find a gateway's web page (`wcr web`, e.g. a Pi) on the LAN and open it.
+    /// On the gateway: print its addresses, service state and a QR code.
+    Webui {
+        /// The gateway's address (IP, name, or IP:port); skips the search
+        #[arg(long)]
+        host: Option<String>,
+        /// Print the address only; do not open a browser
+        #[arg(long)]
+        no_open: bool,
+        /// Also print a QR code of the address, for a phone
+        #[arg(long)]
+        qr: bool,
+    },
     /// Radios with a built-in KISS TNC (VR-N76, UV-PRO, GA-5WB) over Bluetooth
     Tnc {
         #[command(subcommand)]

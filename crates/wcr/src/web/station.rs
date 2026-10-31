@@ -145,6 +145,7 @@ impl Station {
             .arg(&self.cfg_path)
             .arg("node")
             .env("NO_COLOR", "1")
+            .env(crate::config::ALWAYS_TOWER_ENV, "1")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

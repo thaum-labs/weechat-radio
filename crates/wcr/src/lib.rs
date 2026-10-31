@@ -43,6 +43,7 @@ pub mod ui_style;
 pub mod update;
 pub mod weather;
 pub mod web;
+pub mod webui;
 pub mod weechat_app;
 
 pub use error::{Error, Result};

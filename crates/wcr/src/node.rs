@@ -4325,13 +4325,16 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             }
             let on = match sp.next().map(|s| s.to_ascii_lowercase()).as_deref() {
                 None => {
-                    let on = cfg.lock().gateway.tower;
+                    let on = cfg.lock().gateway.show_tower(mode);
                     return format!("tower {}", if on { "on" } else { "off" });
                 }
                 Some("on" | "true" | "1") => true,
                 Some("off" | "false" | "0") => false,
                 Some(_) => return "usage: /radio tower on|off".into(),
             };
+            if !on && crate::config::always_tower() {
+                return "tower stays on: a gateway run by wcr web always shows as a tower".into();
+            }
             cfg.lock().gateway.tower = on;
             snap.lock().tower = on;
             persist_cfg(&cfg.lock());

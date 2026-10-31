@@ -74,6 +74,8 @@ cpal = { version = "0.15", optional = true }
 serialport = { version = "4.7", optional = true }
 nanoaudio-sbc = "0.1.1"
 nanoaudio-core = "0.1.1"
+qrcode = { version = "0.14", default-features = false }
+if-addrs = "0.13.4"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

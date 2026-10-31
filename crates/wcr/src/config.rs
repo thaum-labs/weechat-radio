@@ -79,6 +79,9 @@ pub struct WebConfig {
     /// PEM certificate and key. Empty: a self-signed pair in the data folder.
     pub cert: String,
     pub key: String,
+    /// On a laptop: the gateway page `wcr webui` opened last (`IP:port`),
+    /// checked first next time. Empty: search the LAN.
+    pub gateway: String,
 }
 
 impl Default for WebConfig {
@@ -89,6 +92,7 @@ impl Default for WebConfig {
             allow_public: false,
             cert: String::new(),
             key: String::new(),
+            gateway: String::new(),
         }
     }
 }
@@ -330,10 +334,22 @@ impl GatewayConfig {
         self.third_party.eq_ignore_ascii_case("allow")
     }
 
-    /// Tower pin only while this node is an internet-radio gateway.
+    /// Tower pin only while this node is an internet-radio gateway. A
+    /// gateway run by `wcr web` always shows as one (see [`always_tower`]).
     pub fn show_tower(&self, mode: Mode) -> bool {
-        self.tower && mode.is_gateway()
+        (self.tower || always_tower()) && mode.is_gateway()
     }
+}
+
+/// Set by `wcr web` on the station it runs.
+pub const ALWAYS_TOWER_ENV: &str = "WCR_ALWAYS_TOWER";
+
+/// A gateway run by `wcr web` always shows as a tower on the map (Tobias,
+/// #220). Forced at runtime only, so `[gateway] tower` in wcr.toml is never
+/// rewritten (#225) and still counts when the same station runs without
+/// `wcr web`.
+pub fn always_tower() -> bool {
+    std::env::var_os(ALWAYS_TOWER_ENV).is_some_and(|v| v == "1")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

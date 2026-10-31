@@ -130,9 +130,15 @@ const WF_MS = 250;
 // Fixed scale (dB below full scale per bin), so a squelched radio stays
 // near black, open-squelch noise is purple and a signal is bright. No
 // auto-gain on purpose. A squelched BF-1909 on a Digirig reads about
-// -67 dBFS overall (QA #222), roughly -88 dB per bin.
+// -67 dBFS overall (QA #222) and about -99 dB per bin on the Pi 3
+// (QA #225); a keyed call reads about -22 dB per bin.
 const WF_FLOOR = -100, WF_TOP = -30;
-let wfOn = false, wfBusy = false;
+// The canvas spans 0–3 kHz of the radio's audio, at true positions.
+const WF_MAX_HZ = 3000;
+// Our TX row is painted only where the modem sends: OFDM 1500 ± 1200 Hz.
+const WF_TX_LO = 300, WF_TX_HI = 2700;
+const WF_TX_RGB = [255, 122, 61];
+let wfOn = false, wfBusy = false, wfNoAudio = 0;
 
 function wfColor(db) {
   const t = Math.max(0, Math.min(1, (db - WF_FLOOR) / (WF_TOP - WF_FLOOR)));
@@ -142,7 +148,9 @@ function wfColor(db) {
   return stops[i].map((c, k) => Math.round(c + (stops[i + 1][k] - c) * f));
 }
 
-function wfRow(bins, tx) {
+// One new row at the top. Column x shows the bin nearest its audio
+// frequency, so 1000 Hz sits exactly a third of the way across.
+function wfRow(bins, hzPerBin, tx) {
   const cv = $("wf");
   const w = Math.max(1, Math.round(cv.clientWidth * (window.devicePixelRatio || 1)));
   const h = cv.height;
@@ -151,7 +159,13 @@ function wfRow(bins, tx) {
   g.drawImage(cv, 0, 0, w, h - 1, 0, 1, w, h - 1);
   const row = g.createImageData(w, 1);
   for (let x = 0; x < w; x++) {
-    const rgb = tx ? [255, 122, 61] : wfColor(bins[Math.floor((x * bins.length) / w)]);
+    const hz = ((x + 0.5) * WF_MAX_HZ) / w;
+    let rgb;
+    if (tx) {
+      rgb = hz >= WF_TX_LO && hz <= WF_TX_HI ? WF_TX_RGB : [0, 0, 0];
+    } else {
+      rgb = wfColor(bins[Math.min(bins.length - 1, Math.round(hz / hzPerBin))]);
+    }
     row.data.set([rgb[0], rgb[1], rgb[2], 255], x * 4);
   }
   g.putImageData(row, 0, 0);
@@ -165,12 +179,17 @@ async function wfTick() {
     if (r.status === 401) { location.href = "/login"; return; }
     const d = await r.json();
     const note = $("wf-note");
+    wfNoAudio = d.why === "no audio" && !d.tx ? wfNoAudio + 1 : 0;
     if (d.tx) {
-      wfRow([], true);
+      wfRow([], 1, true);
       note.textContent = "· transmitting";
     } else if (d.bins.length) {
-      wfRow(d.bins, false);
+            wfRow(d.bins, d.hz_per_bin || WF_MAX_HZ / d.bins.length, false);
       note.textContent = "";
+    } else if (d.why === "no audio") {
+      // No new audio since the last row: draw nothing rather than repeat
+      // it. A short gap right after our TX is normal; say so after 1 s.
+      if (wfNoAudio >= 4) note.textContent = "· no audio coming from the radio";
     } else {
       note.textContent = {
         "old modem": "· needs the modem73 from wcr 1.0.7 or later",
