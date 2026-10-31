@@ -119,6 +119,7 @@ fn run_input_meter(
     use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
     use std::time::{Duration, Instant};
 
+    crate::discover::quiet_alsa();
     let peak_millidb = Arc::new(AtomicI32::new(-80_000));
     let mut retry_secs = METER_RETRY_MIN_SECS;
     let mut ever_opened = false;
@@ -141,9 +142,11 @@ fn run_input_meter(
                 }
                 drop(stream);
                 if cancel.is_cancelled() {
+                    snap.lock().local_in_meter = false;
                     break;
                 }
                 set_input_level(&snap, crate::presets::AUDIO_FLOOR_DB);
+                snap.lock().local_in_meter = false;
                 if opened_at.elapsed() >= Duration::from_secs(METER_HEALTHY_SECS) {
                     retry_secs = METER_RETRY_MIN_SECS;
                 }
@@ -154,9 +157,14 @@ fn run_input_meter(
                 reported_down = true;
             }
             Err(e) if !ever_opened && !reported_down => {
-                // Same as before: a station with no usable input device just
-                // has no live meter. Keep trying quietly in case it appears.
-                tracing::warn!("live audio input meter unavailable: {e}");
+                // A station with no usable input device just has no live
+                // meter. On Linux this is the normal case: modem73 holds the
+                // sound card (ALSA hw/plughw take one user), and the level
+                // comes from modem73 instead (QA #220). Not an error, so info;
+                // keep trying quietly in case the card frees up.
+                tracing::info!(
+                    "wcr's own audio meter is off ({e}); modem73 has the sound card and reports the level"
+                );
                 reported_down = true;
             }
             Err(e) => tracing::debug!("audio input meter reopen failed: {e}"),
@@ -173,6 +181,7 @@ fn run_input_meter(
 #[cfg(all(feature = "setup-probe", not(windows)))]
 fn set_input_level(snap: &SharedStatus, db: f32) {
     let mut s = snap.lock();
+    s.local_in_meter = true;
     if s.audio_label.as_str() != "no modem" {
         s.audio_in_db = db;
         s.audio_db = db;

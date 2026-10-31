@@ -459,10 +459,12 @@ mod tests {
             LabeledPort {
                 name: "COM4".into(),
                 label: "COM4 — Silicon Labs Dual CP2105 Standard COM Port".into(),
+                usb_id: None,
             },
             LabeledPort {
                 name: "COM3".into(),
                 label: "COM3 — Silicon Labs Dual CP2105 Enhanced COM Port".into(),
+                usb_id: None,
             },
         ];
         let ft710 = radio("Yaesu FT-710");

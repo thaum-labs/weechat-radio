@@ -67,7 +67,7 @@ pub fn run_wizard() -> Result<Config> {
         println!(
             "  {}",
             ui_style::dim().apply_to(format!(
-                "Detected {label} (shown on the public map if you enable telemetry)"
+                "Detected {label}: a guess from your internet address, so check it (shown on the public map if you enable telemetry)"
             ))
         );
         accepted_detected = Confirm::with_theme(&confirm_theme)
@@ -298,6 +298,7 @@ pub fn run_wizard() -> Result<Config> {
                 "Audio in (decode — radio speaker / interface capture)",
                 crate::discover::list_audio_inputs(),
                 radio,
+                path == 1,
             )?;
             cfg.modem.audio_output = pick_audio_device(
                 &theme,
@@ -306,6 +307,7 @@ pub fn run_wizard() -> Result<Config> {
                 "Audio out (transmit — radio mic / interface playback)",
                 crate::discover::list_audio_outputs(),
                 radio,
+                path == 1,
             )?;
         }
         if !cfg.modem.audio_input.is_empty() || !cfg.modem.audio_output.is_empty() {
@@ -365,11 +367,12 @@ pub fn run_wizard() -> Result<Config> {
         println!(
             "  Guide: https://github.com/thaum-labs/weechat-radio/blob/main/docs/PI-GATEWAY.md"
         );
+        println!("  How you know it worked: the web page's lights show the station, internet, hub and radio.");
     } else {
         println!("  Next:  wcr gui   or   wcr tui");
+        println!("  With WeeChat:  wcr node   then   wcr weechat");
+        println!("  How you know it worked: the status bar shows your callsign and mode.");
     }
-    println!("  With WeeChat:  wcr node   then   wcr weechat");
-    println!("  How you know it worked: the status bar shows your callsign and mode.");
     ui_style::rule();
     let _ = std::io::stdout().flush();
     Ok(cfg)
@@ -446,6 +449,7 @@ fn pick_audio_device(
     prompt: &str,
     devs: Vec<String>,
     radio: Option<&Radio>,
+    digirig: bool,
 ) -> Result<String> {
     if devs.is_empty() {
         let audio: String = Input::with_theme(theme)
@@ -458,12 +462,20 @@ fn pick_audio_device(
             .interact_text()?;
         return Ok(audio.trim().to_string());
     }
-    let guess = radio.and_then(|r| r.pick_audio(&devs));
+    let devs = compact_alsa_list(devs);
+    // On a Pi the system default is the headphone jack, which cannot
+    // capture, so the Digirig path starts on the USB sound card (QA #220).
+    let guess = radio.and_then(|r| r.pick_audio(&devs)).or_else(|| {
+        digirig
+            .then(|| crate::discover::find_digirig_audio(&devs))
+            .flatten()
+    });
+    let cards = alsa_card_names();
     let mut items = vec!["(system default)".to_string()];
-    items.extend(devs);
+    items.extend(devs.iter().map(|d| with_card_name(d, &cards)));
     let default = guess
-        .and_then(|g| items.iter().position(|d| *d == g))
-        .unwrap_or(0);
+        .and_then(|g| devs.iter().position(|d| *d == g))
+        .map_or(0, |i| i + 1);
     let idx = Select::with_theme(theme)
         .with_prompt(ui_style::step(step, total_steps, prompt))
         .items(&items)
@@ -472,8 +484,56 @@ fn pick_audio_device(
     if idx == 0 {
         Ok(String::new())
     } else {
-        Ok(items[idx].clone())
+        Ok(devs[idx - 1].clone())
     }
+}
+
+/// ALSA lists every alias of every card (hw, plughw, default, sysdefault,
+/// front, surround40, iec958, dmix…): 13 outputs on a Pi with no hint which
+/// to pick (QA #220). Keep one `plughw:` entry per card (it converts the
+/// sample rate for modem73) and the plain names (`default`, `pulse`,
+/// `pipewire`). Other systems' lists, or ALSA lists with no `plughw:`, stay
+/// as they are.
+fn compact_alsa_list(devs: Vec<String>) -> Vec<String> {
+    if !devs.iter().any(|d| d.starts_with("plughw:")) {
+        return devs;
+    }
+    devs.into_iter()
+        .filter(|d| d.starts_with("plughw:") || !d.contains(':'))
+        .collect()
+}
+
+/// `plughw:CARD=Device,DEV=0  (USB PnP Sound Device)`: the ALSA name plus
+/// the card's long name, when known.
+fn with_card_name(dev: &str, cards: &[(String, String)]) -> String {
+    let id = dev
+        .split("CARD=")
+        .nth(1)
+        .map(|rest| rest.split(',').next().unwrap_or(rest));
+    match id.and_then(|id| cards.iter().find(|(c, _)| c == id)) {
+        Some((_, long)) => format!("{dev}  ({long})"),
+        None => dev.to_string(),
+    }
+}
+
+/// Card id → long name from /proc/asound/cards (Linux only; empty elsewhere).
+fn alsa_card_names() -> Vec<(String, String)> {
+    std::fs::read_to_string("/proc/asound/cards")
+        .map(|t| parse_asound_cards(&t))
+        .unwrap_or_default()
+}
+
+/// ` 2 [Device         ]: USB-Audio - USB PnP Sound Device` → (`Device`,
+/// `USB PnP Sound Device`).
+fn parse_asound_cards(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|line| {
+            let (_, rest) = line.split_once('[')?;
+            let (id, rest) = rest.split_once(']')?;
+            let (_, long) = rest.split_once(" - ")?;
+            Some((id.trim().to_string(), long.trim().to_string()))
+        })
+        .collect()
 }
 
 fn pick_rigctld(theme: &dyn dialoguer::theme::Theme) -> Result<String> {
@@ -619,6 +679,49 @@ mod tests {
         assert_eq!(grid_from_setup(true, "IO81UF", "jo01"), "JO01");
         assert_eq!(grid_from_setup(false, "IO81UF", ""), "");
         assert_eq!(grid_from_setup(false, "IO81UF", "jn68"), "JN68");
+    }
+
+    #[test]
+    fn audio_list_keeps_one_plughw_per_card_with_its_name() {
+        // Pi 3 + Digirig outputs from QA #220.
+        let devs: Vec<String> = [
+            "default",
+            "hw:CARD=Headphones,DEV=0",
+            "plughw:CARD=Headphones,DEV=0",
+            "default:CARD=Headphones",
+            "sysdefault:CARD=Headphones",
+            "dmix:CARD=Headphones,DEV=0",
+            "hw:CARD=Device,DEV=0",
+            "plughw:CARD=Device,DEV=0",
+            "front:CARD=Device,DEV=0",
+            "surround40:CARD=Device,DEV=0",
+            "iec958:CARD=Device,DEV=0",
+        ]
+        .map(String::from)
+        .to_vec();
+        let short = compact_alsa_list(devs);
+        assert_eq!(
+            short,
+            vec![
+                "default",
+                "plughw:CARD=Headphones,DEV=0",
+                "plughw:CARD=Device,DEV=0"
+            ]
+        );
+        let cards = parse_asound_cards(
+            " 0 [Headphones     ]: bcm2835_headpho - bcm2835 Headphones\n                      bcm2835 Headphones\n 2 [Device         ]: USB-Audio - USB PnP Sound Device\n                      C-Media Electronics Inc. USB PnP Sound Device at usb-3f980000.usb-1.3, full speed\n",
+        );
+        assert_eq!(
+            with_card_name("plughw:CARD=Device,DEV=0", &cards),
+            "plughw:CARD=Device,DEV=0  (USB PnP Sound Device)"
+        );
+        assert_eq!(with_card_name("default", &cards), "default");
+        // macOS and Windows names are left alone.
+        let mac = vec![
+            "MacBook Pro Microphone".to_string(),
+            "USB PnP Sound Device".into(),
+        ];
+        assert_eq!(compact_alsa_list(mac.clone()), mac);
     }
 
     #[test]
