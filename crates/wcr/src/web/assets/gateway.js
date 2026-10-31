@@ -81,6 +81,7 @@ function draw(d) {
   dl.replaceChildren();
   for (const [k, v] of facts) dl.append(el("dt", "", k), el("dd", "", v));
   setFreq = d.frequency || "";
+  wfShow(running, s);
   $("start").disabled = running;
   $("stop").disabled = !running;
   fill($("relay"), d.relay_mail, mailRow, running ? "No mail through this gateway yet." : "Station stopped.");
@@ -122,6 +123,75 @@ function audioIn(s) {
   return `${Math.round(s.audio_in_db)} dBFS (${label})`;
 }
 
+// Waterfall: one row from /api/spectrum every WF_MS while the page is
+// visible and the station runs a sound-card modem. Nothing is asked while
+// the page is hidden or closed, so modem73 stops collecting audio for it.
+const WF_MS = 250;
+// Fixed scale (dB below full scale per bin), so a squelched radio stays
+// near black, open-squelch noise is purple and a signal is bright. No
+// auto-gain on purpose. A squelched BF-1909 on a Digirig reads about
+// -67 dBFS overall (QA #222), roughly -88 dB per bin.
+const WF_FLOOR = -100, WF_TOP = -30;
+let wfOn = false, wfBusy = false;
+
+function wfColor(db) {
+  const t = Math.max(0, Math.min(1, (db - WF_FLOOR) / (WF_TOP - WF_FLOOR)));
+  // black → blue → purple → yellow → white
+  const stops = [[0, 0, 0], [28, 42, 107], [140, 60, 200], [255, 225, 77], [255, 255, 255]];
+  const x = t * (stops.length - 1), i = Math.min(stops.length - 2, Math.floor(x)), f = x - i;
+  return stops[i].map((c, k) => Math.round(c + (stops[i + 1][k] - c) * f));
+}
+
+function wfRow(bins, tx) {
+  const cv = $("wf");
+  const w = Math.max(1, Math.round(cv.clientWidth * (window.devicePixelRatio || 1)));
+  const h = cv.height;
+  if (cv.width !== w) cv.width = w;
+  const g = cv.getContext("2d");
+  g.drawImage(cv, 0, 0, w, h - 1, 0, 1, w, h - 1);
+  const row = g.createImageData(w, 1);
+  for (let x = 0; x < w; x++) {
+    const rgb = tx ? [255, 122, 61] : wfColor(bins[Math.floor((x * bins.length) / w)]);
+    row.data.set([rgb[0], rgb[1], rgb[2], 255], x * 4);
+  }
+  g.putImageData(row, 0, 0);
+}
+
+async function wfTick() {
+  if (!wfOn || wfBusy || document.hidden) return;
+  wfBusy = true;
+  try {
+    const r = await fetch("/api/spectrum", { cache: "no-store" });
+    if (r.status === 401) { location.href = "/login"; return; }
+    const d = await r.json();
+    const note = $("wf-note");
+    if (d.tx) {
+      wfRow([], true);
+      note.textContent = "· transmitting";
+    } else if (d.bins.length) {
+      wfRow(d.bins, false);
+      note.textContent = "";
+    } else {
+      note.textContent = {
+        "old modem": "· needs the modem73 from wcr 1.0.7 or later",
+        "no modem": "· modem not answering",
+        "stopped": "· station stopped",
+      }[d.why] || "· starting…";
+    }
+  } catch (e) {
+    // The main poll reports a lost connection.
+  } finally {
+    wfBusy = false;
+  }
+}
+
+// Shown for a station with a sound-card modem (not internet-only, not a TNC).
+function wfShow(running, s) {
+  const want = running && s.mode && s.mode !== "internet" && !s.tnc;
+  $("wf-card").hidden = !want;
+  wfOn = want;
+}
+
 async function poll() {
   try {
     const r = await fetch("/api/gateway", { cache: "no-store" });
@@ -154,3 +224,4 @@ $("start").addEventListener("click", () => act("start"));
 $("stop").addEventListener("click", () => act("stop"));
 poll();
 setInterval(poll, POLL_MS);
+setInterval(wfTick, WF_MS);

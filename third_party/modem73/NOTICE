@@ -9,7 +9,10 @@ pinned tag (.github/workflows/modem73.yml) with one patch added:
 `patches/network-audio.patch` (`patches/network-audio-win.patch` for the
 Windows port). It adds network audio (`-d tcp:HOST:PORT`), which WeeChat
 Radio uses to carry a Bluetooth radio's audio (VR-N76 / VR-N7600) into
-modem73 with no sound card. Both patches are offered upstream; once
+modem73 with no sound card. The Linux and macOS patch also adds the
+`audio_in_db` level to the control port's status and a `get_spectrum`
+command, which feed the level line and the waterfall on `wcr web`'s page.
+Both patches are offered upstream; once
 upstream ships network audio the patch goes away. The patch is under the
 same Unlicense as modem73. That binary is not Apache-2.0.
 macOS archives also include the `libs/` folder (`@executable_path/libs`).

@@ -27,7 +27,7 @@ async fn real_main() -> Result<()> {
     Config::set_active_path(&cfg_path);
     match cli.cmd {
         Command::Setup => {
-            wcr::setup::run_wizard()?;
+            wcr::setup::run_wizard(&cfg_path)?;
         }
         Command::Node => {
             let cfg = load_cfg(&cfg_path)?;

@@ -41,6 +41,8 @@ On the Pi, logged in as your own user (not root):
 
    Choose the preset for the band, the Digirig or sound card, the PTT, and the dial frequency the radio stays on. With "Handheld + Digirig", setup starts the serial and audio pickers on the Digirig (`plughw:CARD=Device,DEV=0` for audio), so Enter is right; the Pi's own `Headphones` card cannot hear the radio. Setup puts a station with both a radio and the internet in `internet-radio` mode by itself; that is the mode a gateway needs. Without a desktop it ends by pointing you at the next two steps.
 
+   Running `wcr setup` again on a working gateway is safe: it keeps the web page password and the settings it does not ask about, and starts each picker on the current value. While the station runs, it holds the Digirig, so setup lists it as "in use"; stop the station first (`sudo systemctl stop wcr-web`) if you want to test the card. To try setup without touching the live file, give it another one: `wcr setup -c /tmp/test/wcr.toml`.
+
 4. Choose a password for the web page (at least 8 characters):
 
    ```
@@ -79,7 +81,9 @@ The radio light is up only while modem73 is running and has its sound card. If i
 
 **Stop** and **Start** stop and start the station. The page stays up while the station is stopped. Start asks first, because the station then transmits: beacons and gateway replies.
 
-modem73's own ports (KISS on 8001, control on 8073) listen only on the Pi itself (127.0.0.1), so nobody on the network can key the radio through them. Only the password-protected page is on the network. To open both to the network on purpose, set `host = "0.0.0.0"` in `[modem]`.
+modem73's own ports (KISS on 8001, control on 8073) listen only on the Pi itself (127.0.0.1), so nobody on the network can key the radio through them. To open both to the network on purpose, set `host = "0.0.0.0"` in `[modem]`.
+
+Two things are on the network. The password-protected page on 8443. And port 7373 (TCP and UDP), where WeeChat Radio stations on the same network find each other and pass chat lines without the hub. A station on your network can hand the gateway a line there, and the gateway treats it like a line from the hub: it goes on the air only under the same gateway rules (`rf_egress`, the addressee must have been heard on this frequency lately, guests only with `third_party = "allow"`). Nobody can key the radio or change settings through 7373. If you do not want local stations at all, set `discovery = false` in `[lan]`; the port then closes.
 
 `[web]` settings, all optional:
 
@@ -121,7 +125,7 @@ With the radio squelched and quiet, audio in on the web page reads very low. Whe
 
 ## Troubleshooting
 
-- **The Digirig does not show up** (`lsusb` has no "CP2102N" and no "USB PnP Sound Device"): try a USB-C cable that carries data, and the official power supply. `vcgencmd get_throttled` must say `0x0`.
+- **The Digirig does not show up** (`lsusb` has no `10c4:ea60 Silicon Labs CP210x UART Bridge` and no `0d8c:013c C-Media Electronics, Inc. CM108 Audio Controller`; the IDs are what matters, the names vary): try a USB-C cable that carries data, and the official power supply. `vcgencmd get_throttled` must say `0x0`.
 - **`raspberrypi.local` does not answer:** use the Pi's IP address (see The web page).
 - **Audio in says "not measured":** the modem73 next to `wcr` is an older one. Run `wcr update`.
 
