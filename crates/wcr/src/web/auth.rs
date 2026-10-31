@@ -69,6 +69,15 @@ impl Sessions {
         }
     }
 
+    /// True while the token is live, without restarting its clock: an open
+    /// page's event stream does not keep a login alive by itself.
+    pub fn alive(&self, token: &str) -> bool {
+        self.live
+            .lock()
+            .get(token)
+            .is_some_and(|seen| seen.elapsed() < SESSION_IDLE)
+    }
+
     pub fn close(&self, token: &str) {
         self.live.lock().remove(token);
     }

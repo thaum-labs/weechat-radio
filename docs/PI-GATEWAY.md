@@ -85,6 +85,17 @@ The radio light is up only while modem73 is running and has its sound card. If i
 
 **Stop** and **Start** stop and start the station. The page stays up while the station is stopped. Start asks first, because the station then transmits: beacons and gateway replies.
 
+## The App view: messages in the browser
+
+**App** at the top of the page (or `https://<pi>:8443/app`) turns the Pi into a field computer you use from a phone or laptop on the same network, without the desktop app. **Gateway** goes back to the gateway view.
+
+- **Chat** (Live Chat): your channels and direct conversations, with history from the station. Type and press Send (or Enter). New lines appear by themselves. Type `#name` or a callsign under the list and press Open to start one.
+- Your own lines carry the same marks as in the desktop app: `[..]` waiting to go out, `[tx]` sent on air, `[x2]` keyed twice, `[rl]` heard relayed, `[gw]` put on the hub by a gateway, `[ok]` delivered, `[all]` every member got it, `[no]` failed. Lines from others show how they reached you (`[rf]`, `[net]`, `[lan]`) and the SNR of a radio line. **marks** next to the conversation name explains them.
+- **Mail**: Inbox, Outbox and Sent, with the same status chips as the desktop app (sent, delivered, failed; there is no read or opened status). New mail, Reply, and Retry on a failed mail. A Radio+ station also has Check mail and Get.
+- **Stations**: who the station has heard, newest first. **Message** opens a direct conversation.
+
+The browser sends through the station exactly as the desktop app does, so the same on-air, hub and gateway rules apply. Slash commands, creating closed channels and invites stay in the desktop app for now.
+
 modem73's own ports (KISS on 8001, control on 8073) listen only on the Pi itself (127.0.0.1), so nobody on the network can key the radio through them. To open both to the network on purpose, set `host = "0.0.0.0"` in `[modem]`.
 
 Two things are on the network. The password-protected page on 8443. And port 7373 (TCP and UDP), where WeeChat Radio stations on the same network find each other and pass chat lines without the hub. A station on your network can hand the gateway a line there, and the gateway treats it like a line from the hub: it goes on the air only under the same gateway rules (`rf_egress`, the addressee must have been heard on this frequency lately, guests only with `third_party = "allow"`). Nobody can key the radio or change settings through 7373. If you do not want local stations at all, set `discovery = false` in `[lan]`; the port then closes.
