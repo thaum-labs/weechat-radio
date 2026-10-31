@@ -141,6 +141,9 @@ async fn real_main() -> Result<()> {
             Some(WebAction::Password) => wcr::web::set_password(&cfg_path)?,
             Some(WebAction::Install) => wcr::web::install(&cfg_path)?,
         },
+        Command::Webui { host, no_open, qr } => {
+            wcr::webui::run(&cfg_path, wcr::webui::Opts { host, no_open, qr }).await?;
+        }
         Command::Tnc { action } => {
             wcr::ui_style::panel("WEECHAT RADIO", "TNC");
             wcr::tnc::cli::run(action, &cfg_path)?;

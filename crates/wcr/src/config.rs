@@ -79,6 +79,9 @@ pub struct WebConfig {
     /// PEM certificate and key. Empty: a self-signed pair in the data folder.
     pub cert: String,
     pub key: String,
+    /// On a laptop: the gateway page `wcr webui` opened last (`IP:port`),
+    /// checked first next time. Empty: search the LAN.
+    pub gateway: String,
 }
 
 impl Default for WebConfig {
@@ -89,6 +92,7 @@ impl Default for WebConfig {
             allow_public: false,
             cert: String::new(),
             key: String::new(),
+            gateway: String::new(),
         }
     }
 }

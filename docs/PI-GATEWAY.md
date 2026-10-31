@@ -63,6 +63,10 @@ Open `https://<pi-name>.local:8443` from a phone or laptop on the same network (
 
 Right after the first boot, `raspberrypi.local` may not resolve yet. Use the Pi's IP address instead, for SSH and for the page (for example `ssh you@192.168.1.158` and `https://192.168.1.158:8443`). Your router's list of devices shows it, and so does `hostname -I` on the Pi. The `.local` name usually starts working a few minutes later.
 
+**`wcr webui` finds it for you.** On a laptop with WeeChat Radio installed (Mac, Windows or Linux), run `wcr webui`. It looks for the page in this order: the address it found last time, then by name on the network (mDNS, including `raspberrypi.local`), then by trying port 8443 on every address of your network. It prints the address and opens it in your browser. With several gateways it lists them (callsign, name, IP) and asks which one; the choice is saved as `gateway` in `[web]`. Options: `--host <address>` skips the search, `--no-open` only prints, `--qr` also prints a QR code. It never opens a port, changes a service or sees your password. If nothing answers within a few seconds, it says so.
+
+On the Pi itself, `wcr webui` prints the page's addresses, whether the `wcr-web` service runs (and how to start it), and a QR code a phone can scan.
+
 - **HTTPS only.** On first start the Pi makes its own certificate. Browsers do not know it, so they warn once: check that the address is your Pi's, then continue. To use your own certificate, set `cert` and `key` (PEM file paths) in `[web]` in `wcr.toml`.
 - **Password.** Log in with the password from `wcr web password`. A login lasts 12 hours of use.
 - **Local network only.** The page answers only addresses on your own network (192.168.x.x, 10.x.x.x, 172.16–31.x.x, and IPv6 local addresses). Do not forward port 8443 on your router. If you really want it reachable from elsewhere, set `allow_public = true` in `[web]` and protect it yourself. That is your decision as the control operator.
@@ -93,6 +97,7 @@ Two things are on the network. The password-protected page on 8443. And port 737
 | `password_hash` | (empty) | Set by `wcr web password`. Empty means `wcr web` will not start |
 | `allow_public` | `false` | Answer browsers outside the local network |
 | `cert`, `key` | (empty) | Your own PEM certificate and key, instead of the self-signed pair |
+| `gateway` | (empty) | On a laptop: the gateway page `wcr webui` opened last, checked first next time |
 
 ## The radio on a fixed channel
 
@@ -126,7 +131,7 @@ With the radio squelched and quiet, audio in on the web page reads very low. Whe
 ## Troubleshooting
 
 - **The Digirig does not show up** (`lsusb` has no `10c4:ea60 Silicon Labs CP210x UART Bridge` and no `0d8c:013c C-Media Electronics, Inc. CM108 Audio Controller`; the IDs are what matters, the names vary): try a USB-C cable that carries data, and the official power supply. `vcgencmd get_throttled` must say `0x0`.
-- **`raspberrypi.local` does not answer:** use the Pi's IP address (see The web page).
+- **`raspberrypi.local` does not answer:** run `wcr webui` on your laptop, or use the Pi's IP address (see The web page).
 - **Audio in says "not measured":** the modem73 next to `wcr` is an older one. Run `wcr update`.
 
 ## Without a monitor
