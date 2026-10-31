@@ -42,7 +42,7 @@ index 2b40c05..16e0684 100644
          if (!iface_.get_status) {
              send_error(client_fd, "get_status not available");
 diff --git a/kiss_tnc.cc b/kiss_tnc.cc
-index f3fe696..d6aeb92 100644
+index f3fe696..119fe49 100644
 --- a/kiss_tnc.cc
 +++ b/kiss_tnc.cc
 @@ -288,6 +288,9 @@ void print_help(const char* prog) {
@@ -55,7 +55,7 @@ index f3fe696..d6aeb92 100644
                << "      --audio-backend B   Audio backend: auto, alsa, pulse, jack (default: auto)\n"
                << "                          Place before --list-audio to list that backend's devices\n"
                << "      --tx-level PCT      TX audio output level, 5-100 (default: 100)\n"
-@@ -1303,12 +1306,33 @@ int main(int argc, char** argv) {
+@@ -1303,12 +1306,36 @@ int main(int argc, char** argv) {
                  cJSON_AddNumberToObject(j, "client_count", tnc.get_client_count());
                  cJSON_AddBoolToObject(j, "rigctl_connected", tnc.is_rigctl_connected());
                  cJSON_AddBoolToObject(j, "audio_connected", tnc.is_audio_healthy());
@@ -74,10 +74,13 @@ index f3fe696..d6aeb92 100644
              };
  
 +            // wcr: audio spectrum for the web page's waterfall. Whole dB
-+            // keep the answer small; an empty list means "warming up".
++            // keep the answer small; an empty list means "warming up", or
++            // "no new audio since the last ask" when no_audio is set.
 +            ctrl_iface.get_spectrum = [&tnc]() -> cJSON* {
 +                cJSON* j = cJSON_CreateObject();
-+                std::vector<float> db = tnc.get_spectrum();
++                bool no_audio = false;
++                std::vector<float> db = tnc.get_spectrum(no_audio);
++                if (no_audio) cJSON_AddBoolToObject(j, "no_audio", true);
 +                cJSON* bins = cJSON_AddArrayToObject(j, "bins");
 +                for (float v : db)
 +                    cJSON_AddItemToArray(bins, cJSON_CreateNumber(std::round(std::max(-140.0f, v))));
@@ -90,7 +93,7 @@ index f3fe696..d6aeb92 100644
                  cJSON* j = cJSON_CreateObject();
                  TNCConfig cfg = tnc.get_config();
 diff --git a/kiss_tnc_impl.hh b/kiss_tnc_impl.hh
-index b721d8a..92791d7 100644
+index b721d8a..e1d8763 100644
 --- a/kiss_tnc_impl.hh
 +++ b/kiss_tnc_impl.hh
 @@ -39,6 +39,9 @@
@@ -111,62 +114,139 @@ index b721d8a..92791d7 100644
  
                  {
                      int64_t now_ms = steady_now_ms();
-@@ -2532,6 +2536,85 @@ public:
+@@ -2532,6 +2536,168 @@ public:
          return tx_on_air_.load() || tx_blanking_active_.load();
      }
  
 +    // wcr: audio spectrum for the web page's waterfall. Samples are kept
 +    // only while someone asked in the last few seconds, so it costs
-+    // nothing while no page is open.
++    // nothing while no page is open. The audio goes through a 150 Hz
++    // high-pass (no DC or sub-audio stripe at the left edge, no thump
++    // after TX) and a proper low-pass before it is decimated to ~8 kHz,
++    // so 3-24 kHz audio does not fold into the picture. Each answer
++    // averages ALL audio that came in since the previous ask.
 +    static constexpr int SPEC_FFT = 256;
-+    static constexpr int SPEC_RATE = 6000;  // decimated, so the bins span 0-3 kHz
-+    static constexpr int SPEC_RING = 2048;
++    static constexpr int SPEC_HOP = SPEC_FFT / 2;
++    static constexpr int SPEC_RATE = 8000;          // decimated rate (about)
++    static constexpr float SPEC_MAX_HZ = 3000.0f;   // bins returned: 0-3 kHz
++    static constexpr float SPEC_HP_HZ = 150.0f;
++    static constexpr int SPEC_RING = 4096;          // ~0.5 s at 8 kHz
++    static constexpr int SPEC_HIST = 512;           // FIR history (power of 2)
 +    static constexpr int64_t SPEC_IDLE_MS = 5000;
 +    std::atomic<int64_t> spec_asked_ms_{0};
 +    std::mutex spec_mutex_;
 +    float spec_ring_[SPEC_RING] = {};
 +    int spec_wpos_ = 0;
-+    uint32_t spec_written_ = 0;
-+    float spec_acc_ = 0.0f;
-+    int spec_acc_n_ = 0;
++    uint32_t spec_written_ = 0;  // since the page (re)opened
++    uint32_t spec_new_ = 0;      // since the last ask
++    int spec_rate_in_ = 0;       // the input rate the filters were made for
++    int spec_decim_ = 1;
++    int spec_phase_ = 0;
++    double spec_hp_[5] = {};     // b0 b1 b2 a1 a2
++    double spec_hx_[2] = {}, spec_hy_[2] = {};
++    std::vector<float> spec_lp_;
++    float spec_hist_[SPEC_HIST] = {};
++    int spec_hpos_ = 0;
 +    DSP::RealToHalfComplexTransform<SPEC_FFT, std::complex<float>> spec_fft_;
++
++    static int spec_decim_for(int rate) { return std::max(1, rate / SPEC_RATE); }
++
++    // Called with spec_mutex_ held.
++    void spec_make_filters(int rate) {
++        spec_rate_in_ = rate;
++        spec_decim_ = spec_decim_for(rate);
++        spec_phase_ = 0;
++        // 2nd-order Butterworth high-pass (RBJ cookbook).
++        const double w0 = 2.0 * M_PI * SPEC_HP_HZ / rate;
++        const double alpha = std::sin(w0) / (2.0 * M_SQRT1_2);
++        const double c = std::cos(w0), a0 = 1.0 + alpha;
++        spec_hp_[0] = (1.0 + c) / 2.0 / a0;
++        spec_hp_[1] = -(1.0 + c) / a0;
++        spec_hp_[2] = (1.0 + c) / 2.0 / a0;
++        spec_hp_[3] = -2.0 * c / a0;
++        spec_hp_[4] = (1.0 - alpha) / a0;
++        spec_hx_[0] = spec_hx_[1] = spec_hy_[0] = spec_hy_[1] = 0.0;
++        // Blackman windowed-sinc low-pass at half the decimated rate. Its
++        // transition band ends where an alias would land above 3 kHz, so
++        // what is shown is flat to 3 kHz and free of folded audio.
++        spec_lp_.clear();
++        if (spec_decim_ > 1) {
++            const double out = (double)rate / spec_decim_;
++            const double width = std::max(500.0, out - 2.0 * SPEC_MAX_HZ);
++            int taps = (int)std::ceil(5.5 * rate / width) | 1;
++            taps = std::min(taps, SPEC_HIST - 1);
++            const double fc = (out / 2.0) / rate;
++            const int m = taps - 1;
++            double sum = 0.0;
++            for (int i = 0; i < taps; i++) {
++                const double x = i - m / 2.0;
++                const double sinc = x == 0.0 ? 2.0 * fc : std::sin(2.0 * M_PI * fc * x) / (M_PI * x);
++                const double w = 0.42 - 0.5 * std::cos(2.0 * M_PI * i / m) + 0.08 * std::cos(4.0 * M_PI * i / m);
++                spec_lp_.push_back((float)(sinc * w));
++                sum += sinc * w;
++            }
++            for (float& t : spec_lp_) t = (float)(t / sum);
++        }
++    }
 +
 +    void push_spectrum_audio(const float* s, int n) {
 +        if (steady_now_ms() - spec_asked_ms_.load(std::memory_order_relaxed) > SPEC_IDLE_MS)
 +            return;
-+        const int decim = std::max(1, config_.sample_rate / SPEC_RATE);
 +        std::lock_guard<std::mutex> lock(spec_mutex_);
++        if (spec_rate_in_ != config_.sample_rate) spec_make_filters(config_.sample_rate);
++        const double* h = spec_hp_;
 +        for (int i = 0; i < n; i++) {
-+            spec_acc_ += s[i];
-+            if (++spec_acc_n_ >= decim) {
-+                spec_ring_[spec_wpos_] = spec_acc_ / spec_acc_n_;
-+                spec_wpos_ = (spec_wpos_ + 1) % SPEC_RING;
-+                spec_written_++;
-+                spec_acc_ = 0.0f;
-+                spec_acc_n_ = 0;
++            const double x = s[i];
++            const double y = h[0] * x + h[1] * spec_hx_[0] + h[2] * spec_hx_[1]
++                           - h[3] * spec_hy_[0] - h[4] * spec_hy_[1];
++            spec_hx_[1] = spec_hx_[0]; spec_hx_[0] = x;
++            spec_hy_[1] = spec_hy_[0]; spec_hy_[0] = y;
++            spec_hpos_ = (spec_hpos_ + 1) & (SPEC_HIST - 1);
++            spec_hist_[spec_hpos_] = (float)y;
++            if (++spec_phase_ < spec_decim_) continue;
++            spec_phase_ = 0;
++            float out = (float)y;
++            if (!spec_lp_.empty()) {
++                out = 0.0f;
++                for (size_t k = 0; k < spec_lp_.size(); k++)
++                    out += spec_lp_[k] * spec_hist_[(spec_hpos_ - (int)k) & (SPEC_HIST - 1)];
 +            }
++            spec_ring_[spec_wpos_] = out;
++            spec_wpos_ = (spec_wpos_ + 1) % SPEC_RING;
++            spec_written_++;
++            if (spec_new_ < (uint32_t)SPEC_RING) spec_new_++;
 +        }
 +    }
 +
-+    // Level per bin in dB below full scale (a full-scale sine reads 0), for
-+    // SPEC_FFT/2 bins across 0-3 kHz, over the last ~0.15 s of audio. Empty
-+    // until enough audio has come in since the first ask.
-+    std::vector<float> get_spectrum() {
++    // Level per bin in dB below full scale (a full-scale sine reads 0)
++    // across 0-3 kHz, averaged over every sample since the previous ask
++    // (50% overlapping Hann windows). Empty while warming up. Empty with
++    // `no_audio` set when no new audio came in since the previous ask, so
++    // a stalled capture is never shown as a repeat of the last row.
++    std::vector<float> get_spectrum(bool& no_audio) {
++        no_audio = false;
 +        const int64_t now = steady_now_ms();
 +        const int64_t last = spec_asked_ms_.exchange(now);
-+        static constexpr int SEGS = 6;
-+        static constexpr int HOP = SPEC_FFT / 2;
-+        static constexpr int SPAN = SPEC_FFT + HOP * (SEGS - 1);
-+        float tdom[SPAN];
++        std::vector<float> tdom;
 +        {
 +            std::lock_guard<std::mutex> lock(spec_mutex_);
 +            if (now - last > SPEC_IDLE_MS) {
 +                spec_written_ = 0;  // old audio from before the page closed
++                spec_new_ = 0;
 +                return {};
 +            }
-+            if (spec_written_ < (uint32_t)SPAN) return {};
-+            for (int i = 0; i < SPAN; i++)
-+                tdom[i] = spec_ring_[(spec_wpos_ + SPEC_RING - SPAN + i) % SPEC_RING];
++            if (spec_written_ < (uint32_t)SPEC_FFT) return {};
++            const int fresh = (int)spec_new_;
++            spec_new_ = 0;
++            if (fresh < SPEC_FFT) {
++                no_audio = true;
++                return {};
++            }
++            const int segs = (fresh - SPEC_FFT) / SPEC_HOP + 1;
++            const int span = SPEC_FFT + SPEC_HOP * (segs - 1);
++            tdom.resize(span);
++            for (int i = 0; i < span; i++)
++                tdom[i] = spec_ring_[(spec_wpos_ + SPEC_RING - span + i) % SPEC_RING];
 +        }
 +        static const auto window = [] {
 +            std::array<float, SPEC_FFT> w{};
@@ -174,25 +254,31 @@ index b721d8a..92791d7 100644
 +                w[i] = 0.5f - 0.5f * std::cos(2.0f * (float)M_PI * i / SPEC_FFT);
 +            return w;
 +        }();
-+        float pwr[SPEC_FFT / 2] = {};
++        const int segs = ((int)tdom.size() - SPEC_FFT) / SPEC_HOP + 1;
++        const int nbins = std::min(SPEC_FFT / 2,
++                                   (int)std::ceil(SPEC_MAX_HZ / spectrum_hz_per_bin()) + 1);
++        std::vector<float> pwr(nbins, 0.0f);
 +        float seg[SPEC_FFT];
 +        std::complex<float> fdom[SPEC_FFT / 2 + 1];
-+        for (int k = 0; k < SEGS; k++) {
++        for (int k = 0; k < segs; k++) {
 +            for (int i = 0; i < SPEC_FFT; i++)
-+                seg[i] = tdom[k * HOP + i] * window[i];
++                seg[i] = tdom[k * SPEC_HOP + i] * window[i];
 +            spec_fft_(fdom, seg);
-+            for (int i = 0; i < SPEC_FFT / 2; i++)
++            for (int i = 0; i < nbins; i++)
 +                pwr[i] += std::norm(fdom[i]);
 +        }
 +        // Hann window: a sine of amplitude A peaks at A * SPEC_FFT / 4.
-+        const float full = (SPEC_FFT / 4.0f) * (SPEC_FFT / 4.0f) * SEGS;
-+        std::vector<float> db(SPEC_FFT / 2);
-+        for (int i = 0; i < SPEC_FFT / 2; i++)
++        const float full = (SPEC_FFT / 4.0f) * (SPEC_FFT / 4.0f) * segs;
++        std::vector<float> db(nbins);
++        for (int i = 0; i < nbins; i++)
 +            db[i] = 10.0f * std::log10(pwr[i] / full + 1e-12f);
 +        return db;
 +    }
 +
-+    float spectrum_hz_per_bin() const { return (float)SPEC_RATE / SPEC_FFT; }
++    float spectrum_hz_per_bin() const {
++        const int rate = config_.sample_rate;
++        return (float)rate / spec_decim_for(rate) / SPEC_FFT;
++    }
 +
      void unkey() {
          set_ptt(false);

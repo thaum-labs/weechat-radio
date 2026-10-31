@@ -50,7 +50,12 @@ input { font: inherit; width: 100%; color: var(--fg); background: #0b0b12; borde
 #errors { color: var(--orange); }
 /* Waterfall: newest row at the top. */
 .wf { display: block; width: 100%; height: 160px; background: #000; border: 1px solid var(--line); border-radius: 4px; image-rendering: pixelated; }
-.wf-axis { display: flex; justify-content: space-between; margin-top: 2px; }
+.wf-pass { position: relative; margin: 2px 0 0 10%; width: 80%; height: 3px; background: var(--orange); opacity: 0.6; }
+.wf-axis { position: relative; height: 1.4em; margin-top: 2px; }
+.wf-axis span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+.wf-axis .t0 { left: 0; transform: none; } .wf-axis .t1 { left: 33.333%; } .wf-axis .t2 { left: 66.667%; }
+.wf-axis .t3 { left: 100%; transform: translateX(-100%); }
+.wf-help { margin: 2px 0 0; }
 .wf-key { margin: 6px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
 .wf-sw { display: inline-block; width: 10px; height: 10px; border: 1px solid var(--line); }
 .wf-sw.quiet { background: #0b1230; } .wf-sw.noise { background: #8c3cc8; }

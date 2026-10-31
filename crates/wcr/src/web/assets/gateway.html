@@ -26,8 +26,10 @@
   <section class="card" id="wf-card" aria-labelledby="h-wf" hidden>
     <h2 id="h-wf">Waterfall <small id="wf-note" class="dim"></small></h2>
     <canvas id="wf" class="wf" height="160" role="img" aria-label="Live audio spectrum from the radio, newest at the top"></canvas>
-    <div class="wf-axis dim small" aria-hidden="true"><span>0</span><span>1</span><span>2</span><span>3 kHz</span></div>
+    <div class="wf-pass" aria-hidden="true" title="Modem passband, 300–2700 Hz"></div>
+    <div class="wf-axis dim small" aria-hidden="true"><span class="t0">0</span><span class="t1">1000</span><span class="t2">2000</span><span class="t3">3000 Hz</span></div>
     <p class="dim small wf-key"><span class="wf-sw quiet"></span>squelched <span class="wf-sw noise"></span>noise <span class="wf-sw sig"></span>signal <span class="wf-sw tx"></span>our TX</p>
+    <p class="dim small wf-help">Across: the radio's audio, 0–3000 Hz. Orange bar: where the modem sends, 300–2700 Hz. Newest row at the top.</p>
   </section>
   <section class="card" aria-labelledby="h-mail">
     <h2 id="h-mail">Mail through this gateway</h2>

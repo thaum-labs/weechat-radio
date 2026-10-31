@@ -53,13 +53,13 @@ struct Web {
 /// Run the page and the station until `stop` resolves, then stop the station
 /// (which ends modem73) before returning.
 pub async fn run(cfg_path: &Path, stop: impl std::future::Future<Output = ()>) -> Result<()> {
-    let mut cfg = Config::load(cfg_path)?;
+    keep_big_blocks_out_of_the_heap();
+    let cfg = Config::load(cfg_path)?;
     // A gateway run by `wcr web` always shows as a tower on the map
-    // (Tobias, #220). Saved before the station starts, so it reads it.
-    if cfg.mode.is_gateway() && !cfg.gateway.tower {
-        cfg.gateway.tower = true;
-        cfg.save(cfg_path)?;
-        println!("map: this gateway shows as a tower ([gateway] tower = true)");
+    // (Tobias, #220). The station child gets WCR_ALWAYS_TOWER=1 (see
+    // `station`); wcr.toml is left as it is (#225).
+    if cfg.mode.is_gateway() {
+        println!("map: this gateway shows as a tower (always, under wcr web)");
     }
     if cfg.web.password_hash.trim().is_empty() {
         return Err(Error::config(
@@ -114,6 +114,20 @@ pub async fn run(cfg_path: &Path, stop: impl std::future::Future<Output = ()>) -
     }
     station.stop().await;
     Ok(())
+}
+
+/// Each login checks the password with Argon2, which takes a 19 MB block.
+/// glibc's default raises its mmap threshold after the first such block is
+/// freed, so later ones come from a worker thread's heap and stay in RSS
+/// (+19 MB per login on another thread, QA #225). A fixed threshold keeps
+/// big blocks in mmap, so they go back to the system when freed.
+fn keep_big_blocks_out_of_the_heap() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: mallopt only sets an allocator tunable; called before any
+    // login can allocate an Argon2 block.
+    unsafe {
+        libc::mallopt(libc::M_MMAP_THRESHOLD, 1024 * 1024);
+    }
 }
 
 /// The browser's address, for the LAN check.
@@ -346,8 +360,10 @@ fn modem_control_addr(host: &str, port: u16) -> String {
 /// page asks only while it is open and visible, and modem73 stops keeping
 /// audio for it a few seconds after the last ask.
 ///
-/// `bins` is dB below full scale across 0–3 kHz; empty with a `why` when
-/// there is nothing to show (`stopped`, `no modem`, `old modem`).
+/// `bins` is dB below full scale from 0 Hz up, `hz_per_bin` apart; empty
+/// with a `why` when there is nothing to show (`stopped`, `no modem`,
+/// `old modem`, or `no audio` when no new audio came in since the last ask,
+/// so a stalled capture never repeats the last row).
 async fn spectrum(State(web): State<Web>) -> Json<Value> {
     let empty = |why: &str| Json(json!({ "bins": [], "why": why }));
     if !web.station.state().await.running {
@@ -366,6 +382,11 @@ async fn spectrum(State(web): State<Web>) -> Json<Value> {
     };
     let ask = client.request(json!({ "cmd": "get_spectrum" }));
     match tokio::time::timeout(Duration::from_secs(1), ask).await {
+        Ok(Ok(v)) if v["no_audio"] == json!(true) => Json(json!({
+            "bins": [],
+            "why": "no audio",
+            "tx": v["tx"],
+        })),
         Ok(Ok(v)) if v["bins"].is_array() => Json(json!({
             "bins": v["bins"],
             "hz_per_bin": v["hz_per_bin"],
