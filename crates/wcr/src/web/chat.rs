@@ -124,6 +124,36 @@ impl Chat {
         json!({ "type": "hello", "me": st.me, "up": st.up, "convs": convs })
     }
 
+    /// Change the station's mode or preset with the same commands the desktop
+    /// app's pickers send (`/mode X`, `/preset X`, #226). Nothing else is
+    /// accepted, so the page cannot run other commands.
+    pub fn radio_setting(&self, what: &str, value: &str) -> Result<(), String> {
+        let cmd = match what {
+            "mode" => {
+                let mode: crate::modes::Mode = value.parse()?;
+                // The page asks first, as the desktop app does.
+                if mode == crate::modes::Mode::Radio {
+                    "/mode radio confirm".to_string()
+                } else {
+                    format!("/mode {}", mode.as_str())
+                }
+            }
+            "preset" => {
+                let p = crate::presets::Preset::parse(value)
+                    .ok_or_else(|| format!("unknown preset {value}"))?;
+                format!("/preset {}", p.as_str())
+            }
+            _ => return Err("only mode and preset can be changed here".into()),
+        };
+        if !self.state.lock().up {
+            return Err("the station is not running".into());
+        }
+        for wire in crate::slash::to_wire(&cmd, "#bulletin") {
+            let _ = self.out.send(wire);
+        }
+        Ok(())
+    }
+
     /// Send what was typed into `to` (`#channel` or a callsign), through the
     /// same steps as the desktop app's compose box.
     pub fn send(&self, to: &str, text: &str) -> Result<(), String> {
@@ -231,7 +261,7 @@ impl Chat {
     }
 
     /// A delivery mark from the station, applied as the desktop app does.
-    fn mark(&self, msgid: &str, state: &str, tries: u32) {
+    fn mark(&self, msgid: &str, state: &str, tries: u32, via: Option<&str>) {
         let changed: Vec<LineView> = {
             let mut st = self.state.lock();
             let me = st.me.clone();
@@ -243,7 +273,7 @@ impl Chat {
             });
             if let Some(i) = pos.or_else(|| newest_unmarked(&st.convs, &me)) {
                 let conv = &mut st.convs[i];
-                let before: Vec<(String, String, u32)> = conv.lines.iter().map(marks).collect();
+                let before: Vec<_> = conv.lines.iter().map(marks).collect();
                 chat_line::apply_delivery_to(
                     conv.lines.make_contiguous(),
                     &me,
@@ -251,6 +281,9 @@ impl Chat {
                     state,
                     tries,
                 );
+                if let Some(via) = via {
+                    chat_line::apply_receipt_via(conv.lines.make_contiguous(), msgid, via);
+                }
                 for (j, was) in before.into_iter().enumerate() {
                     if marks(&conv.lines[j]) != was {
                         out.push(view(&me, &conv.id, conv.seqs[j], &conv.lines[j]));
@@ -281,7 +314,8 @@ impl Chat {
     fn handle(&self, raw: &str) {
         let me = self.state.lock().me.clone();
         if let Some((msgid, state, tries)) = chat_line::parse_delivery(raw) {
-            self.mark(&msgid, &state, tries);
+            let via = chat_line::delivery_via(raw);
+            self.mark(&msgid, &state, tries, via.as_deref());
         } else if let Some((from, ch)) = chat_line::parse_invite(raw) {
             let ch = crate::slash::normalize_channel(&ch);
             if !crate::slash::is_bulletin(&ch) && ch.len() >= 3 {
@@ -390,8 +424,8 @@ fn dm_target(raw: &str) -> Option<String> {
 }
 
 /// What a mark can change on a line.
-fn marks(l: &ChatLine) -> (String, String, u32) {
-    (l.msgid.clone(), l.ticks.clone(), l.tries)
+fn marks(l: &ChatLine) -> (String, String, u32, String) {
+    (l.msgid.clone(), l.ticks.clone(), l.tries, l.via.clone())
 }
 
 fn view(me: &str, conv: &str, seq: u64, l: &ChatLine) -> LineView {

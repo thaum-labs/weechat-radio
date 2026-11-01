@@ -117,6 +117,14 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
         }
     };
 
+    // Radios with two ways in (built-in TNC or modem73 over Bluetooth audio)
+    // say which is which before the list (#232).
+    for r in RADIOS.iter().filter(|r| !r.note.is_empty()) {
+        println!(
+            "  {}",
+            ui_style::dim().apply_to(format!("{}: {}", r.name, r.note))
+        );
+    }
     // Supported radios first: picking one fills in everything but the port.
     let mut paths: Vec<String> = vec!["Internet only (no radio yet)".into()];
     paths.extend(RADIOS.iter().map(|r| r.name.to_string()));
@@ -285,8 +293,10 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
             .interact()?;
         cfg.modem.preset = offered[idx].as_str().into();
         let cat = matches!(path, 3 | SUPPORTED_CAT);
+        let saved_khz = previous.as_ref().map_or(0, |p| p.rf.frequency_khz);
         let default_mhz = match radio {
-            Some(r) => format!("{:.3}", r.dial_khz as f64 / 1000.0),
+            Some(r) => format!("{:.3}", r.dial_for(saved_khz).0 as f64 / 1000.0),
+            None if saved_khz != 0 => format!("{:.3}", saved_khz as f64 / 1000.0),
             None if cat => "7.045".into(),
             None => "144.950".into(),
         };
@@ -300,6 +310,17 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
             .interact_text()?;
         if let Some(khz) = crate::band::parse_mhz(&freq) {
             cfg.rf.frequency_khz = khz;
+            if let Some(r) = radio.filter(|r| !r.covers(khz)) {
+                println!(
+                    "  {}",
+                    ui_style::warn().apply_to(format!(
+                        "{} is not a band the {} transmits on ({}). Check the radio's dial.",
+                        crate::band::describe(khz),
+                        r.short_name(),
+                        r.bands.join(", ")
+                    ))
+                );
+            }
             println!(
                 "  {}",
                 ui_style::dim().apply_to(format!(
@@ -380,6 +401,12 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
         keep_unasked(&mut cfg, prev);
     }
     config::ensure_dirs()?;
+    if let Some(backup) = config::backup_before_setup(cfg_path)? {
+        println!(
+            "  {}",
+            ui_style::dim().apply_to(format!("Previous settings kept in {}", backup.display()))
+        );
+    }
     cfg.save(cfg_path)?;
     ui_style::panel("SAVED", cfg_path.display().to_string().as_str());
     match crate::weechat_app::configure(cfg_path) {

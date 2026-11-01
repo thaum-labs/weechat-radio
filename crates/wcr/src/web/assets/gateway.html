@@ -20,11 +20,24 @@
     <h2 id="h-state">Station</h2>
     <div id="lights" class="lights" aria-live="polite"></div>
     <dl id="facts" class="facts"></dl>
+    <div class="row pickers">
+      <label>Mode <select id="mode-pick" aria-label="Station mode"></select></label>
+      <label id="preset-label">Preset <select id="preset-pick" aria-label="Modem preset"></select></label>
+    </div>
+    <p id="pick-help" class="dim small">The preset picks the modem family. Inside it the speed steps down by itself on a poor path (QPSK 1/2 down to MFSK-32R) and back up when it clears; that step is shown after the preset above.</p>
     <div class="row">
       <button id="start" type="button">Start</button>
       <button id="stop" type="button" class="danger">Stop</button>
       <span id="action" class="dim" role="status"></span>
     </div>
+  </section>
+  <section class="card" id="health-card" aria-labelledby="h-health" hidden>
+    <h2 id="h-health">Health <small id="health-sys" class="dim"></small></h2>
+    <div id="health-strip" class="lights" aria-live="polite"></div>
+    <details class="health-more">
+      <summary class="dim small">Details</summary>
+      <dl id="health-facts" class="facts"></dl>
+    </details>
   </section>
   <section class="card" id="wf-card" aria-labelledby="h-wf" hidden>
     <h2 id="h-wf">Waterfall <small id="wf-note" class="dim"></small></h2>

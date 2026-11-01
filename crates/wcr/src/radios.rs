@@ -39,7 +39,24 @@ pub struct Radio {
     pub preset: Preset,
     /// First dial frequency for setup to suggest (CAT radios report their own).
     pub dial_khz: u32,
+    /// Bands the radio transmits on (`band::band_for_khz` names). Setup warns
+    /// when the saved frequency is outside them.
+    pub bands: &'static [&'static str],
+    /// One line under the name in setup, for radios with more than one way in.
+    pub note: &'static str,
 }
+
+/// HF radios (all also cover 6 m or close to it; this only catches a
+/// VHF/UHF or licence-free frequency left over from another radio).
+const HF: &[&str] = &[
+    "160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m",
+];
+/// Dual-band FM handhelds and mobiles.
+const VU: &[&str] = &["2m", "70cm"];
+const TEN_M: &[&str] = &["10m"];
+
+const BT_TNC_NOTE: &str = "Built-in 1200 bd packet TNC (KISS TNC on, no modem73). Slow; talks to other 1200 bd packet stations.";
+const BT_AUDIO_NOTE: &str = "modem73 over the radio's Bluetooth audio (KISS TNC off). Faster, steps down to sturdier modes on a poor path. Pick this to reach a modem73 gateway, such as a Pi + Digirig.";
 
 /// Hamlib model numbers (`rigctl -l`).
 const HAMLIB_X6100: u32 = 3087;
@@ -65,6 +82,8 @@ pub const RADIOS: &[Radio] = &[
         cable: "",
         preset: Preset::Afsk1200,
         dial_khz: 144950,
+        bands: VU,
+        note: BT_TNC_NOTE,
     },
     Radio {
         name: "VR-N7600 (Bluetooth)",
@@ -77,6 +96,8 @@ pub const RADIOS: &[Radio] = &[
         cable: "",
         preset: Preset::Afsk1200,
         dial_khz: 144950,
+        bands: VU,
+        note: BT_TNC_NOTE,
     },
     Radio {
         name: "VR-N76 / UV-PRO / GA-5WB (Bluetooth audio, modem73)",
@@ -87,6 +108,8 @@ pub const RADIOS: &[Radio] = &[
         cable: "",
         preset: Preset::VhfFm,
         dial_khz: 144950,
+        bands: VU,
+        note: BT_AUDIO_NOTE,
     },
     Radio {
         name: "VR-N7600 (Bluetooth audio, modem73)",
@@ -99,6 +122,8 @@ pub const RADIOS: &[Radio] = &[
         cable: "",
         preset: Preset::VhfFm,
         dial_khz: 144950,
+        bands: VU,
+        note: BT_AUDIO_NOTE,
     },
     Radio {
         name: "Xiegu X6100 (USB cable)",
@@ -113,6 +138,8 @@ pub const RADIOS: &[Radio] = &[
         // ROBUST RDM-600S: the most forgiving on a fading HF path.
         preset: Preset::HfPoor,
         dial_khz: 7045,
+        bands: HF,
+        note: "",
     },
     Radio {
         name: "Xiegu G90 (DE-19 or Digirig)",
@@ -128,6 +155,8 @@ pub const RADIOS: &[Radio] = &[
         // ROBUST RDM-600S: the most forgiving on a fading HF path.
         preset: Preset::HfPoor,
         dial_khz: 7045,
+        bands: HF,
+        note: "",
     },
     Radio {
         name: "Xiegu X6200 (USB cable)",
@@ -141,6 +170,8 @@ pub const RADIOS: &[Radio] = &[
         cable: "",
         preset: Preset::HfPoor,
         dial_khz: 7045,
+        bands: HF,
+        note: "",
     },
     Radio {
         name: "Xiegu G106 (DE-19 or Digirig)",
@@ -155,6 +186,8 @@ pub const RADIOS: &[Radio] = &[
         cable: G90_CABLE,
         preset: Preset::HfPoor,
         dial_khz: 7045,
+        bands: HF,
+        note: "",
     },
     Radio {
         name: "Xiegu X5105 (DE-19 or Digirig)",
@@ -168,6 +201,8 @@ pub const RADIOS: &[Radio] = &[
         cable: G90_CABLE,
         preset: Preset::HfPoor,
         dial_khz: 7045,
+        bands: HF,
+        note: "",
     },
     Radio {
         name: "Yaesu FT-710 (USB cable)",
@@ -182,6 +217,8 @@ pub const RADIOS: &[Radio] = &[
         // ROBUST RDM-600S: the most forgiving on a fading HF path.
         preset: Preset::HfPoor,
         dial_khz: 7045,
+        bands: HF,
+        note: "",
     },
     Radio {
         name: "QRP Labs QDX (USB cable)",
@@ -196,6 +233,8 @@ pub const RADIOS: &[Radio] = &[
         // The QDX sends one tone at a time: only MFSK gets through it.
         preset: Preset::HfDeep,
         dial_khz: 7045,
+        bands: HF,
+        note: "",
     },
     Radio {
         name: "uSDX / (tr)uSDX (CAT + sound card)",
@@ -210,6 +249,8 @@ pub const RADIOS: &[Radio] = &[
         // The uSDX sends one tone at a time well; MFSK is the safe choice.
         preset: Preset::HfDeep,
         dial_khz: 7045,
+        bands: HF,
+        note: "",
     },
     Radio {
         name: "AnyTone AT-5555N (Digirig, 10 m)",
@@ -221,6 +262,8 @@ pub const RADIOS: &[Radio] = &[
             "Digirig AnyTone AT-778UV cable: https://digirig.net/product/anytone-at-778uv-cable/",
         preset: Preset::HfPoor,
         dial_khz: 28120,
+        bands: TEN_M,
+        note: "",
     },
     Radio {
         name: "Retevis RT95 (Digirig)",
@@ -232,6 +275,8 @@ pub const RADIOS: &[Radio] = &[
             "Digirig AnyTone AT-778UV cable: https://digirig.net/product/anytone-at-778uv-cable/",
         preset: Preset::VhfFm,
         dial_khz: 144950,
+        bands: VU,
+        note: "",
     },
     Radio {
         name: "IC-980 Pro (audio cable, VOX)",
@@ -242,6 +287,8 @@ pub const RADIOS: &[Radio] = &[
         cable: "",
         preset: Preset::VoxSafe,
         dial_khz: 144950,
+        bands: VU,
+        note: "",
     },
 ];
 
@@ -256,6 +303,33 @@ impl Radio {
             Link::Cat { .. } => 6,
             Link::BluetoothAudio { .. } => 7,
         }
+    }
+
+    /// True when `khz` is on a band this radio transmits on.
+    pub fn covers(&self, khz: u32) -> bool {
+        crate::band::band_for_khz(khz).is_some_and(|b| self.bands.contains(&b))
+    }
+
+    /// The dial setup should store: the saved one when this radio can use it,
+    /// else the radio's default. The note says why it changed (#232, #233).
+    pub fn dial_for(&self, saved_khz: u32) -> (u32, Option<String>) {
+        if saved_khz != 0 && self.covers(saved_khz) {
+            return (saved_khz, None);
+        }
+        let note = (saved_khz != 0).then(|| {
+            format!(
+                "{} is not a band the {} transmits on, so the dial is now {}. Set the radio's real frequency with FREQ (or /radio freq) so the map and status match.",
+                crate::band::describe(saved_khz),
+                self.short_name(),
+                crate::band::describe(self.dial_khz),
+            )
+        });
+        (self.dial_khz, note)
+    }
+
+    /// The name without the "(…)" link part: "VR-N76 / UV-PRO / GA-5WB".
+    pub fn short_name(&self) -> &'static str {
+        self.name.split(" (").next().unwrap_or(self.name)
     }
 
     /// The Bluetooth name to look for, for radios reached over Bluetooth.
@@ -346,6 +420,29 @@ mod tests {
 
     fn radio(name: &str) -> &'static Radio {
         RADIOS.iter().find(|r| r.name.starts_with(name)).unwrap()
+    }
+
+    #[test]
+    fn dial_keeps_a_frequency_the_radio_can_use() {
+        let r = radio("VR-N76 / UV-PRO / GA-5WB (Bluetooth audio, modem73)");
+        assert_eq!(r.dial_for(433625), (433625, None));
+        assert_eq!(r.dial_for(0), (144950, None));
+        // A PMR446 dial left over from another radio is replaced, with a note.
+        let (khz, note) = r.dial_for(446006);
+        assert_eq!(khz, 144950);
+        assert!(note.unwrap().contains("PMR446"));
+        let g90 = radio("Xiegu G90 (DE-19 or Digirig)");
+        assert_eq!(g90.dial_for(14105).0, 14105);
+        assert_eq!(g90.dial_for(144950).0, 7045);
+    }
+
+    #[test]
+    fn only_the_two_way_radios_carry_a_note() {
+        for r in RADIOS {
+            assert_eq!(!r.note.is_empty(), r.bt_name().is_some(), "{}", r.name);
+            assert!(!r.bands.is_empty(), "{}", r.name);
+            assert!(r.covers(r.dial_khz), "{}", r.name);
+        }
     }
 
     #[test]

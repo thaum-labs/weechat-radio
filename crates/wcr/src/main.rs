@@ -126,7 +126,10 @@ async fn real_main() -> Result<()> {
                             .into(),
                     ));
                 };
-                let status = std::process::Command::new(&gui).status()?;
+                let status = std::process::Command::new(&gui)
+                    .arg("-c")
+                    .arg(&cfg_path)
+                    .status()?;
                 if !status.success() {
                     std::process::exit(status.code().unwrap_or(1));
                 }

@@ -2812,7 +2812,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                 }
                 let now = rt.store.delivery_of(&id).ok().flatten();
                 if !already && matches!(now, Some(Delivery::Delivered | Delivery::All)) {
-                    rt.irc.tagmsg_delivery(&id.hex(), "delivered").await;
+                    rt.irc.tagmsg_delivered_via(&id.hex(), medium).await;
                 }
                 // A closed group is not done on the first ACK. Keep the retry
                 // and the gateway's RF relay until every stored member has
