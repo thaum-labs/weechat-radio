@@ -57,13 +57,11 @@ pub(crate) fn csma_mode_args(m: &ModemConfig, freq_khz: u32) -> Vec<String> {
     }
 }
 
-/// `--tx-level` from `[modem] tx_level_db` (#241). Nothing at 0 dB, which
-/// is modem73's own default (100 %).
+/// `--tx-level` from `[modem] tx_level_db` (#241), always, 0 dB too: left
+/// out, modem73 takes `tx_drive` from its own settings file, and the radio
+/// then sends at a level wcr does not show (#247).
 pub(crate) fn tx_level_args(m: &ModemConfig) -> Vec<String> {
     let pct = crate::levels::tx_level_pct(m.tx_level_db);
-    if pct >= 100 {
-        return Vec::new();
-    }
     vec!["--tx-level".into(), pct.to_string()]
 }
 
@@ -371,8 +369,8 @@ mod tests {
             tx_level_db: db,
             ..Default::default()
         };
-        assert!(tx_level_args(&m(0.0)).is_empty());
-        assert!(tx_level_args(&m(3.0)).is_empty());
+        assert_eq!(tx_level_args(&m(0.0)).join(" "), "--tx-level 100");
+        assert_eq!(tx_level_args(&m(3.0)).join(" "), "--tx-level 100");
         assert_eq!(tx_level_args(&m(-6.0)).join(" "), "--tx-level 50");
         // The floor is -40 dB (1 %) with our modem73 build, -26 dB (5 %) on
         // Windows, whose modem73 build stops there.

@@ -102,6 +102,16 @@ pub fn judge(input: Input, busy: Busy, control: RxControl) -> (Word, String) {
     let down = turn_down(control);
     if clipping {
         let pct = input.clip_pct.unwrap_or(0.0);
+        // On Bluetooth the clip count is taken before wcr's RX gain: the
+        // radio's own audio is clipping, and RX gain cannot undo it (#247).
+        if matches!(control, RxControl::Bluetooth { .. }) {
+            return (
+                Word::Clipping,
+                format!(
+                    "Clipping in the radio ({pct:.1}% of samples at full scale, before RX gain). Turn the radio's volume down until the meter is green; RX gain cannot fix this."
+                ),
+            );
+        }
         return (
             Word::Clipping,
             format!(
@@ -189,6 +199,38 @@ pub fn tx_level_pct(db: f32) -> u32 {
     (tx_drive(db) * 100.0)
         .round()
         .clamp(TX_DRIVE_MIN * 100.0, 100.0) as u32
+}
+
+/// modem73's own settings file, which it reads at every launch.
+pub fn modem73_settings_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    Some(
+        std::path::PathBuf::from(home)
+            .join(".config")
+            .join("modem73")
+            .join("settings"),
+    )
+}
+
+/// #247: a TX level from before wcr.toml kept one. When wcr.toml has no
+/// `tx_level_db` yet and modem73's settings file holds a `tx_drive` below
+/// full, that is the level the station was really sending at: take it over
+/// once, in dB. `None` when there is nothing to carry over.
+pub fn carried_over_tx_level(cfg_text: &str, modem73_settings: &str) -> Option<f32> {
+    if cfg_text
+        .lines()
+        .any(|l| l.trim_start().starts_with("tx_level_db"))
+    {
+        return None;
+    }
+    let drive: f32 = modem73_settings.lines().find_map(|l| {
+        let (k, v) = l.split_once('=')?;
+        (k.trim() == "tx_drive").then(|| v.trim().parse().ok())?
+    })?;
+    if !drive.is_finite() || drive <= 0.0 || drive >= 0.995 {
+        return None;
+    }
+    Some(tx_level_db((20.0 * drive.log10() * 10.0).round() / 10.0))
 }
 
 /// Bluetooth receive level range, dB.
@@ -404,6 +446,23 @@ mod tests {
         }
     }
 
+    #[test]
+    fn an_old_tx_level_is_carried_over_once() {
+        // modem73 kept 0.126 (-18 dB); wcr.toml has no level yet.
+        let db =
+            carried_over_tx_level("[modem]\npreset = \"vhf-fm\"\n", "tx_drive=0.126\n").unwrap();
+        assert!((db - -18.0).abs() < 0.1, "{db}");
+        // wcr.toml already has one: it wins.
+        assert_eq!(
+            carried_over_tx_level("[modem]\ntx_level_db = -36.0\n", "tx_drive=0.126\n"),
+            None
+        );
+        // Full drive, nothing, or junk: nothing to carry.
+        assert_eq!(carried_over_tx_level("", "tx_drive=1.0\n"), None);
+        assert_eq!(carried_over_tx_level("", "callsign=M7TJF\n"), None);
+        assert_eq!(carried_over_tx_level("", "tx_drive=abc\n"), None);
+    }
+
     const FM: Busy = Busy {
         level_threshold_db: None,
     };
@@ -466,14 +525,16 @@ mod tests {
             },
         );
         assert!(h.contains("radio's own audio is too loud"), "{h}");
-        let (_, h) = judge(
-            hot,
-            FM,
-            RxControl::Bluetooth {
-                at_min: false,
-                at_max: false,
-            },
-        );
+        // Bluetooth clipping happens in the radio, before RX gain (#247).
+        let bt = RxControl::Bluetooth {
+            at_min: false,
+            at_max: false,
+        };
+        let (_, h) = judge(hot, FM, bt);
+        assert!(h.contains("radio's volume down"), "{h}");
+        assert!(!h.contains("Lower RX gain"), "{h}");
+        // Hot but not clipping: RX gain still helps.
+        let (_, h) = judge(input(-6.0, -1.0, 0.0), FM, bt);
         assert!(h.contains("Lower RX gain"), "{h}");
         let quiet = input(-55.0, -44.0, 0.0);
         let (_, h) = judge(

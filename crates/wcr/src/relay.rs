@@ -188,6 +188,22 @@ pub fn own_bulletin_first_rf_copy_stays(
     gateway && own && bulletin_keeps_walking(env) && handed <= 1
 }
 
+/// #247 B3, approved by Tobias: a station that is not a gateway (Radio+,
+/// Radio) does not air someone else's `#bulletin` back to RF when it heard it
+/// straight from its RF origin and no other RF station is around. The only
+/// station that would hear the copy is the origin, which already has it (QA
+/// v1.0.14: the Mac sent the Pi's bulletin back 3 times; the 3rd collided).
+/// `other_rf_neighbours` counts stations heard directly on RF lately, not
+/// counting the origin.
+pub fn bulletin_relay_is_echo(
+    gateway: bool,
+    env: &Envelope,
+    heard_direct_on_rf: bool,
+    other_rf_neighbours: usize,
+) -> bool {
+    !gateway && bulletin_keeps_walking(env) && heard_direct_on_rf && other_rf_neighbours == 0
+}
+
 /// Channel control frame (`WCRMETA members=…`, `leave=…`, `prio=…`). It has
 /// no ACK, so one lost copy used to leave every station past it with a
 /// short roster.
@@ -1220,6 +1236,32 @@ mod tests {
         )
         .unwrap();
         assert!(!own_bulletin_first_rf_copy_stays(true, true, &dm, 1));
+    }
+
+    /// #247 B3: a Radio+ relay that heard the bulletin straight from its RF
+    /// origin, with nobody else on RF, does not send it back.
+    #[test]
+    fn a_radio_plus_relay_does_not_echo_a_bulletin_to_its_origin() {
+        let bulletin = Envelope::new_msg(
+            Callsign::parse("M7TJF").unwrap(),
+            Callsign::from_raw("BULLETIN"),
+            1,
+            b"b1".to_vec(),
+            5,
+            Flags::new().with(crate::proto::FLAG_GROUP),
+        )
+        .unwrap();
+        assert!(bulletin_relay_is_echo(false, &bulletin, true, 0));
+        // Another RF station is around: the walk goes on.
+        assert!(!bulletin_relay_is_echo(false, &bulletin, true, 1));
+        // Heard through a relay or the internet: unchanged.
+        assert!(!bulletin_relay_is_echo(false, &bulletin, false, 0));
+        // A gateway: still the open question on #243, unchanged here.
+        assert!(!bulletin_relay_is_echo(true, &bulletin, true, 0));
+        // Not a bulletin: unchanged.
+        let mut dm = bulletin.clone();
+        dm.dest = Callsign::parse("M0BBB").unwrap();
+        assert!(!bulletin_relay_is_echo(false, &dm, true, 0));
     }
 
     #[test]

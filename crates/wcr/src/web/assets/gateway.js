@@ -354,13 +354,13 @@ function trafficRow(r) {
   if (r.to) {
     who.append(el("span", "dir", " → "), document.createTextNode(r.to));
   }
-  who.title = `${r.dir === "sent" ? "sent by this station" : "heard"} · id ${r.id}`;
+  who.title = `${r.relayed ? `relayed by this station for ${r.from}` : r.dir === "sent" ? "sent by this station" : "heard"} · id ${r.id}`;
   li.append(who);
   const side = el("span", "t-side");
   if (typeof r.snr === "number") {
     side.append(el("span", r.snr >= 10 ? "up" : r.snr >= 6 ? "amber" : "down", `${r.snr.toFixed(0)} dB`));
   }
-  side.append(document.createTextNode(r.via === "rf" ? (r.dir === "sent" ? "sent rf" : "rf") : r.via === "inet" ? "internet" : r.via));
+  side.append(document.createTextNode(r.via === "rf" ? (r.relayed ? "relayed rf" : r.dir === "sent" ? "sent rf" : "rf") : r.via === "inet" ? "internet" : r.via));
   // Reply to the other station: never us, never a room.
   const other = r.dir === "sent" ? r.to : r.from;
   const chatty = ["dm", "bulletin", "group", "checkin", "status", "form"].includes(r.kind);
@@ -665,7 +665,7 @@ async function healthTick() {
 }
 
 // Open or closed sections are remembered on this browser.
-for (const id of ["log-box", "health-more", "settings-box"]) {
+for (const id of ["log-box", "health-more", "settings-box", "level-help", "wf-key-box", "relay-more"]) {
   try {
     if (localStorage.getItem(`wcr.${id}`) === "open") $(id).open = true;
   } catch (e) { /* private window: closed */ }

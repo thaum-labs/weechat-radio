@@ -3,6 +3,13 @@
 //! does, so the page can stop and start it and stays up while it is down.
 //! The child's log lines are kept for the page's log tail and also written
 //! to our own stderr, so `journalctl -u wcr-web` has them.
+//!
+//! Start and Stop on the page are remembered in `web-station.state` next to
+//! wcr.toml. When `wcr web` starts (boot, `systemctl restart`, update) it
+//! starts the station only if that file says the operator left it running,
+//! so a restart never keys the radio for a station that was stopped (#247
+//! B1). No file (first run after updating from v1.0.14 or older) means
+//! stopped; `wcr web install` writes `start`.
 
 use parking_lot::Mutex;
 use std::collections::VecDeque;
@@ -19,6 +26,11 @@ const LOG_LINES: usize = 300;
 const RESTART_AFTER: Duration = Duration::from_secs(5);
 /// How long a stopping station gets to end modem73 before it is killed.
 const STOP_WAIT: Duration = Duration::from_secs(10);
+/// The file next to wcr.toml that remembers Start / Stop across restarts.
+pub const STATE_FILE: &str = "web-station.state";
+/// What the state file holds.
+pub const STATE_START: &str = "start";
+pub const STATE_STOP: &str = "stop";
 
 #[derive(Default)]
 struct Inner {
@@ -35,6 +47,17 @@ pub struct Station {
     inner: tokio::sync::Mutex<Inner>,
     log: Log,
     cfg_path: PathBuf,
+}
+
+/// The state file for the station run from `cfg_path`.
+pub fn state_path(cfg_path: &std::path::Path) -> PathBuf {
+    cfg_path.with_file_name(STATE_FILE)
+}
+
+/// True when the operator last left the station running. A missing or
+/// unreadable file counts as stopped.
+fn saved_start(cfg_path: &std::path::Path) -> bool {
+    std::fs::read_to_string(state_path(cfg_path)).is_ok_and(|s| s.trim() == STATE_START)
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -99,7 +122,9 @@ impl Station {
         self.inner.lock().await.child.as_ref()?.id()
     }
 
+    /// Start pressed: run the station, and remember it for the next restart.
     pub async fn start(&self) {
+        self.save(STATE_START);
         let mut inner = self.inner.lock().await;
         inner.want = true;
         if inner.child.is_none() {
@@ -107,15 +132,58 @@ impl Station {
         }
     }
 
-    /// Stop the station and keep it stopped until Start.
+    /// Stop pressed: stop the station and keep it stopped until Start,
+    /// across restarts of `wcr web` too.
     pub async fn stop(&self) {
+        self.save(STATE_STOP);
+        self.end("stopped from the web page").await;
+    }
+
+    /// `wcr web` is ending: stop the station but keep the saved choice, so
+    /// it comes back after the restart if it was running.
+    pub async fn shutdown(&self) {
+        self.end("wcr web stopped").await;
+    }
+
+    /// `wcr web` is starting: start the station only if the operator left it
+    /// running. Says which in the station log either way.
+    pub async fn resume(&self) {
+        let path = state_path(&self.cfg_path);
+        if saved_start(&self.cfg_path) {
+            self.note(&format!(
+                "starting the station: it was left running ({})",
+                path.display()
+            ));
+            let mut inner = self.inner.lock().await;
+            inner.want = true;
+            self.spawn(&mut inner);
+        } else {
+            let why = if path.exists() {
+                "it was stopped from the web page"
+            } else {
+                "no saved Start yet (first run of this version)"
+            };
+            let line = format!("station not started: {why}. Press Start to put it on the air");
+            self.note(&line);
+            self.inner.lock().await.last_exit = line;
+        }
+    }
+
+    async fn end(&self, why: &str) {
         let mut inner = self.inner.lock().await;
         inner.want = false;
         if let Some(child) = inner.child.take() {
             self.note("stopping the station");
             end_child(child).await;
-            inner.last_exit = "stopped from the web page".into();
+            inner.last_exit = why.into();
             inner.exited_at = Some(Instant::now());
+        }
+    }
+
+    fn save(&self, what: &str) {
+        let path = state_path(&self.cfg_path);
+        if let Err(e) = std::fs::write(&path, format!("{what}\n")) {
+            self.note(&format!("could not save {}: {e}", path.display()));
         }
     }
 
@@ -273,5 +341,33 @@ mod tests {
         let tail = s.log_tail(LOG_LINES + 10);
         assert_eq!(tail.len(), LOG_LINES);
         assert_eq!(tail[0], "line 5");
+    }
+
+    #[tokio::test]
+    async fn a_restart_starts_the_station_only_if_it_was_left_running() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("wcr.toml");
+        // No saved choice yet: stays off and says why.
+        let s = Station::new(cfg.clone());
+        s.resume().await;
+        assert!(!s.inner.lock().await.want);
+        assert!(s.state().await.last_exit.contains("station not started"));
+        // Stop pressed, then a restart: still off.
+        s.stop().await;
+        let s = Station::new(cfg.clone());
+        s.resume().await;
+        assert!(!s.inner.lock().await.want);
+        assert!(s
+            .state()
+            .await
+            .last_exit
+            .contains("stopped from the web page"));
+        // Start was saved: a restart wants it running.
+        std::fs::write(state_path(&cfg), "start\n").unwrap();
+        assert!(saved_start(&cfg));
+        // Shutting down keeps the saved choice.
+        let s = Station::new(cfg.clone());
+        s.shutdown().await;
+        assert!(saved_start(&cfg));
     }
 }
