@@ -42,3 +42,12 @@
   max-width: 520px;
   margin: 0 auto;
 }
+
+/* The Pi board's GPIO header in the diagrams. */
+svg.dgm .pi-header {
+  fill: none;
+  stroke: var(--mode-internet-radio);
+  stroke-width: 4;
+  stroke-dasharray: 3 3;
+  opacity: 0.45;
+}

@@ -63,9 +63,163 @@
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> Raspberry Pi gateway</h1>
       <p class="lead">A Raspberry Pi and a Digirig make an always-on station: a gateway between the radio and the hub, with email. You look after it from a phone or laptop browser on your own network. About 20 minutes.</p>
 
-      <section class="article-section article-section--first" aria-labelledby="needH">
+      <section class="article-section article-section--first" aria-labelledby="flowH">
+        <h2 id="flowH">How it fits together</h2>
+        <figure class="diagram live-dgm live-dgm--wide pi-hero" data-live-dgm>
+          <div class="live-dgm__body">
+            <div class="live-dgm__pic">
+              <div class="dgm-wrap">
+                <svg class="dgm" data-layout="wide" viewBox="0 0 800 312" role="img" aria-labelledby="piTw piDw">
+                <title id="piTw">How a Raspberry Pi gateway fits together</title>
+                <desc id="piDw">G4ABC, out walking with a handheld, sends a message on 144.950 FM. At home, the gateway's radio hears it on the mast antenna, the Digirig passes the sound over USB to the Raspberry Pi, and modem73 on the Pi decodes it. WeeChat Radio on the Pi passes it to the hub, where internet stations such as G4XYZ read it. A phone on the home Wi-Fi shows it live on the Pi's web page. The Pi then keys the radio through the Digirig and sends a receipt back on the air.</desc>
+                <g data-node="other">
+                  <rect class="lane-bg" x="10" y="30" width="150" height="270" />
+                  <text class="sub" x="22" y="292">out walking</text>
+                  <line class="antenna" x1="84" y1="116" x2="84" y2="80" />
+                  <circle class="antenna-tip" cx="84" cy="78" r="2.5" />
+                  <rect class="box orange" x="60" y="116" width="48" height="88" rx="5" />
+                  <circle class="led" cx="98" cy="128" r="3.5" />
+                  <path class="grille" d="M70 164 H98 M70 171 H98 M70 178 H98 M70 185 H98" />
+                  <text class="on-orange" x="84" y="226" text-anchor="middle">G4ABC</text>
+                  <text class="sub" x="84" y="242" text-anchor="middle">handheld</text>
+                  <text class="scr ok" data-show="w-ok" x="84" y="266" text-anchor="middle">back by 4 [ok]</text>
+                </g>
+                <g class="seg seg-rf" data-seg="rf"><path class="rf" d="M90 78 q6 -7 12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0" /><path class="pkt" d="M90 78 q6 -7 12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0" /></g>
+                <text class="sub on-rf" x="192" y="58" text-anchor="middle">144.950 FM · on the air</text>
+                <path class="house" d="M220 130 L390 60 L560 130 V300 H220 Z" />
+                <path class="mast" d="M300 80 V230 M292 88 H308 M294 96 H306" />
+                <circle class="antenna-tip" cx="300" cy="78" r="2.5" />
+                <text class="sub" x="390" y="120" text-anchor="middle">M0GWY · home gateway</text>
+                <g data-node="radio">
+                  <rect class="box orange" x="250" y="230" width="70" height="34" rx="3" />
+                  <circle class="led" cx="260" cy="240" r="3.5" />
+                  <path class="grille" d="M274 240 H312 M274 247 H312 M274 254 H312" />
+                  <text class="sub" x="268" y="222" text-anchor="middle">radio</text>
+                </g>
+                <g class="seg seg-sound" data-seg="jack"><path class="wire" d="M320 247 H350" /><path class="pkt" d="M320 247 H350" /></g>
+                <g data-node="digirig">
+                  <rect class="box accent" x="350" y="232" width="70" height="30" />
+                  <text class="on-accent" x="385" y="251" text-anchor="middle">Digirig</text>
+                  <text class="sub" x="385" y="278" text-anchor="middle">audio + PTT</text>
+                </g>
+                <g class="seg seg-sound" data-seg="usb"><path class="wire" d="M420 247 H450" /><path class="pkt" d="M420 247 H450" /></g>
+                <text class="sub" x="435" y="240" text-anchor="middle">USB</text>
+                <g data-node="pi">
+                  <rect class="box gw" x="450" y="196" width="96" height="74" rx="4" />
+                  <path class="pi-header" d="M460 205 H536" />
+                  <circle class="led" cx="537" cy="261" r="3.5" />
+                  <text class="on-gw" x="498" y="232" text-anchor="middle">Raspberry Pi</text>
+                  <text class="sub" x="498" y="250" text-anchor="middle">wcr · modem73</text>
+                </g>
+                <g class="seg seg-net" data-seg="net"><path class="net" d="M530 196 V62 H600" /><path class="pkt" d="M530 196 V62 H600" /></g>
+                <text class="sub" x="536" y="160">internet</text>
+                <g data-node="hub">
+                  <rect class="box hub" x="600" y="40" width="180" height="44" />
+                  <text class="on-hub" x="690" y="58" text-anchor="middle">hub</text>
+                  <text class="sub" x="690" y="75" text-anchor="middle">G4XYZ reads #walk here</text>
+                </g>
+                <g class="seg seg-net" data-seg="lan"><path class="net" d="M546 235 H612" /><path class="pkt" d="M546 235 H612" /></g>
+                <text class="sub" x="579" y="227" text-anchor="middle">https</text>
+                <text class="sub" x="579" y="252" text-anchor="middle">Wi-Fi</text>
+                <g data-node="phone">
+                  <rect class="box accent" x="612" y="116" width="170" height="180" rx="12" />
+                  <text class="sub" x="626" y="140">phone · On the air</text>
+                  <text class="scr" data-show="ph1" x="626" y="170">23:04 G4ABC → #walk</text>
+                  <text class="scr-dim" data-show="ph1" x="626" y="186">back by 4 · rf 17 dB</text>
+                  <text class="scr ok" data-show="ph2" x="626" y="212">23:04 M0GWY receipt</text>
+                  <text class="scr-dim" data-show="ph2" x="626" y="228">sent rf</text>
+                  <text class="scr-dim" x="626" y="262">raspberrypi.local</text>
+                  <text class="scr ok" x="626" y="282">● On the air</text>
+                </g>
+                </svg>
+                <svg class="dgm" data-layout="narrow" viewBox="0 0 440 366" role="img" aria-labelledby="piTn piDn">
+                <title id="piTn">How a Raspberry Pi gateway fits together</title>
+                <desc id="piDn">G4ABC, out walking with a handheld, sends a message on 144.950 FM. At home, the gateway's radio hears it, the Digirig passes the sound over USB to the Raspberry Pi, and the Pi passes it to the hub for internet stations such as G4XYZ. A phone on the home Wi-Fi shows it live on the Pi's web page. The Pi then sends a receipt back on the air.</desc>
+                <g data-node="other">
+                  <rect class="lane-bg" x="8" y="8" width="112" height="190" />
+                  <text class="sub" x="16" y="190">out walking</text>
+                  <line class="antenna" x1="58" y1="70" x2="58" y2="44" />
+                  <circle class="antenna-tip" cx="58" cy="42" r="2.5" />
+                  <rect class="box orange" x="40" y="70" width="36" height="64" rx="5" />
+                  <circle class="led" cx="68" cy="80" r="3.5" />
+                  <path class="grille" d="M48 104 H68 M48 111 H68 M48 118 H68" />
+                  <text class="on-orange" x="58" y="152" text-anchor="middle">G4ABC</text>
+                  <text class="scr ok" data-show="w-ok" x="58" y="170" text-anchor="middle">[ok]</text>
+                </g>
+                <g class="seg seg-rf" data-seg="rf"><path class="rf" d="M64 42 q5.5 -6 11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0" /><path class="pkt" d="M64 42 q5.5 -6 11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0" /></g>
+                <text class="sub on-rf" x="120" y="24" text-anchor="middle">144.950 FM</text>
+                <path class="house" d="M140 130 L270 80 L400 130 V330 H140 Z" />
+                <path class="mast" d="M180 44 V150 M172 52 H188 M174 60 H186" />
+                <circle class="antenna-tip" cx="180" cy="42" r="2.5" />
+                <text class="sub" x="270" y="318" text-anchor="middle">M0GWY · home</text>
+                <g data-node="radio">
+                  <rect class="box orange" x="160" y="150" width="70" height="34" rx="3" />
+                  <circle class="led" cx="170" cy="160" r="3.5" />
+                  <path class="grille" d="M184 160 H222 M184 167 H222 M184 174 H222" />
+                  <text class="sub" x="195" y="200" text-anchor="middle">radio</text>
+                </g>
+                <g class="seg seg-sound" data-seg="jack"><path class="wire" d="M230 167 H250" /><path class="pkt" d="M230 167 H250" /></g>
+                <g data-node="digirig">
+                  <rect class="box accent" x="250" y="152" width="70" height="30" />
+                  <text class="on-accent" x="285" y="171" text-anchor="middle">Digirig</text>
+                </g>
+                <g class="seg seg-sound" data-seg="usb"><path class="wire" d="M285 182 V220" /><path class="pkt" d="M285 182 V220" /></g>
+                <text class="sub" x="291" y="205">USB</text>
+                <g data-node="pi">
+                  <rect class="box gw" x="230" y="220" width="110" height="70" rx="4" />
+                  <path class="pi-header" d="M240 229 H322" />
+                  <circle class="led" cx="331" cy="281" r="3.5" />
+                  <text class="on-gw" x="285" y="256" text-anchor="middle">Raspberry Pi</text>
+                  <text class="sub" x="285" y="274" text-anchor="middle">wcr · modem73</text>
+                </g>
+                <g class="seg seg-net" data-seg="net"><path class="net" d="M330 220 V50" /><path class="pkt" d="M330 220 V50" /></g>
+                <text class="sub" x="336" y="112">internet</text>
+                <g data-node="hub">
+                  <rect class="box hub" x="250" y="8" width="180" height="42" />
+                  <text class="on-hub" x="340" y="25" text-anchor="middle">hub</text>
+                  <text class="sub" x="340" y="41" text-anchor="middle">G4XYZ reads #walk</text>
+                </g>
+                <g class="seg seg-net" data-seg="lan"><path class="net" d="M230 255 H126" /><path class="pkt" d="M230 255 H126" /></g>
+                <text class="sub" x="178" y="247" text-anchor="middle">https</text>
+                <text class="sub" x="178" y="270" text-anchor="middle">Wi-Fi</text>
+                <g data-node="phone">
+                  <rect class="box accent" x="10" y="206" width="116" height="150" rx="10" />
+                  <text class="sub" x="20" y="224">phone</text>
+                  <text class="scr" data-show="ph1" x="20" y="248">G4ABC #walk</text>
+                  <text class="scr-dim" data-show="ph1" x="20" y="264">rf 17 dB</text>
+                  <text class="scr ok" data-show="ph2" x="20" y="288">M0GWY receipt</text>
+                  <text class="scr-dim" data-show="ph2" x="20" y="304">sent rf</text>
+                  <text class="scr ok" x="20" y="340">● On the air</text>
+                </g>
+                </svg>
+              </div>
+              <div class="live-status">
+                <p class="live-status__text" data-live-status aria-live="polite"></p>
+                <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
+              </div>
+            </div>
+          </div>
+          <figcaption>The radio, Digirig and Pi stay at home. The Pi links the radio to the hub, and you check on it from your phone.</figcaption>
+          <script type="application/json" data-live-steps>
+          {
+            "main": {
+              "done": "The Pi relays between the radio and the hub on its own. Your phone watches it and steers it.",
+              "steps": [
+                { "say": "G4ABC, out walking, sends “back by 4” to #walk on the gateway’s frequency.", "segs": ["<rf"], "on": ["other"], "ms": 1800 },
+                { "say": "The gateway’s radio hears it. The Digirig turns the sound into USB audio for the Pi.", "segs": ["<jack", "<usb"], "chain": true, "on": ["radio", "digirig"], "ms": 2100 },
+                { "say": "modem73 on the Pi decodes it, and WeeChat Radio passes it to the hub, where G4XYZ reads it in #walk.", "segs": ["net"], "on": ["pi", "hub"], "ms": 2200 },
+                { "say": "Your phone, on the home Wi-Fi, shows the frame live on the Pi’s page with its SNR.", "segs": ["lan"], "on": ["phone"], "show": ["ph1"], "ms": 1900 },
+                { "say": "The Pi keys the radio through the Digirig and sends a receipt back on the air.", "segs": ["usb", "jack", "rf"], "chain": true, "on": ["pi", "radio"], "show": ["ph2"], "ms": 3000 },
+                { "say": "G4ABC’s line shows [ok]. Nobody had to sit at a computer.", "on": ["other"], "show": ["w-ok"], "ms": 1800 }
+              ]
+            }
+          }
+          </script>
+        </figure>
+      </section>
+
+      <section class="article-section" aria-labelledby="needH">
         <h2 id="needH">What you need</h2>
-        <div class="pair">
           <ul class="cards">
             <li>
               <svg class="card-ico" aria-hidden="true"><use href="#ico-board" /></svg>
@@ -88,84 +242,6 @@
               <span>The Pi on Ethernet is the most reliable; Wi-Fi works.</span>
             </li>
           </ul>
-        <figure class="diagram live-dgm live-dgm--wide" data-live-dgm>
-          <div class="live-dgm__body">
-            <div class="live-dgm__pic">
-              <div class="dgm-wrap">
-                <svg class="dgm" viewBox="0 0 440 290" role="img" aria-labelledby="piT piD">
-                <title id="piT">How a Raspberry Pi gateway fits together</title>
-                <desc id="piD">A handheld out walking sends a message on the gateway's frequency. The gateway's radio hears it and the Digirig passes the sound over USB to the Raspberry Pi, where modem73 decodes it and WeeChat Radio puts it on the hub for internet stations. A phone on the same network shows it live on the Pi's web page. The Pi then keys the radio through the Digirig and sends a receipt back on the air.</desc>
-                <g data-node="hub">
-                  <rect class="box hub" x="10" y="12" width="120" height="40" />
-                  <text class="on-hub" x="70" y="29" text-anchor="middle">hub</text>
-                  <text class="sub" x="70" y="44" text-anchor="middle">internet stations</text>
-                </g>
-                <g data-node="other">
-                  <rect class="box orange" x="318" y="12" width="112" height="40" />
-                  <text class="on-orange" x="374" y="29" text-anchor="middle">G4ABC walking</text>
-                  <text class="sub" x="374" y="44" text-anchor="middle">same frequency</text>
-                </g>
-                <g class="seg seg-rf" data-seg="rf"><path class="rf" d="M374 128 q5 -6 0 -12 t0 -12 t0 -12 t0 -12 t0 -12 t0 -12" /><path class="pkt" d="M374 128 q5 -6 0 -12 t0 -12 t0 -12 t0 -12 t0 -12 t0 -12" /></g>
-                <text class="sub on-rf" x="364" y="96" text-anchor="end">on the air</text>
-                <g class="seg seg-net" data-seg="net"><path class="net" d="M170 92 V32 H130" /><path class="pkt" d="M170 92 V32 H130" /></g>
-                <text class="sub" x="176" y="66">internet</text>
-                <g data-node="pi">
-                  <rect class="box gw" x="150" y="92" width="120" height="56" rx="3" />
-                  <circle class="led" cx="160" cy="102" r="3.5" />
-                  <text class="on-gw" x="210" y="116" text-anchor="middle">Raspberry Pi</text>
-                  <text class="sub" x="210" y="134" text-anchor="middle">wcr web · modem73</text>
-                </g>
-                <g class="seg seg-net" data-seg="lan"><path class="net" d="M150 120 H76 V168" /><path class="pkt" d="M150 120 H76 V168" /></g>
-                <text class="sub" x="144" y="112" text-anchor="end">https :8443</text>
-                <g class="seg seg-sound" data-seg="usb"><path class="wire" d="M256 148 V196" /><path class="pkt" d="M256 148 V196" /></g>
-                <text class="sub" x="262" y="176">USB</text>
-                <g data-node="digirig">
-                  <rect class="box accent" x="214" y="196" width="84" height="36" />
-                  <text class="on-accent" x="256" y="211" text-anchor="middle">Digirig</text>
-                  <text class="sub" x="256" y="225" text-anchor="middle">audio + PTT</text>
-                </g>
-                <g class="seg seg-sound" data-seg="jack"><path class="wire" d="M298 214 H334" /><path class="pkt" d="M298 214 H334" /></g>
-                <g data-node="radio">
-                  <line class="antenna" x1="374" y1="170" x2="374" y2="136" />
-                  <circle class="antenna-tip" cx="374" cy="134" r="2.5" />
-                  <rect class="box orange" x="334" y="170" width="48" height="88" rx="5" />
-                  <circle class="led" cx="370" cy="182" r="3.5" />
-                  <path class="grille" d="M344 218 H372 M344 225 H372 M344 232 H372 M344 239 H372" />
-                  <text class="on-orange" x="358" y="276" text-anchor="middle">radio</text>
-                </g>
-                <g data-node="phone">
-                  <rect class="box accent" x="14" y="168" width="124" height="104" rx="8" />
-                  <text class="sub" x="24" y="186">your phone</text>
-                  <text class="scr" data-show="ph1" x="24" y="210">G4ABC #walk 17dB</text>
-                  <text class="scr ok" data-show="ph2" x="24" y="228">M0GWY receipt</text>
-                  <text class="scr-dim" x="24" y="258">pi.local:8443</text>
-                </g>
-                </svg>
-              </div>
-              <div class="live-status">
-                <p class="live-status__text" data-live-status aria-live="polite"></p>
-                <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
-              </div>
-            </div>
-          </div>
-          <figcaption>Radio → Digirig → Pi → hub, and the Pi’s own web page on your phone.</figcaption>
-          <script type="application/json" data-live-steps>
-          {
-            "main": {
-              "done": "The Pi relays between the radio and the hub on its own. Your phone only watches and steers it.",
-              "steps": [
-                { "say": "G4ABC, out walking, sends “a bit. back by 4” to #walk on the gateway’s frequency.", "segs": ["<rf"], "on": ["other"], "ms": 1700 },
-                { "say": "The gateway’s radio hears it. The Digirig passes the sound to the Pi over USB.", "segs": ["<jack", "<usb"], "chain": true, "on": ["radio", "digirig"], "ms": 2100 },
-                { "say": "modem73 on the Pi decodes it, and WeeChat Radio puts it on the hub for the internet stations in #walk.", "segs": ["net"], "on": ["pi", "hub"], "ms": 1800 },
-                { "say": "Your phone shows the frame live on the Pi’s web page, with its SNR.", "segs": ["lan"], "on": ["phone"], "show": ["ph1"], "ms": 1700 },
-                { "say": "The Pi keys the radio through the Digirig and sends a receipt back on the air.", "segs": ["usb", "jack", "rf"], "chain": true, "on": ["pi", "radio"], "show": ["ph2"], "ms": 3000 },
-                { "say": "G4ABC’s line shows [ok]. Nobody had to sit at a computer.", "on": ["other"], "ms": 1700 }
-              ]
-            }
-          }
-          </script>
-        </figure>
-        </div>
       </section>
 
       <section class="article-section" aria-labelledby="installH">
