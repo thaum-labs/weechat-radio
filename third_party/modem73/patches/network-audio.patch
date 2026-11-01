@@ -42,7 +42,7 @@ index 2b40c05..16e0684 100644
          if (!iface_.get_status) {
              send_error(client_fd, "get_status not available");
 diff --git a/kiss_tnc.cc b/kiss_tnc.cc
-index f3fe696..119fe49 100644
+index f3fe696..bed56fd 100644
 --- a/kiss_tnc.cc
 +++ b/kiss_tnc.cc
 @@ -288,6 +288,9 @@ void print_help(const char* prog) {
@@ -55,7 +55,7 @@ index f3fe696..119fe49 100644
                << "      --audio-backend B   Audio backend: auto, alsa, pulse, jack (default: auto)\n"
                << "                          Place before --list-audio to list that backend's devices\n"
                << "      --tx-level PCT      TX audio output level, 5-100 (default: 100)\n"
-@@ -1303,12 +1306,36 @@ int main(int argc, char** argv) {
+@@ -1303,12 +1306,45 @@ int main(int argc, char** argv) {
                  cJSON_AddNumberToObject(j, "client_count", tnc.get_client_count());
                  cJSON_AddBoolToObject(j, "rigctl_connected", tnc.is_rigctl_connected());
                  cJSON_AddBoolToObject(j, "audio_connected", tnc.is_audio_healthy());
@@ -66,6 +66,15 @@ index f3fe696..119fe49 100644
 +                    float level = tnc.get_audio_level();
 +                    if (level < 0.0f && level > -100.0f)
 +                        cJSON_AddNumberToObject(j, "audio_in_db", level);
++                }
++                // wcr: peak and the share of samples at full scale over the
++                // last half second, so the level meter can say "clipping".
++                {
++                    float peak = 0.0f, clip = 0.0f;
++                    if (tnc.get_audio_peak(peak, clip)) {
++                        cJSON_AddNumberToObject(j, "audio_in_peak_db", peak);
++                        cJSON_AddNumberToObject(j, "audio_in_clip_pct", clip);
++                    }
 +                }
                  cJSON_AddNumberToObject(j, "population", tnc.channel_population());
                  cJSON_AddNumberToObject(j, "occupancy_pct", tnc.channel_occupancy());
@@ -93,7 +102,7 @@ index f3fe696..119fe49 100644
                  cJSON* j = cJSON_CreateObject();
                  TNCConfig cfg = tnc.get_config();
 diff --git a/kiss_tnc_impl.hh b/kiss_tnc_impl.hh
-index b721d8a..e1d8763 100644
+index b721d8a..c8fc2dc 100644
 --- a/kiss_tnc_impl.hh
 +++ b/kiss_tnc_impl.hh
 @@ -39,6 +39,9 @@
@@ -283,8 +292,22 @@ index b721d8a..e1d8763 100644
      void unkey() {
          set_ptt(false);
          tx_on_air_ = false;
+@@ -2606,6 +2772,13 @@ public:
+         return audio_->instant_level_db(100);
+     }
+ 
++    // wcr: capture peak and clipping over the last half second, for the
++    // level meter. False while capture is down.
++    bool get_audio_peak(float& peak_db, float& clip_pct) {
++        if (!audio_ || !audio_->capture_alive()) return false;
++        return audio_->capture_peak_stats(500, peak_db, clip_pct);
++    }
++
+     bool is_audio_healthy() const {
+         if (audio_) return audio_->is_healthy();
+         return false;
 diff --git a/miniaudio_audio.hh b/miniaudio_audio.hh
-index f95bf69..9c5df01 100644
+index f95bf69..1c1db92 100644
 --- a/miniaudio_audio.hh
 +++ b/miniaudio_audio.hh
 @@ -23,6 +23,8 @@
@@ -321,7 +344,40 @@ index f95bf69..9c5df01 100644
          int64_t now = steady_ms();
          if (now - last_block_ms_.load() > HEARTBEAT_STALE_MS) return "no capture callbacks";
          if (now - last_playback_ms_.load() > HEARTBEAT_STALE_MS) return "no playback callbacks";
-@@ -536,8 +542,49 @@ private:
+@@ -307,6 +313,32 @@ public:
+         return 20.0f * std::log10(rms);
+     }
+ 
++    // wcr: the highest sample (dBFS) and the share of samples at full scale
++    // (percent) in about the newest window_ms of capture. False while the
++    // capture is down or has not delivered audio for 250 ms.
++    bool capture_peak_stats(int window_ms, float& peak_db, float& clip_pct) {
++        if (!capture_open_.load(std::memory_order_acquire)) return false;
++        if (steady_ms() - last_block_ms_.load(std::memory_order_relaxed) > 250)
++            return false;
++        uint64_t seq = block_seq_.load(std::memory_order_acquire);
++        if (seq == 0) return false;
++        uint64_t need = (uint64_t)sample_rate_ * window_ms / 1000;
++        uint64_t frames = 0, clipped = 0;
++        float peak = 0.0f;
++        uint64_t count = seq < LEVEL_RING ? seq : LEVEL_RING;
++        for (uint64_t k = 1; k <= count; k++) {
++            uint64_t idx = (seq - k) % LEVEL_RING;
++            frames += block_frames_[idx].load(std::memory_order_relaxed);
++            clipped += block_clipped_[idx].load(std::memory_order_relaxed);
++            peak = std::max(peak, block_peak_[idx].load(std::memory_order_relaxed));
++            if (frames >= need) break;
++        }
++        if (frames == 0) return false;
++        peak_db = peak < 1e-5f ? -100.0f : 20.0f * std::log10(peak);
++        clip_pct = 100.0f * (float)clipped / (float)frames;
++        return true;
++    }
++
+     int sample_rate() const { return sample_rate_; }
+ 
+ private:
+@@ -536,8 +568,49 @@ private:
          return "";
      }
  
@@ -371,7 +427,7 @@ index f95bf69..9c5df01 100644
          if (!ensure_context()) return false;
  
          ma_device_config config = ma_device_config_init(ma_device_type_playback);
-@@ -601,6 +648,7 @@ private:
+@@ -601,6 +674,7 @@ private:
  
      bool open_capture_locked(bool strict) {
          if (capture_open_.load(std::memory_order_acquire)) return true;
@@ -379,7 +435,7 @@ index f95bf69..9c5df01 100644
          if (!ensure_context()) return false;
  
          ma_device_config config = ma_device_config_init(ma_device_type_capture);
-@@ -671,6 +719,7 @@ private:
+@@ -671,6 +745,7 @@ private:
  
      void close_playback_locked() {
          bool was_open = playback_open_.exchange(false, std::memory_order_acq_rel);
@@ -387,7 +443,7 @@ index f95bf69..9c5df01 100644
          ma_device* dev = playback_device_.exchange(nullptr, std::memory_order_acq_rel);
          std::unique_lock<std::shared_mutex> lock(playback_rw_);
          if (dev) {
-@@ -687,6 +736,7 @@ private:
+@@ -687,6 +762,7 @@ private:
  
      void close_capture_locked() {
          bool was_open = capture_open_.exchange(false, std::memory_order_acq_rel);
@@ -395,7 +451,7 @@ index f95bf69..9c5df01 100644
          ma_device* dev = capture_device_.exchange(nullptr, std::memory_order_acq_rel);
          std::unique_lock<std::shared_mutex> lock(capture_rw_);
          if (dev) {
-@@ -733,59 +783,67 @@ private:
+@@ -733,59 +809,74 @@ private:
              for (ma_uint32 i = 0; i < frame_count; i++) out[i] = 0.0f;
              return;
          }
@@ -406,13 +462,13 @@ index f95bf69..9c5df01 100644
 +        (void)output;
 +        MiniAudio* self = static_cast<MiniAudio*>(device->pUserData);
 +        const float* in = static_cast<const float*>(input);
- 
--        size_t read_pos = self->playback_read_pos_.load();
--        size_t write_pos = self->playback_write_pos_.load();
++
 +        if (device != self->capture_device_.load(std::memory_order_acquire)) return;
 +        self->push_capture(in, frame_count);
 +    }
-+
+ 
+-        size_t read_pos = self->playback_read_pos_.load();
+-        size_t write_pos = self->playback_write_pos_.load();
 +    // Fill out with queued playback samples, silence once the queue is empty.
 +    void pull_playback(float* out, ma_uint32 frame_count) {
 +        size_t read_pos = playback_read_pos_.load();
@@ -462,8 +518,13 @@ index f95bf69..9c5df01 100644
 +        capture_write_pos_ = (write_pos + to_write) % CAPTURE_RING_SIZE;
  
          float sum_sq = 0.0f;
++        float peak = 0.0f;       // wcr: level meter
++        uint32_t clipped = 0;
          for (ma_uint32 i = 0; i < frame_count; i++) {
              sum_sq += in[i] * in[i];
++            const float a = std::fabs(in[i]);
++            if (a > peak) peak = a;
++            if (a >= CLIP_LEVEL) clipped++;
          }
 -        self->capture_energy_.store(self->capture_energy_.load() + sum_sq);
 -        self->capture_samples_.store(self->capture_samples_.load() + frame_count);
@@ -483,12 +544,22 @@ index f95bf69..9c5df01 100644
 +                                               std::memory_order_relaxed);
 +            block_frames_[seq % LEVEL_RING].store(frame_count,
 +                                                  std::memory_order_relaxed);
++            block_peak_[seq % LEVEL_RING].store(peak, std::memory_order_relaxed);
++            block_clipped_[seq % LEVEL_RING].store(clipped, std::memory_order_relaxed);
 +            block_seq_.store(seq + 1, std::memory_order_release);
 +            last_block_ms_.store(steady_ms(), std::memory_order_relaxed);
          }
      }
  
-@@ -839,4 +897,7 @@ private:
+@@ -836,7 +927,15 @@ private:
+     static constexpr size_t LEVEL_RING = 64;
+     std::atomic<double> block_msq_[LEVEL_RING] = {};
+     std::atomic<uint32_t> block_frames_[LEVEL_RING] = {};
++    // wcr: per-block peak and samples at full scale, for the level meter.
++    // 0.99 is -0.09 dBFS: a 16-bit card that clips reads +-0.99997.
++    static constexpr float CLIP_LEVEL = 0.99f;
++    std::atomic<float> block_peak_[LEVEL_RING] = {};
++    std::atomic<uint32_t> block_clipped_[LEVEL_RING] = {};
      std::atomic<uint64_t> block_seq_{0};
      std::atomic<int64_t> last_block_ms_{0};
      std::atomic<int64_t> last_playback_ms_{0};

@@ -384,7 +384,7 @@ fn time_to_key_through_hiss(
         ])
         .args(["--callsign", "TEST1A"])
         .args(crate::presets::Preset::VhfFm.modem73_args())
-        .args(crate::modem::supervise::csma_mode_args(m))
+        .args(crate::modem::supervise::csma_mode_args(m, 433_625))
         .env("HOME", home.path())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -525,4 +525,19 @@ fn transmit_level_is_kept_in_range() {
     assert!((tx_gain(-6.0) - 0.501).abs() < 0.01);
     assert_eq!(tx_gain(-90.0), tx_gain(-20.0));
     assert_eq!(tx_gain(f32::NAN), 1.0);
+}
+
+/// #241: the RX gain scales the radio's audio before modem73 hears it and
+/// never lets it past full scale.
+#[test]
+fn receive_gain_scales_and_keeps_full_scale() {
+    let mut pcm = vec![16384i16, -16384, 32767, i16::MIN];
+    let half = 10f32.powf(-6.0 / 20.0);
+    let out = rx_samples(&mut pcm, half);
+    assert!(pcm.is_empty());
+    assert!((out[0] - 0.25).abs() < 0.01, "{out:?}");
+    assert!((out[1] + 0.25).abs() < 0.01, "{out:?}");
+    let mut pcm = vec![16384i16, -32768];
+    let out = rx_samples(&mut pcm, 4.0);
+    assert_eq!(out, vec![1.0, -1.0]);
 }

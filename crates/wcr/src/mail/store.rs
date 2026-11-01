@@ -445,6 +445,25 @@ impl MailStore {
         Ok(due)
     }
 
+    /// Outbox mail an earlier run was still sending (queued, on air, or at
+    /// the gateway). Its retry and time-out timers ended with that run, so it
+    /// would stay in that state for good (QA #241): each is marked Failed
+    /// with `detail`, which offers Retry. Returns their ids.
+    pub fn fail_unfinished(&self, detail: &str) -> Result<Vec<String>> {
+        let ids: Vec<String> = {
+            let conn = self.conn.lock();
+            let mut stmt = conn.prepare(
+                "SELECT id FROM mail WHERE folder = 'outbox' AND state IN ('queued', 'tx', 'gateway')",
+            )?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        for id in &ids {
+            self.set_outcome(id, "outbox", "failed", detail)?;
+        }
+        Ok(ids)
+    }
+
     pub fn bump_retry(&self, id: &str) -> Result<u32> {
         let conn = self.conn.lock();
         conn.execute(
@@ -668,6 +687,44 @@ mod tests {
         assert_eq!(hops[3].ts, 600);
         assert!(store.delete("m1").unwrap());
         assert!(store.hops("m1").unwrap().is_empty());
+    }
+
+    /// QA #241: mail left on air, waiting for the gateway, or between tries
+    /// when the station stopped is Failed at the next start, and Retry works.
+    #[test]
+    fn mail_an_earlier_run_was_sending_is_failed_with_retry() {
+        let store = MailStore::open_memory().unwrap();
+        for (id, state) in [
+            ("q", "queued"),
+            ("t", "tx"),
+            ("g", "gateway"),
+            ("f", "failed"),
+        ] {
+            store.insert(&out_row(id)).unwrap();
+            store.set_outcome(id, "outbox", state, "").unwrap();
+        }
+        store
+            .insert(&MailRow {
+                folder: "sent".into(),
+                state: "sent".into(),
+                ..out_row("s")
+            })
+            .unwrap();
+        let mut ids = store.fail_unfinished("stopped").unwrap();
+        ids.sort();
+        assert_eq!(ids, ["g", "q", "t"]);
+        for id in ["q", "t", "g"] {
+            let row = store.get(id).unwrap().unwrap();
+            assert_eq!(
+                (row.state.as_str(), row.detail.as_str()),
+                ("failed", "stopped")
+            );
+        }
+        assert_eq!(store.get("s").unwrap().unwrap().state, "sent");
+        assert_eq!(store.get("f").unwrap().unwrap().detail, "");
+        assert!(store.reset_for_retry("t").unwrap());
+        assert_eq!(store.get("t").unwrap().unwrap().state, "queued");
+        assert!(store.fail_unfinished("stopped").unwrap().len() == 1);
     }
 
     #[test]

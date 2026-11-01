@@ -34,6 +34,13 @@ pub struct ModemStatus {
     /// Playback RMS in dBFS when the modem reports it.
     #[serde(default)]
     pub audio_out_db: Option<f32>,
+    /// Highest capture sample in the last half second, dBFS (modem73 from
+    /// wcr 1.0.13 on, #241).
+    #[serde(default)]
+    pub audio_in_peak_db: Option<f32>,
+    /// Share of capture samples at full scale in the last half second, %.
+    #[serde(default)]
+    pub audio_in_clip_pct: Option<f32>,
 }
 
 fn json_f32(v: &Value, keys: &[&str]) -> Option<f32> {
@@ -106,6 +113,8 @@ impl ModemStatus {
                     "tx_level_db",
                 ],
             ),
+            audio_in_peak_db: json_f32(&v, &["audio_in_peak_db"]),
+            audio_in_clip_pct: json_f32(&v, &["audio_in_clip_pct"]),
         }
     }
 }
@@ -433,6 +442,21 @@ mod tests {
         assert_eq!(st.audio_in_db, Some(-22.0));
         assert_eq!(st.audio_out_db, Some(-9.0));
         assert!(st.audio_connected);
+        assert_eq!(st.audio_in_peak_db, None);
+        assert_eq!(st.audio_in_clip_pct, None);
+    }
+
+    /// #241: modem73 from wcr 1.0.13 adds the capture peak and clipping.
+    #[test]
+    fn status_reads_the_capture_peak_and_clipping() {
+        let st = ModemStatus::from_json(serde_json::json!({
+            "audio_in_db": -6.3,
+            "audio_in_peak_db": -0.1,
+            "audio_in_clip_pct": 4.6
+        }));
+        assert_eq!(st.audio_in_db, Some(-6.3));
+        assert_eq!(st.audio_in_peak_db, Some(-0.1));
+        assert_eq!(st.audio_in_clip_pct, Some(4.6));
     }
 
     #[test]

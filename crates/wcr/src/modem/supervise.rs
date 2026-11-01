@@ -44,15 +44,27 @@ fn set_csma_threshold(args: &mut Vec<String>, db: i16) {
     args.extend(["--csma-threshold".into(), db.to_string()]);
 }
 
-/// `--csma-mode` from `[modem] csma_mode` (#239). Set at launch: modem73
-/// builds each frame's CSMA gate once, so a change over the control port
-/// would not free a frame already waiting.
-pub(crate) fn csma_mode_args(m: &ModemConfig) -> Vec<String> {
-    match m.csma_mode() {
+/// `--csma-mode` from `[modem] csma_mode` (#239, #241), for a station on
+/// `freq_khz` (0 = unknown). Set at launch: modem73 builds each frame's CSMA
+/// gate once, so a change over the control port would not free a frame
+/// already waiting. `auto` is decided here, at start: a station moved
+/// between HF and VHF/UHF takes the other test at its next start.
+pub(crate) fn csma_mode_args(m: &ModemConfig, freq_khz: u32) -> Vec<String> {
+    match m.csma_mode(freq_khz) {
         Some(CsmaMode::Sync) => vec!["--csma-mode".into(), "sync".into()],
         Some(CsmaMode::Level) => vec!["--csma-mode".into(), "threshold".into()],
         None => Vec::new(),
     }
+}
+
+/// `--tx-level` from `[modem] tx_level_db` (#241). Nothing at 0 dB, which
+/// is modem73's own default (100 %).
+pub(crate) fn tx_level_args(m: &ModemConfig) -> Vec<String> {
+    let pct = crate::levels::tx_level_pct(m.tx_level_db);
+    if pct >= 100 {
+        return Vec::new();
+    }
+    vec!["--tx-level".into(), pct.to_string()]
 }
 
 /// Address modem73 listens on, for KISS and its control port. modem73's own
@@ -138,7 +150,8 @@ impl ModemProcess {
         if cfg.modem.is_vox() {
             set_csma_threshold(&mut args, Preset::VOX_CSMA_THRESHOLD_DB);
         }
-        args.extend(csma_mode_args(&cfg.modem));
+        args.extend(csma_mode_args(&cfg.modem, cfg.rf.frequency_khz));
+        args.extend(tx_level_args(&cfg.modem));
         match cfg.modem.ptt.as_str() {
             "vox" => {
                 args.extend([
@@ -333,18 +346,35 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            csma_mode_args(&m("bluetooth", "vhf-fm", "auto")).join(" "),
+            csma_mode_args(&m("bluetooth", "vhf-fm", "auto"), 433_625).join(" "),
             "--csma-mode sync"
         );
         assert_eq!(
-            csma_mode_args(&m("bluetooth", "vhf-fm", "level")).join(" "),
+            csma_mode_args(&m("bluetooth", "vhf-fm", "level"), 433_625).join(" "),
+            "--csma-mode threshold"
+        );
+        // HF keeps the level test (Tobias, #241).
+        assert_eq!(
+            csma_mode_args(&m("hamlib", "hf-poor", "auto"), 7_074).join(" "),
             "--csma-mode threshold"
         );
         assert_eq!(
-            csma_mode_args(&m("hamlib", "hf-poor", "auto")).join(" "),
+            csma_mode_args(&m("digirig", "vhf-fm", "auto"), 145_500).join(" "),
             "--csma-mode sync"
         );
-        assert!(csma_mode_args(&m("vox", "vox-safe", "sync")).is_empty());
+        assert!(csma_mode_args(&m("vox", "vox-safe", "sync"), 7_074).is_empty());
+    }
+
+    #[test]
+    fn the_transmit_level_goes_to_modem73_at_launch() {
+        let m = |db: f32| ModemConfig {
+            tx_level_db: db,
+            ..Default::default()
+        };
+        assert!(tx_level_args(&m(0.0)).is_empty());
+        assert!(tx_level_args(&m(3.0)).is_empty());
+        assert_eq!(tx_level_args(&m(-6.0)).join(" "), "--tx-level 50");
+        assert_eq!(tx_level_args(&m(-40.0)).join(" "), "--tx-level 5");
     }
 
     #[tokio::test]

@@ -28,7 +28,7 @@ use resample::Resampler;
 use std::collections::VecDeque;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -108,12 +108,33 @@ impl Shared {
 }
 
 static RUNNING: OnceLock<Ports> = OnceLock::new();
+/// Gain on the radio's received audio (`[tnc] bt_rx_level_db`, #241), as
+/// f32 bits. Read for every block, so the RX slider takes effect at once.
+static RX_GAIN_BITS: AtomicU32 = AtomicU32::new(0x3f80_0000); // 1.0
+
+/// Sets the gain on the radio's received audio, dB (kept in range).
+pub fn set_rx_level_db(db: f32) {
+    let gain = 10f32.powf(crate::levels::bt_rx_level_db(db) / 20.0);
+    RX_GAIN_BITS.store(gain.to_bits(), Ordering::Relaxed);
+}
+
+fn rx_gain() -> f32 {
+    f32::from_bits(RX_GAIN_BITS.load(Ordering::Relaxed))
+}
+
+/// Received samples as modem73 hears them: gain applied, full scale kept.
+fn rx_samples(pcm: &mut Vec<i16>, gain: f32) -> Vec<f32> {
+    pcm.drain(..)
+        .map(|s| (s as f32 / 32768.0 * gain).clamp(-1.0, 1.0))
+        .collect()
+}
 /// Last radio link state, put back after the station clears its status.
 static LAST_STATUS: Mutex<(String, bool)> = Mutex::new((String::new(), false));
 
 /// Starts the bridge for the radio in `cfg.tnc` once per process; later calls
 /// return the same ports. The bridge reconnects to the radio by itself.
 pub fn ensure_started(cfg: &crate::config::Config, snap: Arc<SharedStatus>) -> io::Result<Ports> {
+    set_rx_level_db(cfg.tnc.bt_rx_level_db);
     if let Some(p) = RUNNING.get() {
         let (text, ok) = LAST_STATUS.lock().clone();
         let mut s = snap.lock();
@@ -329,7 +350,7 @@ fn radio_manager(mut connector: Connector, sh: &Shared, snap: &Arc<SharedStatus>
             if pcm.is_empty() {
                 continue;
             }
-            let f: Vec<f32> = pcm.drain(..).map(|s| s as f32 / 32768.0).collect();
+            let f = rx_samples(&mut pcm, rx_gain());
             up.process(&f, &mut at48);
             let mut q = sh.rx.lock();
             q.extend(at48.drain(..));

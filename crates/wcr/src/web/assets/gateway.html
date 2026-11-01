@@ -15,20 +15,53 @@
   </nav>
   <form method="post" action="/logout"><button class="quiet" type="submit">Log out</button></form>
 </header>
-<main>
+<main class="gw">
+  <div class="col">
   <section class="card" aria-labelledby="h-state">
     <h2 id="h-state">Station</h2>
     <div id="lights" class="lights" aria-live="polite"></div>
     <dl id="facts" class="facts"></dl>
     <div class="row pickers">
       <label>Mode <select id="mode-pick" aria-label="Station mode"></select></label>
-      <label id="preset-label">Preset <select id="preset-pick" aria-label="Modem preset"></select></label>
+      <label id="preset-label" title="The preset picks the modem family. Inside it the speed steps down by itself on a poor path (QPSK 1/2 down to MFSK-32R) and back up when it clears; that step is shown after the preset.">Preset <select id="preset-pick" aria-label="Modem preset"></select></label>
     </div>
-    <p id="pick-help" class="dim small">The preset picks the modem family. Inside it the speed steps down by itself on a poor path (QPSK 1/2 down to MFSK-32R) and back up when it clears; that step is shown after the preset above.</p>
     <div class="row">
       <button id="start" type="button">Start</button>
       <button id="stop" type="button" class="danger">Stop</button>
       <span id="action" class="dim" role="status"></span>
+    </div>
+  </section>
+  <section class="card" id="radio-card" aria-labelledby="h-radio" hidden>
+    <h2 id="h-radio">Radio audio <small id="lv-busy" class="dim"></small></h2>
+    <div class="lv-head">
+      <span id="lv-word" class="light idle">—</span>
+      <span id="lv-nums" class="dim small"></span>
+    </div>
+    <div class="meter" id="lv-meter" role="meter" aria-label="Receive level, dBFS" aria-valuemin="-60" aria-valuemax="0">
+      <div class="meter-zones" id="lv-zones" aria-hidden="true"></div>
+      <div class="meter-bar" id="lv-bar"></div>
+      <div class="meter-peak" id="lv-peak" hidden></div>
+    </div>
+    <div class="meter-axis dim small" aria-hidden="true"><span style="left:0">-60 dBFS</span><span style="left:25%">-45</span><span style="left:50%">-30</span><span style="left:80%">-12</span><span style="left:100%">0</span></div>
+    <p id="lv-hint" class="lv-hint small" aria-live="polite"></p>
+    <div class="sliders">
+      <div class="slider" id="rx-row">
+        <label for="rx-gain">RX gain <output id="rx-out" for="rx-gain"></output></label>
+        <input type="range" id="rx-gain" min="0" max="24" step="0.5">
+      </div>
+      <p id="rx-note" class="dim small slider-note"></p>
+      <div class="slider" id="tx-row">
+        <label for="tx-level">TX level <output id="tx-out" for="tx-level"></output></label>
+        <input type="range" id="tx-level" min="-26" max="0" step="1">
+      </div>
+      <p class="dim small slider-note">Only turns down: the modem already sends at full scale. Set the deviation with the radio's own mic gain (the Bluetooth mic gain on a VR-N76), then lower TX level until the far end's SNR stops getting better.</p>
+    </div>
+    <div id="wf-box" hidden>
+      <h3>Waterfall <small id="wf-note" class="dim"></small></h3>
+      <canvas id="wf" class="wf" height="160" role="img" aria-label="Live audio spectrum from the radio, newest at the top"></canvas>
+      <div class="wf-pass" aria-hidden="true" title="Modem passband, 300–2700 Hz"></div>
+      <div class="wf-axis dim small" aria-hidden="true"><span class="t0">0</span><span class="t1">1000</span><span class="t2">2000</span><span class="t3">3000 Hz</span></div>
+      <p class="dim small wf-key" title="Colours follow the noise floor, so any radio at any volume shows its noise dark and a signal bright."><span><span class="wf-sw noise"></span> noise</span> <span><span class="wf-sw sig"></span> signal</span> <span><span class="wf-sw hot"></span> strong</span> <span><span class="wf-sw tx"></span> our TX</span></p>
     </div>
   </section>
   <section class="card" id="health-card" aria-labelledby="h-health" hidden>
@@ -39,13 +72,11 @@
       <dl id="health-facts" class="facts"></dl>
     </details>
   </section>
-  <section class="card" id="wf-card" aria-labelledby="h-wf" hidden>
-    <h2 id="h-wf">Waterfall <small id="wf-note" class="dim"></small></h2>
-    <canvas id="wf" class="wf" height="160" role="img" aria-label="Live audio spectrum from the radio, newest at the top"></canvas>
-    <div class="wf-pass" aria-hidden="true" title="Modem passband, 300–2700 Hz"></div>
-    <div class="wf-axis dim small" aria-hidden="true"><span class="t0">0</span><span class="t1">1000</span><span class="t2">2000</span><span class="t3">3000 Hz</span></div>
-    <p class="dim small wf-key"><span class="wf-sw quiet"></span>squelched <span class="wf-sw noise"></span>noise <span class="wf-sw sig"></span>signal <span class="wf-sw tx"></span>our TX</p>
-    <p class="dim small wf-help">Across: the radio's audio, 0–3000 Hz. Orange bar: where the modem sends, 300–2700 Hz. Newest row at the top.</p>
+  </div>
+  <div class="col">
+  <section class="card" aria-labelledby="h-heard">
+    <h2 id="h-heard">Heard stations</h2>
+    <ul id="heard" class="list"></ul>
   </section>
   <section class="card" aria-labelledby="h-mail">
     <h2 id="h-mail">Mail through this gateway</h2>
@@ -53,18 +84,18 @@
     <h3>This station's outbox</h3>
     <ul id="outbox" class="list"></ul>
   </section>
-  <section class="card" aria-labelledby="h-heard">
-    <h2 id="h-heard">Heard stations</h2>
-    <ul id="heard" class="list"></ul>
-  </section>
-  <section class="card" aria-labelledby="h-errors">
-    <h2 id="h-errors">Errors <small>(newest first)</small></h2>
-    <pre id="errors" class="log"></pre>
-  </section>
   <section class="card" aria-labelledby="h-log">
     <h2 id="h-log">Log</h2>
-    <pre id="log" class="log"></pre>
+    <div id="errors-box" hidden>
+      <h3 class="err-title">Errors, newest first</h3>
+      <pre id="errors" class="log"></pre>
+    </div>
+    <details id="log-box" class="log-more" open>
+      <summary class="dim small">Station log</summary>
+      <pre id="log" class="log"></pre>
+    </details>
   </section>
+  </div>
   <p id="updated" class="dim small"></p>
 </main>
 </body>

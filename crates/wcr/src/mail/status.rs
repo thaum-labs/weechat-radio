@@ -180,7 +180,7 @@ pub fn failed_reason(detail: &str, rf: bool) -> String {
             "The gateway never acknowledged it. It may not have heard the mail.".into()
         }
         gateway::GATEWAY_NOT_ACCEPTED => "The gateway has it, but the hub refused it.".into(),
-        gateway::RADIO_NOT_RUNNING | gateway::TX_STUCK => detail.into(),
+        gateway::RADIO_NOT_RUNNING | gateway::TX_STUCK | gateway::STOPPED_MID_SEND => detail.into(),
         "Hub did not accept the message." => {
             "The hub refused it: Resend did not accept the message.".into()
         }
@@ -323,6 +323,11 @@ mod tests {
         assert_eq!(failed_reason("", false), "Failed.");
         let down = "The hub is down. Retry when it is back.";
         assert_eq!(failed_reason(down, true), down);
+        // Not "the hub refused it": nobody knows whether it arrived (#241).
+        assert_eq!(
+            failed_reason(gateway::STOPPED_MID_SEND, true),
+            gateway::STOPPED_MID_SEND
+        );
     }
 
     #[test]

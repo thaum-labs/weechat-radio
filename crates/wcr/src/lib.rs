@@ -19,9 +19,11 @@ pub mod gui;
 pub mod help;
 pub mod http_local;
 pub mod ircd;
+pub mod levels;
 pub mod mail;
 #[cfg(target_os = "macos")]
 pub mod main_loop;
+pub mod mixer;
 pub mod modem;
 pub mod modes;
 pub mod net;

@@ -206,9 +206,56 @@ pub async fn wait_clear(ports: &RadioPorts, cap: Duration) {
     }
 }
 
+/// Mail keys with modem73's CSMA off, so a frame that started just before
+/// the burst is only seen once modem73 has found it: up to 1.31 s for OFDM.
+/// The lease waits this long with no frame found, plus a random part so two
+/// stations that waited out the same frame do not key together (QA #241: a
+/// mail chunk keyed 0.4 s into the other station's relayed receipt).
+pub const QUIET_BEFORE_KEY: Duration = Duration::from_millis(1500);
+pub const QUIET_DITHER_MS: u64 = 800;
+
+pub fn quiet_before_key() -> Duration {
+    QUIET_BEFORE_KEY + Duration::from_millis(rand::random::<u64>() % (QUIET_DITHER_MS + 1))
+}
+
+/// Waits until no frame has been found for `quiet`, at most `cap`.
+pub async fn wait_quiet(ports: &RadioPorts, quiet: Duration, cap: Duration) {
+    let start = Instant::now();
+    let mut since = Instant::now();
+    while start.elapsed() < cap {
+        if channel_receiving(ports) {
+            since = Instant::now();
+        } else if since.elapsed() >= quiet {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn a_burst_waits_for_a_quiet_moment_first() {
+        let ports = RadioPorts {
+            kiss: None,
+            control: None,
+            air: None,
+            sense: None,
+        };
+        let t = Instant::now();
+        wait_quiet(&ports, Duration::from_millis(1500), WAIT_CLEAR_CAP).await;
+        let waited = t.elapsed();
+        assert!(
+            waited >= Duration::from_millis(1500) && waited < Duration::from_millis(1700),
+            "{waited:?}"
+        );
+        let q = quiet_before_key();
+        assert!(
+            q >= QUIET_BEFORE_KEY && q <= QUIET_BEFORE_KEY + Duration::from_millis(QUIET_DITHER_MS)
+        );
+    }
 
     /// A chat frame taken off the air queue just before a mail lease waits
     /// out carrier sense, then sets chat's modem config and goes to the

@@ -3772,6 +3772,8 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
             cfg.modem.rigctl = ports.rigctl_addr();
             rt.snap.lock().ptt = "bluetooth".into();
         }
+        // RX gain onto the sound card, busy test and levels into the status (#241).
+        crate::levels::apply_at_start(&cfg, &rt.snap);
         let kiss_addr = format!("{}:{}", cfg.modem.host, cfg.modem.kiss_port);
         let already = KissClient::connect(&kiss_addr).await.ok();
         {
@@ -3860,6 +3862,7 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
                             s.ber = frame.ber_pct;
                             s.audio_db = frame.level_db;
                             s.audio_in_db = frame.level_db;
+                            s.audio_in_frame_db = Some(frame.level_db);
                             s.audio_label = presets::audio_level_label(frame.level_db).into();
                             s.channel = "rx".into();
                         }
@@ -4526,8 +4529,17 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                 format!("kiss {}:{}", c.modem.host, c.modem.kiss_port)
             }
         }
+        "level" => {
+            let control = rt.control();
+            let (which, value) = (sp.next(), sp.next());
+            let said = crate::levels::level_cmd(cfg, snap, control.as_ref(), which, value).await;
+            if said.is_ok() && value.is_some() {
+                persist_cfg(&cfg.lock());
+            }
+            said.unwrap_or_else(|e| e)
+        }
         "" | "help" => {
-            "RADIO commands: mode preset tower status form group queue flush trace history freq qsy prio ptt checkin net mute theme activity snr update report wx. /report CALL asks a station how well it hears you (signal report); /wx shows the weather for your grid and /wx CALL sends it to that station. Both answers are private lines in the CALL tab. Channels: /join #name (closed, +i)  /invite CALL (over-air notice from you)  /part /prio. /radio status shows relayed (every forwarded frame), unique (distinct messages), and groups (group_prios). /radio flush marks unacked outbound [no]."
+            "RADIO commands: mode preset level tower status form group queue flush trace history freq qsy prio ptt checkin net mute theme activity snr update report wx. /report CALL asks a station how well it hears you (signal report); /wx shows the weather for your grid and /wx CALL sends it to that station. Both answers are private lines in the CALL tab. Channels: /join #name (closed, +i)  /invite CALL (over-air notice from you)  /part /prio. /radio status shows relayed (every forwarded frame), unique (distinct messages), and groups (group_prios). /radio flush marks unacked outbound [no]."
                 .into()
         }
         other => format!("unknown RADIO subcommand '{other}'. Try /radio help"),

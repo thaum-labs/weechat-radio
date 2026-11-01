@@ -200,6 +200,22 @@ const COMMANDS: &[Cmd] = &[
         send_bare: false,
     },
     Cmd {
+        name: "level",
+        usage: "/level [rx|tx <dB>]",
+        summary: "Receive gain and transmit level",
+        args: &[
+            Arg {
+                value: "rx",
+                hint: "RX gain in dB: the sound card's mixer, or Bluetooth audio",
+            },
+            Arg {
+                value: "tx",
+                hint: "TX level in dB, -26 to 0 (only turns down)",
+            },
+        ],
+        send_bare: true,
+    },
+    Cmd {
         name: "ptt",
         usage: "/ptt vox|digirig|cm108|rigctl|none",
         summary: "How the radio is keyed",
@@ -940,5 +956,19 @@ mod tests {
             to_wire("/clear M0XYZ", "#bulletin"),
             vec!["RADIO clear M0XYZ".to_string()]
         );
+    }
+
+    /// The level sliders (desktop app and Pi page) send `/level` (#241).
+    #[test]
+    fn level_goes_to_the_station() {
+        assert_eq!(
+            to_wire("/level tx -6", "#bulletin"),
+            vec!["RADIO level tx -6".to_string()]
+        );
+        assert_eq!(
+            to_wire("/level rx 4.5", "M0XYZ"),
+            vec!["RADIO level rx 4.5".to_string()]
+        );
+        assert_eq!(line_error("/level rx 4.5", "#bulletin"), None);
     }
 }

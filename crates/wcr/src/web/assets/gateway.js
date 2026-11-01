@@ -72,7 +72,6 @@ function draw(d) {
     ["mode", s.mode || "—"],
     ["preset", s.preset ? `${s.preset}${s.tx_rung ? ` · ${s.tx_rung}` : ""}` : "—"],
     ["modem", s.tnc || (s.modem73 ? `modem73 ${s.modem73}${running && !radioUp(s) ? " (not running)" : ""}` : "—")],
-    ["audio in", running && s.mode !== "internet" ? audioIn(s) : "—"],
     ["forwarded", s.relayed !== undefined ? `${s.relayed} frames (${s.relayed_unique} messages)` : "—"],
     ["restarts", String(d.station.restarts)],
   ];
@@ -83,7 +82,7 @@ function draw(d) {
   setFreq = d.frequency || "";
   shown = { mode: s.mode, preset: s.preset };
   drawPickers(d.choices || {}, running, s);
-  wfShow(running, s);
+  drawRadio(running, s);
   $("start").disabled = running;
   $("stop").disabled = !running;
   fill($("relay"), d.relay_mail, mailRow, running ? "No mail through this gateway yet." : "Station stopped.");
@@ -91,15 +90,18 @@ function draw(d) {
   const heard = (s.heard || []).slice().sort((a, b) => (b.last_heard || 0) - (a.last_heard || 0));
   fill($("heard"), heard, (h) => {
     const li = el("li");
-    const snr = h.snr === null || h.snr === undefined ? "" : ` ${h.snr.toFixed(0)} dB`;
     const age = h.last_heard ? ago(Math.max(0, d.now - h.last_heard)) : "";
-    li.append(
-      el("span", "when", age),
-      el("span", "what", `${h.callsign}${h.gateway ? " (gateway)" : ""}  ${h.band || h.medium || ""}${snr}`),
-    );
+    const what = el("span", "what");
+    what.append(el("span", "subject", `${h.callsign}${h.gateway ? " (gateway)" : ""}`), el("span", "who", h.band || h.medium || ""));
+    li.append(el("span", "when", age), what);
+    if (h.snr !== null && h.snr !== undefined) {
+      // 10 dB or more with the radios in one room; under 6 dB, check levels.
+      li.append(el("span", `snr ${h.snr >= 10 ? "up" : h.snr >= 6 ? "amber" : "down"}`, `${h.snr.toFixed(0)} dB`));
+    }
     return li;
   }, running ? "Nobody heard yet." : "Station stopped.");
-  $("errors").textContent = d.errors.length ? d.errors.join("\n") : "None.";
+  $("errors-box").hidden = !d.errors.length;
+  $("errors").textContent = d.errors.join("\n");
   const log = $("log");
   const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
   log.textContent = d.log.join("\n");
@@ -115,26 +117,125 @@ function radioUp(s) {
   return !["", "no modem", "no audio"].includes(s.audio_label || "");
 }
 
-// Capture level from the radio. modem73 holds the sound card, so the level
-// comes from modem73; "—" means nothing measures it (an older modem73).
-function audioIn(s) {
-  if (s.tnc) return "—";
-  const label = s.audio_label || "";
-  if (["", "no modem", "no audio"].includes(label)) return label || "—";
-  if (label === "—") return "not measured";
-  return `${Math.round(s.audio_in_db)} dBFS (${label})`;
+// Radio audio card (#241): the receive level as a meter with a target
+// zone and a plain hint, the RX gain and TX level sliders, and the
+// waterfall. Shown for a station with a sound-card or Bluetooth audio
+// modem (not internet-only, not a radio with its own TNC).
+const METER_MIN = -60;
+const pctOf = (db) => Math.max(0, Math.min(100, ((db - METER_MIN) * 100) / -METER_MIN));
+function drawRadio(running, s) {
+  const want = !!(running && s.mode && s.mode !== "internet" && !s.tnc);
+  $("radio-card").hidden = !want;
+  wfOn = want && !!s.modem73;
+  $("wf-box").hidden = !wfOn;
+  if (!want) return;
+  drawMeter(s);
+  drawSliders(s);
 }
+
+// The green zone: -45..-12 dBFS on FM (sync busy test). With the level
+// busy test (HF) idle noise must also sit 3 dB under the threshold; above
+// that it is amber ("noisy": sends wait), above -12 red as on FM.
+function zones(s) {
+  if (s.csma_mode === "level" && typeof s.csma_threshold_db === "number") {
+    return { low: -55, good: Math.min(-12, s.csma_threshold_db - 3), high: -12 };
+  }
+  return { low: -45, good: -12, high: -12 };
+}
+
+function drawMeter(s) {
+  const z = zones(s);
+  const [a, b, c] = [pctOf(z.low), pctOf(z.good), pctOf(z.high)];
+  $("lv-zones").style.background = `linear-gradient(90deg, var(--meter-low) 0 ${a}%, var(--meter-good) ${a}% ${b}%, var(--meter-busy) ${b}% ${c}%, var(--meter-high) ${c}% 100%)`;
+  const word = s.audio_in_word || "";
+  const measured = word !== "" && !["", "no modem", "no audio", "—"].includes(s.audio_label || "");
+  const db = s.audio_in_db;
+  $("lv-bar").style.width = measured ? `${pctOf(db)}%` : "0";
+  $("lv-bar").className = `meter-bar ${word}`;
+  $("lv-meter").setAttribute("aria-valuenow", measured ? String(Math.round(db)) : "");
+  const peak = s.audio_in_peak_db;
+  $("lv-peak").hidden = !(measured && typeof peak === "number");
+  if (typeof peak === "number") $("lv-peak").style.left = `${pctOf(peak)}%`;
+  const cls = { good: "up", low: "idle", high: "amber", noisy: "amber", clipping: "down" }[word] || "idle";
+  const audio = s.audio_label || "";
+  $("lv-word").className = `light ${cls}`;
+  if (measured) {
+    $("lv-word").textContent = word;
+    const nums = [`${Math.round(db)} dBFS`];
+    if (typeof peak === "number") nums.push(`peak ${Math.round(peak)}`);
+    if (typeof s.audio_in_clip_pct === "number") nums.push(`${s.audio_in_clip_pct.toFixed(1)}% clipped`);
+    if (typeof s.audio_in_frame_db === "number") nums.push(`last signal ${Math.round(s.audio_in_frame_db)}`);
+    $("lv-nums").textContent = nums.join(" · ");
+    $("lv-hint").textContent = s.audio_in_hint || "";
+  } else {
+    $("lv-word").textContent = audio && audio !== "—" ? audio : "not measured";
+    $("lv-nums").textContent = "";
+    $("lv-hint").textContent = audio === "—" ? "This modem73 does not report the level live." : "";
+  }
+  $("lv-hint").className = `lv-hint small ${cls}`;
+  $("lv-busy").textContent = s.csma_mode === "sync"
+    ? "· busy test: data signals (FM)"
+    : s.csma_mode === "level" ? `· busy test: level ${Math.round(s.csma_threshold_db)} dBFS` : "";
+}
+
+// A slider the operator touched is left alone until the station has
+// answered with the new value (or 5 s pass).
+const held = { rx: 0, tx: 0 };
+
+function drawSliders(s) {
+  const g = s.rx_gain;
+  const rx = $("rx-gain");
+  $("rx-row").hidden = !g;
+  if (g) {
+    rx.min = String(g.min_db);
+    rx.max = String(g.max_db);
+    if (Date.now() > held.rx) rx.value = String(g.db);
+    $("rx-out").textContent = `${(+rx.value).toFixed(1)} dB`;
+    $("rx-note").textContent = g.kind === "bluetooth"
+      ? "wcr's gain on the radio's Bluetooth audio. The radio's volume knob does not change this audio."
+      : `The sound card's ${g.control || "capture"} gain${g.agc === true ? " (automatic gain is on: moving the slider turns it off)" : ""}. If it is at its lowest and still clipping, turn the radio's volume down.`;
+  } else {
+    $("rx-note").textContent = s.rx_gain_note ? `RX gain: ${s.rx_gain_note}.` : "RX gain: use the radio's volume.";
+  }
+  const tx = $("tx-level");
+  if (Date.now() > held.tx) tx.value = String(typeof s.tx_level_db === "number" ? s.tx_level_db : 0);
+  $("tx-out").textContent = `${(+tx.value).toFixed(0)} dB`;
+}
+
+async function sendLevel(what, input, knob) {
+  held[knob] = Date.now() + 5000;
+  $("action").textContent = "";
+  try {
+    const r = await fetch("/api/station/setting", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ what, value: String(input.value) }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) $("action").textContent = d.error || `could not set ${what}`;
+  } finally {
+    setTimeout(poll, 600);
+  }
+}
+
+$("rx-gain").addEventListener("input", (e) => { held.rx = Date.now() + 5000; $("rx-out").textContent = `${(+e.target.value).toFixed(1)} dB`; });
+$("tx-level").addEventListener("input", (e) => { held.tx = Date.now() + 5000; $("tx-out").textContent = `${(+e.target.value).toFixed(0)} dB`; });
+$("rx-gain").addEventListener("change", (e) => sendLevel("rx_gain", e.target, "rx"));
+$("tx-level").addEventListener("change", (e) => sendLevel("tx_level", e.target, "tx"));
 
 // Waterfall: one row from /api/spectrum every WF_MS while the page is
 // visible and the station runs a sound-card modem. Nothing is asked while
 // the page is hidden or closed, so modem73 stops collecting audio for it.
 const WF_MS = 250;
-// Fixed scale (dB below full scale per bin), so a squelched radio stays
-// near black, open-squelch noise is purple and a signal is bright. No
-// auto-gain on purpose. A squelched BF-1909 on a Digirig reads about
-// -67 dBFS overall (QA #222) and about -99 dB per bin on the Pi 3
-// (QA #225); a keyed call reads about -22 dB per bin.
-const WF_FLOOR = -100, WF_TOP = -30;
+// Colours follow the noise floor (#241): every radio and every volume
+// setting shows its noise as dark blue-purple and a signal as bright, the
+// way WSJT-X and fldigi do. A fixed scale painted squelch-0 hiss solid
+// white on a hot input and black on a quiet one. The floor is a low
+// percentile of each row across the modem's passband, followed slowly
+// upward (so a long frame stays bright) and quickly downward.
+const WF_SPAN_DB = 36;     // floor - 6 dB is black, floor + 30 dB is white
+const WF_RISE = 0.03, WF_FALL = 0.4;
+let wfFloor = null;
 // The canvas spans 0–3 kHz of the radio's audio, at true positions.
 const WF_MAX_HZ = 3000;
 // Our TX row is painted only where the modem sends: OFDM 1500 ± 1200 Hz.
@@ -142,8 +243,24 @@ const WF_TX_LO = 300, WF_TX_HI = 2700;
 const WF_TX_RGB = [255, 122, 61];
 let wfOn = false, wfBusy = false, wfNoAudio = 0;
 
+// The row's noise floor: the 20th percentile of the passband bins.
+function wfRowFloor(bins, hzPerBin) {
+  const lo = Math.floor(WF_TX_LO / hzPerBin), hi = Math.min(bins.length - 1, Math.ceil(WF_TX_HI / hzPerBin));
+  const band = bins.slice(lo, hi + 1).filter((v) => typeof v === "number").sort((a, b) => a - b);
+  if (!band.length) return null;
+  return band[Math.floor(band.length * 0.2)];
+}
+
+function wfTrack(bins, hzPerBin) {
+  const f = wfRowFloor(bins, hzPerBin);
+  if (f === null) return;
+  if (wfFloor === null) wfFloor = f;
+  else wfFloor += (f - wfFloor) * (f > wfFloor ? WF_RISE : WF_FALL);
+}
+
 function wfColor(db) {
-  const t = Math.max(0, Math.min(1, (db - WF_FLOOR) / (WF_TOP - WF_FLOOR)));
+  const base = (wfFloor === null ? -100 : wfFloor) - 6;
+  const t = Math.max(0, Math.min(1, (db - base) / WF_SPAN_DB));
   // black → blue → purple → yellow → white
   const stops = [[0, 0, 0], [28, 42, 107], [140, 60, 200], [255, 225, 77], [255, 255, 255]];
   const x = t * (stops.length - 1), i = Math.min(stops.length - 2, Math.floor(x)), f = x - i;
@@ -186,8 +303,10 @@ async function wfTick() {
       wfRow([], 1, true);
       note.textContent = "· transmitting";
     } else if (d.bins.length) {
-            wfRow(d.bins, d.hz_per_bin || WF_MAX_HZ / d.bins.length, false);
-      note.textContent = "";
+      const hz = d.hz_per_bin || WF_MAX_HZ / d.bins.length;
+      wfTrack(d.bins, hz);
+      wfRow(d.bins, hz, false);
+      note.textContent = wfFloor === null ? "" : `· scaled to the noise floor (${Math.round(wfFloor)} dB)`;
     } else if (d.why === "no audio") {
       // No new audio since the last row: draw nothing rather than repeat
       // it. A short gap right after our TX is normal; say so after 1 s.
@@ -204,13 +323,6 @@ async function wfTick() {
   } finally {
     wfBusy = false;
   }
-}
-
-// Shown for a station with a sound-card modem (not internet-only, not a TNC).
-function wfShow(running, s) {
-  const want = running && s.mode && s.mode !== "internet" && !s.tnc;
-  $("wf-card").hidden = !want;
-  wfOn = want;
 }
 
 async function poll() {
@@ -265,7 +377,6 @@ function drawPickers(c, running, s) {
   fillSelect(mode, c.modes || [], s.mode);
   const presets = c.presets || [];
   $("preset-label").hidden = !presets.length;
-  $("pick-help").hidden = !presets.length;
   fillSelect(preset, presets, s.preset);
   mode.disabled = preset.disabled = !running || pickBusy;
 }
@@ -398,6 +509,14 @@ async function healthTick() {
     healthBusy = false;
   }
 }
+
+// The log's open or closed state is remembered on this browser.
+try {
+  if (localStorage.getItem("wcr.log") === "closed") $("log-box").open = false;
+} catch (e) { /* private window: open */ }
+$("log-box").addEventListener("toggle", () => {
+  try { localStorage.setItem("wcr.log", $("log-box").open ? "open" : "closed"); } catch (e) { /* ignore */ }
+});
 
 $("start").addEventListener("click", () => act("start"));
 $("stop").addEventListener("click", () => act("stop"));
