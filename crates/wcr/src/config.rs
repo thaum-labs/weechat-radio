@@ -262,6 +262,10 @@ pub struct TncConfig {
     pub ax25_dest: String,
     /// Pause between frames so the radio's one-frame-per-PTT TNC keeps up.
     pub frame_gap_ms: u32,
+    /// Bluetooth audio (`ptt = "bluetooth"`): transmit level change in dB,
+    /// -20 to +12. 0 keeps modem73's own level. Raise it a few dB at a time
+    /// while a far station reports SNR (QA #237).
+    pub bt_tx_level_db: f32,
 }
 
 impl Default for TncConfig {
@@ -276,6 +280,7 @@ impl Default for TncConfig {
             ax25: true,
             ax25_dest: "WCR".into(),
             frame_gap_ms: 400,
+            bt_tx_level_db: 0.0,
         }
     }
 }
@@ -471,6 +476,13 @@ impl Default for UiConfig {
             show_snr: true,
         }
     }
+}
+
+/// Where a local client reaches a listener bound to `bind`: the same port on
+/// 127.0.0.1 (a `0.0.0.0` bind is reached on loopback too).
+pub fn loopback_addr(bind: &str) -> String {
+    let port = bind.trim().rsplit(':').next().unwrap_or("");
+    format!("127.0.0.1:{port}")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -921,6 +933,21 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn loopback_addr_reaches_a_listener_on_its_port() {
+        assert_eq!(loopback_addr("127.0.0.1:8075"), "127.0.0.1:8075");
+        assert_eq!(loopback_addr("0.0.0.0:6668"), "127.0.0.1:6668");
+        assert_eq!(loopback_addr("[::1]:9000"), "127.0.0.1:9000");
+    }
+
+    #[test]
+    fn bluetooth_transmit_level_defaults_to_unchanged() {
+        let cfg: Config = toml::from_str("[tnc]\nbt_name = \"VR-N76\"\n").unwrap();
+        assert_eq!(cfg.tnc.bt_tx_level_db, 0.0);
+        let cfg: Config = toml::from_str("[tnc]\nbt_tx_level_db = 4.5\n").unwrap();
+        assert_eq!(cfg.tnc.bt_tx_level_db, 4.5);
+    }
 
     #[test]
     fn load_rejects_invalid_callsign() {

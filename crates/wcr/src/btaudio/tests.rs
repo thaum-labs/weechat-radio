@@ -330,3 +330,68 @@ fn free_port() -> u16 {
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.windows(needle.len()).any(|w| w == needle)
 }
+
+#[test]
+fn receive_counters_tell_no_bytes_from_bytes_that_do_not_decode() {
+    let snap = crate::status::new_shared();
+    let (connector, radio_rx) = fake_radio();
+    let _ports = start(connector, snap.clone()).unwrap();
+    let mut radio = radio_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(snap.lock().bt_rx_bytes, 0);
+
+    let pcm = vec![0i16; 640];
+    let mut enc = sbc::Encode::new();
+    let mut sent = 0;
+    for kind in [0x00u8, 0x03] {
+        // Type 0 the way the radio sends it to macOS, type 3 as on Windows.
+        let mut wire = frame::rx_audio(&enc.push(&pcm));
+        wire[1] = kind;
+        sent += wire.len();
+        radio.write_all(&wire).unwrap();
+    }
+    // A message that is not SBC, the radio's echo, an ack and the end frame.
+    let junk = frame::rx_audio(&[0x9C, 0x71, 0x12, 1, 2, 3]);
+    let echo = [0x7E, 0x09, 0x9C, 0x00, 0x7E];
+    let ack = [0x7E, 0x02, 0x00, 0x7E];
+    for part in [&junk[..], &echo, &ack, &frame::END_OF_AUDIO] {
+        sent += part.len();
+        radio.write_all(part).unwrap();
+    }
+    radio.flush().unwrap();
+
+    let until = Instant::now() + Duration::from_secs(5);
+    while snap.lock().bt_rx_bytes < sent as u64 && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let s = snap.lock();
+    assert_eq!(s.bt_rx_bytes, sent as u64);
+    let f = s.bt_rx_frames;
+    assert_eq!(
+        (f.t00, f.t01, f.t02, f.t03, f.t09, f.other),
+        (1, 1, 1, 2, 1, 0)
+    );
+    assert_eq!(s.sbc_decode_errors, 1, "only the junk message fails: {s:?}");
+}
+
+#[test]
+fn sbc_frame_maths_match_the_radio() {
+    // 32 kHz mono, 16 blocks, 8 subbands, loudness, bitpool 18: 44 bytes,
+    // 128 samples a frame.
+    let frame = [0x9C, 0x71, 0x12];
+    let mut two = frame.to_vec();
+    two.resize(88, 0);
+    assert_eq!(expected_samples(&two), 256);
+    // A cut-off frame is still expected, so its loss counts as an error.
+    assert_eq!(expected_samples(&two[..60]), 256);
+    assert_eq!(expected_samples(&[]), 0);
+    assert_eq!(expected_samples(&[1, 2, 3]), usize::MAX);
+}
+
+#[test]
+fn transmit_level_is_kept_in_range() {
+    assert_eq!(tx_gain(0.0), 1.0);
+    assert!((tx_gain(6.0) - 1.995).abs() < 0.01);
+    assert_eq!(tx_gain(40.0), tx_gain(12.0));
+    assert_eq!(tx_gain(-90.0), tx_gain(-20.0));
+    assert_eq!(tx_gain(f32::NAN), 1.0);
+}

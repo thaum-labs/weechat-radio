@@ -20,6 +20,8 @@ pub mod help;
 pub mod http_local;
 pub mod ircd;
 pub mod mail;
+#[cfg(target_os = "macos")]
+pub mod main_loop;
 pub mod modem;
 pub mod modes;
 pub mod net;

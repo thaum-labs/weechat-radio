@@ -5453,7 +5453,7 @@ fn mail_http_wait(
     wait: Duration,
 ) -> std::result::Result<serde_json::Value, String> {
     let none = |_| String::new();
-    let addr = "127.0.0.1:8074".parse().map_err(|_| String::new())?;
+    let addr = station_addrs().0.parse().map_err(|_| String::new())?;
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(400)).map_err(none)?;
     let _ = stream.set_read_timeout(Some(wait));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(400)));
@@ -5490,9 +5490,28 @@ fn mail_http_wait(
     serde_json::from_str(raw.trim()).map_err(|_| String::new())
 }
 
+/// The attached station's status and IRC addresses, from the active config
+/// (`-c`), so a station on other ports is still found (QA #237). Read again
+/// every few seconds, since setup can change them.
+fn station_addrs() -> (String, String) {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(Instant, String, String)>> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, status, irc)) = cache.as_ref() {
+        if at.elapsed() < Duration::from_secs(3) {
+            return (status.clone(), irc.clone());
+        }
+    }
+    let cfg = Config::load(&Config::active_path()).unwrap_or_default();
+    let status = crate::config::loopback_addr(&cfg.status.bind);
+    let irc = crate::config::loopback_addr(&cfg.irc.bind);
+    *cache = Some((Instant::now(), status.clone(), irc.clone()));
+    (status, irc)
+}
+
 fn fetch_status() -> Option<StatusSnapshot> {
     let mut stream =
-        TcpStream::connect_timeout(&"127.0.0.1:8074".parse().ok()?, Duration::from_millis(250))
+        TcpStream::connect_timeout(&station_addrs().0.parse().ok()?, Duration::from_millis(250))
             .ok()?;
     let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
@@ -5521,13 +5540,13 @@ fn irc_session(
     outgoing: Receiver<String>,
     events: Sender<IrcEvent>,
 ) {
-    let addr = "127.0.0.1:6667";
     let mut last_try = Instant::now() - Duration::from_secs(5);
     loop {
         if last_try.elapsed() < Duration::from_secs(2) {
             std::thread::sleep(Duration::from_millis(400));
         }
         last_try = Instant::now();
+        let addr = station_addrs().1;
         let Ok(mut stream) = TcpStream::connect_timeout(
             &addr
                 .parse()

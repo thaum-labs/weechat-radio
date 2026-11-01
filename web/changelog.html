@@ -52,6 +52,17 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v1.0.11</p>
+          <p>Sun, 1 Nov 2026</p>
+        </h3>
+        <pre>Mac: a VR-N76 over Bluetooth audio should now hear the radio. macOS hands the radio's audio only to the app's main thread, and wcr never listened there, so the Mac heard nothing while it could still send. The Bluetooth link also no longer keeps a processor core busy.
+
+The station status now counts the bytes and audio messages that arrive from a Bluetooth radio, so you can tell "nothing arrives" from "it arrives but does not decode". A new setting, [tnc] bt_tx_level_db, raises or lowers the Bluetooth transmit level.
+
+The desktop app now finds its station on the ports in its own config, not only the default ports.</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>v1.0.10</p>
           <p>Sun, 1 Nov 2026</p>
         </h3>

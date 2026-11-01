@@ -6,22 +6,56 @@ use wcr::cli::{Cli, Command, HubAdmin, ServiceAction, WebAction};
 use wcr::config::Config;
 use wcr::error::Result;
 
+#[cfg(not(target_os = "macos"))]
 #[tokio::main]
 async fn main() {
+    init_tracing();
+    if let Err(e) = real_main(Cli::parse()).await {
+        exit_with(e);
+    }
+}
+
+/// macOS: IOBluetooth delivers the radio's data to the main thread's run
+/// loop, so the main thread serves that loop and the station runs on a
+/// worker thread (QA #237). `wcr gui` keeps the main thread for its window,
+/// whose event loop serves the run loop itself.
+#[cfg(target_os = "macos")]
+fn main() {
+    init_tracing();
+    let cli = Cli::parse();
+    let gui = matches!(cli.cmd, Command::Gui);
+    let run = move || {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(wcr::Error::from)
+            .and_then(|rt| rt.block_on(real_main(cli)))
+    };
+    let result = if gui {
+        run()
+    } else {
+        wcr::main_loop::run_with_main_loop(run)
+    };
+    if let Err(e) = result {
+        exit_with(e);
+    }
+}
+
+fn init_tracing() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .with_target(false)
         .try_init();
-    if let Err(e) = real_main().await {
-        eprintln!("{} {e}", wcr::ui_style::err().apply_to("ERR"));
-        std::process::exit(1);
-    }
 }
 
-async fn real_main() -> Result<()> {
-    let cli = Cli::parse();
+fn exit_with(e: wcr::Error) -> ! {
+    eprintln!("{} {e}", wcr::ui_style::err().apply_to("ERR"));
+    std::process::exit(1);
+}
+
+async fn real_main(cli: Cli) -> Result<()> {
     let cfg_path = cli.config.clone().unwrap_or_else(Config::default_path);
     // Commands that change a setting save it to this file, not the default.
     Config::set_active_path(&cfg_path);
