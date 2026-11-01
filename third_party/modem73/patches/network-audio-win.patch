@@ -1,8 +1,59 @@
+diff --git a/csma.hh b/csma.hh
+index 7763996..b8df693 100644
+--- a/csma.hh
++++ b/csma.hh
+@@ -89,7 +89,7 @@ public:
+             quiet_needed_ = cfg_.quiet_ms;
+             contention_ms_ = cfg_.extra_delay_ms + slot *
+                 std::uniform_int_distribution<int>(0, slots - 1)(gen_) +
+-                std::uniform_int_distribution<int>(0, slot - 1)(gen_);
++                std::uniform_int_distribution<int>(0, jitter_span(slot) - 1)(gen_);
+         }
+         contention_drawn_ = contention_ms_;
+         idle_ms_ = std::min(std::max(0, cfg_.idle_credit_ms), quiet_needed_);
+@@ -133,7 +133,7 @@ public:
+                 int slots = std::max(2, w / slot);
+                 contention_ms_ = cfg_.extra_delay_ms + slot *
+                     std::uniform_int_distribution<int>(0, slots - 1)(gen_) +
+-                    std::uniform_int_distribution<int>(0, slot - 1)(gen_);
++                    std::uniform_int_distribution<int>(0, jitter_span(slot) - 1)(gen_);
+             }
+             contention_drawn_ = contention_ms_;
+         }
+@@ -162,6 +162,15 @@ public:
+         window_ = std::max(1, cfg_.rank_n) * rank_slot_;
+     }
+ 
++    // wcr (#241 item 3): in sync mode, random spread inside a slot stays below
++    // slot - detection time, so stations in neighbouring slots start at least
++    // one detection time apart and the later one hears the earlier one.
++    int jitter_span(int slot) const {
++        if (cfg_.sync_only && !cfg_.responder && slot > cfg_.dcd_detect_ms)
++            return slot - cfg_.dcd_detect_ms;
++        return slot;
++    }
++
+     Reason reason() const { return reason_; }
+     bool quiet_met() const { return idle_ms_ >= quiet_needed_; }
+     int window_ms() const { return window_; }
 diff --git a/kiss_tnc.cc b/kiss_tnc.cc
-index 0f52944..fae23b6 100644
+index 0f52944..2763e87 100644
 --- a/kiss_tnc.cc
 +++ b/kiss_tnc.cc
-@@ -2959,6 +2959,9 @@ void print_help(const char* prog) {
+@@ -836,6 +836,12 @@ private:
+                                      pkt.enqueue_ms >= rx_ms &&
+                                      pkt.enqueue_ms - rx_ms <= 5000 &&
+                                      steady_now_ms() - rx_ms <= 8000;
++                    // wcr (#241 item 3): in sync mode a contention slot lasts at
++                    // least as long as modem73 needs to find another station's
++                    // frame, plus a margin. With shorter slots two stations that
++                    // draw nearby slots both see a clear channel and collide.
++                    if (csma_sync_only && !pkt.beacon && !gcfg.responder)
++                        gcfg.slot_ms = std::max(gcfg.slot_ms, gcfg.dcd_detect_ms + 150);
+                     CsmaGate gate(gcfg, (uint32_t)gen());
+ #ifdef WITH_UI
+                     if (g_ui_state) g_ui_state->csma_window_ms = gate.window_ms();
+@@ -2959,6 +2965,9 @@ void print_help(const char* prog) {
                << "  -d, --device DEV        Audio device for both capture and playback\n"
                << "      --input-device DEV  Audio capture device\n"
                << "      --output-device DEV Audio playback device\n"
