@@ -11,7 +11,7 @@
 <header>
   <h1><span class="name"><span class="brand">weechat</span> radio</span> <span id="call" class="call"></span></h1>
   <nav class="views" aria-label="View">
-    <a href="/app" aria-current="page">App</a><a href="/">Gateway</a>
+    <a href="/app" aria-current="page">App</a><a href="/">Station</a>
   </nav>
   <form method="post" action="/logout"><button class="quiet" type="submit">Log out</button></form>
 </header>
@@ -19,6 +19,7 @@
   <button type="button" role="tab" id="tab-chat" aria-selected="true" aria-controls="chat">Chat</button>
   <button type="button" role="tab" id="tab-mail" aria-selected="false" aria-controls="mail">Mail</button>
   <button type="button" role="tab" id="tab-stations" aria-selected="false" aria-controls="stations">Stations</button>
+  <button type="button" role="tab" id="tab-traffic" aria-selected="false" aria-controls="traffic-tab">On the air</button>
   <span id="link" class="light idle" role="status">station —</span>
 </nav>
 <main class="wide">
@@ -99,6 +100,24 @@
     <div class="card">
       <h2>Stations heard</h2>
       <ul id="heard" class="list"></ul>
+    </div>
+  </section>
+
+  <section id="traffic-tab" role="tabpanel" aria-labelledby="tab-traffic" hidden>
+    <div class="card traffic-card">
+      <div class="card-head">
+        <h2>On the air</h2>
+        <span id="traffic-count" class="meta"></span>
+      </div>
+      <div class="filters" role="group" aria-label="Show">
+        <button type="button" data-f="all" aria-pressed="true">All</button>
+        <button type="button" data-f="chat" aria-pressed="false">Messages</button>
+        <button type="button" data-f="receipt" aria-pressed="false">Receipts</button>
+        <button type="button" data-f="beacon" aria-pressed="false">Beacons</button>
+        <button type="button" data-f="mail" aria-pressed="false">Mail</button>
+      </div>
+      <ol id="traffic" class="traffic"></ol>
+      <p class="meta">Every frame this station heard or sent, newest first. Amateur radio is open, so other stations' messages show here too. Read only: Reply opens a separate direct chat with that station.</p>
     </div>
   </section>
 </main>

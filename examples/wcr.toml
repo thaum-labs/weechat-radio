@@ -30,7 +30,7 @@ audio_output = ""
 csma_mode = "auto"    # auto | sync | level
 # Levels (the RX gain and TX level sliders, or /level rx|tx <dB>):
 # rx_gain_db = 0.0    # Linux sound card capture gain, set at every start
-tx_level_db = 0.0     # -26 to 0: only turns the modem's audio down
+tx_level_db = 0.0     # -40 to 0 (-26 on Windows): only turns the modem's audio down
 
 [hub]
 url = "wss://hub.weechatradio.com/ws"

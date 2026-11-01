@@ -374,7 +374,15 @@ mod tests {
         assert!(tx_level_args(&m(0.0)).is_empty());
         assert!(tx_level_args(&m(3.0)).is_empty());
         assert_eq!(tx_level_args(&m(-6.0)).join(" "), "--tx-level 50");
-        assert_eq!(tx_level_args(&m(-40.0)).join(" "), "--tx-level 5");
+        // The floor is -40 dB (1 %) with our modem73 build, -26 dB (5 %) on
+        // Windows, whose modem73 build stops there.
+        let floor = if cfg!(windows) {
+            "--tx-level 5"
+        } else {
+            "--tx-level 1"
+        };
+        assert_eq!(tx_level_args(&m(-40.0)).join(" "), floor);
+        assert_eq!(tx_level_args(&m(-60.0)).join(" "), floor);
     }
 
     #[tokio::test]

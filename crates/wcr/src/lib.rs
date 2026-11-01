@@ -42,6 +42,7 @@ pub mod status;
 pub mod store;
 pub mod telemetry;
 pub mod tnc;
+pub mod traffic;
 pub mod tui;
 pub mod ui_style;
 pub mod update;

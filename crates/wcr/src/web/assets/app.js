@@ -54,17 +54,20 @@ async function getJson(path) {
 
 // ---------- tabs ----------
 let tab = "chat";
+const TABS = ["chat", "mail", "stations", "traffic"];
+const PANEL = { traffic: "traffic-tab" };
 function showTab(name) {
   tab = name;
-  for (const t of ["chat", "mail", "stations"]) {
-    $(t).hidden = t !== name;
+  for (const t of TABS) {
+    $(PANEL[t] || t).hidden = t !== name;
     $(`tab-${t}`).setAttribute("aria-selected", String(t === name));
   }
   try { localStorage.setItem("wcr-tab", name); } catch (_) { /* private mode */ }
   if (name === "mail") loadMail();
   if (name === "stations") loadStations();
+  if (name === "traffic") trafficTick();
 }
-for (const t of ["chat", "mail", "stations"]) $(`tab-${t}`).onclick = () => showTab(t);
+for (const t of TABS) $(`tab-${t}`).onclick = () => showTab(t);
 
 // ---------- chat ----------
 const chat = { me: "", up: false, convs: new Map(), order: [], active: "#bulletin", unread: new Map() };
@@ -440,11 +443,83 @@ async function loadStations() {
   }
 }
 
+// ---------- on the air (#243) ----------
+// Every frame heard or sent, read only. Reply opens a separate DM with
+// that station; nothing is ever posted into the monitor or anyone else's chat.
+const KIND_WORD = { dm: "DM", bulletin: "bulletin", group: "group", receipt: "receipt", beacon: "beacon", mail: "mail", status: "status", form: "form", checkin: "check-in", ping: "ping" };
+const FILTER = {
+  all: () => true,
+  chat: (r) => ["dm", "bulletin", "group", "form", "checkin", "status"].includes(r.kind),
+  receipt: (r) => r.kind === "receipt",
+  beacon: (r) => r.kind === "beacon",
+  mail: (r) => r.kind === "mail",
+};
+let traffic = [], trafficLast = 0, trafficFilter = "all", trafficBusy = false;
+
+function trafficRow(r) {
+  const li = el("li", r.dir);
+  const t = new Date(r.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  li.append(el("span", "t-time", t), el("span", `chip k-${r.kind}`, KIND_WORD[r.kind] || r.kind));
+  const who = el("span", "t-who");
+  who.append(document.createTextNode(r.from || "?"));
+  if (r.to) who.append(el("span", "dir", " → "), document.createTextNode(r.to));
+  li.append(who);
+  const side = el("span", "t-side");
+  if (typeof r.snr === "number") side.append(el("span", r.snr >= 10 ? "up" : r.snr >= 6 ? "amber" : "down", `${r.snr.toFixed(0)} dB`));
+  side.append(document.createTextNode(r.via === "rf" ? (r.dir === "sent" ? "sent rf" : "rf") : r.via === "inet" ? "internet" : r.via));
+  const chatty = ["dm", "bulletin", "group", "checkin", "status", "form"].includes(r.kind);
+  const station = r.dir === "sent" ? (r.kind === "dm" ? r.to : "") : r.from;
+  if (chatty && station && /^[A-Z0-9]{3,}(\/[A-Z0-9]+)?$/i.test(station) && station.toUpperCase() !== (chat.me || "").toUpperCase()) {
+    const b = el("button", "link", "Reply");
+    b.type = "button";
+    b.title = `Open a direct chat with ${station}`;
+    b.onclick = () => openDm(station);
+    side.append(b);
+  }
+  li.append(side);
+  if (r.text) li.append(el("span", ["dm", "bulletin", "group"].includes(r.kind) ? "t-text" : "t-text dim", r.text));
+  return li;
+}
+
+function drawTraffic() {
+  const rows = traffic.filter(FILTER[trafficFilter]).slice(-80).reverse();
+  const list = $("traffic");
+  list.replaceChildren();
+  if (!rows.length) list.append(el("li", "empty", traffic.length ? "Nothing of this kind yet." : "Nothing heard or sent since the station started."));
+  for (const r of rows) list.append(trafficRow(r));
+  $("traffic-count").textContent = traffic.length ? `${traffic.length} frames` : "";
+}
+
+async function trafficTick() {
+  if (trafficBusy) return;
+  trafficBusy = true;
+  try {
+    const d = await getJson(`/api/traffic?since=${trafficLast}`);
+    if (d.last < trafficLast) { traffic = []; trafficLast = 0; return; }
+    traffic = traffic.concat(d.rows).slice(-400);
+    trafficLast = d.last;
+    drawTraffic();
+  } catch (err) {
+    $("traffic").replaceChildren(el("li", "empty", err.message));
+  } finally {
+    trafficBusy = false;
+  }
+}
+
+for (const b of document.querySelectorAll(".filters button")) {
+  b.addEventListener("click", () => {
+    trafficFilter = b.dataset.f;
+    for (const o of document.querySelectorAll(".filters button")) o.setAttribute("aria-pressed", String(o === b));
+    drawTraffic();
+  });
+}
+
 // ---------- start ----------
 setInterval(() => {
   if (document.hidden) return;
   if (tab === "mail") loadMail();
   if (tab === "stations") loadStations();
+  if (tab === "traffic") trafficTick();
 }, POLL_MS);
 
 try {
@@ -455,4 +530,13 @@ connect();
 loadStations();
 let first = "chat";
 try { first = localStorage.getItem("wcr-tab") || "chat"; } catch (_) { /* private mode */ }
+if (!TABS.includes(first)) first = "chat";
 showTab(first);
+// The station page's Reply opens /app#dm=CALL: a separate direct chat.
+let dmHash = "";
+try { dmHash = decodeURIComponent(location.hash); } catch (_) { /* bad escape */ }
+const dm = /^#dm=([A-Za-z0-9/]+)$/.exec(dmHash);
+if (dm) {
+  history.replaceState(null, "", "/app");
+  openDm(dm[1]);
+}

@@ -173,7 +173,7 @@ pub struct ModemConfig {
     /// start (Linux: a Digirig or other CM108 card). Unset = the mixer is
     /// left as it is. Setting it also turns the card's automatic gain off.
     pub rx_gain_db: Option<f32>,
-    /// Transmit level in dB, -26 to 0 (#241): modem73's `tx_drive`. Only
+    /// Transmit level in dB, -40 to 0 (-26 on Windows; #241, #243): modem73's `tx_drive`. Only
     /// turns down: modem73's audio already peaks at full scale. Set the
     /// radio's own mic gain for more deviation.
     pub tx_level_db: f32,

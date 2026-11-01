@@ -516,6 +516,8 @@ fn save_session(active: &str, joined: &[String], members: &HashMap<String, Vec<S
 enum CenterView {
     Chat,
     Email,
+    /// Every frame heard or sent on air, read only (#243).
+    Traffic,
 }
 
 /// One email being sent. The send window stays up, and the rest of the app
@@ -659,6 +661,10 @@ struct GuiApp {
     /// A copy-to save or confirm still waiting on the hub.
     copy_rx: Option<Receiver<CopyReply>>,
     last_mail_poll: Instant,
+    /// The all-traffic monitor's rows (newest last) and the last row number.
+    traffic: Vec<serde_json::Value>,
+    traffic_last: u64,
+    last_traffic_poll: Instant,
 }
 
 /// A copy-to save or confirm, answered off the UI thread.
@@ -773,6 +779,9 @@ impl GuiApp {
             copy_loaded: false,
             copy_rx: None,
             last_mail_poll: Instant::now() - Duration::from_secs(5),
+            traffic: Vec::new(),
+            traffic_last: 0,
+            last_traffic_poll: Instant::now() - Duration::from_secs(5),
         };
         app.install_tray();
         crate::service::soften_keep_alive();
@@ -1524,6 +1533,7 @@ impl eframe::App for GuiApp {
                     self.connect_chat();
                 }
                 self.poll_mail();
+                self.poll_traffic();
             }
         }
         if self.configured() && !self.auto_started && !self.user_stopped {
@@ -1612,6 +1622,13 @@ impl eframe::App for GuiApp {
                         }
                     }
                     self.paint_email_nav(ui);
+                    if nav_link(ui, "on air").clicked() {
+                        self.center = CenterView::Traffic;
+                        self.last_traffic_poll = Instant::now() - Duration::from_secs(5);
+                        if self.configured() {
+                            self.show_setup = false;
+                        }
+                    }
                     let running = self.status.is_some();
                     if running {
                         if nav_link(ui, "stop").clicked() {
@@ -2062,6 +2079,10 @@ impl eframe::App for GuiApp {
             .show(ctx, |ui| {
                 if self.center == CenterView::Email {
                     self.paint_email(ui);
+                    return;
+                }
+                if self.center == CenterView::Traffic {
+                    self.paint_traffic(ui);
                     return;
                 }
                 module_title(ui, "LIVE CHAT", &self.active_channel);
@@ -3850,6 +3871,132 @@ impl GuiApp {
             }
         };
         self.load_copy_state();
+    }
+
+    /// New rows for the all-traffic monitor, while it is open (#243).
+    fn poll_traffic(&mut self) {
+        if self.center != CenterView::Traffic
+            || self.last_traffic_poll.elapsed() < Duration::from_secs(2)
+        {
+            return;
+        }
+        self.last_traffic_poll = Instant::now();
+        let Some(v) = mail_http(
+            "GET",
+            &format!("/traffic?since={}", self.traffic_last),
+            None,
+        ) else {
+            return;
+        };
+        let last = v["last"].as_u64().unwrap_or(0);
+        if last < self.traffic_last {
+            // The station restarted: its row numbers start again.
+            self.traffic.clear();
+            self.traffic_last = 0;
+            return;
+        }
+        if let Some(rows) = v["rows"].as_array() {
+            self.traffic.extend(rows.iter().cloned());
+            let over = self.traffic.len().saturating_sub(crate::traffic::KEEP);
+            self.traffic.drain(..over);
+        }
+        self.traffic_last = last;
+    }
+
+    /// The all-traffic monitor: every frame heard or sent, newest first.
+    /// Read only; nothing is ever posted from here.
+    fn paint_traffic(&mut self, ui: &mut egui::Ui) {
+        module_title(ui, "ON THE AIR", &format!("{} frames", self.traffic.len()));
+        ui.label(
+            RichText::new(
+                "Every frame this station heard or sent. Read only: to answer a station, \
+                 use the web App's Reply or /query CALL in WeeChat, which opens a separate direct chat.",
+            )
+            .color(DIM)
+            .size(12.0),
+        );
+        ui.add_space(6.0);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if self.traffic.is_empty() {
+                    ui.label(
+                        RichText::new("Nothing heard or sent since the station started.")
+                            .color(DIM),
+                    );
+                }
+                for r in self.traffic.iter().rev() {
+                    let s = |k: &str| r[k].as_str().unwrap_or("").to_string();
+                    let ts = r["ts"].as_i64().unwrap_or(0);
+                    let when = chrono::DateTime::from_timestamp(ts, 0)
+                        .map(|d| {
+                            d.with_timezone(&chrono::Local)
+                                .format("%H:%M:%S")
+                                .to_string()
+                        })
+                        .unwrap_or_default();
+                    let kind = s("kind");
+                    let kind_color = match kind.as_str() {
+                        "dm" => ACCENT,
+                        "bulletin" | "group" => PURPLE,
+                        "receipt" => GREEN,
+                        "mail" => AMBER,
+                        _ => DIM,
+                    };
+                    let sent = s("dir") == "sent";
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(when).color(DIM).monospace().size(12.0));
+                        ui.label(
+                            RichText::new(&kind)
+                                .color(kind_color)
+                                .monospace()
+                                .size(12.0),
+                        );
+                        let to = s("to");
+                        let who = if to.is_empty() {
+                            s("from")
+                        } else {
+                            format!("{} -> {to}", s("from"))
+                        };
+                        ui.label(
+                            RichText::new(who)
+                                .color(if sent { ORANGE } else { FG })
+                                .monospace(),
+                        );
+                        if let Some(snr) = r["snr"].as_f64() {
+                            let c = if snr >= 10.0 {
+                                GREEN
+                            } else if snr >= 6.0 {
+                                AMBER
+                            } else {
+                                RED
+                            };
+                            ui.label(
+                                RichText::new(format!("{snr:.0} dB"))
+                                    .color(c)
+                                    .monospace()
+                                    .size(12.0),
+                            );
+                        }
+                        let via = s("via");
+                        ui.label(
+                            RichText::new(match (sent, via.as_str()) {
+                                (true, _) => "sent".to_string(),
+                                (false, "inet") => "internet".to_string(),
+                                (false, v) => v.to_string(),
+                            })
+                            .color(DIM)
+                            .monospace()
+                            .size(12.0),
+                        );
+                    });
+                    let text = s("text");
+                    if !text.is_empty() {
+                        ui.label(RichText::new(text).color(FG));
+                    }
+                    ui.separator();
+                }
+            });
     }
 
     fn poll_mail(&mut self) {

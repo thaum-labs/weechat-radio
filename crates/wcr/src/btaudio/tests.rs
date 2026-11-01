@@ -541,3 +541,24 @@ fn receive_gain_scales_and_keeps_full_scale() {
     let out = rx_samples(&mut pcm, 4.0);
     assert_eq!(out, vec![1.0, -1.0]);
 }
+
+/// #243: clipping inside the radio is counted before wcr's RX gain.
+#[test]
+fn clipping_in_the_radios_audio_is_counted_before_rx_gain() {
+    let mut c = ClipCount::default();
+    let mut block = vec![1000i16; 15_000];
+    block.extend(std::iter::repeat_n(32_767i16, 500));
+    block.extend(std::iter::repeat_n(-32_768i16, 500));
+    assert_eq!(c.push(&block), Some(6.25));
+    // The next window starts clean.
+    assert_eq!(c.push(&[0; 8000]), None);
+    assert_eq!(c.push(&[0; 8000]), Some(0.0));
+}
+
+/// #243: a link with no bytes 5 s after linking is opened again.
+#[test]
+fn a_silent_link_is_reopened_after_five_seconds() {
+    assert!(!no_audio_since_linked(Duration::from_secs(4), 0));
+    assert!(no_audio_since_linked(Duration::from_secs(5), 0));
+    assert!(!no_audio_since_linked(Duration::from_secs(60), 1));
+}

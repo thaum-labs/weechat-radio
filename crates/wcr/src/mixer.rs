@@ -21,6 +21,8 @@ pub struct CaptureGain {
     pub db: f32,
     pub min_db: f32,
     pub max_db: f32,
+    /// One step of the control, dB (the Digirig's `Mic` moves 1.49 dB).
+    pub step_db: f32,
     /// The card's automatic gain: `Some(false)` off, `None` if it has none.
     pub agc: Option<bool>,
 }
@@ -124,11 +126,13 @@ mod imp {
             .get_capture_vol_db(SelemChannelId::mono())
             .map(|v| v.to_db())
             .unwrap_or(lo.to_db());
+        let (vmin, vmax) = s.get_capture_volume_range();
         CaptureGain {
             control: name(s),
             db,
             min_db: lo.to_db(),
             max_db: hi.to_db(),
+            step_db: super::step_db(lo.to_db(), hi.to_db(), vmax - vmin),
             agc,
         }
     }
@@ -144,7 +148,9 @@ mod imp {
         let mixer = open(card)?;
         let s = capture(&mixer).ok_or_else(|| format!("{card} has no capture gain control"))?;
         let (lo, hi) = s.get_capture_db_range();
-        let want = db.clamp(lo.to_db(), hi.to_db());
+        // A slider value on a step can come back a hair under it in
+        // floating point, and Floor then took the step below (#243).
+        let want = (db + 0.05).clamp(lo.to_db(), hi.to_db());
         s.set_capture_db_all(MilliBel::from_db(want), alsa::Round::Floor)
             .map_err(|e| format!("cannot set {} on {card}: {e}", name(&s)))?;
         if s.has_capture_switch() {
@@ -165,6 +171,16 @@ mod imp {
 
     pub fn set(_card: &str, _db: f32) -> Result<CaptureGain, String> {
         Err("capture gain is set on Linux only".into())
+    }
+}
+
+/// One step of a control with `steps` steps over `min_db..max_db`, dB. A
+/// control that does not say falls back to 0.5 dB.
+pub fn step_db(min_db: f32, max_db: f32, steps: i64) -> f32 {
+    if steps > 0 && max_db > min_db {
+        (max_db - min_db) / steps as f32
+    } else {
+        0.5
     }
 }
 
@@ -232,9 +248,13 @@ mod tests {
             db: 0.0,
             min_db: 0.0,
             max_db: 23.81,
+            step_db: step_db(0.0, 23.81, 16),
             agc: Some(false),
         };
         assert!(g.at_min());
         assert!(!g.at_max());
+        // The Digirig's Mic: 16 steps of 1.49 dB (QA #243 saw 5.5 -> 5.95).
+        assert!((g.step_db - 1.488).abs() < 0.01);
+        assert_eq!(step_db(0.0, 10.0, 0), 0.5);
     }
 }
