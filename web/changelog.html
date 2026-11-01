@@ -52,6 +52,17 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v1.0.9</p>
+          <p>Sun, 1 Nov 2026</p>
+        </h3>
+        <pre>VR-N76 over Bluetooth audio now links on macOS. The Mac reported an error for a channel that was in fact open; wcr now uses it, and finds the radio's audio service without a 6 second wait.
+
+Setup: wcr -c FILE gui now loads, saves and starts the station on FILE. Setup keeps a dated .bak of the settings it replaces, says which VR-N76 option is which (the radio's own 1200 bd packet TNC, or modem73 over Bluetooth audio for modem73 gateways like a Pi with a Digirig), and warns when the saved frequency is not on a band the chosen radio can use. The setup page fits a laptop screen: it scrolls, uses two columns when there is room, and Save and start always stays in view.
+
+Pi web page: a Health card shows CPU, memory, temperature, power and throttling, disk space, uptime, network, Wi-Fi signal and the clock. Mode and preset can be changed from the gateway view. A delivered line now says how its receipt came back: [ok net] or [ok rf].</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>v1.0.8</p>
           <p>Sat, 31 Oct 2026</p>
         </h3>
