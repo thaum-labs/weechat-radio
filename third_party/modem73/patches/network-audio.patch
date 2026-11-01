@@ -42,10 +42,19 @@ index 2b40c05..16e0684 100644
          if (!iface_.get_status) {
              send_error(client_fd, "get_status not available");
 diff --git a/kiss_tnc.cc b/kiss_tnc.cc
-index f3fe696..bed56fd 100644
+index f3fe696..6919c3c 100644
 --- a/kiss_tnc.cc
 +++ b/kiss_tnc.cc
-@@ -288,6 +288,9 @@ void print_help(const char* prog) {
+@@ -159,7 +159,7 @@ static bool apply_settings_file(const std::string& path, TNCConfig& config,
+         else if (!strcmp(key, "tx_blanking_enabled") && take(key)) config.tx_blanking_enabled = atoi(value) != 0;
+         else if (!strcmp(key, "tx_drive") && take(key)) {
+             float v = (float)atof(value);
+-            if (std::isfinite(v) && v >= 0.05f && v <= 1.0f) config.tx_drive = v;
++            if (std::isfinite(v) && v >= 0.01f && v <= 1.0f) config.tx_drive = v;
+         }
+         else if (!strcmp(key, "audio_input") && take(key)) config.audio_input_device = value;
+         else if (!strcmp(key, "audio_output") && take(key)) config.audio_output_device = value;
+@@ -288,9 +288,12 @@ void print_help(const char* prog) {
                << "  -d, --device DEV        Audio device for both capture and playback\n"
                << "      --input-device DEV  Audio capture device\n"
                << "      --output-device DEV Audio playback device\n"
@@ -54,7 +63,20 @@ index f3fe696..bed56fd 100644
 +              << "                          and gets the same number of playback samples back\n"
                << "      --audio-backend B   Audio backend: auto, alsa, pulse, jack (default: auto)\n"
                << "                          Place before --list-audio to list that backend's devices\n"
-               << "      --tx-level PCT      TX audio output level, 5-100 (default: 100)\n"
+-              << "      --tx-level PCT      TX audio output level, 5-100 (default: 100)\n"
++              << "      --tx-level PCT      TX audio output level, 1-100 (default: 100)\n"
+               << "\nModem:\n"
+               << "  -c, --callsign CALL     Callsign (default: N0CALL)\n"
+               << "      --modem TYPE        ofdm, mfsk or robust (default: ofdm)\n"
+@@ -487,7 +490,7 @@ int main(int argc, char** argv) {
+             config.audio_backend = b;
+             cli_set.insert("audio_backend");
+         } else if (arg == "--tx-level" && i + 1 < argc) {
+-            config.tx_drive = clamp_arg("--tx-level", argv[++i], 5, 100) / 100.0f;
++            config.tx_drive = clamp_arg("--tx-level", argv[++i], 1, 100) / 100.0f;
+             cli_set.insert("tx_drive");
+         } else if ((arg == "-c" || arg == "--callsign") && i + 1 < argc) {
+             config.callsign = argv[++i];
 @@ -1303,12 +1306,45 @@ int main(int argc, char** argv) {
                  cJSON_AddNumberToObject(j, "client_count", tnc.get_client_count());
                  cJSON_AddBoolToObject(j, "rigctl_connected", tnc.is_rigctl_connected());
@@ -101,6 +123,15 @@ index f3fe696..bed56fd 100644
              ctrl_iface.get_config = [&tnc]() -> cJSON* {
                  cJSON* j = cJSON_CreateObject();
                  TNCConfig cfg = tnc.get_config();
+@@ -1431,7 +1467,7 @@ int main(int argc, char** argv) {
+                 if ((item = cJSON_GetObjectItemCaseSensitive(params, "tx_lead_tone")) && cJSON_IsBool(item))
+                     new_config.tx_lead_tone = cJSON_IsTrue(item);
+                 if ((item = cJSON_GetObjectItemCaseSensitive(params, "tx_drive")) && cJSON_IsNumber(item)
+-                    && item->valuedouble >= 0.05 && item->valuedouble <= 1.0)
++                    && item->valuedouble >= 0.01 && item->valuedouble <= 1.0)
+                     new_config.tx_drive = (float)item->valuedouble;
+                 if ((item = cJSON_GetObjectItemCaseSensitive(params, "tx_blanking_enabled")) && cJSON_IsBool(item))
+                     new_config.tx_blanking_enabled = cJSON_IsTrue(item);
 diff --git a/kiss_tnc_impl.hh b/kiss_tnc_impl.hh
 index b721d8a..c8fc2dc 100644
 --- a/kiss_tnc_impl.hh
@@ -749,3 +780,16 @@ index 0000000..bbee646
 +    CaptureSink capture_;
 +    PlaybackSource playback_;
 +};
+diff --git a/tnc_ui_state.hh b/tnc_ui_state.hh
+index bf1b660..be0b115 100644
+--- a/tnc_ui_state.hh
++++ b/tnc_ui_state.hh
+@@ -843,7 +843,7 @@ struct TNCUIState {
+                 }
+                 else if (strcmp(key, "tx_drive") == 0) {
+                     float v = strtof(value, nullptr);
+-                    if (v >= 0.05f && v <= 1.0f) tx_drive = v;
++                    if (v >= 0.01f && v <= 1.0f) tx_drive = v;
+                 }
+                 else if (strcmp(key, "alt_mode_mask") == 0)
+                     alt_mode_mask = atoi(value) & ((1 << ALT_MODE_COUNT) - 1);

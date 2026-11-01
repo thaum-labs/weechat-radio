@@ -216,6 +216,7 @@ fn router(web: Web) -> Router {
         .route("/api/chat/send", post(chat_send))
         .route("/api/chat/join", post(chat_join))
         .route("/api/stations", get(stations))
+        .route("/api/traffic", get(traffic))
         .route("/api/mail", get(mail_list))
         .route("/api/mail/open", get(mail_open))
         .route("/api/mail/send", post(mail_send))
@@ -576,6 +577,20 @@ async fn stations(State(web): State<Web>) -> Json<Value> {
         "heard": heard,
         "now": chrono::Utc::now().timestamp(),
     }))
+}
+
+#[derive(Deserialize)]
+struct TrafficQ {
+    #[serde(default)]
+    since: u64,
+}
+
+/// The all-traffic monitor (#243): frames heard or sent since `since`.
+async fn traffic(State(web): State<Web>, Query(q): Query<TrafficQ>) -> Response {
+    match web.local_get(&format!("/traffic?since={}", q.since)).await {
+        Ok((code, body)) => json_response(code, body),
+        Err(r) => r,
+    }
 }
 
 #[derive(Deserialize)]

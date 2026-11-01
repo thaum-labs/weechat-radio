@@ -174,6 +174,20 @@ pub fn bulletin_keeps_walking(env: &Envelope) -> bool {
     ) && crate::slash::is_bulletin(env.dest.as_str())
 }
 
+/// A gateway's own `#bulletin`: the first receipt (often from a hub
+/// station, over the internet) used to cancel the RF copy still queued, so
+/// radio-only stations never heard the gateway's bulletins (#241, #243,
+/// approved by Tobias). The first RF copy always goes; `handed` is how many
+/// copies went to the air queue. Retries still stop at the first receipt.
+pub fn own_bulletin_first_rf_copy_stays(
+    gateway: bool,
+    own: bool,
+    env: &Envelope,
+    handed: u32,
+) -> bool {
+    gateway && own && bulletin_keeps_walking(env) && handed <= 1
+}
+
 /// Channel control frame (`WCRMETA members=…`, `leave=…`, `prio=…`). It has
 /// no ACK, so one lost copy used to leave every station past it with a
 /// short roster.
@@ -1174,6 +1188,38 @@ mod tests {
         let ack = Envelope::ack_for(&group, Callsign::parse("M0BBB").unwrap(), 2, None);
         assert!(!bulletin_keeps_walking(&ack));
         assert!(!keep_relaying(&ack, 0, 3, false));
+    }
+
+    /// #243 item 2: a gateway's own bulletin keeps its first RF copy when
+    /// the first receipt (often over the internet) arrives before it keys.
+    #[test]
+    fn a_gateways_own_bulletin_always_gets_its_first_rf_copy() {
+        let bulletin = Envelope::new_msg(
+            Callsign::parse("M7TJF").unwrap(),
+            Callsign::from_raw("BULLETIN"),
+            1,
+            b"b1".to_vec(),
+            5,
+            Flags::new().with(crate::proto::FLAG_GROUP),
+        )
+        .unwrap();
+        assert!(own_bulletin_first_rf_copy_stays(true, true, &bulletin, 1));
+        assert!(own_bulletin_first_rf_copy_stays(true, true, &bulletin, 0));
+        // A later repeat is still dropped at the first receipt.
+        assert!(!own_bulletin_first_rf_copy_stays(true, true, &bulletin, 2));
+        // Not a gateway, or not our own line: unchanged.
+        assert!(!own_bulletin_first_rf_copy_stays(false, true, &bulletin, 1));
+        assert!(!own_bulletin_first_rf_copy_stays(true, false, &bulletin, 1));
+        let dm = Envelope::new_msg(
+            Callsign::parse("M7TJF").unwrap(),
+            Callsign::parse("M0BBB").unwrap(),
+            1,
+            b"d1".to_vec(),
+            5,
+            Flags::new(),
+        )
+        .unwrap();
+        assert!(!own_bulletin_first_rf_copy_stays(true, true, &dm, 1));
     }
 
     #[test]

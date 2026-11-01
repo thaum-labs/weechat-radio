@@ -38,8 +38,6 @@ pub const CLIP_PCT: f32 = 0.5;
 /// Level-test (HF) stations: idle noise must sit this far under the busy
 /// threshold, or the station waits for a quiet moment that never comes.
 pub const BUSY_MARGIN_DB: f32 = 3.0;
-/// A decoded frame this loud (RMS dBFS) is close to clipping.
-pub const FRAME_HIGH_DB: f32 = -8.0;
 
 /// What the meter says about the input, worst first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,8 +84,6 @@ pub struct Input {
     pub peak_db: Option<f32>,
     /// Samples at full scale in the last half second, % (newer modem73 only).
     pub clip_pct: Option<f32>,
-    /// RMS of the last decoded frame, dBFS, if one was heard.
-    pub frame_db: Option<f32>,
 }
 
 /// The busy test the station's modem73 runs.
@@ -102,8 +98,7 @@ pub fn judge(input: Input, busy: Busy, control: RxControl) -> (Word, String) {
     let clipping = input.clip_pct.is_some_and(|c| c >= CLIP_PCT);
     let high = input.rms_db > HIGH_DB
         || input.peak_db.is_some_and(|p| p >= PEAK_HIGH_DB)
-        || input.clip_pct.is_some_and(|c| c > 0.0)
-        || input.frame_db.is_some_and(|f| f > FRAME_HIGH_DB);
+        || input.clip_pct.is_some_and(|c| c > 0.0);
     let down = turn_down(control);
     if clipping {
         let pct = input.clip_pct.unwrap_or(0.0);
@@ -137,14 +132,6 @@ pub fn judge(input: Input, busy: Busy, control: RxControl) -> (Word, String) {
         LOW_DB
     };
     if input.rms_db < low {
-        // A frame that decoded at a fine level says the radio is right; the
-        // quiet idle input is just a squelched or quiet channel.
-        if input.frame_db.is_some_and(|f| f >= low) {
-            return (
-                Word::Good,
-                "Good: the last signal arrived at a healthy level.".into(),
-            );
-        }
         return (
             Word::Low,
             format!("Too quiet: weak signals may be lost. {}.", turn_up(control)),
@@ -175,8 +162,12 @@ fn turn_up(control: RxControl) -> &'static str {
     }
 }
 
-/// Allowed transmit level change, dB: modem73's `tx_drive` 0.05..1.0.
-pub const TX_LEVEL_MIN_DB: f32 = -26.0;
+/// Allowed transmit level change, dB: modem73's `tx_drive`. Our patched
+/// modem73 takes 0.01..1.0 (-40 dB, #243: the Pi was still overdriven at
+/// -26); the Windows port stops at 0.05 (-26 dB).
+pub const TX_LEVEL_MIN_DB: f32 = if cfg!(windows) { -26.0 } else { -40.0 };
+/// `tx_drive` at [`TX_LEVEL_MIN_DB`].
+const TX_DRIVE_MIN: f32 = if cfg!(windows) { 0.05 } else { 0.01 };
 pub const TX_LEVEL_MAX_DB: f32 = 0.0;
 
 /// A transmit level kept in range.
@@ -188,14 +179,16 @@ pub fn tx_level_db(db: f32) -> f32 {
     }
 }
 
-/// modem73's `tx_drive` (0.05..1.0) for a transmit level in dB.
+/// modem73's `tx_drive` for a transmit level in dB.
 pub fn tx_drive(db: f32) -> f32 {
-    10f32.powf(tx_level_db(db) / 20.0).clamp(0.05, 1.0)
+    10f32.powf(tx_level_db(db) / 20.0).clamp(TX_DRIVE_MIN, 1.0)
 }
 
-/// modem73's `--tx-level` percent (5..100) for a transmit level in dB.
+/// modem73's `--tx-level` percent for a transmit level in dB.
 pub fn tx_level_pct(db: f32) -> u32 {
-    (tx_drive(db) * 100.0).round().clamp(5.0, 100.0) as u32
+    (tx_drive(db) * 100.0)
+        .round()
+        .clamp(TX_DRIVE_MIN * 100.0, 100.0) as u32
 }
 
 /// Bluetooth receive level range, dB.
@@ -282,7 +275,6 @@ pub fn apply_at_start(cfg: &crate::config::Config, snap: &crate::status::SharedS
     s.rx_gain = rx_gain;
     s.rx_gain_note = note;
     s.tx_level_db = tx_level_db(m.tx_level_db);
-    s.audio_in_frame_db = None;
 }
 
 /// What `/level` changes.
@@ -394,8 +386,9 @@ fn level_summary(cfg: &crate::config::Config, snap: &crate::status::SharedStatus
         )
     };
     format!(
-        "{rx} | TX level {:+.1} dB | {input} | /level rx <dB>, /level tx <dB> (-26 to 0)",
-        tx_level_db(cfg.modem.tx_level_db)
+        "{rx} | TX level {:+.1} dB | {input} | /level rx <dB>, /level tx <dB> ({:.0} to 0)",
+        tx_level_db(cfg.modem.tx_level_db),
+        TX_LEVEL_MIN_DB
     )
 }
 
@@ -408,7 +401,6 @@ mod tests {
             rms_db,
             peak_db: Some(peak_db),
             clip_pct: Some(clip_pct),
-            frame_db: None,
         }
     }
 
@@ -519,29 +511,30 @@ mod tests {
         );
     }
 
-    /// A quiet channel with healthy decodes is fine.
+    /// QA #243: modem73's frame `level_db` is the 200 ms after a decode
+    /// (the hiss after the frame), not the frame, so it is not judged: a
+    /// quiet idle input reads low whatever the last decode said.
     #[test]
-    fn a_healthy_frame_level_overrides_a_quiet_idle_input() {
-        let i = Input {
-            frame_db: Some(-20.0),
-            ..input(-70.0, -60.0, 0.0)
-        };
-        assert_eq!(judge(i, FM, RxControl::Radio).0, Word::Good);
-        let hot_frame = Input {
-            frame_db: Some(-4.0),
-            ..input(-30.0, -19.0, 0.0)
-        };
-        assert_eq!(judge(hot_frame, FM, RxControl::Radio).0, Word::High);
+    fn a_quiet_idle_input_is_low_without_any_frame_override() {
+        assert_eq!(
+            judge(input(-70.0, -60.0, 0.0), FM, RxControl::Radio).0,
+            Word::Low
+        );
     }
 
     #[test]
     fn transmit_level_only_turns_down() {
         assert_eq!(tx_level_db(6.0), 0.0);
-        assert_eq!(tx_level_db(-40.0), -26.0);
+        assert_eq!(tx_level_db(-60.0), TX_LEVEL_MIN_DB);
+        assert_eq!(tx_level_db(-26.0), -26.0);
         assert_eq!(tx_level_db(f32::NAN), 0.0);
         assert_eq!(tx_level_pct(0.0), 100);
         assert_eq!(tx_level_pct(-6.0), 50);
         assert_eq!(tx_level_pct(-26.0), 5);
+        if !cfg!(windows) {
+            assert_eq!(tx_level_db(-40.0), -40.0);
+            assert_eq!(tx_level_pct(-40.0), 1);
+        }
         assert!((tx_drive(-20.0) - 0.1).abs() < 0.001);
     }
 

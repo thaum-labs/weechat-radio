@@ -892,6 +892,10 @@ pub struct AckTx<'a> {
     pub slot: Duration,
     pub quiet: Duration,
     pub csma: bool,
+    /// modem73 runs the sync busy test (FM, #239/#241): it counts only a
+    /// data signal as busy, never hiss. The receipt then waits for that test
+    /// like every other frame, and is forced out only at `cap` (#243).
+    pub csma_sync: bool,
     pub drain_cap: Duration,
 }
 
@@ -941,6 +945,56 @@ pub fn ack_forces_csma_off(cap_elapsed: bool, modem_busy: bool, rx_in_progress: 
     cap_elapsed || (modem_busy && !rx_in_progress)
 }
 
+/// What a waiting receipt does next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AckStep {
+    /// Keep waiting one slot.
+    Wait,
+    /// Hand it to modem73 with its busy test on.
+    Send,
+    /// Hand it over with the busy test off (the emergency cap).
+    Force,
+}
+
+/// The next step for a receipt waiting to key.
+///
+/// Level test (HF, VOX): unchanged. Carrier sense goes off for undecodable
+/// busy/noise or at the cap, and stays on while a frame is being received.
+///
+/// Sync test (FM, #243, approved by Tobias on #241): modem73's sync test
+/// never counts hiss, so there is no noise to force past. Its occupancy
+/// only says a data signal was heard lately, and forcing the receipt out
+/// on that keyed it over the other station (QA #241 16:46). The receipt
+/// waits while modem73 is receiving or sending, then goes to modem73 with
+/// the busy test on like every other frame. Only the cap forces it.
+pub fn ack_step(
+    sync: bool,
+    cap_elapsed: bool,
+    modem_busy: bool,
+    rx_in_progress: bool,
+    channel_state: &str,
+) -> AckStep {
+    if cap_elapsed {
+        return AckStep::Force;
+    }
+    if sync {
+        let on_air = matches!(
+            channel_state.trim().to_ascii_lowercase().as_str(),
+            "rx" | "tx" | "busy"
+        );
+        return if on_air || rx_in_progress {
+            AckStep::Wait
+        } else {
+            AckStep::Send
+        };
+    }
+    if ack_forces_csma_off(false, modem_busy, rx_in_progress) {
+        AckStep::Force
+    } else {
+        AckStep::Wait
+    }
+}
+
 /// A frame decoded this recently may be the first of a run its sender is
 /// still keying: modem73 reports `rx` only for half a second after each
 /// decode, not while the next frame is on the air. A receipt keyed over that
@@ -969,6 +1023,7 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
     let mut force = false;
     let window = ack_listen_window(tx.preset);
     let listen_max = window * ACK_LISTEN_FRAMES;
+    let mut busy_test_since: Option<Instant> = None;
     if tx.csma {
         loop {
             if tx.sense.is_some_and(|s| {
@@ -977,6 +1032,11 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             }
+            // The busy test starts once the sender's run is over. In sync
+            // mode the cap counts from here: the listen window above is
+            // longer than the cap on FM, so counted from the start every
+            // receipt was forced out with the busy test off (#243).
+            let testing = *busy_test_since.get_or_insert_with(Instant::now);
             let status = match tx.control {
                 Some(c) => c.get_status().await.ok(),
                 None => None,
@@ -987,16 +1047,28 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
                 .as_ref()
                 .map(|st| st.channel_state.as_str())
                 .unwrap_or("");
-            // Do not send early just because we have not decoded a frame.
-            // That left CSMA on, and modem73 then held the ACK over noise.
-            // Do not force CSMA off while a frame is actually being received.
-            if ack_forces_csma_off(
-                started.elapsed() >= tx.cap,
+            // Level test: do not send early just because we have not decoded
+            // a frame. That left CSMA on, and modem73 then held the ACK over
+            // noise. Do not force CSMA off while a frame is being received.
+            // Sync test: see [`ack_step`].
+            let cap_elapsed = if tx.csma_sync {
+                testing.elapsed() >= tx.cap
+            } else {
+                started.elapsed() >= tx.cap
+            };
+            match ack_step(
+                tx.csma_sync,
+                cap_elapsed,
                 modem_busy,
                 ack_rx_in_progress(sense_rx, channel),
+                channel,
             ) {
-                force = true;
-                break;
+                AckStep::Wait => {}
+                AckStep::Send => break,
+                AckStep::Force => {
+                    force = true;
+                    break;
+                }
             }
             let slot = if tx.slot.is_zero() {
                 Duration::from_millis(1)
@@ -1948,6 +2020,7 @@ mod tests {
             slot: Duration::from_millis(20),
             quiet: Duration::from_millis(50),
             csma: true,
+            csma_sync: false,
             drain_cap: Duration::from_secs(2),
         })
         .await;
@@ -2131,6 +2204,7 @@ mod tests {
             slot: Duration::from_millis(20),
             quiet: Duration::from_millis(50),
             csma: true,
+            csma_sync: false,
             drain_cap: Duration::from_millis(800),
         })
         .await;
@@ -2185,6 +2259,7 @@ mod tests {
             slot: Duration::from_millis(20),
             quiet: Duration::from_millis(50),
             csma: true,
+            csma_sync: false,
             drain_cap: Duration::from_millis(800),
         })
         .await;
@@ -2226,6 +2301,7 @@ mod tests {
             slot: Duration::from_millis(20),
             quiet: Duration::from_millis(1),
             csma: true,
+            csma_sync: false,
             drain_cap: Duration::from_millis(800),
         })
         .await;
@@ -2275,6 +2351,7 @@ mod tests {
             slot: Duration::from_millis(20),
             quiet: Duration::from_millis(1),
             csma: true,
+            csma_sync: false,
             drain_cap: Duration::from_millis(800),
         })
         .await;
@@ -2299,5 +2376,23 @@ mod tests {
             "carrier sense must be restored: {:?}",
             modem.csma_seen.lock()
         );
+    }
+
+    /// #243 item 1: in sync mode a receipt waits for modem73's busy test
+    /// instead of forcing it off because a data signal was heard lately.
+    #[test]
+    fn a_sync_receipt_waits_for_the_busy_test_and_is_forced_only_at_the_cap() {
+        // Occupancy from a recent frame used to force the busy test off.
+        assert_eq!(ack_step(true, false, true, false, "idle"), AckStep::Send);
+        assert_eq!(ack_step(true, false, false, false, "idle"), AckStep::Send);
+        assert_eq!(ack_step(true, false, true, false, "rx"), AckStep::Wait);
+        assert_eq!(ack_step(true, false, true, false, "tx"), AckStep::Wait);
+        assert_eq!(ack_step(true, false, false, true, "idle"), AckStep::Wait);
+        assert_eq!(ack_step(true, true, true, false, "rx"), AckStep::Force);
+        // Level mode is unchanged: undecodable busy forces, idle waits.
+        assert_eq!(ack_step(false, false, true, false, "idle"), AckStep::Force);
+        assert_eq!(ack_step(false, false, false, false, "idle"), AckStep::Wait);
+        assert_eq!(ack_step(false, false, true, true, "rx"), AckStep::Wait);
+        assert_eq!(ack_step(false, true, false, false, "idle"), AckStep::Force);
     }
 }

@@ -200,6 +200,13 @@ const COMMANDS: &[Cmd] = &[
         send_bare: false,
     },
     Cmd {
+        name: "traffic",
+        usage: "/traffic [N]",
+        summary: "Every frame heard or sent on air (read only)",
+        args: &[],
+        send_bare: true,
+    },
+    Cmd {
         name: "level",
         usage: "/level [rx|tx <dB>]",
         summary: "Receive gain and transmit level",
@@ -210,7 +217,7 @@ const COMMANDS: &[Cmd] = &[
             },
             Arg {
                 value: "tx",
-                hint: "TX level in dB, -26 to 0 (only turns down)",
+                hint: "TX level in dB, down to -40 (-26 on Windows); only turns down",
             },
         ],
         send_bare: true,

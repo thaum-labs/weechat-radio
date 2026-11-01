@@ -124,6 +124,8 @@ struct Runtime {
     heard_grids: Arc<Mutex<HashMap<String, HeardGrid>>>,
     /// The grid our last receipt carried, and when.
     ack_grid_sent: Arc<Mutex<(String, u32)>>,
+    /// Every frame heard or sent, for the all-traffic monitor (#243).
+    traffic: crate::traffic::Shared,
 }
 
 /// A beacon handed to the air queue that has not reached the modem yet.
@@ -382,6 +384,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     }
 
     let mail_slot: crate::mail::MailSlot = Arc::new(Mutex::new(None));
+    let traffic = crate::traffic::new_shared();
     let status_bind = cfg.status.bind.clone();
     match tokio::net::TcpListener::bind(&status_bind).await {
         Ok(listener) => {
@@ -389,9 +392,8 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             crate::update::note_running_station(&status_bind);
             let snap_s = snap.clone();
             let slot = mail_slot.clone();
-            tokio::spawn(async move {
-                status::serve_listener_with(listener, snap_s, crate::mail::router(slot)).await
-            });
+            let extra = crate::mail::router(slot).merge(crate::traffic::router(traffic.clone()));
+            tokio::spawn(async move { status::serve_listener_with(listener, snap_s, extra).await });
         }
         Err(e) => tracing::warn!("status HTTP {status_bind}: {e}"),
     }
@@ -515,6 +517,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         own_receipts: Arc::new(Mutex::new(HashMap::new())),
         heard_grids: Arc::new(Mutex::new(HashMap::new())),
         ack_grid_sent: Arc::new(Mutex::new((String::new(), 0))),
+        traffic: traffic.clone(),
     };
     refresh_group_prios(&rt);
     if !rt.cfg.lock().gps.port.trim().is_empty() {
@@ -1278,6 +1281,10 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     }
                     rt.heard_on_air.store(true, std::sync::atomic::Ordering::Relaxed);
                     if let Some(incoming) = crate::mail::try_decode(&payload) {
+                        let snr = *rt.last_rx_snr.lock();
+                        rt.traffic
+                            .lock()
+                            .push(crate::traffic::mail_row(&incoming, "heard", snr));
                         note_exchange(&rt, None, Some(&incoming));
                         hold_air_for_heard_mail(&rt, &incoming);
                         crate::mail::on_rf(&rt.mail, incoming).await;
@@ -1920,7 +1927,11 @@ async fn key_ack_now(
     if rt.downstream_heard.lock().contains(&rf_env.msg_id) {
         return Ok(false);
     }
-    let rf = rt.cfg.lock().rf.clone();
+    let (rf, csma_sync) = {
+        let cfg = rt.cfg.lock();
+        let sync = cfg.modem.csma_mode(cfg.rf.frequency_khz) == Some(crate::config::CsmaMode::Sync);
+        (cfg.rf.clone(), sync)
+    };
     let sense = rt.sense();
     let control = rt.control();
     let kiss = rt.kiss();
@@ -1936,6 +1947,8 @@ async fn key_ack_now(
         slot: Duration::from_millis(u64::from(rf.slot_ms.max(1))),
         quiet: Duration::from_millis(u64::from(rf.quiet_ms)),
         csma: rf.csma,
+        // Only modem73 runs the sync test; a radio's own TNC keeps the old wait.
+        csma_sync: csma_sync && control.is_some(),
         drain_cap: Duration::from_secs(5),
     })
     .await;
@@ -2041,8 +2054,16 @@ fn watch_keyed(rt: &Runtime, kiss: &KissClient, cancel: CancellationToken) {
                 a.note_keyed(&payload);
             }
             if let Some(m) = crate::mail::try_decode(&payload) {
+                rt.traffic
+                    .lock()
+                    .push(crate::traffic::mail_row(&m, "sent", None));
                 note_exchange(&rt, None, Some(&m));
             } else if let Ok(env) = Envelope::decode(&payload) {
+                if env.kind != MsgType::Frag {
+                    rt.traffic
+                        .lock()
+                        .push(crate::traffic::envelope_row(&env, "sent", "rf", None));
+                }
                 if env.kind == MsgType::Beacon {
                     rt.beacon_keyed
                         .store(crate::proto::now_ts(), std::sync::atomic::Ordering::Relaxed);
@@ -2501,6 +2522,13 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
     if env.kind == MsgType::Mail {
         return Ok(());
     }
+    // A fragment is shown once it is whole (the reassembled line comes back
+    // through here), not once per piece.
+    if env.kind != MsgType::Frag {
+        rt.traffic
+            .lock()
+            .push(crate::traffic::envelope_row(&env, "heard", medium, snr));
+    }
     if medium == "rf" {
         note_exchange(rt, Some(&env), None);
         note_neighbour(rt, &env);
@@ -2866,8 +2894,18 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                         .filter(|o| !relay::is_own_origin(&rt.engine.our_call, &o.env))
                         .map_or(0, |o| o.env.hops_left);
                     let _ = rt.store.set_hold(&id, 0, hops);
-                    if let Some(air) = rt.air() {
-                        air.cancel(id);
+                    let first_rf_stays = orig.as_ref().is_some_and(|o| {
+                        relay::own_bulletin_first_rf_copy_stays(
+                            rt.cfg.lock().mode.is_gateway(),
+                            relay::is_own_origin(&rt.engine.our_call, &o.env),
+                            &o.env,
+                            rt.store.rf_tx_of(&id).unwrap_or(0),
+                        )
+                    });
+                    if !first_rf_stays {
+                        if let Some(air) = rt.air() {
+                            air.cancel(id);
+                        }
                     }
                     rt.snap.lock().retries = 0;
                 }
@@ -3860,10 +3898,16 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
                             let mut s = snap_c.lock();
                             s.snr = frame.snr;
                             s.ber = frame.ber_pct;
-                            s.audio_db = frame.level_db;
-                            s.audio_in_db = frame.level_db;
-                            s.audio_in_frame_db = Some(frame.level_db);
-                            s.audio_label = presets::audio_level_label(frame.level_db).into();
+                            // modem73's frame level_db is its input over the
+                            // 200 ms after the decode (the hiss after the frame),
+                            // not the frame (QA #243). With a live level the
+                            // meter and the word go by that; only Windows, which
+                            // has no live level, moves IN on a decode.
+                            if cfg!(windows) {
+                                s.audio_db = frame.level_db;
+                                s.audio_in_db = frame.level_db;
+                                s.audio_label = presets::audio_level_label(frame.level_db).into();
+                            }
                             s.channel = "rx".into();
                         }
                     }
@@ -4529,6 +4573,20 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                 format!("kiss {}:{}", c.modem.host, c.modem.kiss_port)
             }
         }
+        "traffic" => {
+            // #243: every frame this station heard or sent, newest last.
+            let n = sp.next().and_then(|v| v.parse().ok()).unwrap_or(15);
+            let lines = crate::traffic::lines(&rt.traffic.lock(), n);
+            if lines.is_empty() {
+                "traffic: nothing heard or sent yet".into()
+            } else {
+                format!(
+                    "traffic, last {} (read only; /query CALL to reply):\n{}",
+                    lines.len(),
+                    lines.join("\n")
+                )
+            }
+        }
         "level" => {
             let control = rt.control();
             let (which, value) = (sp.next(), sp.next());
@@ -4539,7 +4597,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             said.unwrap_or_else(|e| e)
         }
         "" | "help" => {
-            "RADIO commands: mode preset level tower status form group queue flush trace history freq qsy prio ptt checkin net mute theme activity snr update report wx. /report CALL asks a station how well it hears you (signal report); /wx shows the weather for your grid and /wx CALL sends it to that station. Both answers are private lines in the CALL tab. Channels: /join #name (closed, +i)  /invite CALL (over-air notice from you)  /part /prio. /radio status shows relayed (every forwarded frame), unique (distinct messages), and groups (group_prios). /radio flush marks unacked outbound [no]."
+            "RADIO commands: mode preset level traffic tower status form group queue flush trace history freq qsy prio ptt checkin net mute theme activity snr update report wx. /report CALL asks a station how well it hears you (signal report); /wx shows the weather for your grid and /wx CALL sends it to that station. Both answers are private lines in the CALL tab. Channels: /join #name (closed, +i)  /invite CALL (over-air notice from you)  /part /prio. /radio status shows relayed (every forwarded frame), unique (distinct messages), and groups (group_prios). /radio flush marks unacked outbound [no]."
                 .into()
         }
         other => format!("unknown RADIO subcommand '{other}'. Try /radio help"),

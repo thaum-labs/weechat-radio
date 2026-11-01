@@ -120,18 +120,20 @@ Two things are on the network. The password-protected page on 8443. And port 737
 
 ## Digirig audio levels
 
-**Receive:** use the **RX gain** slider on the web page's **Radio audio** card. It sets the Digirig's own `Mic` capture gain (0 to +23.8 dB) and turns its Auto Gain Control off, saves the value in wcr.toml (`[modem] rx_gain_db`), and sets it again at every start, so `alsamixer` and `alsactl store` are not needed for it. At squelch 0, set it so the radio's hiss sits in the meter's green band (−45 to −12 dBFS) with nothing clipped; the hint under the meter says which way to go. On the QA Pi (BF-1909, volume about the middle) the hiss read −0.6 dBFS with Mic at 12 of 16 (about +18 dB) and still −6.3 dBFS at 0 dB: the input was at full scale, so an 18 dB cut lowered it only about 6 dB. In that case set RX gain to 0 dB and turn the radio's volume down until the hiss is in the green band; the hint says so when RX gain is at its lowest.
+**Receive:** use the **RX gain** slider on the web page's **Receive level** card. It sets the Digirig's own `Mic` capture gain (0 to +23.8 dB) and turns its Auto Gain Control off, saves the value in wcr.toml (`[modem] rx_gain_db`), and sets it again at every start, so `alsamixer` and `alsactl store` are not needed for it. At squelch 0, set it so the radio's hiss sits in the meter's green band (−45 to −12 dBFS) with nothing clipped; the hint under the meter says which way to go. On the QA Pi (BF-1909, volume about the middle) the hiss read −0.6 dBFS with Mic at 12 of 16 (about +18 dB) and still −6.3 dBFS at 0 dB: the input was at full scale, so an 18 dB cut lowered it only about 6 dB. In that case set RX gain to 0 dB and turn the radio's volume down until the hiss is in the green band; the hint says so when RX gain is at its lowest.
 
-**Transmit:** the Digirig **Speaker** playback level is the audio into the radio's microphone input, so it sets the deviation. Set it once with `alsamixer -c Device` (F3 for playback; it starts at 44 of 151), then `sudo alsactl store`. Fine-tune with the **TX level** slider (it only turns down) and the far end's SNR, as in [RADIO-SETUP.md](RADIO-SETUP.md#audio-too-low--too-hot--good). Too much audio over-deviates and distorts the burst, and that costs more SNR than a weak signal.
+**Transmit:** the Digirig **Speaker** playback level is the audio into the radio's microphone input, so it sets the deviation. Set it once with `alsamixer -c Device` (F3 for playback; it starts at 44 of 151), then `sudo alsactl store`. Fine-tune with the **TX level** slider (it only turns down, to −40 dB) and the far end's SNR, as in [RADIO-SETUP.md](RADIO-SETUP.md#audio-too-low--too-hot--good). Too much audio over-deviates and distorts the burst, and that costs more SNR than a weak signal.
 
-The waterfall on the same card scales its colours to the noise floor, so squelch-0 hiss shows dark blue and a data signal bright, whatever the level.
+The waterfall on the same card scales its colours to the noise floor (the median of the last 15 seconds), so squelch-0 hiss shows dark blue and a data signal bright, whatever the level.
+
+**On the air** (the station page and the App's tab of the same name, `/traffic` in any client) lists every frame the gateway hears or sends: other stations' messages, receipts, beacons, bulletins and mail chunks, with who to whom, the time, the SNR and whether it came by radio or internet. It is read only; Reply opens a separate direct chat with that station.
 
 ## Quick signal check after setup
 
 Do this once with a second station (a laptop or another Pi) a few metres away, both on the gateway's frequency and preset, squelch 0 on both radios:
 
 1. **The far station hears the gateway.** Wait for the gateway's beacon (about a minute after start). The far station's heard list shows the gateway's callsign with an SNR. Listen on a handheld too: the burst should sound clean and steady, not clipped at the start or cut in the middle.
-2. **The gateway hears the far station.** Send a bulletin from the far station. The gateway's web page shows it in the log, the Radio audio card shows its level as "last signal" (it should not read clipping), and the far station's heard list gets the gateway's reply.
+2. **The gateway hears the far station.** Send a bulletin from the far station. The gateway's web page shows it under **On the air** with its SNR, the **Receive level** card should not read clipping, and the far station's heard list gets the gateway's reply.
 3. **SNR is comfortable.** Target: 10 dB or more with the radios in the same room. A few dB means a level is wrong: the receive side clipping (the meter says so), or the transmit side overdriven or too weak (try TX level 0, −6, −12 and −18 dB and keep the best), or the squelch is chopping the burst.
 4. **A long message gets through.** Send a direct message of about 500 characters each way. It should arrive whole, and the sender should see `[ok rf]`.
 

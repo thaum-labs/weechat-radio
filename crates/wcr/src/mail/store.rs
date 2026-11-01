@@ -425,7 +425,10 @@ impl MailStore {
     pub fn delivery_due(&self, now: i64) -> Result<Vec<String>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, ts, delivery, delivery_ts FROM mail WHERE folder = 'sent' AND state = 'sent'",
+            // A gateway's relayed mail too (#243): the hub answers the gateway
+            // that posted it, so its list can say Bounced, not Sent.
+            "SELECT id, ts, delivery, delivery_ts FROM mail \
+             WHERE folder IN ('sent', 'relay') AND state = 'sent'",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok((
@@ -687,6 +690,20 @@ mod tests {
         assert_eq!(hops[3].ts, 600);
         assert!(store.delete("m1").unwrap());
         assert!(store.hops("m1").unwrap().is_empty());
+    }
+
+    /// QA #243: a gateway's relayed mail is checked like its own sent mail.
+    #[test]
+    fn relayed_mail_gets_its_delivery_checked() {
+        let store = MailStore::open_memory().unwrap();
+        let mut r = out_row("r1");
+        r.folder = "relay".into();
+        r.state = "sent".into();
+        store.insert(&r).unwrap();
+        let mut q = out_row("r2");
+        q.folder = "relay".into();
+        store.insert(&q).unwrap();
+        assert_eq!(store.delivery_due(130).unwrap(), ["r1"]);
     }
 
     /// QA #241: mail left on air, waiting for the gateway, or between tries

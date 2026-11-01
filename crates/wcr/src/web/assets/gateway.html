@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WeeChat Radio gateway</title>
+<title>WeeChat Radio station</title>
 <link rel="stylesheet" href="/station.css">
 <script src="/gateway.js" defer></script>
 </head>
@@ -11,92 +11,141 @@
 <header>
   <h1><span class="name"><span class="brand">weechat</span> radio</span> <span id="call" class="call"></span></h1>
   <nav class="views" aria-label="View">
-    <a href="/app">App</a><a href="/" aria-current="page">Gateway</a>
+    <a href="/app">App</a><a href="/" aria-current="page">Station</a>
   </nav>
   <form method="post" action="/logout"><button class="quiet" type="submit">Log out</button></form>
 </header>
-<main class="gw">
-  <div class="col">
-  <section class="card" aria-labelledby="h-state">
-    <h2 id="h-state">Station</h2>
-    <div id="lights" class="lights" aria-live="polite"></div>
+<main>
+  <!-- 1. Is it working? -->
+  <section class="card" aria-labelledby="state-line">
+    <div class="hero-top">
+      <div>
+        <p class="eyebrow">Station</p>
+        <h2 id="state-line" class="state idle">Checking…</h2>
+        <p id="state-sub" class="sub"></p>
+      </div>
+      <div class="actions">
+        <button id="start" type="button" class="primary" hidden>Start</button>
+        <button id="stop" type="button" class="danger" hidden>Stop</button>
+      </div>
+    </div>
+    <div id="lights" class="chips" aria-live="polite"></div>
     <dl id="facts" class="facts"></dl>
-    <div class="row pickers">
-      <label>Mode <select id="mode-pick" aria-label="Station mode"></select></label>
-      <label id="preset-label" title="The preset picks the modem family. Inside it the speed steps down by itself on a poor path (QPSK 1/2 down to MFSK-32R) and back up when it clears; that step is shown after the preset.">Preset <select id="preset-pick" aria-label="Modem preset"></select></label>
-    </div>
-    <div class="row">
-      <button id="start" type="button">Start</button>
-      <button id="stop" type="button" class="danger">Stop</button>
-      <span id="action" class="dim" role="status"></span>
-    </div>
+    <p id="action" class="note" role="status"></p>
+    <details class="more" id="settings-box">
+      <summary>Mode and preset</summary>
+      <div class="pickers">
+        <label>Mode <select id="mode-pick" aria-label="Station mode"></select></label>
+        <label id="preset-label">Preset <select id="preset-pick" aria-label="Modem preset"></select></label>
+      </div>
+      <p class="meta">The preset picks the modem family. Inside it the speed steps down by itself on a poor path and back up when it clears; the step in use is shown after the preset.</p>
+    </details>
   </section>
+
+  <!-- 2. Levels -->
   <section class="card" id="radio-card" aria-labelledby="h-radio" hidden>
-    <h2 id="h-radio">Radio audio <small id="lv-busy" class="dim"></small></h2>
-    <div class="lv-head">
+    <div class="card-head">
+      <h2 id="h-radio">Receive level</h2>
       <span id="lv-word" class="light idle">—</span>
-      <span id="lv-nums" class="dim small"></span>
     </div>
+    <p id="lv-hint" class="lead" aria-live="polite"></p>
     <div class="meter" id="lv-meter" role="meter" aria-label="Receive level, dBFS" aria-valuemin="-60" aria-valuemax="0">
       <div class="meter-zones" id="lv-zones" aria-hidden="true"></div>
       <div class="meter-bar" id="lv-bar"></div>
       <div class="meter-peak" id="lv-peak" hidden></div>
     </div>
-    <div class="meter-axis dim small" aria-hidden="true"><span style="left:0">-60 dBFS</span><span style="left:25%">-45</span><span style="left:50%">-30</span><span style="left:80%">-12</span><span style="left:100%">0</span></div>
-    <p id="lv-hint" class="lv-hint small" aria-live="polite"></p>
+    <div class="meter-axis" aria-hidden="true"><span class="a0">-60 dBFS</span><span class="a25">-45</span><span class="a50">-30</span><span class="a80">-12</span><span class="a100">0</span></div>
+    <p id="lv-nums" class="meta"></p>
     <div class="sliders">
       <div class="slider" id="rx-row">
-        <label for="rx-gain">RX gain <output id="rx-out" for="rx-gain"></output></label>
+        <label for="rx-gain">RX gain</label>
         <input type="range" id="rx-gain" min="0" max="24" step="0.5">
+        <output id="rx-out" for="rx-gain"></output>
       </div>
-      <p id="rx-note" class="dim small slider-note"></p>
       <div class="slider" id="tx-row">
-        <label for="tx-level">TX level <output id="tx-out" for="tx-level"></output></label>
-        <input type="range" id="tx-level" min="-26" max="0" step="1">
+        <label for="tx-level">TX level</label>
+        <input type="range" id="tx-level" min="-40" max="0" step="1">
+        <output id="tx-out" for="tx-level"></output>
       </div>
-      <p class="dim small slider-note">Only turns down: the modem already sends at full scale. Set the deviation with the radio's own mic gain (the Bluetooth mic gain on a VR-N76), then lower TX level until the far end's SNR stops getting better.</p>
     </div>
-    <div id="wf-box" hidden>
-      <h3>Waterfall <small id="wf-note" class="dim"></small></h3>
-      <canvas id="wf" class="wf" height="160" role="img" aria-label="Live audio spectrum from the radio, newest at the top"></canvas>
-      <div class="wf-pass" aria-hidden="true" title="Modem passband, 300–2700 Hz"></div>
-      <div class="wf-axis dim small" aria-hidden="true"><span class="t0">0</span><span class="t1">1000</span><span class="t2">2000</span><span class="t3">3000 Hz</span></div>
-      <p class="dim small wf-key" title="Colours follow the noise floor, so any radio at any volume shows its noise dark and a signal bright."><span><span class="wf-sw noise"></span> noise</span> <span><span class="wf-sw sig"></span> signal</span> <span><span class="wf-sw hot"></span> strong</span> <span><span class="wf-sw tx"></span> our TX</span></p>
-    </div>
-  </section>
-  <section class="card" id="health-card" aria-labelledby="h-health" hidden>
-    <h2 id="h-health">Health <small id="health-sys" class="dim"></small></h2>
-    <div id="health-strip" class="lights" aria-live="polite"></div>
-    <details class="health-more">
-      <summary class="dim small">Details</summary>
-      <dl id="health-facts" class="facts"></dl>
+    <details class="more help">
+      <summary>How to set the levels</summary>
+      <p id="rx-note"></p>
+      <p>TX level only turns down: the modem already sends at full scale. Set the deviation with the radio's own mic gain (the Bluetooth mic gain on a VR-N76, the Digirig's Speaker in alsamixer), then lower TX level a step at a time until the far end's SNR stops getting better.</p>
+      <p id="lv-busy"></p>
     </details>
+    <div id="wf-box" hidden>
+      <div class="wf-head"><h3>Waterfall</h3><span id="wf-note" class="meta"></span></div>
+      <canvas id="wf" class="wf" height="140" role="img" aria-label="Live audio spectrum from the radio, newest at the top"></canvas>
+      <div class="wf-pass" aria-hidden="true" title="Modem passband, 300–2700 Hz"></div>
+      <div class="wf-axis" aria-hidden="true"><span class="t0">0</span><span class="t1">1000</span><span class="t2">2000</span><span class="t3">3000 Hz</span></div>
+      <details class="more">
+        <summary>Colour key</summary>
+        <p class="wf-key"><span><span class="wf-sw noise"></span>noise</span><span><span class="wf-sw sig"></span>signal</span><span><span class="wf-sw hot"></span>strong</span><span><span class="wf-sw tx"></span>our TX</span></p>
+        <p class="meta">Colours follow the noise floor, so any radio at any volume shows its noise dark blue and a signal bright. The orange bar under the waterfall is the modem's passband.</p>
+      </details>
+    </div>
   </section>
-  </div>
-  <div class="col">
+
+  <!-- 3. Traffic and mail -->
+  <section class="card" id="traffic-card" aria-labelledby="h-traffic">
+    <div class="card-head">
+      <h2 id="h-traffic">On the air</h2>
+      <span id="traffic-count" class="meta"></span>
+    </div>
+    <div class="filters" role="group" aria-label="Show">
+      <button type="button" data-f="all" aria-pressed="true">All</button>
+      <button type="button" data-f="chat" aria-pressed="false">Messages</button>
+      <button type="button" data-f="receipt" aria-pressed="false">Receipts</button>
+      <button type="button" data-f="beacon" aria-pressed="false">Beacons</button>
+      <button type="button" data-f="mail" aria-pressed="false">Mail</button>
+    </div>
+    <ol id="traffic" class="traffic" aria-live="off"></ol>
+    <p class="meta">Every frame this station heard or sent, newest first. Read only: Reply opens a separate direct chat in the App.</p>
+  </section>
+
   <section class="card" aria-labelledby="h-heard">
-    <h2 id="h-heard">Heard stations</h2>
+    <h2 id="h-heard">Stations heard</h2>
     <ul id="heard" class="list"></ul>
   </section>
+
   <section class="card" aria-labelledby="h-mail">
-    <h2 id="h-mail">Mail through this gateway</h2>
+    <div class="card-head">
+      <h2 id="h-mail">Mail through this station</h2>
+      <span id="mail-count" class="meta"></span>
+    </div>
     <ul id="relay" class="list"></ul>
-    <h3>This station's outbox</h3>
-    <ul id="outbox" class="list"></ul>
+    <details class="more" id="relay-more" hidden>
+      <summary id="relay-more-label">Older mail</summary>
+      <ul id="relay-old" class="list"></ul>
+    </details>
+    <div id="outbox-box" hidden>
+      <h3>Waiting to send from this station</h3>
+      <ul id="outbox" class="list"></ul>
+    </div>
   </section>
-  <section class="card" aria-labelledby="h-log">
-    <h2 id="h-log">Log</h2>
+
+  <!-- 4. Diagnostics -->
+  <section class="card" aria-labelledby="h-diag">
+    <div class="card-head">
+      <h2 id="h-diag">Diagnostics</h2>
+      <span id="health-sys" class="meta"></span>
+    </div>
+    <div id="health-strip" class="chips" aria-live="polite"></div>
     <div id="errors-box" hidden>
       <h3 class="err-title">Errors, newest first</h3>
       <pre id="errors" class="log"></pre>
     </div>
-    <details id="log-box" class="log-more" open>
-      <summary class="dim small">Station log</summary>
+    <details class="more" id="health-more">
+      <summary>Computer details</summary>
+      <dl id="health-facts" class="facts"></dl>
+    </details>
+    <details class="more" id="log-box">
+      <summary>Station log</summary>
       <pre id="log" class="log"></pre>
     </details>
   </section>
-  </div>
-  <p id="updated" class="dim small"></p>
+  <p id="updated" class="meta"></p>
 </main>
 </body>
 </html>

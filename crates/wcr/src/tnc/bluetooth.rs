@@ -1079,9 +1079,17 @@ mod imp {
     impl io::Read for Inbound {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             if self.pending.is_empty() {
-                match self.rx.recv() {
+                // Wake once a second with nothing, like a socket's read
+                // timeout, so the reader can tell a silent link (#243).
+                match self.rx.recv_timeout(Duration::from_secs(1)) {
                     Ok(Some(bytes)) => self.pending = bytes,
-                    Ok(None) | Err(_) => return Ok(0),
+                    Ok(None) | Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(0),
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "nothing from the radio",
+                        ))
+                    }
                 }
             }
             let n = buf.len().min(self.pending.len());

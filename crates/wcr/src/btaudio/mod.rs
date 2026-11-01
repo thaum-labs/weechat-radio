@@ -128,6 +128,50 @@ fn rx_samples(pcm: &mut Vec<i16>, gain: f32) -> Vec<f32> {
         .map(|s| (s as f32 / 32768.0 * gain).clamp(-1.0, 1.0))
         .collect()
 }
+
+/// A sample this close to full scale counts as clipped. SBC decoding
+/// rounds, so a clipped sample from the radio rarely lands exactly on it.
+const CLIP_AT: i16 = 32_440; // -0.09 dBFS
+
+/// Clipping in the radio's own audio, counted before wcr's RX gain (#243):
+/// a lowered RX gain hid clipping inside the radio. Reported every
+/// [`ClipCount::WINDOW`] samples, the same half second as modem73's count.
+#[derive(Default)]
+struct ClipCount {
+    seen: u32,
+    clipped: u32,
+}
+
+impl ClipCount {
+    /// Half a second of the radio's 32 kHz audio.
+    const WINDOW: u32 = 16_000;
+
+    /// Counts `pcm`; returns the % clipped when a window is full.
+    fn push(&mut self, pcm: &[i16]) -> Option<f32> {
+        for &s in pcm {
+            self.seen += 1;
+            if s >= CLIP_AT || s <= -CLIP_AT {
+                self.clipped += 1;
+            }
+        }
+        if self.seen < Self::WINDOW {
+            return None;
+        }
+        let pct = self.clipped as f32 * 100.0 / self.seen as f32;
+        *self = Self::default();
+        Some(pct)
+    }
+}
+
+/// A link that opens but brings no audio this long after `linked` is
+/// closed and opened again (QA #243: the Mac's first start sat 76 s with
+/// 0 bytes until a beacon's write failed).
+const NO_AUDIO_RECONNECT: Duration = Duration::from_secs(5);
+
+/// The link is dead: linked this long ago and nothing has arrived.
+fn no_audio_since_linked(linked_for: Duration, bytes: u64) -> bool {
+    bytes == 0 && linked_for >= NO_AUDIO_RECONNECT
+}
 /// Last radio link state, put back after the station clears its status.
 static LAST_STATUS: Mutex<(String, bool)> = Mutex::new((String::new(), false));
 
@@ -325,11 +369,21 @@ fn radio_manager(mut connector: Connector, sh: &Shared, snap: &Arc<SharedStatus>
         let mut at48 = Vec::new();
         let linked = Arc::new(AtomicBool::new(true));
         spawn_rx_log(label.clone(), snap.clone(), linked.clone());
+        let linked_at = Instant::now();
+        let mut got_bytes = 0u64;
+        let mut clips = ClipCount::default();
         let why = loop {
+            if no_audio_since_linked(linked_at.elapsed(), got_bytes) {
+                break format!(
+                    "no audio from the radio within {} s of linking",
+                    NO_AUDIO_RECONNECT.as_secs()
+                );
+            }
             match reader.read(&mut buf) {
                 Ok(0) if zero_is_eof => break "closed".to_string(),
                 Ok(0) => continue,
                 Ok(n) => {
+                    got_bytes += n as u64;
                     let mut stats = snap.lock();
                     stats.bt_rx_bytes += n as u64;
                     types.push(&buf[..n], &mut stats.bt_rx_frames);
@@ -349,6 +403,9 @@ fn radio_manager(mut connector: Connector, sh: &Shared, snap: &Arc<SharedStatus>
             }
             if pcm.is_empty() {
                 continue;
+            }
+            if let Some(pct) = clips.push(&pcm) {
+                snap.lock().bt_rx_clip_pct = Some(pct);
             }
             let f = rx_samples(&mut pcm, rx_gain());
             up.process(&f, &mut at48);

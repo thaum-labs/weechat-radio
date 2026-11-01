@@ -135,7 +135,7 @@ At squelch 0 on FM the hiss is the loudest thing the radio passes, so set the le
 - **VR-N76 / UV-PRO Bluetooth audio:** wcr's own gain on the radio's audio, −30 to +12 dB, saved as `[tnc] bt_rx_level_db`. The radio's volume knob does not change this audio.
 - **Elsewhere** (Windows, Mac sound cards): the radio's volume and the computer's input level.
 
-**TX level** (Pi page slider, desktop app **TX LVL**, `/level tx <dB>`, `[modem] tx_level_db`): −26 to 0 dB, and it only turns down, because modem73 already sends at full scale. Too much audio overdrives the radio's microphone input, and that distortion costs more than a weak signal: in our test, audio 6 dB into clipping cost 20 dB of SNR.
+**TX level** (Pi page slider, desktop app **TX LVL**, `/level tx <dB>`, `[modem] tx_level_db`): −40 to 0 dB (−26 on Windows), and it only turns down, because modem73 already sends at full scale. Too much audio overdrives the radio's microphone input, and that distortion costs more than a weak signal: in our test, audio 6 dB into clipping cost 20 dB of SNR.
 
 How to set TX without test gear, with someone at the far end:
 
