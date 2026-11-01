@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
 PackageIdentifier: ThaumLabs.Wcr
-PackageVersion: 1.0.12
+PackageVersion: 1.0.13
 InstallerLocale: en-US
 Platform:
   - Windows.Desktop
@@ -9,8 +9,8 @@ InstallModes:
 Installers:
   - Architecture: x64
     InstallerType: zip
-    InstallerUrl: https://github.com/thaum-labs/weechat-radio/releases/download/v1.0.12/wcr-windows-x86_64.zip
-    InstallerSha256: 8F453AF0121071CB107928663A40D02225A1BA028855D69A7718E6AE0F5453B1
+    InstallerUrl: https://github.com/thaum-labs/weechat-radio/releases/download/v1.0.13/wcr-windows-x86_64.zip
+    InstallerSha256: 672B34DCE701392878C21FB339D0727CC5F45790C9D5A1460364CE15D34C4FF1
     NestedInstallerType: portable
     NestedInstallerFiles:
       - RelativeFilePath: wcr.exe
