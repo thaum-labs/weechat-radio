@@ -64,7 +64,8 @@ async fn real_main(cli: Cli) -> Result<()> {
             wcr::setup::run_wizard(&cfg_path)?;
         }
         Command::Node => {
-            let cfg = load_cfg(&cfg_path)?;
+            let mut cfg = load_cfg(&cfg_path)?;
+            carry_over_tx_level(&mut cfg, &cfg_path);
             tokio::select! {
                 r = wcr::node::run_node(cfg, false) => r?,
                 _ = stop_signal() => {
@@ -209,6 +210,25 @@ fn load_cfg(path: &std::path::Path) -> Result<Config> {
         )));
     }
     Config::load(path)
+}
+
+/// #247: take a TX level modem73 kept from before wcr.toml saved one, once.
+fn carry_over_tx_level(cfg: &mut Config, cfg_path: &std::path::Path) {
+    let text = std::fs::read_to_string(cfg_path).unwrap_or_default();
+    let Some(settings) =
+        wcr::levels::modem73_settings_path().and_then(|p| std::fs::read_to_string(p).ok())
+    else {
+        return;
+    };
+    if let Some(db) = wcr::levels::carried_over_tx_level(&text, &settings) {
+        cfg.modem.tx_level_db = db;
+        match cfg.save(cfg_path) {
+            Ok(()) => {
+                eprintln!("TX level {db:+.1} dB carried over from modem73's settings into wcr.toml")
+            }
+            Err(e) => eprintln!("TX level {db:+.1} dB from modem73's settings, not saved: {e}"),
+        }
+    }
 }
 
 fn data_telemetry() -> std::path::PathBuf {

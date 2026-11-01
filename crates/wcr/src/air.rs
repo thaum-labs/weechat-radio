@@ -1029,6 +1029,17 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
             if tx.sense.is_some_and(|s| {
                 ack_still_listening(s.since_last_decode(), window, started.elapsed(), listen_max)
             }) {
+                // A frame decoded during the busy test: a station is still
+                // keying. The cap starts again once its run is over. Kept
+                // from before, it had already run out by then, and the
+                // receipt went to modem73 with the busy test off straight
+                // after that frame (#247 B2, the Mac's receipt at 21:16:05).
+                if busy_test_since.take().is_some() && tx.csma_sync {
+                    tracing::info!(
+                        "receipt: a frame was heard during the busy test; its {} ms cap starts again after that run",
+                        tx.cap.as_millis()
+                    );
+                }
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             }
@@ -1064,8 +1075,27 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
                 channel,
             ) {
                 AckStep::Wait => {}
-                AckStep::Send => break,
+                AckStep::Send => {
+                    tracing::info!(
+                        "receipt: channel clear after {} ms, to modem73 with its busy test on",
+                        started.elapsed().as_millis()
+                    );
+                    break;
+                }
                 AckStep::Force => {
+                    // Every receipt keyed with the busy test off says why,
+                    // so a log shows which path it took (#247 B2).
+                    tracing::info!(
+                        "receipt: busy test OFF for this receipt ({}), after {} ms (busy test {} ms, modem73 {})",
+                        if cap_elapsed {
+                            "emergency cap"
+                        } else {
+                            "undecodable busy (level test)"
+                        },
+                        started.elapsed().as_millis(),
+                        testing.elapsed().as_millis(),
+                        if channel.is_empty() { "?" } else { channel }
+                    );
                     force = true;
                     break;
                 }
@@ -1122,7 +1152,9 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
     }
     if force {
         if let Some(c) = tx.control {
-            let _ = c.set_config(tx.preset.control_config()).await;
+            if let Err(e) = c.set_config(tx.preset.control_config()).await {
+                tracing::warn!("receipt: could not turn modem73's busy test back on: {e}");
+            }
         }
     }
     sent
@@ -2376,6 +2408,51 @@ mod tests {
             "carrier sense must be restored: {:?}",
             modem.csma_seen.lock()
         );
+    }
+
+    /// #247 B2: a frame heard while a sync receipt runs its busy test starts
+    /// the cap again. Before, the cap had already run out when that frame
+    /// ended, and the receipt was forced out with the busy test off at once.
+    #[tokio::test]
+    async fn a_frame_heard_during_the_busy_test_restarts_the_cap() {
+        let modem = spawn_ack_modem("rx", 40).await;
+        let sense = FakeSense::new();
+        let preset = Preset::VhfFm;
+        let window = ack_listen_window(preset);
+        let cap = Duration::from_millis(1500);
+        sense.note_decode();
+        let s2 = sense.clone();
+        tokio::spawn(async move {
+            // Into the busy test, before its cap: another frame decodes.
+            tokio::time::sleep(window + Duration::from_millis(1000)).await;
+            s2.note_decode();
+        });
+        let ack = vec![vec![0xB2]];
+        let started = Instant::now();
+        let keyed = transmit_ack(AckTx {
+            frames: &ack,
+            preset,
+            air: None,
+            sense: Some(sense.as_ref()),
+            control: Some(&modem.control),
+            kiss: Some(&modem.kiss),
+            cap,
+            slot: Duration::from_millis(20),
+            quiet: Duration::from_millis(50),
+            csma: true,
+            csma_sync: true,
+            drain_cap: Duration::from_millis(300),
+        })
+        .await;
+        assert!(keyed);
+        // Second run ends at about 2 windows + 1 s; the cap counts after it.
+        let earliest = window * 2 + Duration::from_millis(1000) + cap - Duration::from_millis(200);
+        assert!(
+            started.elapsed() >= earliest,
+            "forced after {:?}, before the cap had run after the last frame ({earliest:?})",
+            started.elapsed()
+        );
+        assert_eq!(modem.csma_seen.lock().first().copied(), Some(false));
     }
 
     /// #243 item 1: in sync mode a receipt waits for modem73's busy test

@@ -129,14 +129,14 @@ pub async fn run(cfg_path: &Path, stop: impl std::future::Future<Output = ()>) -
             ""
         }
     );
-    station.start().await;
+    station.resume().await;
     tokio::spawn(station.clone().supervise());
     let app = router(web).into_make_service_with_connect_info::<Peer>();
     tokio::select! {
         r = axum::serve(listener, app) => r.map_err(|e| Error::Msg(e.to_string()))?,
         _ = stop => {}
     }
-    station.stop().await;
+    station.shutdown().await;
     Ok(())
 }
 
@@ -864,6 +864,16 @@ pub fn install(cfg_path: &Path) -> Result<()> {
             cfg_path.display()
         )));
     }
+    // Installing the service is the operator asking for the station to run,
+    // so the first start puts it on the air. Later restarts follow the
+    // page's Start / Stop (#247 B1).
+    let state = station::state_path(&cfg_path);
+    std::fs::write(&state, format!("{}\n", station::STATE_START))
+        .map_err(|e| Error::Msg(format!("{}: {e}", state.display())))?;
+    let _ = std::process::Command::new("chown")
+        .arg(&user)
+        .arg(&state)
+        .status();
     let exe = std::env::current_exe()?;
     std::fs::write(UNIT_PATH, systemd_unit(&exe, &user, &cfg_path))
         .map_err(|e| Error::Msg(format!("{UNIT_PATH}: {e} (run it with sudo)")))?;

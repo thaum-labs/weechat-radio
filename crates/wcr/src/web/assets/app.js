@@ -466,7 +466,7 @@ function trafficRow(r) {
   li.append(who);
   const side = el("span", "t-side");
   if (typeof r.snr === "number") side.append(el("span", r.snr >= 10 ? "up" : r.snr >= 6 ? "amber" : "down", `${r.snr.toFixed(0)} dB`));
-  side.append(document.createTextNode(r.via === "rf" ? (r.dir === "sent" ? "sent rf" : "rf") : r.via === "inet" ? "internet" : r.via));
+  side.append(document.createTextNode(r.via === "rf" ? (r.relayed ? "relayed rf" : r.dir === "sent" ? "sent rf" : "rf") : r.via === "inet" ? "internet" : r.via));
   const chatty = ["dm", "bulletin", "group", "checkin", "status", "form"].includes(r.kind);
   const station = r.dir === "sent" ? (r.kind === "dm" ? r.to : "") : r.from;
   if (chatty && station && /^[A-Z0-9]{3,}(\/[A-Z0-9]+)?$/i.test(station) && station.toUpperCase() !== (chat.me || "").toUpperCase()) {

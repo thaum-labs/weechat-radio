@@ -3981,6 +3981,9 @@ impl GuiApp {
                         let via = s("via");
                         ui.label(
                             RichText::new(match (sent, via.as_str()) {
+                                (true, _) if r["relayed"].as_bool() == Some(true) => {
+                                    "relayed".to_string()
+                                }
                                 (true, _) => "sent".to_string(),
                                 (false, "inet") => "internet".to_string(),
                                 (false, v) => v.to_string(),

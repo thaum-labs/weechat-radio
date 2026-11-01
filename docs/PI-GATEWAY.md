@@ -57,6 +57,8 @@ On the Pi, logged in as your own user (not root):
 
    This writes `/etc/systemd/system/wcr-web.service`, which runs as your user, and starts it. Check it with `systemctl status wcr-web` and read its log with `journalctl -u wcr-web -f`. The journal has the station's own log too, including modem73 problems (modem73's full log is `~/.local/share/wcr/modem73.log`).
 
+   The page's Start and Stop are remembered (in `web-station.state` next to `wcr.toml`). After a reboot, an update or `systemctl restart wcr-web`, the station goes back on the air only if you left it running; a station you stopped stays stopped and the log says `station not started`.
+
 ## The web page
 
 Open `https://<pi-name>.local:8443` from a phone or laptop on the same network (for example `https://raspberrypi.local:8443`), or use the Pi's IP address.
@@ -151,4 +153,4 @@ Raspberry Pi Imager can set the hostname, your user, Wi-Fi and SSH before the fi
 
 ## Updating
 
-Run `wcr update`, then `sudo systemctl restart wcr-web`.
+Run `wcr update`, then `sudo systemctl restart wcr-web`. The station comes back only if it was running before. Updating from v1.0.14 or older, the first restart leaves it stopped (there is no saved Start yet): press Start on the page once.

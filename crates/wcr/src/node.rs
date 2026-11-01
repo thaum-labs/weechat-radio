@@ -605,6 +605,10 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                             }
                             continue;
                         }
+                        if bulletin_relay_is_echo(&rt_h, &m.env) {
+                            let _ = rt_h.store.set_hold(&m.env.msg_id, 0, m.env.hops_left);
+                            continue;
+                        }
                         let retries = rt_h.store.retries_of(&m.env.msg_id).unwrap_or(0);
                         let heard = rt_h.downstream_heard.lock().contains(&m.env.msg_id)
                             || (m.env.kind != MsgType::Ack
@@ -2060,9 +2064,13 @@ fn watch_keyed(rt: &Runtime, kiss: &KissClient, cancel: CancellationToken) {
                 note_exchange(&rt, None, Some(&m));
             } else if let Ok(env) = Envelope::decode(&payload) {
                 if env.kind != MsgType::Frag {
-                    rt.traffic
-                        .lock()
-                        .push(crate::traffic::envelope_row(&env, "sent", "rf", None));
+                    let mut row = crate::traffic::envelope_row(&env, "sent", "rf", None);
+                    // Someone else's frame we keyed: a relay, shown as one (#247).
+                    row.relayed = !env
+                        .origin
+                        .as_str()
+                        .eq_ignore_ascii_case(&rt.engine.our_call);
+                    rt.traffic.lock().push(row);
                 }
                 if env.kind == MsgType::Beacon {
                     rt.beacon_keyed
@@ -2135,6 +2143,48 @@ fn line_reached_neighbours(rt: &Runtime, line: &Envelope) -> bool {
     let came_relayed = !relay::is_direct_line(line)
         && !relay::heard_from_origin(line, line.hops_left.saturating_add(1));
     relay::neighbours_hold(&current_neighbours(rt), &holders, came_relayed)
+}
+
+/// #247 B3: someone else's bulletin that we heard straight from its origin
+/// on RF, while no other station is heard directly on RF, stays off the
+/// air here (not a gateway). See [`relay::bulletin_relay_is_echo`]. Logged
+/// each time it holds a copy back.
+fn bulletin_relay_is_echo(rt: &Runtime, line: &Envelope) -> bool {
+    if !relay::bulletin_keeps_walking(line) || relay::is_own_origin(&rt.engine.our_call, line) {
+        return false;
+    }
+    // Just started, the stations around have not all been heard yet: an
+    // empty list then means "not known", not "nobody", so relay as before.
+    let now = crate::proto::now_ts();
+    if now.saturating_sub(rt.started) < relay::NEIGHBOUR_WARMUP_S {
+        return false;
+    }
+    let gateway = rt.cfg.lock().mode.is_gateway();
+    let origin = line.origin.as_str();
+    // Our stored copy has one hop less than the copy we heard.
+    let direct_rf = relay::heard_from_origin(line, line.hops_left.saturating_add(1))
+        && rt
+            .store
+            .trace(&line.msg_id)
+            .unwrap_or_default()
+            .iter()
+            .any(|(hop, medium, _, _)| hop.eq_ignore_ascii_case(origin) && medium == "rf");
+    let others = rt
+        .neighbours
+        .lock()
+        .iter()
+        .filter(|(call, t)| {
+            now.saturating_sub(**t) < relay::NEIGHBOUR_TTL_S && !call.eq_ignore_ascii_case(origin)
+        })
+        .count();
+    let echo = relay::bulletin_relay_is_echo(gateway, line, direct_rf, others);
+    if echo {
+        tracing::info!(
+            "bulletin {} heard straight from {origin} on RF, no other station on RF: not sent back on RF",
+            line.msg_id.hex()
+        );
+    }
+    echo
 }
 
 /// We have keyed our cap of copies of someone else's line or receipt.
@@ -3217,6 +3267,7 @@ async fn relay_heard_retry(rt: &Runtime, env: &Envelope) {
     // new. The receipts we hold for it went out above.
     // Our own copy that went out a moment ago carries this retry too.
     if line_reached_neighbours(rt, &stored.env)
+        || bulletin_relay_is_echo(rt, &stored.env)
         || relay_copies_spent(rt, &stored.env)
         || relay_copy_too_soon(rt, &stored.env, now)
     {

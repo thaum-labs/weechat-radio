@@ -931,6 +931,10 @@ async fn burst(
                 "set_mail_config" => {
                     if let Some(c) = &ports.control {
                         mode_set = true;
+                        tracing::info!(
+                            "mail burst: busy test off for {} frame(s), back on after",
+                            keyed.frames.len()
+                        );
                         c.set_config(lease::mail_tx_config(preset, rung)).await?;
                     }
                 }

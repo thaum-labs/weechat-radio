@@ -2,6 +2,8 @@
    One column at every width (#243): status, then levels, then traffic and
    mail, then diagnostics. Advanced detail sits behind <details>. */
 :root {
+  /* Dark scrollbars and form controls, not the browser's bright default (#247). */
+  color-scheme: dark;
   --bg: #0b0b10; --card: #14141c; --raised: #1b1b26; --line: #262a3d; --fg: #e4def0; --dim: #8d87a0;
   --accent: #8aa4ff; --orange: #ff8a4d; --purple: #c4b5fd; --green: #4ade80;
   --amber: #fbbf24; --red: #f87171;
@@ -21,7 +23,14 @@ code { color: var(--purple); }
 header { display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--bg); }
 h1 { font-size: 17px; margin: 0; font-weight: 600; color: var(--accent); white-space: nowrap; }
-.brand { color: var(--fg); }
+/* Wordmark as on the website and in the desktop app (#247): the mark, then
+   "weechat" bold and "radio" in blue, monospace, no space between. */
+.brand-line { display: flex; align-items: center; gap: 10px; font-family: var(--mono);
+  font-size: 18px; line-height: 1; letter-spacing: -0.06em; }
+.brand-mark { width: 28px; height: 26px; flex: none; display: block; }
+.brand-weechat { color: #d8d0e8; font-weight: 700; }
+.brand-radio { color: #7d9bff; font-weight: 400; }
+.brand-line .call { letter-spacing: 0; font-size: 16px; }
 .call { color: var(--orange); margin-left: 6px; font-weight: 600; }
 .views { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-left: auto; }
 .views a { color: var(--dim); text-decoration: none; padding: 5px 12px; font-size: 14px; }
@@ -140,14 +149,22 @@ input[type="range"] { width: 100%; margin: 0; padding: 0; min-height: 36px; back
 .filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .filters button { min-height: 30px; padding: 2px 12px; font-size: 13px; font-weight: 500; color: var(--dim); border-radius: 999px; }
 .filters button[aria-pressed="true"] { color: var(--bg); background: var(--accent); border-color: var(--accent); }
-.traffic { list-style: none; margin: 0; padding: 0; max-height: 26rem; overflow-y: auto; }
-.traffic li { display: grid; grid-template-columns: auto auto 1fr auto; column-gap: 8px; row-gap: 2px; align-items: baseline;
+/* A real (non-overlay) scrollbar takes its own gutter: always reserved, so
+   rows never shift or run under it, and thin and dark to match (#247). */
+.traffic { list-style: none; margin: 0; padding: 0 6px 0 0; max-height: 26rem; overflow-y: auto; overflow-x: hidden;
+  scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.traffic::-webkit-scrollbar { width: 8px; }
+.traffic::-webkit-scrollbar-track { background: transparent; }
+.traffic::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+/* Same columns for every kind of row: time, kind, who, and the right side. */
+.traffic li { display: grid; grid-template-columns: 4.6em 5.6em minmax(0, 1fr) auto; column-gap: 8px; row-gap: 2px; align-items: center;
   padding: 8px 0; border-top: 1px solid var(--line); }
+.traffic .chip { justify-self: start; }
 .traffic li:first-child { border-top: 0; }
 .traffic .t-time { color: var(--dim); font-family: var(--mono); font-size: 12px; }
 .traffic .t-who { font-family: var(--mono); font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .traffic .t-who .dir { color: var(--dim); }
-.traffic .t-side { display: flex; align-items: baseline; gap: 4px; font-size: 12px; font-family: var(--mono); color: var(--dim); white-space: nowrap; }
+.traffic .t-side { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: baseline; gap: 4px 6px; font-size: 12px; font-family: var(--mono); color: var(--dim); white-space: nowrap; min-width: 0; }
 .traffic .t-text { grid-column: 3 / -1; font-size: 14px; overflow-wrap: anywhere; }
 .traffic .t-text.dim { font-size: 13px; }
 .traffic li.sent .t-who { color: var(--orange); }
@@ -215,6 +232,7 @@ main.wide { max-width: 1100px; }
   header { padding: 8px 12px; gap: 6px; }
   h1 { font-size: 16px; }
   h1 .name { display: none; }
+  .brand-line { gap: 6px; }
   .call { margin-left: 0; }
   .views a { padding: 5px 9px; }
   header button.quiet { padding: 4px 8px; font-size: 13px; }

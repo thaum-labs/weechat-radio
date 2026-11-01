@@ -38,6 +38,8 @@ pub struct Row {
     pub snr: Option<f32>,
     /// Short message id, to match a receipt with its line.
     pub id: String,
+    /// Sent by this station for another (a relay), not its own (#247).
+    pub relayed: bool,
 }
 
 #[derive(Debug, Default)]
@@ -144,6 +146,7 @@ pub fn envelope_row(env: &Envelope, dir: &'static str, via: &str, snr: Option<f3
         text,
         snr: if via == "rf" { snr } else { None },
         id: short_id(env),
+        relayed: false,
     }
 }
 
@@ -199,6 +202,7 @@ pub fn mail_row(m: &crate::mail::Incoming, dir: &'static str, snr: Option<f32>) 
         text,
         snr,
         id,
+        relayed: false,
     }
 }
 
@@ -257,7 +261,7 @@ pub fn line(r: &Row) -> String {
     };
     format!(
         "{when} {} {} {} {}{to}{snr}{text}",
-        r.dir,
+        if r.relayed { "relayed" } else { r.dir },
         r.via,
         r.kind,
         if r.from.is_empty() { "?" } else { &r.from }

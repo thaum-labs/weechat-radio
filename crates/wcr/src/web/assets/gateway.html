@@ -9,7 +9,7 @@
 </head>
 <body>
 <header>
-  <h1><span class="name"><span class="brand">weechat</span> radio</span> <span id="call" class="call"></span></h1>
+  <h1 class="brand-line"><svg class="brand-mark" viewBox="0 0 64 60" fill="none" aria-hidden="true" focusable="false"><path d="M8 20 L20 30 L8 40" stroke="#d8d0e8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><rect x="25" y="36" width="15" height="5" rx="1" fill="#7d9bff"/><path d="M40 29 A7 7 0 0 1 47 36" stroke="#7d9bff" stroke-width="4" stroke-linecap="round"/><path d="M40 23 A13 13 0 0 1 53 36" stroke="#7d9bff" stroke-width="4" stroke-linecap="round" opacity="0.7"/><path d="M40 17 A19 19 0 0 1 59 36" stroke="#7d9bff" stroke-width="4" stroke-linecap="round" opacity="0.4"/></svg><span class="name"><span class="brand-word"><span class="brand-weechat">weechat</span><span class="brand-radio">radio</span></span></span><span id="call" class="call"></span></h1>
   <nav class="views" aria-label="View">
     <a href="/app">App</a><a href="/" aria-current="page">Station</a>
   </nav>
@@ -68,7 +68,7 @@
         <output id="tx-out" for="tx-level"></output>
       </div>
     </div>
-    <details class="more help">
+    <details class="more help" id="level-help">
       <summary>How to set the levels</summary>
       <p id="rx-note"></p>
       <p>TX level only turns down: the modem already sends at full scale. Set the deviation with the radio's own mic gain (the Bluetooth mic gain on a VR-N76, the Digirig's Speaker in alsamixer), then lower TX level a step at a time until the far end's SNR stops getting better.</p>
@@ -79,7 +79,7 @@
       <canvas id="wf" class="wf" height="140" role="img" aria-label="Live audio spectrum from the radio, newest at the top"></canvas>
       <div class="wf-pass" aria-hidden="true" title="Modem passband, 300–2700 Hz"></div>
       <div class="wf-axis" aria-hidden="true"><span class="t0">0</span><span class="t1">1000</span><span class="t2">2000</span><span class="t3">3000 Hz</span></div>
-      <details class="more">
+      <details class="more" id="wf-key-box">
         <summary>Colour key</summary>
         <p class="wf-key"><span><span class="wf-sw noise"></span>noise</span><span><span class="wf-sw sig"></span>signal</span><span><span class="wf-sw hot"></span>strong</span><span><span class="wf-sw tx"></span>our TX</span></p>
         <p class="meta">Colours follow the noise floor, so any radio at any volume shows its noise dark blue and a signal bright. The orange bar under the waterfall is the modem's passband.</p>
