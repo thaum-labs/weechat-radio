@@ -26,6 +26,11 @@ rigctl = "127.0.0.1:4532"
 # In = decode (radio speaker). Out = transmit (radio mic).
 audio_input = ""
 audio_output = ""
+# Busy test before sending: auto = sync on VHF/UHF FM, level on HF (< 30 MHz).
+csma_mode = "auto"    # auto | sync | level
+# Levels (the RX gain and TX level sliders, or /level rx|tx <dB>):
+# rx_gain_db = 0.0    # Linux sound card capture gain, set at every start
+tx_level_db = 0.0     # -26 to 0: only turns the modem's audio down
 
 [hub]
 url = "wss://hub.weechatradio.com/ws"

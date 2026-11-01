@@ -161,6 +161,16 @@ pub fn start(
 ) -> Result<MailHandle> {
     let path = db_path(&cfg.lock());
     let store = Arc::new(store::MailStore::open(&path)?);
+    // Mail the last run was still sending has no timers any more (QA #241).
+    match store.fail_unfinished(gateway::STOPPED_MID_SEND) {
+        Ok(ids) if !ids.is_empty() => tracing::info!(
+            "mail: {} unfinished from the last run marked failed, Retry sends again: {}",
+            ids.len(),
+            ids.join(", ")
+        ),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("mail: could not check unfinished outbox mail: {e}"),
+    }
     let (cmd, rx) = mpsc::channel(64);
     let keying = Arc::new(AtomicBool::new(false));
     let handle = MailHandle {

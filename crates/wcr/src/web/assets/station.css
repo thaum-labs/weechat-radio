@@ -3,6 +3,7 @@
   --bg: #07070a; --card: #15151e; --line: #212840; --fg: #d8d0e8; --dim: #7a7388;
   --accent: #7d9bff; --orange: #ff7a3d; --purple: #c4b5fd; --green: #39ff14;
   --amber: #ffc43d; --red: #ff4d6d;
+  --meter-low: #1b1f30; --meter-good: #173d1f; --meter-busy: #3d3416; --meter-high: #4a2418;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -37,7 +38,6 @@ input { font: inherit; width: 100%; color: var(--fg); background: #0b0b12; borde
 .amber { color: var(--amber); }
 .pickers label { display: flex; align-items: center; gap: 6px; color: var(--dim); }
 .pickers select { min-height: 40px; padding: 6px 8px; max-width: 100%; }
-#pick-help { margin: 6px 0 0; }
 .health-more { margin-top: 4px; } .health-more summary { cursor: pointer; padding: 4px 0; }
 .health-more .facts { margin-top: 6px; }
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; }
@@ -55,6 +55,9 @@ input { font: inherit; width: 100%; color: var(--fg); background: #0b0b12; borde
 .chip.bounced, .chip.spam, .chip.failed { color: var(--red); } .chip.queued, .chip.no_record, .chip.received { color: var(--dim); }
 .log { margin: 0; max-height: 40vh; overflow: auto; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--dim); }
 #errors { color: var(--orange); }
+.err-title { color: var(--orange); margin-top: 0; }
+.log-more summary { cursor: pointer; padding: 4px 0; }
+.list .snr { flex: none; font-size: 12px; }
 /* Waterfall: newest row at the top. */
 .wf { display: block; width: 100%; height: 160px; background: #000; border: 1px solid var(--line); border-radius: 4px; image-rendering: pixelated; }
 .wf-pass { position: relative; margin: 2px 0 0 10%; width: 80%; height: 3px; background: var(--orange); opacity: 0.6; }
@@ -63,10 +66,36 @@ input { font: inherit; width: 100%; color: var(--fg); background: #0b0b12; borde
 .wf-axis .t0 { left: 0; transform: none; } .wf-axis .t1 { left: 33.333%; } .wf-axis .t2 { left: 66.667%; }
 .wf-axis .t3 { left: 100%; transform: translateX(-100%); }
 .wf-help { margin: 2px 0 0; }
-.wf-key { margin: 6px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.wf-key { margin: 6px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.wf-key > span { white-space: nowrap; }
 .wf-sw { display: inline-block; width: 10px; height: 10px; border: 1px solid var(--line); }
-.wf-sw.quiet { background: #0b1230; } .wf-sw.noise { background: #8c3cc8; }
-.wf-sw.sig { background: #ffe14d; } .wf-sw.tx { background: var(--orange); }
+.wf-sw.noise { background: #1c2a6b; } .wf-sw.sig { background: #ffe14d; }
+.wf-sw.hot { background: #fff; } .wf-sw.tx { background: var(--orange); }
+/* Radio audio card (#241): receive level meter with its target zone. */
+.lv-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 6px; }
+.meter { position: relative; height: 18px; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; background: var(--meter-low); }
+.meter-zones { position: absolute; inset: 0; }
+.meter-bar { position: absolute; left: 0; top: 5px; bottom: 5px; width: 0; background: var(--dim); transition: width .25s; }
+.meter-bar.good { background: var(--green); } .meter-bar.high, .meter-bar.noisy { background: var(--amber); }
+.meter-bar.clipping { background: var(--red); }
+.meter-peak { position: absolute; top: 2px; bottom: 2px; width: 2px; margin-left: -1px; background: var(--fg); }
+.meter-axis { position: relative; height: 1.4em; margin-top: 2px; }
+.meter-axis span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+.meter-axis span:first-child { transform: none; } .meter-axis span:last-child { transform: translateX(-100%); }
+.lv-hint { margin: 2px 0 10px; min-height: 1.4em; color: var(--fg); }
+.lv-hint.up, .lv-hint.idle { color: var(--dim); }
+.slider { display: grid; grid-template-columns: 11em 1fr; align-items: center; gap: 8px; }
+.slider label { color: var(--dim); }
+.slider output { color: var(--fg); margin-left: 4px; }
+input[type="range"] { width: 100%; margin: 0; padding: 0; min-height: 36px; background: transparent; border: 0; accent-color: var(--orange); }
+.slider-note { margin: 0 0 10px; }
+#wf-box h3 { margin-top: 4px; }
+/* Gateway page: two columns on a wide screen, one on a phone. */
+main.gw { max-width: 1180px; }
+@media (min-width: 960px) {
+  main.gw { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; align-items: start; }
+  main.gw #updated { grid-column: 1 / -1; }
+}
 /* App | Gateway switch. */
 .views { display: flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; margin-left: auto; }
 .views a { color: var(--dim); text-decoration: none; padding: 4px 10px; font-size: 13px; }
@@ -134,4 +163,5 @@ label { display: block; }
   .tabs { padding: 8px 12px 0; gap: 4px; }
   .tabs [role="tab"] { padding: 4px 10px; }
   main { padding: 10px 12px 20px; }
+  .slider { grid-template-columns: 1fr; gap: 0; }
 }

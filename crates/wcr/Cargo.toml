@@ -96,6 +96,8 @@ libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = { version = "0.18", optional = true, default-features = false, features = ["v3_24"] }
+# The sound card's capture gain (#241); cpal already brings it in.
+alsa = { version = "0.9", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2.7"
@@ -106,7 +108,7 @@ winresource = "0.1"
 [features]
 default = ["desktop", "setup-probe"]
 desktop = ["dep:eframe", "dep:open", "dep:tray-icon", "dep:gtk"]
-setup-probe = ["dep:cpal", "dep:serialport"]
+setup-probe = ["dep:cpal", "dep:serialport", "dep:alsa"]
 
 [[test]]
 name = "macos_main_loop"

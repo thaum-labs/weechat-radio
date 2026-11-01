@@ -622,6 +622,10 @@ struct GuiApp {
     freq_pending: Option<u32>,
     /// Last FREQ-list row picked (keeps CB region/mode when several share a kHz).
     freq_pick_last: Option<crate::band::CallingFreq>,
+    /// RX gain / TX level slider values the operator just set, shown until
+    /// /status catches up (#241).
+    rx_held: Option<(f32, Instant)>,
+    tx_held: Option<(f32, Instant)>,
     /// Channels already JOINed on the current IRC connection (avoid duplicate history).
     irc_joined: Vec<String>,
     /// Skip OS notifications while IRC history is replaying after connect.
@@ -740,6 +744,8 @@ impl GuiApp {
             members: session.members,
             freq_pending: None,
             freq_pick_last: None,
+            rx_held: None,
+            tx_held: None,
             irc_joined: Vec::new(),
             irc_connected_at: None,
             center: CenterView::Chat,
@@ -1749,6 +1755,7 @@ impl eframe::App for GuiApp {
                         let mut preset_cmd = None;
                         let mut freq_cmd = None;
                         let mut tower_cmd = None;
+                        let mut level_cmd = None;
                         let mut freq_pending_set = None;
                         let mut freq_pick_last_set = None;
                         let mut want_radio_confirm = false;
@@ -1804,13 +1811,14 @@ impl eframe::App for GuiApp {
                             if s.tnc.is_empty() && !s.modem73.is_empty() {
                                 kv(ui, "MODEM", &format!("modem73 v{}", s.modem73), DIM);
                             }
-                            audio_meter_row(
-                                ui,
-                                "IN",
-                                s.audio_in_db,
-                                crate::presets::audio_meter_live(&s.audio_label),
-                                "Receive audio from the radio (sound card capture). Green is a healthy level; orange is clipping.",
-                            );
+                            input_meter_row(ui, s);
+                            if !s.audio_in_hint.is_empty() {
+                                ui.label(
+                                    RichText::new(&s.audio_in_hint)
+                                        .color(hint_color(&s.audio_in_word))
+                                        .small(),
+                                );
+                            }
                             audio_meter_row(
                                 ui,
                                 "OUT",
@@ -1818,6 +1826,37 @@ impl eframe::App for GuiApp {
                                 crate::presets::audio_meter_live(&s.audio_label),
                                 "Transmit audio to the radio (sound card playback). Fills while PTT is keyed.",
                             );
+                            if s.tnc.is_empty() && !s.modem73.is_empty() && s.mode != Mode::Internet {
+                                if let Some(g) = &s.rx_gain {
+                                    let tip = if g.kind == "bluetooth" {
+                                        "RX gain: wcr's gain on the radio's Bluetooth audio (the radio's volume knob does not change it). Set it so the IN meter sits in the green band."
+                                    } else {
+                                        "RX gain: the sound card's capture gain (automatic gain off). Set it so the IN meter sits in the green band. If it is at its lowest and still clipping, turn the radio's volume down."
+                                    };
+                                    if let Some(db) = level_slider_row(
+                                        ui,
+                                        "RX GAIN",
+                                        &mut self.rx_held,
+                                        g.db,
+                                        g.min_db..=g.max_db,
+                                        0.5,
+                                        tip,
+                                    ) {
+                                        level_cmd = Some(format!("/level rx {db:.1}"));
+                                    }
+                                }
+                                if let Some(db) = level_slider_row(
+                                    ui,
+                                    "TX LVL",
+                                    &mut self.tx_held,
+                                    s.tx_level_db,
+                                    crate::levels::TX_LEVEL_MIN_DB..=crate::levels::TX_LEVEL_MAX_DB,
+                                    1.0,
+                                    "TX level: only turns down, the modem already sends at full scale. Set the deviation with the radio's own mic gain (the Bluetooth mic gain on a VR-N76), then lower TX level until the far end's SNR stops getting better.",
+                                ) {
+                                    level_cmd = Some(format!("/level tx {db:.0}"));
+                                }
+                            }
                             kv(ui, "SNR", &format!("{:.0}", s.snr), PURPLE);
                             kv(
                                 ui,
@@ -1920,6 +1959,9 @@ impl eframe::App for GuiApp {
                             self.send_cmd(&cmd);
                         }
                         if let Some(cmd) = preset_cmd {
+                            self.send_cmd(&cmd);
+                        }
+                        if let Some(cmd) = level_cmd {
                             self.send_cmd(&cmd);
                         }
                         if let Some(cmd) = freq_cmd {
@@ -2544,6 +2586,168 @@ fn paint_remaining_arc(painter: &egui::Painter, c: egui::Pos2, r: f32, frac: f32
     for w in pts.windows(2) {
         painter.line_segment([w[0], w[1]], stroke);
     }
+}
+
+/// Faint target zones behind the IN meter (#241): too quiet, good, noisy
+/// (HF level busy test), too hot.
+const ZONE_GOOD: Color32 = Color32::from_rgb(23, 61, 31);
+const ZONE_BUSY: Color32 = Color32::from_rgb(61, 52, 22);
+const ZONE_HOT: Color32 = Color32::from_rgb(74, 36, 24);
+
+/// The colour of the station's word for the receive level (#241).
+fn word_color(word: &str) -> Color32 {
+    match word {
+        "good" => GREEN,
+        "high" | "noisy" => AMBER,
+        "clipping" => RED,
+        _ => DIM,
+    }
+}
+
+/// The hint under the IN meter: quiet when the level is good.
+fn hint_color(word: &str) -> Color32 {
+    match word {
+        "good" | "low" | "" => DIM,
+        w => word_color(w),
+    }
+}
+
+/// The IN meter (#241): the level over its target zones in the colour of
+/// the station's word, with the last half second's peak as a tick. Without
+/// a live level (Windows, an older modem73) it is the plain meter.
+fn input_meter_row(ui: &mut egui::Ui, s: &StatusSnapshot) {
+    let live = crate::presets::audio_meter_live(&s.audio_label);
+    if s.audio_in_word.is_empty() || !live {
+        audio_meter_row(
+            ui,
+            "IN",
+            s.audio_in_db,
+            live,
+            "Receive audio from the radio (sound card capture). Green is a healthy level; orange is clipping.",
+        );
+        return;
+    }
+    use crate::levels::{BUSY_MARGIN_DB, HIGH_DB, LOW_DB, LOW_DB_LEVEL};
+    let (low, good) = match (s.csma_mode.as_str(), s.csma_threshold_db) {
+        ("level", Some(th)) => (LOW_DB_LEVEL, (th - BUSY_MARGIN_DB).min(HIGH_DB)),
+        _ => (LOW_DB, HIGH_DB),
+    };
+    let color = word_color(&s.audio_in_word);
+    let inner = ui.horizontal(|ui| {
+        station_key(ui, "IN");
+        let h = ui.spacing().interact_size.y;
+        let db_w = 36.0;
+        let gap = ui.spacing().item_spacing.x;
+        let bar_w = (ui.available_width() - gap - db_w).max(28.0);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(bar_w, h), egui::Sense::hover());
+        let bar = egui::Rect::from_center_size(
+            rect.center(),
+            egui::vec2(rect.width(), (h - 6.0).clamp(8.0, 12.0)),
+        );
+        let x_of = |db: f32| bar.left() + bar.width() * crate::presets::audio_level_frac(db);
+        let painter = ui.painter();
+        painter.rect_filled(bar, 0.0, LINE);
+        for (a, b, c) in [
+            (low, good, ZONE_GOOD),
+            (good, HIGH_DB, ZONE_BUSY),
+            (HIGH_DB, 0.0, ZONE_HOT),
+        ] {
+            if b > a {
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        egui::pos2(x_of(a), bar.top()),
+                        egui::pos2(x_of(b), bar.bottom()),
+                    ),
+                    0.0,
+                    c,
+                );
+            }
+        }
+        let level = egui::Rect::from_min_max(
+            egui::pos2(bar.left(), bar.top() + 2.0),
+            egui::pos2(x_of(s.audio_in_db), bar.bottom() - 2.0),
+        );
+        if level.width() > 0.5 {
+            painter.rect_filled(level, 0.0, color);
+        }
+        if let Some(peak) = s.audio_in_peak_db {
+            let x = x_of(peak);
+            painter.line_segment(
+                [
+                    egui::pos2(x, rect.top() + 2.0),
+                    egui::pos2(x, rect.bottom() - 2.0),
+                ],
+                egui::Stroke::new(1.5_f32, FG),
+            );
+        }
+        ui.add_sized(
+            [db_w, h],
+            egui::Label::new(
+                RichText::new(format!("{:.0}", s.audio_in_db))
+                    .color(color)
+                    .monospace(),
+            ),
+        );
+    });
+    let resp = ui.interact(
+        inner.response.rect,
+        ui.id().with(("audio_meter", "IN")),
+        egui::Sense::hover(),
+    );
+    let mut tip = format!(
+        "Receive audio from the radio: {:.0} dBFS RMS",
+        s.audio_in_db
+    );
+    if let Some(p) = s.audio_in_peak_db {
+        tip.push_str(&format!(", peak {p:.0}"));
+    }
+    if let Some(c) = s.audio_in_clip_pct {
+        tip.push_str(&format!(", {c:.1}% clipped"));
+    }
+    tip.push_str(&format!(
+        " ({}). The green band is the target ({low:.0} to {good:.0} dBFS); the white tick is the peak.",
+        s.audio_in_word
+    ));
+    hover_tip(&resp, tip);
+}
+
+/// A level slider (#241). Returns the value to send once the operator lets
+/// go of it (or sets it with a click or the keys).
+fn level_slider_row(
+    ui: &mut egui::Ui,
+    k: &str,
+    held: &mut Option<(f32, Instant)>,
+    now_db: f32,
+    range: std::ops::RangeInclusive<f32>,
+    step: f64,
+    tip: &str,
+) -> Option<f32> {
+    let mut send = None;
+    ui.horizontal(|ui| {
+        station_key(ui, k);
+        let mut v = match *held {
+            Some((v, at)) if at.elapsed() < Duration::from_secs(4) => v,
+            _ => now_db,
+        };
+        ui.spacing_mut().slider_width = (ui.available_width() - 80.0).max(60.0);
+        // The theme's rail is near black: give it the meters' colour.
+        ui.visuals_mut().widgets.inactive.bg_fill = LINE;
+        let resp = ui.add(
+            egui::Slider::new(&mut v, range)
+                .trailing_fill(true)
+                .step_by(step)
+                .fixed_decimals(if step < 1.0 { 1 } else { 0 })
+                .suffix(" dB"),
+        );
+        if resp.changed() || resp.dragged() {
+            *held = Some((v, Instant::now()));
+        }
+        if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
+            send = Some(v);
+        }
+        hover_tip(&resp, tip);
+    });
+    send
 }
 
 fn audio_meter_row(ui: &mut egui::Ui, k: &str, db: f32, live: bool, tip: &str) {

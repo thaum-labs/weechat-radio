@@ -52,6 +52,19 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v1.0.13</p>
+          <p>Sun, 1 Nov 2026</p>
+        </h3>
+        <pre>Every radio and sound card is different, so the receive level now says in words whether it is right: good, low, high, clipping, or (on HF) noisy, with a hint that names the knob to turn. The Pi page and the desktop app draw it as a meter with a green target band and the peak.
+
+New RX gain and TX level sliders. On a Digirig or another USB sound card under Linux, RX gain sets the card's own capture gain and turns its automatic gain off; on a VR-N76 over Bluetooth it is the app's own gain. TX level only turns down, because the modem already sends at full scale. Both are saved and set again at every start. /level does the same from any client.
+
+The Pi page's waterfall scales its colours to the noise floor, so squelch-0 hiss no longer paints it white. The page is tidier: two columns on a wide screen, and the error box only when there are errors.
+
+Busy test: sync on VHF/UHF FM, level on HF. A mail burst now waits for a quiet moment before it keys. Mail a station was still sending when it stopped is marked Failed with Retry at the next start, instead of staying on air for good.</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>v1.0.12</p>
           <p>Sun, 1 Nov 2026</p>
         </h3>

@@ -169,6 +169,14 @@ pub struct ModemConfig {
     /// How modem73 tells a busy channel before it sends (#239):
     /// `auto` (default), `level` or `sync`. See [`ModemConfig::csma_mode`].
     pub csma_mode: String,
+    /// Sound card capture gain in dB (#241), set on the card's mixer at every
+    /// start (Linux: a Digirig or other CM108 card). Unset = the mixer is
+    /// left as it is. Setting it also turns the card's automatic gain off.
+    pub rx_gain_db: Option<f32>,
+    /// Transmit level in dB, -26 to 0 (#241): modem73's `tx_drive`. Only
+    /// turns down: modem73's audio already peaks at full scale. Set the
+    /// radio's own mic gain for more deviation.
+    pub tx_level_db: f32,
 }
 
 impl Default for ModemConfig {
@@ -195,6 +203,8 @@ impl Default for ModemConfig {
             audio_input: String::new(),
             audio_output: String::new(),
             csma_mode: "auto".into(),
+            rx_gain_db: None,
+            tx_level_db: 0.0,
         }
     }
 }
@@ -237,19 +247,37 @@ impl ModemConfig {
     }
 
     /// The busy test to start modem73 with, or `None` to leave modem73 at its
-    /// default (level). An FM radio at squelch 0 streams hiss louder than any
-    /// signal (QA #239: -4 dBFS hiss, -45 dBFS under a carrier), and an HF
-    /// receiver passes band noise all the time, so a level gate reads the
-    /// channel busy and never sends. `auto` therefore means `sync` (Tobias,
-    /// #239: HF too). VOX keeps its level gate whatever the setting.
-    pub fn csma_mode(&self) -> Option<CsmaMode> {
+    /// default (level). `freq_khz` is the station's frequency, 0 if unknown.
+    ///
+    /// `auto` (Tobias, #241): `sync` on VHF/UHF FM, `level` on HF. An FM
+    /// radio at squelch 0 streams hiss louder than any signal (QA #239: -4
+    /// dBFS hiss, -45 dBFS under a carrier), so a level gate never finds the
+    /// channel free there. On HF the band is shared with SSB voice, FT8 and
+    /// other data users that modem73's sync test cannot see, so HF keeps the
+    /// level test. HF is a frequency below 30 MHz; with no frequency set, an
+    /// HF preset. A Bluetooth audio radio (VR-N76 and friends) is a VHF/UHF
+    /// FM handheld, so it is always `sync`. VOX keeps its level gate whatever
+    /// the setting.
+    pub fn csma_mode(&self, freq_khz: u32) -> Option<CsmaMode> {
         if self.is_vox() {
             return None;
         }
         match self.csma_mode.trim().to_ascii_lowercase().as_str() {
             "level" | "threshold" => Some(CsmaMode::Level),
+            "sync" => Some(CsmaMode::Sync),
+            _ if self.is_bt_audio() => Some(CsmaMode::Sync),
+            _ if self.on_hf(freq_khz) => Some(CsmaMode::Level),
             _ => Some(CsmaMode::Sync),
         }
+    }
+
+    /// HF for the busy test: below 30 MHz, or an HF preset when no frequency
+    /// is set.
+    fn on_hf(&self, freq_khz: u32) -> bool {
+        if freq_khz > 0 {
+            return freq_khz < 30_000;
+        }
+        crate::presets::Preset::parse(&self.preset).is_some_and(|p| p.is_hf())
     }
 
     /// Why this link cannot run preset `p`, or `None` when it can. The node's
@@ -297,6 +325,10 @@ pub struct TncConfig {
     /// scale, so only lower it (a radio that distorts). To transmit louder,
     /// raise the radio's own Bluetooth mic gain (#239).
     pub bt_tx_level_db: f32,
+    /// Receive level change in dB for Bluetooth audio, -30 to +12 (#241),
+    /// applied to the radio's audio before modem73 hears it. The radio sets
+    /// its Bluetooth audio level itself (its volume knob does not change it).
+    pub bt_rx_level_db: f32,
 }
 
 impl Default for TncConfig {
@@ -312,6 +344,7 @@ impl Default for TncConfig {
             ax25_dest: "WCR".into(),
             frame_gap_ms: 400,
             bt_tx_level_db: 0.0,
+            bt_rx_level_db: 0.0,
         }
     }
 }
@@ -982,23 +1015,37 @@ mod tests {
 
     fn csma(toml_text: &str) -> Option<CsmaMode> {
         let cfg: Config = toml::from_str(toml_text).unwrap();
-        cfg.modem.csma_mode()
+        cfg.modem.csma_mode(cfg.rf.frequency_khz)
     }
 
-    /// #239: a VR-N76 at squelch 0 streams hiss at -4 dBFS (a Pi's BF-1909
-    /// at -1 dBFS), so a level gate never lets modem73 send. Every station
-    /// but VOX uses sync, HF too.
+    /// #241 (Tobias): `auto` is sync on VHF/UHF FM, where squelch-0 hiss
+    /// would hold a level gate for ever (#239), and level on HF, where sync
+    /// would key over SSB voice and FT8.
     #[test]
-    fn csma_auto_uses_sync_where_noise_would_hold_transmit() {
+    fn csma_auto_is_sync_on_fm_and_level_on_hf() {
         assert_eq!(ModemConfig::default().csma_mode, "auto");
+        let digirig =
+            "[modem]\nptt = \"digirig\"\npreset = \"vhf-fm\"\n[rf]\nfrequency_khz = 433625\n";
+        assert_eq!(csma(digirig), Some(CsmaMode::Sync));
+        // A robust preset on an FM channel is still FM.
+        let robust_fm =
+            "[modem]\nptt = \"digirig\"\npreset = \"hf-poor\"\n[rf]\nfrequency_khz = 145500\n";
+        assert_eq!(csma(robust_fm), Some(CsmaMode::Sync));
+        let hf = "[modem]\nptt = \"hamlib\"\npreset = \"hf-poor\"\n[rf]\nfrequency_khz = 7074\n";
+        assert_eq!(csma(hf), Some(CsmaMode::Level));
+        // vhf-fm picked on 10 m is still HF: the band decides.
+        let ten = "[modem]\nptt = \"hamlib\"\npreset = \"vhf-fm\"\n[rf]\nfrequency_khz = 28120\n";
+        assert_eq!(csma(ten), Some(CsmaMode::Level));
+        // No frequency set: the preset's band decides.
+        let hf_preset = "[modem]\nptt = \"hamlib\"\npreset = \"hf-weak\"\n";
+        assert_eq!(csma(hf_preset), Some(CsmaMode::Level));
+        let fm_preset = "[modem]\nptt = \"cm108\"\npreset = \"vhf-fm\"\n";
+        assert_eq!(csma(fm_preset), Some(CsmaMode::Sync));
+        // A Bluetooth audio radio is a VHF/UHF FM handheld.
         let bt = "[modem]\nptt = \"bluetooth\"\n";
         assert_eq!(csma(bt), Some(CsmaMode::Sync));
         let bt_hf = "[modem]\nptt = \"bluetooth\"\npreset = \"hf-poor\"\n";
         assert_eq!(csma(bt_hf), Some(CsmaMode::Sync));
-        let digirig = "[modem]\nptt = \"digirig\"\npreset = \"vhf-fm\"\n";
-        assert_eq!(csma(digirig), Some(CsmaMode::Sync));
-        let hf = "[modem]\nptt = \"hamlib\"\npreset = \"hf-poor\"\n";
-        assert_eq!(csma(hf), Some(CsmaMode::Sync));
         // VOX keeps its -30 dB level gate whatever the setting.
         let vox = "[modem]\nptt = \"vox\"\ncsma_mode = \"sync\"\n";
         assert_eq!(csma(vox), None);
@@ -1008,10 +1055,11 @@ mod tests {
     fn csma_mode_can_be_set_by_hand() {
         let level = "[modem]\nptt = \"bluetooth\"\ncsma_mode = \"level\"\n";
         assert_eq!(csma(level), Some(CsmaMode::Level));
-        let sync = "[modem]\nptt = \"hamlib\"\npreset = \"hf-weak\"\ncsma_mode = \" Sync \"\n";
+        let sync = "[modem]\nptt = \"hamlib\"\npreset = \"hf-weak\"\ncsma_mode = \" Sync \"\n[rf]\nfrequency_khz = 7074\n";
         assert_eq!(csma(sync), Some(CsmaMode::Sync));
-        let level_hf = "[modem]\nptt = \"hamlib\"\npreset = \"hf-weak\"\ncsma_mode = \"level\"\n";
-        assert_eq!(csma(level_hf), Some(CsmaMode::Level));
+        let level_fm =
+            "[modem]\nptt = \"digirig\"\ncsma_mode = \"level\"\n[rf]\nfrequency_khz = 433625\n";
+        assert_eq!(csma(level_fm), Some(CsmaMode::Level));
     }
 
     #[test]

@@ -905,6 +905,8 @@ async fn burst(
                 }
                 "wait_clear" => {
                     lease::wait_clear(&ports, lease::WAIT_CLEAR_CAP).await;
+                    lease::wait_quiet(&ports, lease::quiet_before_key(), lease::WAIT_CLEAR_CAP)
+                        .await;
                 }
                 "pause" => {
                     if let Some(air) = &ports.air {

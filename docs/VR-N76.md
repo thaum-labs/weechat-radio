@@ -93,16 +93,18 @@ This needs the modem73 that comes with WeeChat Radio (it adds network audio); a 
 csma_mode = "auto"     # auto (default) | sync | level
 ```
 
-`auto` means `sync` on every preset, HF included: an HF receiver passes band noise all the time, which a level test reads as busy in the same way. `level` goes back to modem73's level test. VOX stations always keep the level test. With `sync`, signals modem73 cannot decode (voice, other data modes) do not count as busy, so listen before you leave a station running on a busy HF band. `modem73.log` shows the one in use at start: `CSMA: enabled (mode=sync, …)`.
+`auto` means `sync` on VHF/UHF FM (and always on a Bluetooth audio radio, which is an FM handheld) and `level` on HF, below 30 MHz. On HF the band is shared with SSB voice, FT8 and other data users that the sync test cannot see, so an HF station keeps listening for any audio above the threshold. `sync` and `level` set the test by hand. VOX stations always keep the level test. With `sync`, signals modem73 cannot decode (voice, other data modes) do not count as busy, so listen before you leave a station running. `auto` is decided when the station starts; `modem73.log` shows the one in use: `CSMA: enabled (mode=sync, …)`.
 
-**Transmit level.** modem73's audio already peaks at full scale, so WeeChat Radio cannot send it louder without clipping it: at +6 dB a quarter of each QPSK burst clipped and the far end's SNR went down (QA #239). The level that sets your deviation is the radio's own **Bluetooth mic gain** (0 to 7; in HTCommander: radio settings → Bluetooth Mic Gain). Raise it one step at a time and redo the transmit step of the quick signal check below; stop when the SNR stops improving. `bt_tx_level_db` in `[tnc]` can only lower the level (-20 to 0 dB), for a radio that distorts; higher values are treated as 0 and logged.
+**Transmit level.** modem73's audio already peaks at full scale, so WeeChat Radio cannot send it louder without clipping it: at +6 dB a quarter of each QPSK burst clipped and the far end's SNR went down (QA #239). The level that sets your deviation is the radio's own **Bluetooth mic gain** (0 to 7; in HTCommander: radio settings → Bluetooth Mic Gain). Start in the middle, then use the desktop app's **TX LVL** slider (or `/level tx <dB>`, saved as `[modem] tx_level_db`, -26 to 0 dB) to turn it down a step at a time while the far end reads its SNR: keep the level where the SNR stops improving. If 0 dB is still the best, raise the mic gain one step and try again. `bt_tx_level_db` in `[tnc]` still lowers the level too (-20 to 0 dB); higher values are treated as 0 and logged.
+
+**Receive level.** The radio's volume knob does not change its Bluetooth audio, so WeeChat Radio has its own **RX GAIN** slider (or `/level rx <dB>`, saved as `[tnc] bt_rx_level_db`, -30 to +12 dB). Set it so the IN meter's word reads good: at squelch 0 the hiss in the green band (-45 to -12 dBFS) and nothing clipping. The hint under the meter says which way to go.
 
 **Is the radio's audio arriving?** While the radio is linked, `/status` (and the station log every 10 s) shows `bt_rx_bytes` (about 11 KB/s even on a quiet channel, because the radio streams all the time), `bt_rx_frames` by frame type and `sbc_decode_errors`. Bytes stuck at 0 means nothing arrives over Bluetooth; bytes rising with decode errors rising too means the audio arrives but does not decode.
 
 **Quick signal check** (with a second station, such as a [Pi gateway](PI-GATEWAY.md#quick-signal-check-after-setup), on the same frequency and preset):
 
-1. **Receive:** when the other station sends, the station panel's audio in rises above the floor (not stuck at -80 dB) and its callsign shows in the heard list.
-2. **Transmit:** your beacon or a bulletin shows on the other station with a comfortable SNR. Target: 10 dB or more with the radios in the same room. Under 6 dB, look at the Bluetooth mic gain (transmit) or the far radio's squelch and volume (its receive).
+1. **Receive:** the IN meter moves (not stuck at -80 dB) and reads good, and when the other station sends its callsign shows in the heard list.
+2. **Transmit:** your beacon or a bulletin shows on the other station with a comfortable SNR. Target: 10 dB or more with the radios in the same room. Under 6 dB, try TX level 0, -6, -12 and -18 dB with the far end reading its SNR, and check the far radio's own receive meter.
 3. **Both ways:** a direct message of about 500 characters arrives whole, and you see `[ok rf]`.
 
 ## Linux

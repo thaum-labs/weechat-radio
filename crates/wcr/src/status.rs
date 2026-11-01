@@ -138,6 +138,88 @@ pub struct StatusSnapshot {
     /// stop exactly this station and its modem73 (#235). 0 from older nodes.
     #[serde(default)]
     pub pid: u32,
+    /// Highest capture sample in the last half second, dBFS (#241). `None`
+    /// when modem73 does not report it (older modem73, Windows).
+    #[serde(default)]
+    pub audio_in_peak_db: Option<f32>,
+    /// Capture samples at full scale in the last half second, % (#241).
+    #[serde(default)]
+    pub audio_in_clip_pct: Option<f32>,
+    /// RMS of the last frame modem73 decoded, dBFS.
+    #[serde(default)]
+    pub audio_in_frame_db: Option<f32>,
+    /// The receive level in a word (`good`, `low`, `high`, `clipping`,
+    /// `noisy`), empty when nothing measures it. See [`crate::levels`].
+    #[serde(default)]
+    pub audio_in_word: String,
+    /// What to do about the receive level, in plain words.
+    #[serde(default)]
+    pub audio_in_hint: String,
+    /// modem73's busy test: `sync`, `level`, or empty (no modem73).
+    #[serde(default)]
+    pub csma_mode: String,
+    /// The level test's threshold, dBFS, when `csma_mode` is `level`.
+    #[serde(default)]
+    pub csma_threshold_db: Option<f32>,
+    /// The RX gain wcr can set on this station, if any (#241).
+    #[serde(default)]
+    pub rx_gain: Option<RxGain>,
+    /// Why there is no RX gain here, when `rx_gain` is `None`.
+    #[serde(default)]
+    pub rx_gain_note: String,
+    /// Transmit level, dB (-26 to 0, #241).
+    #[serde(default)]
+    pub tx_level_db: f32,
+}
+
+/// An RX gain wcr can set: the sound card's mixer (`mixer`) or its own gain
+/// on Bluetooth audio (`bluetooth`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RxGain {
+    pub kind: String,
+    pub db: f32,
+    pub min_db: f32,
+    pub max_db: f32,
+    /// The mixer control (`Mic`), empty for Bluetooth.
+    #[serde(default)]
+    pub control: String,
+    /// The card's automatic gain, if it has one.
+    #[serde(default)]
+    pub agc: Option<bool>,
+}
+
+impl RxGain {
+    pub fn from_mixer(g: &crate::mixer::CaptureGain) -> Self {
+        Self {
+            kind: "mixer".into(),
+            db: g.db,
+            min_db: g.min_db,
+            max_db: g.max_db,
+            control: g.control.clone(),
+            agc: g.agc,
+        }
+    }
+
+    pub fn bluetooth(db: f32) -> Self {
+        Self {
+            kind: "bluetooth".into(),
+            db,
+            min_db: crate::levels::BT_RX_MIN_DB,
+            max_db: crate::levels::BT_RX_MAX_DB,
+            control: String::new(),
+            agc: None,
+        }
+    }
+
+    fn control(&self) -> crate::levels::RxControl {
+        let at_min = self.db <= self.min_db + 0.5;
+        let at_max = self.db >= self.max_db - 0.5;
+        if self.kind == "bluetooth" {
+            crate::levels::RxControl::Bluetooth { at_min, at_max }
+        } else {
+            crate::levels::RxControl::Mixer { at_min, at_max }
+        }
+    }
 }
 
 fn default_version() -> String {
@@ -241,6 +323,44 @@ impl StatusSnapshot {
         } else {
             "—".into()
         };
+        self.audio_in_peak_db = st.audio_in_peak_db;
+        self.audio_in_clip_pct = st.audio_in_clip_pct;
+        // The words need a live level: on Windows IN only moves on a decode,
+        // so an idle Windows station would always read "low".
+        let live = st.audio_in_db.is_some() || self.local_in_meter;
+        if !live {
+            self.audio_in_word.clear();
+            self.audio_in_hint.clear();
+        } else if !(st.ptt_on || st.channel_state.eq_ignore_ascii_case("tx")) {
+            // While we send, the input is our own transmission (or nothing):
+            // keep the last idle judgement.
+            self.judge_input();
+        }
+    }
+
+    /// Sets `audio_in_word` and `audio_in_hint` from the levels now.
+    pub fn judge_input(&mut self) {
+        let input = crate::levels::Input {
+            rms_db: self.audio_in_db,
+            peak_db: self.audio_in_peak_db,
+            clip_pct: self.audio_in_clip_pct,
+            frame_db: self.audio_in_frame_db,
+        };
+        let busy = crate::levels::Busy {
+            level_threshold_db: if self.csma_mode == "level" {
+                self.csma_threshold_db
+            } else {
+                None
+            },
+        };
+        let control = self
+            .rx_gain
+            .as_ref()
+            .map(|g| g.control())
+            .unwrap_or_default();
+        let (word, hint) = crate::levels::judge(input, busy, control);
+        self.audio_in_word = word.as_str().into();
+        self.audio_in_hint = hint;
     }
 
     pub fn prio_for_channel(&self, channel: &str) -> &str {
@@ -420,6 +540,16 @@ impl Default for StatusSnapshot {
             relayed: 0,
             relayed_unique: 0,
             pid: std::process::id(),
+            audio_in_peak_db: None,
+            audio_in_clip_pct: None,
+            audio_in_frame_db: None,
+            audio_in_word: String::new(),
+            audio_in_hint: String::new(),
+            csma_mode: String::new(),
+            csma_threshold_db: None,
+            rx_gain: None,
+            rx_gain_note: String::new(),
+            tx_level_db: 0.0,
         }
     }
 }
@@ -536,6 +666,52 @@ mod tests {
         assert_eq!(s.audio_in_db, -16.0);
         assert_eq!(s.audio_out_db, AUDIO_TX_NOMINAL_DB);
         assert_eq!(s.audio_label, "good");
+    }
+
+    /// QA #241: the Pi's -1.5 dBFS of squelch-0 hiss with a quarter of the
+    /// samples at full scale reads "clipping", with a hint naming the knob.
+    #[test]
+    fn the_input_is_judged_from_the_live_level() {
+        let mut s = StatusSnapshot {
+            csma_mode: "sync".into(),
+            rx_gain: Some(RxGain {
+                kind: "mixer".into(),
+                db: 17.9,
+                min_db: 0.0,
+                max_db: 23.81,
+                control: "Mic".into(),
+                agc: Some(false),
+            }),
+            ..StatusSnapshot::default()
+        };
+        let st = ModemStatus {
+            audio_connected: true,
+            audio_in_db: Some(-1.5),
+            audio_in_peak_db: Some(0.0),
+            audio_in_clip_pct: Some(26.0),
+            ..Default::default()
+        };
+        s.apply_modem_audio(&st);
+        assert_eq!(s.audio_in_word, "clipping");
+        assert!(s.audio_in_hint.contains("Lower RX gain"), "{}", s.audio_in_hint);
+        assert_eq!(s.audio_in_clip_pct, Some(26.0));
+        // While we send, the input is our own audio: the idle word stays.
+        let tx = ModemStatus {
+            audio_connected: true,
+            ptt_on: true,
+            audio_in_db: Some(-30.0),
+            ..Default::default()
+        };
+        s.apply_modem_audio(&tx);
+        assert_eq!(s.audio_in_word, "clipping");
+        // No live level (Windows' modem73): no word, rather than "low"
+        // between decodes.
+        let mut w = StatusSnapshot::default();
+        w.apply_modem_audio(&ModemStatus {
+            audio_connected: true,
+            ..Default::default()
+        });
+        assert_eq!(w.audio_in_word, "");
     }
 
     #[test]

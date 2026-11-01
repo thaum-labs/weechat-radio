@@ -117,13 +117,37 @@ Also in setup: **KISS TNC on a serial port** for Mobilinkd, `/dev/rfcomm0`, or a
 
 ## Audio too low / too hot / good
 
-The status bar reads the receive level from modem73.
+The Pi page (**Radio audio** card) and the desktop app (**IN** meter) show the receive level against a green target band, with a word and a hint that says what to change. `/level` prints the same in any client. Every radio and sound card is different, so set yours by the meter, not by a number from someone else's setup.
 
-- **low** — turn radio volume up, or raise the sound-card input.
-- **hot** — turn it down. Distortion kills data.
-- **good** — leave it.
+| Word | Means | Do |
+|---|---|---|
+| **good** | Idle hiss or band noise from −45 to −12 dBFS RMS (HF: from −55), nothing at full scale | Leave it. |
+| **low** | Under −45 dBFS (HF: −55). modem73 stops finding frames when all it hears is under about −58 | Radio volume up, or raise **RX gain**. |
+| **high** | Over −12 dBFS, or peaks within 1 dB of full scale: a loud signal will clip | A little down. |
+| **clipping** | 0.5 % or more of the samples at full scale | Down until the meter is green. |
+| **noisy** | HF only: idle noise above the busy threshold, so sends wait | Down until idle noise reads 3 dB under the threshold. |
 
-At squelch 0 an FM radio hisses louder than any signal, and an HF receiver always passes band noise. That is fine: modem73 only counts another station's data signal as busy, not noise (`[modem] csma_mode = "auto"`, the default; `level` goes back to an audio-level test, and VOX always uses that). Signals modem73 cannot decode, such as voice, do not count as busy either, so listen to the frequency before you leave a station running.
+At squelch 0 on FM the hiss is the loudest thing the radio passes, so set the level by the hiss. Anywhere in the green band decodes as well as anywhere else: in our test with two modem73s, hiss from −50 to −4 dBFS gave the same 35 dB SNR, as long as the signal did not clip. Clipping costs SNR: 4 % of samples at full scale cost 12 dB.
+
+**RX gain** (Pi page slider, desktop app **RX GAIN**, `/level rx <dB>`):
+
+- **Digirig or another USB sound card on Linux** (the Pi): wcr sets the card's own capture gain (`Mic` on a Digirig, 0 to +23.8 dB) and turns its automatic gain off. It is saved as `[modem] rx_gain_db` and set again at every start, with no sudo (the station's user is in the `audio` group). If RX gain is at its lowest and the meter still says clipping, turn the radio's volume down.
+- **VR-N76 / UV-PRO Bluetooth audio:** wcr's own gain on the radio's audio, −30 to +12 dB, saved as `[tnc] bt_rx_level_db`. The radio's volume knob does not change this audio.
+- **Elsewhere** (Windows, Mac sound cards): the radio's volume and the computer's input level.
+
+**TX level** (Pi page slider, desktop app **TX LVL**, `/level tx <dB>`, `[modem] tx_level_db`): −26 to 0 dB, and it only turns down, because modem73 already sends at full scale. Too much audio overdrives the radio's microphone input, and that distortion costs more than a weak signal: in our test, audio 6 dB into clipping cost 20 dB of SNR.
+
+How to set TX without test gear, with someone at the far end:
+
+1. Set the radio's own mic gain to the middle (on a VR-N76 the Bluetooth mic gain, in the radio's menu or its app).
+2. Send a line at TX level 0, then −6, −12 and −18 dB. The far end reads the SNR of each from its heard-stations list.
+3. Keep the level where the SNR stops getting better. Two radios in one room should reach 10 dB or more; under 6 dB, check levels at both ends.
+
+**Busy test before sending** (`[modem] csma_mode`, default `auto`):
+
+- **VHF/UHF FM:** at squelch 0 an FM radio hisses louder than any signal, so modem73 counts only another station's data signal as busy, not hiss (`sync`). Voice on the channel does not count as busy either, so listen to the frequency before you leave a station running.
+- **HF (below 30 MHz):** the band is shared with SSB voice, FT8 and other data users, so modem73 waits while any audio is above its threshold (`level`). Set the receive audio so the idle band noise sits below that threshold (see the input target below), or the station waits for a quiet moment that never comes.
+- `csma_mode = "sync"` or `"level"` sets the test by hand. VOX stations always use the level test.
 
 ---
 

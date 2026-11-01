@@ -124,9 +124,9 @@ impl Chat {
         json!({ "type": "hello", "me": st.me, "up": st.up, "convs": convs })
     }
 
-    /// Change the station's mode or preset with the same commands the desktop
-    /// app's pickers send (`/mode X`, `/preset X`, #226). Nothing else is
-    /// accepted, so the page cannot run other commands.
+    /// Change the station's mode, preset or levels with the same commands the
+    /// desktop app sends (`/mode X`, `/preset X`, #226; `/level rx|tx X`,
+    /// #241). Nothing else is accepted, so the page cannot run other commands.
     pub fn radio_setting(&self, what: &str, value: &str) -> Result<(), String> {
         let cmd = match what {
             "mode" => {
@@ -143,7 +143,18 @@ impl Chat {
                     .ok_or_else(|| format!("unknown preset {value}"))?;
                 format!("/preset {}", p.as_str())
             }
-            _ => return Err("only mode and preset can be changed here".into()),
+            // The level sliders (#241): the same /level the desktop app sends.
+            "rx_gain" | "tx_level" => {
+                let db: f32 = value
+                    .trim()
+                    .parse()
+                    .ok()
+                    .filter(|d: &f32| d.is_finite())
+                    .ok_or_else(|| format!("{value} is not a number of dB"))?;
+                let knob = if what == "rx_gain" { "rx" } else { "tx" };
+                format!("/level {knob} {db:.1}")
+            }
+            _ => return Err("only mode, preset and the levels can be changed here".into()),
         };
         if !self.state.lock().up {
             return Err("the station is not running".into());

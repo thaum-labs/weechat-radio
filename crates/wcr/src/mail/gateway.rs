@@ -38,6 +38,8 @@ pub const NO_GATEWAY_ACK: &str =
 pub const RADIO_NOT_RUNNING: &str = "Radio is not running.";
 pub const GATEWAY_NOT_ACCEPTED: &str = "Gateway has the message, but it was not accepted.";
 pub const TX_STUCK: &str = "Timed out while transmitting. The message stayed at tx.";
+/// Set at start on mail an earlier run was still sending (QA #241).
+pub const STOPPED_MID_SEND: &str = "The station stopped before this mail was confirmed, so it may or may not have arrived. Retry sends it again: a gateway that already has it only confirms it.";
 
 /// Longer than one hf-poor VOX pass (idle wait, drain, lead, and tail).
 pub const TX_STUCK_AFTER_SECS: u64 = 300;
