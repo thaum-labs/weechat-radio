@@ -55,7 +55,7 @@
           <p>v1.0.12</p>
           <p>Sun, 1 Nov 2026</p>
         </h3>
-        <pre>Data needs squelch 0, and at squelch 0 an FM radio hisses louder than any signal it hears. modem73 took that hiss for a busy channel, so a VR-N76 over Bluetooth audio heard everything but never sent. A Bluetooth radio, and any station on the VHF/UHF FM presets, now only counts another station's data signal as busy, not hiss. A new setting, [modem] csma_mode, can set this by hand.
+        <pre>Data needs squelch 0, and at squelch 0 an FM radio hisses louder than any signal it hears. modem73 took that hiss for a busy channel, so a VR-N76 over Bluetooth audio heard everything but never sent. Every station except VOX now counts only another station's data signal as busy, not hiss or HF band noise. A new setting, [modem] csma_mode, can set this by hand.
 
 [tnc] bt_tx_level_db can now only lower the Bluetooth transmit level. modem73 already sends at full scale, so raising it only clipped the signal. To send louder, raise the radio's own Bluetooth mic gain.
 

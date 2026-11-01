@@ -238,26 +238,17 @@ impl ModemConfig {
 
     /// The busy test to start modem73 with, or `None` to leave modem73 at its
     /// default (level). An FM radio at squelch 0 streams hiss louder than any
-    /// signal (QA #239: -4 dBFS hiss, -45 dBFS under a carrier), so a level
-    /// gate reads the channel busy all the time and never sends. `auto`
-    /// therefore picks `sync` for Bluetooth audio radios and for the VHF/UHF
-    /// FM presets, and `level` (modem73's default) for HF. VOX keeps its level
-    /// gate whatever the setting.
+    /// signal (QA #239: -4 dBFS hiss, -45 dBFS under a carrier), and an HF
+    /// receiver passes band noise all the time, so a level gate reads the
+    /// channel busy and never sends. `auto` therefore means `sync` (Tobias,
+    /// #239: HF too). VOX keeps its level gate whatever the setting.
     pub fn csma_mode(&self) -> Option<CsmaMode> {
         if self.is_vox() {
             return None;
         }
         match self.csma_mode.trim().to_ascii_lowercase().as_str() {
             "level" | "threshold" => Some(CsmaMode::Level),
-            "sync" => Some(CsmaMode::Sync),
-            _ => {
-                // Same fallback as the modem73 launch: unknown = vhf-fm.
-                let fm = crate::presets::Preset::parse(&self.preset)
-                    .unwrap_or(crate::presets::Preset::VhfFm)
-                    .csma_band()
-                    == 1;
-                (self.is_bt_audio() || fm).then_some(CsmaMode::Sync)
-            }
+            _ => Some(CsmaMode::Sync),
         }
     }
 
@@ -994,10 +985,11 @@ mod tests {
         cfg.modem.csma_mode()
     }
 
-    /// #239: a VR-N76 at squelch 0 streams hiss at -4 dBFS, so a level gate
-    /// never lets modem73 send. Bluetooth audio and VHF/UHF FM use sync.
+    /// #239: a VR-N76 at squelch 0 streams hiss at -4 dBFS (a Pi's BF-1909
+    /// at -1 dBFS), so a level gate never lets modem73 send. Every station
+    /// but VOX uses sync, HF too.
     #[test]
-    fn csma_auto_uses_sync_where_open_squelch_hiss_would_hold_transmit() {
+    fn csma_auto_uses_sync_where_noise_would_hold_transmit() {
         assert_eq!(ModemConfig::default().csma_mode, "auto");
         let bt = "[modem]\nptt = \"bluetooth\"\n";
         assert_eq!(csma(bt), Some(CsmaMode::Sync));
@@ -1005,9 +997,8 @@ mod tests {
         assert_eq!(csma(bt_hf), Some(CsmaMode::Sync));
         let digirig = "[modem]\nptt = \"digirig\"\npreset = \"vhf-fm\"\n";
         assert_eq!(csma(digirig), Some(CsmaMode::Sync));
-        // HF stays on modem73's own level gate.
         let hf = "[modem]\nptt = \"hamlib\"\npreset = \"hf-poor\"\n";
-        assert_eq!(csma(hf), None);
+        assert_eq!(csma(hf), Some(CsmaMode::Sync));
         // VOX keeps its -30 dB level gate whatever the setting.
         let vox = "[modem]\nptt = \"vox\"\ncsma_mode = \"sync\"\n";
         assert_eq!(csma(vox), None);
@@ -1019,6 +1010,8 @@ mod tests {
         assert_eq!(csma(level), Some(CsmaMode::Level));
         let sync = "[modem]\nptt = \"hamlib\"\npreset = \"hf-weak\"\ncsma_mode = \" Sync \"\n";
         assert_eq!(csma(sync), Some(CsmaMode::Sync));
+        let level_hf = "[modem]\nptt = \"hamlib\"\npreset = \"hf-weak\"\ncsma_mode = \"level\"\n";
+        assert_eq!(csma(level_hf), Some(CsmaMode::Level));
     }
 
     #[test]

@@ -93,7 +93,7 @@ This needs the modem73 that comes with WeeChat Radio (it adds network audio); a 
 csma_mode = "auto"     # auto (default) | sync | level
 ```
 
-`auto` means `sync` for a Bluetooth audio radio and for the VHF/UHF FM presets, and modem73's level test for HF. VOX stations always keep the level test. `modem73.log` shows the one in use at start: `CSMA: enabled (mode=sync, …)`.
+`auto` means `sync` on every preset, HF included: an HF receiver passes band noise all the time, which a level test reads as busy in the same way. `level` goes back to modem73's level test. VOX stations always keep the level test. With `sync`, signals modem73 cannot decode (voice, other data modes) do not count as busy, so listen before you leave a station running on a busy HF band. `modem73.log` shows the one in use at start: `CSMA: enabled (mode=sync, …)`.
 
 **Transmit level.** modem73's audio already peaks at full scale, so WeeChat Radio cannot send it louder without clipping it: at +6 dB a quarter of each QPSK burst clipped and the far end's SNR went down (QA #239). The level that sets your deviation is the radio's own **Bluetooth mic gain** (0 to 7; in HTCommander: radio settings → Bluetooth Mic Gain). Raise it one step at a time and redo the transmit step of the quick signal check below; stop when the SNR stops improving. `bt_tx_level_db` in `[tnc]` can only lower the level (-20 to 0 dB), for a radio that distorts; higher values are treated as 0 and logged.
 

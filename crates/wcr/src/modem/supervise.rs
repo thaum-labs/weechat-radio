@@ -340,7 +340,10 @@ mod tests {
             csma_mode_args(&m("bluetooth", "vhf-fm", "level")).join(" "),
             "--csma-mode threshold"
         );
-        assert!(csma_mode_args(&m("hamlib", "hf-poor", "auto")).is_empty());
+        assert_eq!(
+            csma_mode_args(&m("hamlib", "hf-poor", "auto")).join(" "),
+            "--csma-mode sync"
+        );
         assert!(csma_mode_args(&m("vox", "vox-safe", "sync")).is_empty());
     }
 
