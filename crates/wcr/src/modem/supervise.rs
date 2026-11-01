@@ -1,7 +1,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //! Optional supervision of `modem73 --headless`.
 
-use crate::config::Config;
+use crate::config::{Config, CsmaMode, ModemConfig};
 use crate::error::{Error, Result};
 use crate::modem::ensure;
 use crate::presets::Preset;
@@ -42,6 +42,17 @@ fn set_csma_threshold(args: &mut Vec<String>, db: i16) {
         args.drain(i..(i + 2).min(args.len()));
     }
     args.extend(["--csma-threshold".into(), db.to_string()]);
+}
+
+/// `--csma-mode` from `[modem] csma_mode` (#239). Set at launch: modem73
+/// builds each frame's CSMA gate once, so a change over the control port
+/// would not free a frame already waiting.
+pub(crate) fn csma_mode_args(m: &ModemConfig) -> Vec<String> {
+    match m.csma_mode() {
+        Some(CsmaMode::Sync) => vec!["--csma-mode".into(), "sync".into()],
+        Some(CsmaMode::Level) => vec!["--csma-mode".into(), "threshold".into()],
+        None => Vec::new(),
+    }
 }
 
 /// Address modem73 listens on, for KISS and its control port. modem73's own
@@ -127,6 +138,7 @@ impl ModemProcess {
         if cfg.modem.is_vox() {
             set_csma_threshold(&mut args, Preset::VOX_CSMA_THRESHOLD_DB);
         }
+        args.extend(csma_mode_args(&cfg.modem));
         match cfg.modem.ptt.as_str() {
             "vox" => {
                 args.extend([
@@ -310,6 +322,29 @@ mod tests {
             .collect();
         assert_eq!(at.len(), 1);
         assert_eq!(args[at[0] + 1], "-30");
+    }
+
+    #[test]
+    fn csma_mode_goes_to_modem73_at_launch() {
+        let m = |ptt: &str, preset: &str, mode: &str| ModemConfig {
+            ptt: ptt.into(),
+            preset: preset.into(),
+            csma_mode: mode.into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            csma_mode_args(&m("bluetooth", "vhf-fm", "auto")).join(" "),
+            "--csma-mode sync"
+        );
+        assert_eq!(
+            csma_mode_args(&m("bluetooth", "vhf-fm", "level")).join(" "),
+            "--csma-mode threshold"
+        );
+        assert_eq!(
+            csma_mode_args(&m("hamlib", "hf-poor", "auto")).join(" "),
+            "--csma-mode sync"
+        );
+        assert!(csma_mode_args(&m("vox", "vox-safe", "sync")).is_empty());
     }
 
     #[tokio::test]

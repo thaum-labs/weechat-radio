@@ -21,7 +21,7 @@ On the web: https://weechatradio.com/guides/handheld.html
 ### Steps
 
 1. Plug the Digirig into the computer. Plug the audio/PTT cable into the radio's speaker-mic jack.
-2. Turn the radio on. Set **FM**, simplex (one frequency, not a repeater), low power. Disable voice scramble and VOX on the radio itself.
+2. Turn the radio on. Set **FM**, simplex (one frequency, not a repeater), low power, **squelch 0**. Disable voice scramble and VOX on the radio itself.
 3. Note the serial port:
    - Windows: Device Manager → Ports (COM & LPT), for example `COM5`
    - Linux: `ls /dev/ttyUSB* /dev/ttyACM*`
@@ -122,6 +122,8 @@ The status bar reads the receive level from modem73.
 - **low** — turn radio volume up, or raise the sound-card input.
 - **hot** — turn it down. Distortion kills data.
 - **good** — leave it.
+
+At squelch 0 an FM radio hisses louder than any signal, and an HF receiver always passes band noise. That is fine: modem73 only counts another station's data signal as busy, not noise (`[modem] csma_mode = "auto"`, the default; `level` goes back to an audio-level test, and VOX always uses that). Signals modem73 cannot decode, such as voice, do not count as busy either, so listen to the frequency before you leave a station running.
 
 ---
 

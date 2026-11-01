@@ -68,7 +68,7 @@ The preset is fixed at `afsk-1200` (the radio modulates); the robustness ladder 
 
 The second way to use these radios: WeeChat Radio sends **modem73 audio** over the radio's Bluetooth link instead of using the 1200 bd TNC. Same no-cable setup, but you get the modem73 modes (faster, and the robustness ladder works).
 
-1. On the radio: **squelch 0 or 1**, **KISS TNC off**, **Digital Mode off**, then **Menu → Pairing**. Close the HT phone app. Data bursts are short, and at squelch 1 a VR-N76 only just opened on a Pi gateway's beacon; set the radios at the other end to squelch 0 or 1 as well.
+1. On the radio: **squelch 0**, **KISS TNC off**, **Digital Mode off**, then **Menu → Pairing**. Close the HT phone app. Data bursts are short: at squelch 1 a VR-N76 chopped a Pi gateway's bursts and decoded none of them (QA #239). Set the radios at the other end to squelch 0 as well.
 2. In setup choose **VR-N76 / UV-PRO / GA-5WB (Bluetooth audio, modem73)** or **VR-N7600 (Bluetooth audio, modem73)**, press **Find radio** (macOS: pair the radio in System Settings → Bluetooth first), then **Save and start**.
 3. **RADIO** reads `VR-N76 linked` in green, or `lost, reconnecting…` in red; the app reconnects by itself every 5 s.
 
@@ -86,21 +86,23 @@ bt_name = "VR-N76"      # or bt_addr = "38:D2:00:01:03:49"
 
 This needs the modem73 that comes with WeeChat Radio (it adds network audio); a stock modem73 is refused with a clear message.
 
-**Transmit level.** By default WeeChat Radio sends modem73's audio at modem73's own level (SBC bitpool 18, like the HT app). If the far end decodes you only at a low SNR, raise it in `wcr.toml` and restart the station:
+**Squelch 0 and sending.** At squelch 0 the radio streams its receiver hiss all the time, and the hiss is louder than a station's signal (QA #239: about -4 dBFS of hiss, -45 dBFS under a carrier). A busy test on audio level would never find the channel free, so WeeChat Radio starts modem73 with its sync busy test: only another station's data signal (modem73's sync or lead tone) counts as busy, not hiss. This is `csma_mode` in `[modem]`:
 
 ```toml
-[tnc]
-bt_tx_level_db = 3      # -20 to +12; 0 = modem73's own level
+[modem]
+csma_mode = "auto"     # auto (default) | sync | level
 ```
 
-Go up 2 to 3 dB at a time and redo the transmit step of the quick signal check below. Stop when the SNR stops improving or gets worse: too much level clips and distorts the signal.
+`auto` means `sync` on every preset, HF included: an HF receiver passes band noise all the time, which a level test reads as busy in the same way. `level` goes back to modem73's level test. VOX stations always keep the level test. With `sync`, signals modem73 cannot decode (voice, other data modes) do not count as busy, so listen before you leave a station running on a busy HF band. `modem73.log` shows the one in use at start: `CSMA: enabled (mode=sync, …)`.
+
+**Transmit level.** modem73's audio already peaks at full scale, so WeeChat Radio cannot send it louder without clipping it: at +6 dB a quarter of each QPSK burst clipped and the far end's SNR went down (QA #239). The level that sets your deviation is the radio's own **Bluetooth mic gain** (0 to 7; in HTCommander: radio settings → Bluetooth Mic Gain). Raise it one step at a time and redo the transmit step of the quick signal check below; stop when the SNR stops improving. `bt_tx_level_db` in `[tnc]` can only lower the level (-20 to 0 dB), for a radio that distorts; higher values are treated as 0 and logged.
 
 **Is the radio's audio arriving?** While the radio is linked, `/status` (and the station log every 10 s) shows `bt_rx_bytes` (about 11 KB/s even on a quiet channel, because the radio streams all the time), `bt_rx_frames` by frame type and `sbc_decode_errors`. Bytes stuck at 0 means nothing arrives over Bluetooth; bytes rising with decode errors rising too means the audio arrives but does not decode.
 
 **Quick signal check** (with a second station, such as a [Pi gateway](PI-GATEWAY.md#quick-signal-check-after-setup), on the same frequency and preset):
 
 1. **Receive:** when the other station sends, the station panel's audio in rises above the floor (not stuck at -80 dB) and its callsign shows in the heard list.
-2. **Transmit:** your beacon or a bulletin shows on the other station with a comfortable SNR (well above 10 dB in the same room).
+2. **Transmit:** your beacon or a bulletin shows on the other station with a comfortable SNR. Target: 10 dB or more with the radios in the same room. Under 6 dB, look at the Bluetooth mic gain (transmit) or the far radio's squelch and volume (its receive).
 3. **Both ways:** a direct message of about 500 characters arrives whole, and you see `[ok rf]`.
 
 ## Linux
