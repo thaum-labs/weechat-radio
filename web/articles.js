@@ -25,6 +25,7 @@
     { href: "/guides/windows.html", cat: "install", title: "Windows setup", desc: "PowerShell install, then the chat window.", keywords: "install pc powershell" },
     { href: "/guides/macos.html", cat: "install", title: "macOS setup", desc: "One-line installer, then the chat window.", keywords: "install mac apple homebrew" },
     { href: "/guides/linux.html", cat: "install", title: "Linux setup", desc: "Install, then USB radio permission if you need it.", keywords: "install ubuntu debian usb permission" },
+    { href: "/guides/pi.html", cat: "install", title: "Raspberry Pi gateway", desc: "An always-on station on a Pi and a Digirig, run from a phone browser.", keywords: "raspberry pi gateway digirig headless server web browser always-on" },
     { href: "/guides/weechat.html", cat: "install", title: "WeeChat", desc: "Use the WeeChat program instead of the built-in window.", keywords: "irc client terminal" },
     // guides: Connect a radio
     { href: "/guides/radio.html", cat: "connect-a-radio", title: "Pick a radio path", desc: "Four setups. Choose the picture that matches your station.", keywords: "radio setup chooser cable" },

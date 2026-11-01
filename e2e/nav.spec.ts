@@ -48,6 +48,7 @@ const PAGES: [string, string | null][] = [
   ["/guides/hf.html", "guides"],
   ["/guides/linux.html", "guides"],
   ["/guides/macos.html", "guides"],
+  ["/guides/pi.html", "guides"],
   ["/guides/radio.html", "guides"],
   ["/guides/radios.html", "guides"],
   ["/guides/start.html", "guides"],

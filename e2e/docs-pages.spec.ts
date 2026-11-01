@@ -28,6 +28,7 @@ const PAGES = [
   "/guides/hf.html",
   "/guides/linux.html",
   "/guides/macos.html",
+  "/guides/pi.html",
   "/guides/radio.html",
   "/guides/radios.html",
   "/guides/start.html",
@@ -239,7 +240,7 @@ test("the skip link is the first Tab stop on both indexes", async ({ page }) => 
 });
 
 for (const width of [390, 360]) {
-  test(`the indexes fit a ${width} px phone: no sideways scroll, a sticky jump bar, under 2400 px`, async ({ page }) => {
+  test(`the indexes fit a ${width} px phone: no sideways scroll, a sticky jump bar, under 2500 px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await page.emulateMedia({ reducedMotion: "reduce" });
     for (const index of ["/guides.html", "/docs.html"]) {
@@ -250,7 +251,7 @@ for (const width of [390, 360]) {
         height: document.documentElement.scrollHeight,
       }));
       expect(size.sideways, `${index} sideways scroll`).toBeLessThanOrEqual(0);
-      if (width === 390) expect(size.height, `${index} height`).toBeLessThanOrEqual(2400);
+      if (width === 390) expect(size.height, `${index} height`).toBeLessThanOrEqual(2500);
       const cut = await page.$$eval(".section-lead", (ps) => ps.filter((p) => p.scrollWidth > p.clientWidth).map((p) => p.textContent));
       expect(cut, `${index} section intro lines wrap, not cut`).toEqual([]);
       const rows = await page.$$eval("section[data-cat] a.guide-card", (as) => as.map((a) => a.getBoundingClientRect().height));
