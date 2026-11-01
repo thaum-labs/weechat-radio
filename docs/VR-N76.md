@@ -86,7 +86,16 @@ bt_name = "VR-N76"      # or bt_addr = "38:D2:00:01:03:49"
 
 This needs the modem73 that comes with WeeChat Radio (it adds network audio); a stock modem73 is refused with a clear message.
 
-WeeChat Radio has no transmit level setting for Bluetooth audio: it sends modem73's audio at the radio's own SBC rate (bitpool 18, like the HT app). If you hear the radio key up but the far end does not decode it, tell us (with the SNR the far end shows).
+**Transmit level.** By default WeeChat Radio sends modem73's audio at modem73's own level (SBC bitpool 18, like the HT app). If the far end decodes you only at a low SNR, raise it in `wcr.toml` and restart the station:
+
+```toml
+[tnc]
+bt_tx_level_db = 3      # -20 to +12; 0 = modem73's own level
+```
+
+Go up 2 to 3 dB at a time and redo the transmit step of the quick signal check below. Stop when the SNR stops improving or gets worse: too much level clips and distorts the signal.
+
+**Is the radio's audio arriving?** While the radio is linked, `/status` (and the station log every 10 s) shows `bt_rx_bytes` (about 11 KB/s even on a quiet channel, because the radio streams all the time), `bt_rx_frames` by frame type and `sbc_decode_errors`. Bytes stuck at 0 means nothing arrives over Bluetooth; bytes rising with decode errors rising too means the audio arrives but does not decode.
 
 **Quick signal check** (with a second station, such as a [Pi gateway](PI-GATEWAY.md#quick-signal-check-after-setup), on the same frequency and preset):
 

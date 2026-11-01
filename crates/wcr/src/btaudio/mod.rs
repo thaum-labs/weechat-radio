@@ -45,6 +45,11 @@ const TX_PREROLL: Duration = Duration::from_millis(300);
 /// Stuck-PTT guard: unkey the radio after this long whatever modem73 says.
 const TX_LIMIT: Duration = Duration::from_secs(120);
 const RETRY: Duration = Duration::from_secs(5);
+/// How often the receive counters go to the log while linked.
+const RX_LOG_EVERY: Duration = Duration::from_secs(10);
+/// Allowed range for `[tnc] bt_tx_level_db`.
+const TX_LEVEL_MIN_DB: f32 = -20.0;
+const TX_LEVEL_MAX_DB: f32 = 12.0;
 
 /// Presets that survive the radio's FM + SBC audio path. 8PSK (`hf-good`)
 /// fails over the air (HTCommander's measurements, #202); `vox-safe` is for
@@ -86,6 +91,8 @@ struct Shared {
     rx: Mutex<VecDeque<f32>>,
     /// Framed bytes for the radio; `None` while the radio is not linked.
     to_radio: Mutex<Option<mpsc::Sender<Vec<u8>>>>,
+    /// Linear gain on modem73's transmit audio (`[tnc] bt_tx_level_db`).
+    tx_gain: f32,
 }
 
 impl Shared {
@@ -112,8 +119,9 @@ pub fn ensure_started(cfg: &crate::config::Config, snap: Arc<SharedStatus>) -> i
     }
     let tnc = cfg.tnc.clone();
     let snap_c = snap.clone();
+    let level = tnc.bt_tx_level_db;
     let connector: Connector = Box::new(move || connect_radio(&tnc, &snap_c));
-    let ports = start(connector, snap)?;
+    let ports = start_with_level(connector, snap, level)?;
     Ok(*RUNNING.get_or_init(|| ports))
 }
 
@@ -151,13 +159,41 @@ fn set_status(snap: &SharedStatus, text: String, ok: bool) {
 
 /// Starts the bridge with any radio connector (tests use a fake radio).
 pub fn start(connector: Connector, snap: Arc<SharedStatus>) -> io::Result<Ports> {
+    start_with_level(connector, snap, 0.0)
+}
+
+/// The transmit gain for a `[tnc] bt_tx_level_db` setting, kept in range.
+pub fn tx_gain(level_db: f32) -> f32 {
+    let db = if level_db.is_finite() {
+        level_db.clamp(TX_LEVEL_MIN_DB, TX_LEVEL_MAX_DB)
+    } else {
+        0.0
+    };
+    10f32.powf(db / 20.0)
+}
+
+/// [`start`] with a transmit level change in dB (0 = modem73's own level).
+pub fn start_with_level(
+    connector: Connector,
+    snap: Arc<SharedStatus>,
+    tx_level_db: f32,
+) -> io::Result<Ports> {
     let audio = TcpListener::bind("127.0.0.1:0")?;
     let rigctl = TcpListener::bind("127.0.0.1:0")?;
     let ports = Ports {
         audio: audio.local_addr()?.port(),
         rigctl: rigctl.local_addr()?.port(),
     };
-    let shared = Arc::new(Shared::default());
+    let shared = Arc::new(Shared {
+        tx_gain: tx_gain(tx_level_db),
+        ..Shared::default()
+    });
+    if tx_level_db != 0.0 {
+        tracing::info!(
+            "btaudio: transmit level {:+.1} dB",
+            20.0 * shared.tx_gain.log10()
+        );
+    }
 
     let sh = shared.clone();
     std::thread::Builder::new()
@@ -218,7 +254,7 @@ fn serve_rigctl(conn: TcpStream, sh: &Shared) {
 
 /// Keeps the radio's audio channel open: reads its audio into the RX queue
 /// and runs a writer for what the clock sends it.
-fn radio_manager(mut connector: Connector, sh: &Shared, snap: &SharedStatus) {
+fn radio_manager(mut connector: Connector, sh: &Shared, snap: &Arc<SharedStatus>) {
     loop {
         let conn = match connector() {
             Ok(c) => c,
@@ -252,20 +288,32 @@ fn radio_manager(mut connector: Connector, sh: &Shared, snap: &SharedStatus) {
         tracing::info!("btaudio: {label} audio linked");
 
         let mut deframer = frame::Deframer::default();
+        let mut types = TypeCounter::default();
         let mut decode = sbc::Decode::default();
         let mut up = Resampler::radio_to_modem();
         let mut buf = [0u8; 2048];
         let mut pcm = Vec::new();
         let mut at48 = Vec::new();
+        let linked = Arc::new(AtomicBool::new(true));
+        spawn_rx_log(label.clone(), snap.clone(), linked.clone());
         let why = loop {
             match reader.read(&mut buf) {
                 Ok(0) if zero_is_eof => break "closed".to_string(),
                 Ok(0) => continue,
-                Ok(n) => deframer.push(&buf[..n], |m| {
-                    if let frame::Message::Audio(bytes) = m {
-                        decode.push(&bytes, &mut pcm);
-                    }
-                }),
+                Ok(n) => {
+                    let mut stats = snap.lock();
+                    stats.bt_rx_bytes += n as u64;
+                    types.push(&buf[..n], &mut stats.bt_rx_frames);
+                    deframer.push(&buf[..n], |m| {
+                        if let frame::Message::Audio(bytes) = m {
+                            let before = pcm.len();
+                            decode.push(&bytes, &mut pcm);
+                            if pcm.len() - before < expected_samples(&bytes) {
+                                stats.sbc_decode_errors += 1;
+                            }
+                        }
+                    });
+                }
                 Err(e) if e.kind() == io::ErrorKind::TimedOut => continue,
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                 Err(e) => break e.to_string(),
@@ -280,11 +328,100 @@ fn radio_manager(mut connector: Connector, sh: &Shared, snap: &SharedStatus) {
             let over = q.len().saturating_sub(RX_QUEUE_MAX);
             q.drain(..over);
         };
+        linked.store(false, Ordering::SeqCst);
         *sh.to_radio.lock() = None;
         tracing::warn!("btaudio: {label} audio lost ({why}), reconnecting");
         set_status(snap, format!("{label} lost, reconnecting…"), false);
         std::thread::sleep(RETRY);
     }
+}
+
+const RX_FLAG: u8 = 0x7E;
+const RX_ESCAPE: u8 = 0x7D;
+
+/// Counts the radio's messages by frame type: the first byte after a flag.
+/// (The deframer folds 0x00 and 0x03 into one kind of audio, and QA needs
+/// to see which the radio sends.)
+#[derive(Default)]
+struct TypeCounter {
+    after_flag: bool,
+    escaped: bool,
+}
+
+impl TypeCounter {
+    fn push(&mut self, bytes: &[u8], counts: &mut crate::status::BtRxFrames) {
+        for &b in bytes {
+            if b == RX_FLAG {
+                self.after_flag = true;
+                self.escaped = false;
+            } else if self.after_flag {
+                if b == RX_ESCAPE && !self.escaped {
+                    self.escaped = true;
+                    continue;
+                }
+                counts.count(if self.escaped { b ^ 0x20 } else { b });
+                self.after_flag = false;
+                self.escaped = false;
+            }
+        }
+    }
+}
+
+/// PCM samples an audio message should decode to: its SBC frames, sized
+/// from the first frame's header, with a cut-off last frame counted whole
+/// (it is lost, so it counts as an error). `usize::MAX` when the message
+/// does not start with an SBC header at all.
+fn expected_samples(sbc: &[u8]) -> usize {
+    if sbc.is_empty() {
+        return 0;
+    }
+    if sbc.len() < 3 || sbc[0] != 0x9C {
+        return usize::MAX;
+    }
+    let h = sbc[1];
+    let blocks = 4 * (((h >> 4) & 3) as usize + 1);
+    let mode = (h >> 2) & 3;
+    let subbands = if h & 1 == 1 { 8 } else { 4 };
+    let bitpool = sbc[2] as usize;
+    let channels = if mode == 0 { 1 } else { 2 };
+    let data_bits = match mode {
+        0 | 1 => blocks * channels * bitpool,
+        2 => blocks * bitpool,
+        _ => subbands + blocks * bitpool,
+    };
+    let frame_len = 4 + (4 * subbands * channels) / 8 + data_bits.div_ceil(8);
+    sbc.len().div_ceil(frame_len) * blocks * subbands * channels
+}
+
+/// Logs the receive counters every [`RX_LOG_EVERY`] while `linked`, from
+/// its own thread so "no bytes at all" shows up too.
+fn spawn_rx_log(label: String, snap: Arc<SharedStatus>, linked: Arc<AtomicBool>) {
+    let _ = std::thread::Builder::new()
+        .name("bt-rx-log".into())
+        .spawn(move || {
+            let mut last = snap.lock().bt_rx_bytes;
+            loop {
+                std::thread::sleep(RX_LOG_EVERY);
+                if !linked.load(Ordering::SeqCst) {
+                    return;
+                }
+                let s = snap.lock();
+                let f = s.bt_rx_frames;
+                let rate = s.bt_rx_bytes.saturating_sub(last) / RX_LOG_EVERY.as_secs();
+                last = s.bt_rx_bytes;
+                tracing::info!(
+                    "btaudio: {label} rx {} B ({rate} B/s), frames 0x00={} 0x01={} 0x02={} 0x03={} 0x09={} other={}, sbc errors {}",
+                    s.bt_rx_bytes,
+                    f.t00,
+                    f.t01,
+                    f.t02,
+                    f.t03,
+                    f.t09,
+                    f.other,
+                    s.sbc_decode_errors
+                );
+            }
+        });
 }
 
 /// What to send the radio while modem73's PTT is held.
@@ -322,7 +459,12 @@ impl Transmit {
             return;
         }
         let mut at32 = Vec::new();
-        self.down.process(samples, &mut at32);
+        if sh.tx_gain == 1.0 {
+            self.down.process(samples, &mut at32);
+        } else {
+            let louder: Vec<f32> = samples.iter().map(|v| v * sh.tx_gain).collect();
+            self.down.process(&louder, &mut at32);
+        }
         let pcm: Vec<i16> = at32.iter().map(|&v| to_i16(v)).collect();
         let sbc = self.encode.push(&pcm);
         self.hold(&sbc);

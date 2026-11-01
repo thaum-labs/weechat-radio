@@ -66,6 +66,16 @@ pub struct StatusSnapshot {
     /// True while the KISS link to the radio is up.
     #[serde(default)]
     pub tnc_ok: bool,
+    /// Bluetooth audio: bytes read from the radio's audio channel since the
+    /// station started. Rises ~11 KB/s while linked, even on a quiet channel.
+    #[serde(default)]
+    pub bt_rx_bytes: u64,
+    /// Bluetooth audio messages from the radio, by frame type.
+    #[serde(default)]
+    pub bt_rx_frames: BtRxFrames,
+    /// Bluetooth audio messages whose SBC audio did not decode whole.
+    #[serde(default)]
+    pub sbc_decode_errors: u64,
     /// Version of the managed modem73 binary, e.g. `2.4.2`. Empty when unknown.
     #[serde(default)]
     pub modem73: String,
@@ -388,6 +398,9 @@ impl Default for StatusSnapshot {
             deferred: false,
             tnc: String::new(),
             tnc_ok: false,
+            bt_rx_bytes: 0,
+            bt_rx_frames: BtRxFrames::default(),
+            sbc_decode_errors: 0,
             modem73: String::new(),
             freq_khz: 0,
             band: String::new(),
@@ -421,6 +434,42 @@ pub fn group_prio_summary(prios: &[GroupPrioBrief]) -> String {
         .map(|g| format!("{}={}", g.channel.trim_start_matches('#'), g.priority))
         .collect::<Vec<_>>()
         .join(",")
+}
+
+/// Bluetooth audio messages received from the radio, by frame type (QA #237):
+/// 0x00 / 0x03 are received audio, 0x01 end of audio, 0x02 ack, 0x09 the
+/// radio's echo of our own transmit.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BtRxFrames {
+    #[serde(rename = "0x00")]
+    pub t00: u64,
+    #[serde(rename = "0x01")]
+    pub t01: u64,
+    #[serde(rename = "0x02")]
+    pub t02: u64,
+    #[serde(rename = "0x03")]
+    pub t03: u64,
+    #[serde(rename = "0x09")]
+    pub t09: u64,
+    pub other: u64,
+}
+
+impl BtRxFrames {
+    pub fn count(&mut self, kind: u8) {
+        match kind {
+            0x00 => self.t00 += 1,
+            0x01 => self.t01 += 1,
+            0x02 => self.t02 += 1,
+            0x03 => self.t03 += 1,
+            0x09 => self.t09 += 1,
+            _ => self.other += 1,
+        }
+    }
+
+    pub fn total(&self) -> u64 {
+        self.t00 + self.t01 + self.t02 + self.t03 + self.t09 + self.other
+    }
 }
 
 pub type SharedStatus = Mutex<StatusSnapshot>;

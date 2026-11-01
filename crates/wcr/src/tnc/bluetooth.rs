@@ -561,19 +561,23 @@ mod imp {
     }
 }
 
-/// macOS: IOBluetooth. Pair the radio in System Settings first. Every
-/// IOBluetooth call for a channel runs on that channel's own thread, which
-/// spins a run loop so the delegate gets the radio's data.
+/// macOS: IOBluetooth. Pair the radio in System Settings first. IOBluetooth
+/// delivers a channel's callbacks (open complete, data, closed) to the
+/// process main thread's run loop whichever thread opened it, so the channel
+/// is opened and closed on the main thread (`crate::main_loop`) and the
+/// delegate runs there. Writes go out from a writer thread that sleeps until
+/// there is something to send (QA #237).
 #[cfg(target_os = "macos")]
 mod imp {
     use super::{BtDevice, Connection};
+    use crate::main_loop::{is_main_thread, on_main};
     use objc::declare::ClassDecl;
     use objc::runtime::{Class, Object, Sel, BOOL, NO};
     use objc::{class, msg_send, sel, sel_impl};
     use std::ffi::{c_void, CStr};
     use std::io;
-    use std::sync::mpsc;
-    use std::sync::Once;
+    use std::sync::atomic::{AtomicI64, Ordering};
+    use std::sync::{mpsc, Arc, Mutex, Once};
     use std::time::{Duration, Instant};
 
     #[link(name = "IOBluetooth", kind = "framework")]
@@ -685,26 +689,71 @@ mod imp {
     /// Data from the radio, or `None` once the channel closed.
     type Inbox = mpsc::Sender<Option<Vec<u8>>>;
 
+    /// `open_status` before `rfcommChannelOpenComplete` has been called.
+    const NOT_YET: i64 = i64::MIN;
+
+    /// What the delegate (on the main thread) shares with the station's
+    /// threads. The delegate holds one `Arc` in its `link` ivar.
+    struct Link {
+        inbox: Mutex<Inbox>,
+        open_status: AtomicI64,
+    }
+
+    impl Link {
+        fn send(&self, data: Option<Vec<u8>>) {
+            if let Ok(inbox) = self.inbox.lock() {
+                let _ = inbox.send(data);
+            }
+        }
+    }
+
+    /// An Objective-C object handed between threads. IOBluetooth objects are
+    /// only touched on the main thread, except `writeSync`/`getMTU` on the
+    /// writer thread, which IOBluetooth allows.
+    #[derive(Clone, Copy)]
+    struct Obj(Id);
+    unsafe impl Send for Obj {}
+
+    impl Obj {
+        /// Use this inside closures: it moves the whole `Obj` (which is
+        /// `Send`), where `.0` would capture only the raw pointer.
+        fn id(self) -> Id {
+            self.0
+        }
+    }
+
+    unsafe fn link_of(this: &Object) -> *const Link {
+        *this.get_ivar::<*mut c_void>("link") as *const Link
+    }
+
     fn delegate_class() -> &'static Class {
         static REGISTER: Once = Once::new();
         REGISTER.call_once(|| {
             let mut decl = ClassDecl::new("WcrRfcommDelegate", class!(NSObject))
                 .expect("register WcrRfcommDelegate");
-            decl.add_ivar::<*mut c_void>("inbox");
+            decl.add_ivar::<*mut c_void>("link");
             extern "C" fn on_data(this: &Object, _: Sel, _ch: Id, data: *mut c_void, len: usize) {
                 unsafe {
-                    let inbox = *this.get_ivar::<*mut c_void>("inbox") as *const Inbox;
-                    if !inbox.is_null() && !data.is_null() {
+                    let link = link_of(this);
+                    if !link.is_null() && !data.is_null() {
                         let bytes = std::slice::from_raw_parts(data as *const u8, len).to_vec();
-                        let _ = (*inbox).send(Some(bytes));
+                        (*link).send(Some(bytes));
+                    }
+                }
+            }
+            extern "C" fn on_open(this: &Object, _: Sel, _ch: Id, status: i32) {
+                unsafe {
+                    let link = link_of(this);
+                    if !link.is_null() {
+                        (*link).open_status.store(status as i64, Ordering::SeqCst);
                     }
                 }
             }
             extern "C" fn on_closed(this: &Object, _: Sel, _ch: Id) {
                 unsafe {
-                    let inbox = *this.get_ivar::<*mut c_void>("inbox") as *const Inbox;
-                    if !inbox.is_null() {
-                        let _ = (*inbox).send(None);
+                    let link = link_of(this);
+                    if !link.is_null() {
+                        (*link).send(None);
                     }
                 }
             }
@@ -712,6 +761,10 @@ mod imp {
                 decl.add_method(
                     sel!(rfcommChannelData:data:length:),
                     on_data as extern "C" fn(&Object, Sel, Id, *mut c_void, usize),
+                );
+                decl.add_method(
+                    sel!(rfcommChannelOpenComplete:status:),
+                    on_open as extern "C" fn(&Object, Sel, Id, i32),
                 );
                 decl.add_method(
                     sel!(rfcommChannelClosed:),
@@ -818,147 +871,204 @@ mod imp {
         None
     }
 
-    /// How long a channel that `openRFCOMMChannelSync` reported as failed
-    /// gets to show up as open anyway (#233).
-    const OPEN_GRACE: Duration = Duration::from_secs(2);
+    /// How long one open may take before it is closed and tried again.
+    const OPEN_TIMEOUT: Duration = Duration::from_secs(10);
+    /// Opens per connect. A fresh open right after a close sometimes never
+    /// completes; a second try a few seconds later does (QA #237 probes).
+    const OPEN_TRIES: u32 = 3;
+    const RETRY_PAUSE: Duration = Duration::from_millis(2500);
+    /// How long to wait for the main thread to take a job. Starting an open
+    /// may include an SDP query of up to [`SDP_WAIT`].
+    const MAIN_WAIT: Duration = Duration::from_secs(15);
 
-    fn open(dev: &BtDevice, uuid: [u8; 16], fallback: u8) -> io::Result<Connection> {
-        let (ready_tx, ready_rx) = mpsc::channel::<io::Result<()>>();
-        let (in_tx, in_rx) = mpsc::channel::<Option<Vec<u8>>>();
-        let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>();
-        let address = dev.addr_str().replace(':', "-");
-        std::thread::Builder::new()
-            .name("bt-rfcomm".into())
-            .spawn(move || channel_thread(address, uuid, fallback, ready_tx, in_tx, out_rx))?;
-        match ready_rx.recv() {
-            Ok(Ok(())) => Ok(Connection {
-                reader: Box::new(Inbound {
-                    rx: in_rx,
-                    pending: Vec::new(),
-                }),
-                writer: Box::new(Outbound(out_tx)),
-                zero_is_eof: true,
-                label: dev.short_name(),
-            }),
-            Ok(Err(e)) => Err(e),
-            Err(_) => Err(io::Error::other("Bluetooth thread ended")),
-        }
+    fn main_not_running() -> io::Error {
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            "the macOS main run loop is not running, so Bluetooth cannot open",
+        )
     }
 
-    fn channel_thread(
-        address: String,
-        uuid: [u8; 16],
-        fallback: u8,
-        ready: mpsc::Sender<io::Result<()>>,
-        inbox: Inbox,
-        outbox: mpsc::Receiver<Vec<u8>>,
-    ) {
-        let inbox = Box::new(inbox);
-        let opened = pooled(|| unsafe {
-            let device: Id = msg_send![class!(IOBluetoothDevice),
-                deviceWithAddressString: nsstring(&address)];
-            if device.is_null() {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "unknown Bluetooth address",
-                ));
+    fn open(dev: &BtDevice, uuid: [u8; 16], fallback: u8) -> io::Result<Connection> {
+        let address = dev.addr_str().replace(':', "-");
+        let mut last = io::Error::other("Bluetooth open not tried");
+        for attempt in 1..=OPEN_TRIES {
+            if attempt > 1 {
+                std::thread::sleep(RETRY_PAUSE);
             }
-            let ch = sdp_channel(device, &uuid).unwrap_or(fallback);
-            let delegate: Id = msg_send![delegate_class(), new];
-            (*delegate).set_ivar::<*mut c_void>("inbox", &*inbox as *const Inbox as *mut c_void);
-            let mut channel: Id = std::ptr::null_mut();
-            let rc: i32 = msg_send![device, openRFCOMMChannelSync: &mut channel as *mut Id
-                withChannelID: ch delegate: delegate];
-            // The VR-N76 on macOS 13 answers kIOReturnError (0xe00002bc) while
-            // the channel is in fact open (isOpen, MTU 666). The channel's own
-            // state decides, not rc (#233).
-            let is_open = |channel: Id| -> bool {
-                let open: BOOL = msg_send![channel, isOpen];
-                open != NO
-            };
-            if !channel.is_null() && !is_open(channel) {
-                let until = Instant::now() + OPEN_GRACE;
-                while Instant::now() < until && !is_open(channel) {
-                    spin(0.05);
-                }
-            }
-            if channel.is_null() || !is_open(channel) {
-                if !channel.is_null() {
-                    // Never leave a half-open channel pointing at a freed delegate.
-                    let _: i32 = msg_send![channel, closeChannel];
-                    let _: i32 = msg_send![channel, setDelegate: std::ptr::null_mut::<Object>()];
-                }
-                let _: () = msg_send![delegate, release];
-                return Err(io::Error::other(format!(
-                    "could not open RFCOMM channel {ch} (IOReturn {rc:#x})"
-                )));
-            }
-            let _: Id = msg_send![channel, retain];
-            // After the false failure above IOBluetooth may not have attached
-            // the delegate, and the radio's data would go nowhere (#235).
-            // HTCommander sets it again after every open too.
-            let _: i32 = msg_send![channel, setDelegate: delegate];
-            Ok((channel, delegate))
-        });
-        let (channel, delegate) = match opened {
-            Ok(v) => {
-                let _ = ready.send(Ok(()));
-                v
-            }
-            Err(e) => {
-                let _ = ready.send(Err(e));
-                return;
-            }
-        };
-        let open = |channel: Id| -> bool {
-            let open: BOOL = unsafe { msg_send![channel, isOpen] };
-            open != NO
-        };
-        loop {
-            pooled(|| spin(0.01));
-            if !open(channel) {
-                break;
-            }
-            // Send everything waiting, not one message per run-loop turn:
-            // audio arrives in bursts and the radio's playout must not run dry
-            // mid-frame (#235).
-            let mut bytes = Vec::new();
-            let mut gone = false;
-            loop {
-                match outbox.try_recv() {
-                    Ok(b) => bytes.extend(b),
-                    Err(mpsc::TryRecvError::Empty) => break,
-                    Err(mpsc::TryRecvError::Disconnected) => {
-                        gone = true;
-                        break;
-                    }
-                }
-            }
-            if !bytes.is_empty() {
-                let ok = pooled(|| unsafe {
-                    let mtu: u16 = msg_send![channel, getMTU];
-                    bytes.chunks(mtu.max(16) as usize).all(|c| {
-                        let rc: i32 = msg_send![channel,
-                            writeSync: c.as_ptr() as *mut c_void length: c.len() as u16];
-                        rc == 0
+            match open_once(&address, uuid, fallback) {
+                Ok((in_rx, out_tx)) => {
+                    return Ok(Connection {
+                        reader: Box::new(Inbound {
+                            rx: in_rx,
+                            pending: Vec::new(),
+                        }),
+                        writer: Box::new(Outbound(out_tx)),
+                        zero_is_eof: true,
+                        label: dev.short_name(),
                     })
-                });
-                if !ok {
-                    break;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "bluetooth: {} open {attempt}/{OPEN_TRIES} failed: {e}",
+                        dev.short_name()
+                    );
+                    last = e;
                 }
             }
-            if gone {
+        }
+        Err(last)
+    }
+
+    type Opened = (mpsc::Receiver<Option<Vec<u8>>>, mpsc::Sender<Vec<u8>>);
+
+    /// One `openRFCOMMChannelAsync` on the main thread, then wait for it to
+    /// open: `rfcommChannelOpenComplete` status 0, or the channel reporting
+    /// itself open (isOpen, or an MTU) as HTCommander does, since the VR-N76
+    /// sometimes reports a failure for a channel that is in fact open (#233).
+    fn open_once(address: &str, uuid: [u8; 16], fallback: u8) -> io::Result<Opened> {
+        let (in_tx, in_rx) = mpsc::channel::<Option<Vec<u8>>>();
+        let link = Arc::new(Link {
+            inbox: Mutex::new(in_tx),
+            open_status: AtomicI64::new(NOT_YET),
+        });
+        let addr = address.to_string();
+        let l = link.clone();
+        let (channel, delegate, ch) = on_main(MAIN_WAIT, move || {
+            pooled(|| unsafe { start_open(&addr, &uuid, fallback, l) })
+        })
+        .ok_or_else(main_not_running)??;
+
+        let until = Instant::now() + OPEN_TIMEOUT;
+        let opened = loop {
+            if link.open_status.load(Ordering::SeqCst) == 0 {
+                break true;
+            }
+            let c = channel;
+            if on_main(Duration::from_secs(1), move || unsafe {
+                looks_open(c.id())
+            }) == Some(true)
+            {
+                break true;
+            }
+            if Instant::now() >= until {
+                break false;
+            }
+            if is_main_thread() {
+                spin(0.1);
+            } else {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        };
+        if !opened {
+            let status = link.open_status.load(Ordering::SeqCst);
+            let _ = on_main(MAIN_WAIT, move || unsafe { close(channel, delegate) });
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                match status {
+                    NOT_YET => format!(
+                        "RFCOMM channel {ch} did not open within {}s",
+                        OPEN_TIMEOUT.as_secs()
+                    ),
+                    s => format!(
+                        "RFCOMM channel {ch} did not open (IOReturn {:#x})",
+                        s as i32
+                    ),
+                },
+            ));
+        }
+        // HTCommander sets the delegate again after every open; after a
+        // reported failure IOBluetooth may not have attached it (#235).
+        let _ = on_main(MAIN_WAIT, move || unsafe {
+            let _: i32 = msg_send![channel.id(), setDelegate: delegate.id()];
+        });
+        tracing::info!("bluetooth: RFCOMM channel {ch} open");
+        let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>();
+        std::thread::Builder::new()
+            .name("bt-writer".into())
+            .spawn(move || writer(channel, delegate, link, out_rx))?;
+        Ok((in_rx, out_tx))
+    }
+
+    /// Main thread: find the channel and start an asynchronous open.
+    unsafe fn start_open(
+        address: &str,
+        uuid: &[u8; 16],
+        fallback: u8,
+        link: Arc<Link>,
+    ) -> io::Result<(Obj, Obj, u8)> {
+        let device: Id = msg_send![class!(IOBluetoothDevice),
+            deviceWithAddressString: nsstring(address)];
+        if device.is_null() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "unknown Bluetooth address",
+            ));
+        }
+        let ch = sdp_channel(device, uuid).unwrap_or(fallback);
+        let delegate: Id = msg_send![delegate_class(), new];
+        (*delegate).set_ivar::<*mut c_void>("link", Arc::into_raw(link) as *mut c_void);
+        let mut channel: Id = std::ptr::null_mut();
+        let rc: i32 = msg_send![device, openRFCOMMChannelAsync: &mut channel as *mut Id
+            withChannelID: ch delegate: delegate];
+        if channel.is_null() {
+            free_delegate(delegate);
+            return Err(io::Error::other(format!(
+                "could not open RFCOMM channel {ch} (IOReturn {rc:#x})"
+            )));
+        }
+        let _: Id = msg_send![channel, retain];
+        Ok((Obj(channel), Obj(delegate), ch))
+    }
+
+    unsafe fn looks_open(channel: Id) -> bool {
+        let open: BOOL = msg_send![channel, isOpen];
+        let mtu: u16 = msg_send![channel, getMTU];
+        open != NO || mtu > 0
+    }
+
+    /// Main thread (so no callback can run meanwhile): close the channel and
+    /// free the delegate and its link.
+    unsafe fn close(channel: Obj, delegate: Obj) {
+        let _: i32 = msg_send![channel.0, closeChannel];
+        let _: i32 = msg_send![channel.0, setDelegate: std::ptr::null_mut::<Object>()];
+        let _: () = msg_send![channel.0, release];
+        free_delegate(delegate.0);
+    }
+
+    unsafe fn free_delegate(delegate: Id) {
+        let link = link_of(&*delegate);
+        (*delegate).set_ivar::<*mut c_void>("link", std::ptr::null_mut());
+        if !link.is_null() {
+            drop(Arc::from_raw(link));
+        }
+        let _: () = msg_send![delegate, release];
+    }
+
+    /// Sends what the station writes, sleeping on the outbox in between.
+    /// Ends when the station drops the connection or a write fails, then
+    /// closes the channel.
+    fn writer(channel: Obj, delegate: Obj, link: Arc<Link>, outbox: mpsc::Receiver<Vec<u8>>) {
+        while let Ok(mut bytes) = outbox.recv() {
+            // Send everything waiting in one go: audio arrives in bursts and
+            // the radio's playout must not run dry mid-frame (#235).
+            while let Ok(more) = outbox.try_recv() {
+                bytes.extend(more);
+            }
+            let ok = pooled(|| unsafe {
+                let mtu: u16 = msg_send![channel.id(), getMTU];
+                bytes.chunks(mtu.max(16) as usize).all(|c| {
+                    let rc: i32 = msg_send![channel.id(),
+                        writeSync: c.as_ptr() as *mut c_void length: c.len() as u16];
+                    rc == 0
+                })
+            });
+            if !ok {
+                tracing::warn!("bluetooth: write to the radio failed, closing");
                 break;
             }
         }
-        unsafe {
-            let _: i32 = msg_send![channel, closeChannel];
-            let _: i32 = msg_send![channel, setDelegate: std::ptr::null_mut::<Object>()];
-            let _: () = msg_send![channel, release];
-            (*delegate).set_ivar::<*mut c_void>("inbox", std::ptr::null_mut());
-            let _: () = msg_send![delegate, release];
-        }
-        let _ = inbox.send(None);
+        let _ = on_main(MAIN_WAIT, move || unsafe { close(channel, delegate) });
+        link.send(None);
     }
 
     struct Inbound {
