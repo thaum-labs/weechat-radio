@@ -52,6 +52,17 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v1.0.10</p>
+          <p>Sun, 1 Nov 2026</p>
+        </h3>
+        <pre>VR-N76 over Bluetooth audio now hears the radio. The radio marks what it receives differently from what we send, and wcr was throwing all of it away, so a Bluetooth-audio station heard nothing. Transmit now uses the radio's own audio rate in messages the radio can take whole, and the Mac sends queued audio at once, so bursts no longer break up at the start.
+
+Stop, Save and start and Quit in the desktop app now stop only this window's station and its modem73, not every station on the computer. The Pi Health card shows this station's modem73 memory, and the gateway view says why when the radio cannot use a preset.
+
+Guides: set squelch to 0 or 1 for data, the Digirig transmit level, and a quick signal check after setting up a Pi gateway or a VR-N76.</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>v1.0.9</p>
           <p>Sun, 1 Nov 2026</p>
         </h3>

@@ -368,6 +368,18 @@ struct SettingBody {
 
 /// Mode or preset from the gateway view's pickers (#226).
 async fn setting(State(web): State<Web>, Json(b): Json<SettingBody>) -> Response {
+    // The node refuses some presets on this link and only says so in chat;
+    // give the page the same answer instead of ok (#235).
+    if b.what == "preset" {
+        let why = crate::presets::Preset::parse(&b.value).and_then(|p| {
+            Config::load(&web.cfg_path)
+                .ok()
+                .and_then(|c| c.modem.preset_refusal(p))
+        });
+        if let Some(e) = why {
+            return (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response();
+        }
+    }
     match web.chat.radio_setting(&b.what, &b.value) {
         Ok(()) => {
             web.station

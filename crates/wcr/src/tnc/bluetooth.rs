@@ -894,6 +894,10 @@ mod imp {
                 )));
             }
             let _: Id = msg_send![channel, retain];
+            // After the false failure above IOBluetooth may not have attached
+            // the delegate, and the radio's data would go nowhere (#235).
+            // HTCommander sets it again after every open too.
+            let _: i32 = msg_send![channel, setDelegate: delegate];
             Ok((channel, delegate))
         });
         let (channel, delegate) = match opened {
@@ -915,22 +919,36 @@ mod imp {
             if !open(channel) {
                 break;
             }
-            match outbox.try_recv() {
-                Ok(bytes) => {
-                    let ok = pooled(|| unsafe {
-                        let mtu: u16 = msg_send![channel, getMTU];
-                        bytes.chunks(mtu.max(16) as usize).all(|c| {
-                            let rc: i32 = msg_send![channel,
-                                writeSync: c.as_ptr() as *mut c_void length: c.len() as u16];
-                            rc == 0
-                        })
-                    });
-                    if !ok {
+            // Send everything waiting, not one message per run-loop turn:
+            // audio arrives in bursts and the radio's playout must not run dry
+            // mid-frame (#235).
+            let mut bytes = Vec::new();
+            let mut gone = false;
+            loop {
+                match outbox.try_recv() {
+                    Ok(b) => bytes.extend(b),
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        gone = true;
                         break;
                     }
                 }
-                Err(mpsc::TryRecvError::Empty) => {}
-                Err(mpsc::TryRecvError::Disconnected) => break,
+            }
+            if !bytes.is_empty() {
+                let ok = pooled(|| unsafe {
+                    let mtu: u16 = msg_send![channel, getMTU];
+                    bytes.chunks(mtu.max(16) as usize).all(|c| {
+                        let rc: i32 = msg_send![channel,
+                            writeSync: c.as_ptr() as *mut c_void length: c.len() as u16];
+                        rc == 0
+                    })
+                });
+                if !ok {
+                    break;
+                }
+            }
+            if gone {
+                break;
             }
         }
         unsafe {

@@ -4060,11 +4060,8 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                         .into();
                 }
                 if let Some(pr) = Preset::parse(p) {
-                    if cfg.lock().modem.is_bt_audio() && !crate::btaudio::preset_allowed(pr) {
-                        return format!(
-                            "{} does not survive the radio's Bluetooth audio. Use vhf-fm, hf-poor, hf-weak or hf-deep.",
-                            pr.as_str()
-                        );
+                    if let Some(why) = cfg.lock().modem.preset_refusal(pr) {
+                        return why;
                     }
                     cfg.lock().modem.preset = pr.as_str().into();
                     snap.lock().preset = pr.as_str().into();

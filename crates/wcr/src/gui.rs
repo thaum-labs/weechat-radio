@@ -18,7 +18,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -960,6 +960,7 @@ impl GuiApp {
         self.node_log_done.store(false, Ordering::SeqCst);
         match spawn_node(self.node_log.clone(), self.node_log_done.clone()) {
             Ok(child) => {
+                OWN_NODE.store(child.id(), Ordering::SeqCst);
                 self.node = Some(child);
                 self.node_started = Some(Instant::now());
                 self.station_pending = true;
@@ -974,10 +975,11 @@ impl GuiApp {
         self.user_stopped = true;
         crate::service::stop_job();
         if let Some(mut c) = self.node.take() {
+            OWN_NODE.store(0, Ordering::SeqCst);
             kill_pid_tree(c.id());
             let _ = c.kill();
         }
-        kill_sidecars();
+        stop_attached_station();
         self.irc_tx = None;
         self.irc_rx = None;
         self.irc_joined.clear();
@@ -1088,6 +1090,7 @@ impl GuiApp {
         if let Some(status) = exited {
             let log = self.node_log.lock().map(|g| g.clone()).unwrap_or_default();
             let msg = station_exit_message(status.code(), &log);
+            OWN_NODE.store(0, Ordering::SeqCst);
             self.node = None;
             self.node_started = None;
             self.station_pending = false;
@@ -1475,10 +1478,11 @@ impl eframe::App for GuiApp {
         crate::service::stop_job();
         crate::service::forget_login_agent();
         if let Some(mut c) = self.node.take() {
+            OWN_NODE.store(0, Ordering::SeqCst);
             kill_pid_tree(c.id());
             let _ = c.kill();
         }
-        kill_sidecars();
+        stop_attached_station();
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -1500,9 +1504,7 @@ impl eframe::App for GuiApp {
         if self.last_poll.elapsed() > Duration::from_millis(250) {
             self.last_poll = Instant::now();
             if self.user_stopped {
-                if fetch_status().is_some() {
-                    kill_sidecars();
-                }
+                stop_attached_station();
                 self.status = None;
             } else {
                 self.status = fetch_status();
@@ -3324,29 +3326,18 @@ fn run_hidden(cmd: &mut Command) {
     let _ = child.kill();
 }
 
+/// The `wcr node` this window started, 0 when none.
+static OWN_NODE: AtomicU32 = AtomicU32::new(0);
+
 fn force_quit() -> ! {
     crate::service::stop_job();
     crate::service::forget_login_agent();
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        for name in ["wcr.exe", "modem73.exe"] {
-            let _ = Command::new(system32("taskkill.exe"))
-                .args(["/F", "/T", "/IM", name])
-                .creation_flags(CREATE_NO_WINDOW)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-        }
+    // Only this window's own station, as Stop does (#235).
+    let own = OWN_NODE.swap(0, Ordering::SeqCst);
+    if own != 0 {
+        kill_pid_tree(own);
     }
-    #[cfg(not(windows))]
-    {
-        for name in ["wcr", "modem73"] {
-            let _ = Command::new("pkill").args(["-x", name]).status();
-        }
-    }
+    stop_attached_station();
     std::process::exit(0);
 }
 
@@ -3498,49 +3489,28 @@ fn kill_pid_tree(pid: u32) {
     }
     #[cfg(not(windows))]
     {
-        let _ = Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .status();
+        // Children (modem73) first: once the parent is gone they belong to
+        // init and `pkill -P` no longer finds them.
         let _ = Command::new("pkill")
             .args(["-P", &pid.to_string()])
+            .status();
+        let _ = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
             .status();
     }
 }
 
-/// Ends the station's `wcr node` and modem73, never this window. Started as
-/// `wcr gui`, the window is itself a wcr process: killing every wcr by name
-/// made Stop close the app like Quit (QA v0.1.109, Windows).
-fn kill_sidecars() {
-    #[cfg(windows)]
+/// Ends the station this window is attached to (the one answering its status
+/// port) and that station's modem73. Never this window, and never another
+/// station on the machine: killing every wcr and modem73 by name stopped
+/// unrelated stations once `-c` made a second one possible (#235).
+fn stop_attached_station() {
+    let our = std::process::id();
+    if let Some(pid) = fetch_status()
+        .map(|s| s.pid)
+        .filter(|&p| p != 0 && p != our)
     {
-        let mut cmd = Command::new(system32("taskkill.exe"));
-        cmd.args(["/F", "/T", "/IM", "modem73.exe"]);
-        run_hidden(&mut cmd);
-        let our = std::process::id();
-        let mut ps = Command::new(system32("WindowsPowerShell\\v1.0\\powershell.exe"));
-        ps.args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-WindowStyle",
-            "Hidden",
-            "-Command",
-            &format!(
-                "Get-Process -Name wcr,modem73 -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -ne {our} }} | Stop-Process -Force"
-            ),
-        ]);
-        run_hidden(&mut ps);
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = Command::new("pkill").args(["-x", "modem73"]).status();
-        let our = std::process::id().to_string();
-        if let Ok(out) = Command::new("pgrep").args(["-x", "wcr"]).output() {
-            for pid in String::from_utf8_lossy(&out.stdout).split_whitespace() {
-                if pid != our {
-                    let _ = Command::new("kill").args(["-TERM", pid]).status();
-                }
-            }
-        }
+        kill_pid_tree(pid);
     }
 }
 
@@ -5346,7 +5316,7 @@ impl GuiApp {
             ui.add(
                 egui::Label::new(
                     RichText::new(if self.path == BT_AUDIO {
-                        "On the radio: squelch low (1 or 2), KISS TNC and Digital Mode off. Close the HT phone app — the radio takes one Bluetooth client at a time."
+                        "On the radio: squelch 0 or 1, KISS TNC and Digital Mode off. Close the HT phone app — the radio takes one Bluetooth client at a time."
                     } else {
                         "On the radio: General Settings → KISS TNC → Enable, Digital Mode off. Close the HT phone app — the radio takes one Bluetooth client at a time."
                     })

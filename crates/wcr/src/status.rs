@@ -124,6 +124,10 @@ pub struct StatusSnapshot {
     /// Distinct message ids included in `relayed` this process.
     #[serde(default)]
     pub relayed_unique: u64,
+    /// Process id of the station serving this status, so the desktop app can
+    /// stop exactly this station and its modem73 (#235). 0 from older nodes.
+    #[serde(default)]
+    pub pid: u32,
 }
 
 fn default_version() -> String {
@@ -402,6 +406,7 @@ impl Default for StatusSnapshot {
             tower: false,
             relayed: 0,
             relayed_unique: 0,
+            pid: std::process::id(),
         }
     }
 }

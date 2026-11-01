@@ -221,6 +221,23 @@ impl ModemConfig {
     pub fn is_bt_audio(&self) -> bool {
         !self.uses_tnc() && self.ptt.trim().eq_ignore_ascii_case("bluetooth")
     }
+
+    /// Why this link cannot run preset `p`, or `None` when it can. The node's
+    /// `/preset` and the web page's picker both answer with this (#235).
+    pub fn preset_refusal(&self, p: crate::presets::Preset) -> Option<String> {
+        if self.uses_tnc() {
+            return Some(
+                "preset is fixed at afsk-1200: the radio's own TNC does the modulation".into(),
+            );
+        }
+        if self.is_bt_audio() && !crate::btaudio::preset_allowed(p) {
+            return Some(format!(
+                "{} does not survive the radio's Bluetooth audio. Use vhf-fm, hf-poor, hf-weak or hf-deep.",
+                p.as_str()
+            ));
+        }
+        None
+    }
 }
 
 /// Radio-side KISS TNC (Bluetooth SPP or a serial port).
@@ -867,6 +884,21 @@ pub fn ensure_dirs() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn bluetooth_audio_refuses_hf_good_with_the_node_text() {
+        use super::ModemConfig;
+        use crate::presets::Preset;
+        let mut m = ModemConfig {
+            ptt: "bluetooth".into(),
+            ..ModemConfig::default()
+        };
+        assert!(m.is_bt_audio());
+        let why = m.preset_refusal(Preset::HfGood).unwrap();
+        assert!(why.starts_with("hf-good does not survive"), "{why}");
+        assert_eq!(m.preset_refusal(Preset::HfPoor), None);
+        m.ptt = "digirig".into();
+        assert_eq!(m.preset_refusal(Preset::HfGood), None);
+    }
 
     #[test]
     fn setup_backs_up_an_existing_config_once() {
