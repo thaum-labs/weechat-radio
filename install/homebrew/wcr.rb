@@ -1,28 +1,28 @@
 class Wcr < Formula
   desc "WeeChat Radio — chat over internet and HF/VHF"
   homepage "https://weechatradio.com"
-  version "1.0.9"
+  version "1.0.10"
   license "Apache-2.0"
 
   on_macos do
     on_intel do
-      url "https://github.com/thaum-labs/weechat-radio/releases/download/v1.0.9/wcr-macos-x86_64.tar.gz"
-      sha256 "fe4ee700721f62db106299de680c345b143bc445caafa449377b41fc14db6d66"
+      url "https://github.com/thaum-labs/weechat-radio/releases/download/v1.0.10/wcr-macos-x86_64.tar.gz"
+      sha256 "157a0f77623d57a9a64a18eb841d95ddfa4539973c530a2193698da1b10dbd93"
     end
     on_arm do
-      url "https://github.com/thaum-labs/weechat-radio/releases/download/v1.0.9/wcr-macos-aarch64.tar.gz"
-      sha256 "ba6398657472ca1a5542471828d9f5597eaa71db926638b2ad0d3204dee10a3a"
+      url "https://github.com/thaum-labs/weechat-radio/releases/download/v1.0.10/wcr-macos-aarch64.tar.gz"
+      sha256 "560b11aaae1093068b87f8f0a3dbc8192e6fc91ca7443e6029352d5b9f8bd2ed"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/thaum-labs/weechat-radio/releases/download/v1.0.9/wcr-linux-x86_64.tar.gz"
-      sha256 "6149920d9aafaadbe4e0acc674feb137555f13decc1850965bc2d3ce379eedd3"
+      url "https://github.com/thaum-labs/weechat-radio/releases/download/v1.0.10/wcr-linux-x86_64.tar.gz"
+      sha256 "ea8d8d435549c8c4dc61484d6ed78b4fc9a14e88a0070f628fa7b34d7ccd4c96"
     end
     on_arm do
-      url "https://github.com/thaum-labs/weechat-radio/releases/download/v1.0.9/wcr-linux-aarch64.tar.gz"
-      sha256 "dda3f60580963908141e177cbc51f0beff0fb14bd3df367e1d2db93e4543f938"
+      url "https://github.com/thaum-labs/weechat-radio/releases/download/v1.0.10/wcr-linux-aarch64.tar.gz"
+      sha256 "a96f138ba2b13f67c51bb1f579f38c1c6fe3d52858558c530a12c5a2439f933c"
     end
   end
 
