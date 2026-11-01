@@ -830,6 +830,35 @@ pub fn default_data_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".").join(".wcr"))
 }
 
+/// Copy an existing config to `<name>.YYYYMMDD-HHMMSS.bak` beside it before
+/// setup rewrites it (#233). Nothing is copied when there is no file, or when
+/// the newest backup already holds the same bytes (Save pressed twice).
+pub fn backup_before_setup(path: &Path) -> std::io::Result<Option<PathBuf>> {
+    let Ok(current) = std::fs::read(path) else {
+        return Ok(None);
+    };
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str())) else {
+        return Ok(None);
+    };
+    let prefix = format!("{name}.");
+    let newest = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(&prefix) && n.ends_with(".bak"))
+        })
+        .max();
+    if newest.is_some_and(|b| std::fs::read(b).ok().as_deref() == Some(current.as_slice())) {
+        return Ok(None);
+    }
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let backup = dir.join(format!("{name}.{stamp}.bak"));
+    std::fs::write(&backup, &current)?;
+    Ok(Some(backup))
+}
+
 pub fn ensure_dirs() -> Result<()> {
     std::fs::create_dir_all(default_config_dir())?;
     std::fs::create_dir_all(default_data_dir())?;
@@ -838,6 +867,27 @@ pub fn ensure_dirs() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn setup_backs_up_an_existing_config_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wcr.toml");
+        assert!(super::backup_before_setup(&path).unwrap().is_none());
+        std::fs::write(&path, "callsign = \"M7TJF\"\n").unwrap();
+        let bak = super::backup_before_setup(&path).unwrap().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&bak).unwrap(),
+            "callsign = \"M7TJF\"\n"
+        );
+        let name = bak.file_name().unwrap().to_str().unwrap();
+        assert!(
+            name.starts_with("wcr.toml.") && name.ends_with(".bak"),
+            "{name}"
+        );
+        // Same bytes again: no second copy.
+        assert!(super::backup_before_setup(&path).unwrap().is_none());
+    }
+
     use super::*;
 
     #[test]

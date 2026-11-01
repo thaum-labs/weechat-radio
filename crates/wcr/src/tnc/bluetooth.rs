@@ -723,33 +723,104 @@ mod imp {
         Class::get("WcrRfcommDelegate").expect("WcrRfcommDelegate registered")
     }
 
-    /// The RFCOMM channel the device's SDP record gives for `uuid`, asking the
-    /// radio again if the cached records do not have it.
-    unsafe fn sdp_channel(device: Id, uuid: &[u8; 16]) -> Option<u8> {
-        let sdp_uuid: Id = msg_send![class!(IOBluetoothSDPUUID),
-            uuidWithBytes: uuid.as_ptr() as *const c_void length: 16u32];
-        let lookup = || -> Option<u8> {
-            let record: Id = msg_send![device, getServiceRecordForUUID: sdp_uuid];
+    /// IOBluetoothSDPDataElement type descriptors.
+    const SDP_TYPE_UUID: u8 = 3;
+    const SDP_TYPE_SEQUENCE: u8 = 6;
+    const SDP_TYPE_ALTERNATIVE: u8 = 7;
+    /// ServiceClassIDList.
+    const SDP_ATTR_SERVICE_CLASS_IDS: u16 = 0x0001;
+
+    /// The 128-bit form of an SDP UUID element (16- and 32-bit UUIDs are
+    /// widened onto the Bluetooth base UUID by IOBluetooth).
+    unsafe fn uuid128(element: Id) -> Option<[u8; 16]> {
+        let uuid: Id = msg_send![element, getUUIDValue];
+        if uuid.is_null() {
+            return None;
+        }
+        let wide: Id = msg_send![uuid, getUUIDWithLength: 16u32];
+        if wide.is_null() {
+            return None;
+        }
+        let len: usize = msg_send![wide, length];
+        let bytes: *const u8 = msg_send![wide, bytes];
+        (len == 16 && !bytes.is_null()).then(|| {
+            let mut out = [0u8; 16];
+            out.copy_from_slice(std::slice::from_raw_parts(bytes, 16));
+            out
+        })
+    }
+
+    /// True when a ServiceClassIDList element names `uuid`. The VR-N76's
+    /// "BS AOC" record carries a bare UUID here instead of the usual sequence,
+    /// which is why `getServiceRecordForUUID:` never finds it (#233).
+    unsafe fn element_has_uuid(element: Id, uuid: &[u8; 16], depth: u8) -> bool {
+        if element.is_null() || depth > 3 {
+            return false;
+        }
+        let kind: u8 = msg_send![element, getTypeDescriptor];
+        match kind {
+            SDP_TYPE_UUID => uuid128(element).as_ref() == Some(uuid),
+            SDP_TYPE_SEQUENCE | SDP_TYPE_ALTERNATIVE => {
+                let items: Id = msg_send![element, getArrayValue];
+                if items.is_null() {
+                    return false;
+                }
+                let n: usize = msg_send![items, count];
+                (0..n).any(|i| {
+                    let item: Id = msg_send![items, objectAtIndex: i];
+                    element_has_uuid(item, uuid, depth + 1)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    /// The RFCOMM channel of the device's cached SDP record whose
+    /// ServiceClassIDList holds `uuid`.
+    unsafe fn record_channel(device: Id, uuid: &[u8; 16]) -> Option<u8> {
+        let records: Id = msg_send![device, services];
+        if records.is_null() {
+            return None;
+        }
+        let n: usize = msg_send![records, count];
+        for i in 0..n {
+            let record: Id = msg_send![records, objectAtIndex: i];
             if record.is_null() {
-                return None;
+                continue;
+            }
+            let ids: Id = msg_send![record, getAttributeDataElement: SDP_ATTR_SERVICE_CLASS_IDS];
+            if !element_has_uuid(ids, uuid, 0) {
+                continue;
             }
             let mut ch: u8 = 0;
             let rc: i32 = msg_send![record, getRFCOMMChannelID: &mut ch as *mut u8];
-            (rc == 0 && ch > 0).then_some(ch)
-        };
-        if let Some(ch) = lookup() {
+            if rc == 0 && ch > 0 {
+                return Some(ch);
+            }
+        }
+        None
+    }
+
+    /// The RFCOMM channel the device's SDP record gives for `uuid`, asking the
+    /// radio again if the cached records do not have it.
+    unsafe fn sdp_channel(device: Id, uuid: &[u8; 16]) -> Option<u8> {
+        if let Some(ch) = record_channel(device, uuid) {
             return Some(ch);
         }
         let _: i32 = msg_send![device, performSDPQuery: std::ptr::null_mut::<Object>()];
         let until = Instant::now() + SDP_WAIT;
         while Instant::now() < until {
             spin(0.1);
-            if let Some(ch) = lookup() {
+            if let Some(ch) = record_channel(device, uuid) {
                 return Some(ch);
             }
         }
         None
     }
+
+    /// How long a channel that `openRFCOMMChannelSync` reported as failed
+    /// gets to show up as open anyway (#233).
+    const OPEN_GRACE: Duration = Duration::from_secs(2);
 
     fn open(dev: &BtDevice, uuid: [u8; 16], fallback: u8) -> io::Result<Connection> {
         let (ready_tx, ready_rx) = mpsc::channel::<io::Result<()>>();
@@ -798,7 +869,25 @@ mod imp {
             let mut channel: Id = std::ptr::null_mut();
             let rc: i32 = msg_send![device, openRFCOMMChannelSync: &mut channel as *mut Id
                 withChannelID: ch delegate: delegate];
-            if rc != 0 || channel.is_null() {
+            // The VR-N76 on macOS 13 answers kIOReturnError (0xe00002bc) while
+            // the channel is in fact open (isOpen, MTU 666). The channel's own
+            // state decides, not rc (#233).
+            let is_open = |channel: Id| -> bool {
+                let open: BOOL = msg_send![channel, isOpen];
+                open != NO
+            };
+            if !channel.is_null() && !is_open(channel) {
+                let until = Instant::now() + OPEN_GRACE;
+                while Instant::now() < until && !is_open(channel) {
+                    spin(0.05);
+                }
+            }
+            if channel.is_null() || !is_open(channel) {
+                if !channel.is_null() {
+                    // Never leave a half-open channel pointing at a freed delegate.
+                    let _: i32 = msg_send![channel, closeChannel];
+                    let _: i32 = msg_send![channel, setDelegate: std::ptr::null_mut::<Object>()];
+                }
                 let _: () = msg_send![delegate, release];
                 return Err(io::Error::other(format!(
                     "could not open RFCOMM channel {ch} (IOReturn {rc:#x})"
@@ -817,7 +906,10 @@ mod imp {
                 return;
             }
         };
-        let open = |channel: Id| -> bool { unsafe { msg_send![channel, isOpen] } };
+        let open = |channel: Id| -> bool {
+            let open: BOOL = unsafe { msg_send![channel, isOpen] };
+            open != NO
+        };
         loop {
             pooled(|| spin(0.01));
             if !open(channel) {
@@ -843,6 +935,7 @@ mod imp {
         }
         unsafe {
             let _: i32 = msg_send![channel, closeChannel];
+            let _: i32 = msg_send![channel, setDelegate: std::ptr::null_mut::<Object>()];
             let _: () = msg_send![channel, release];
             (*delegate).set_ivar::<*mut c_void>("inbox", std::ptr::null_mut());
             let _: () = msg_send![delegate, release];

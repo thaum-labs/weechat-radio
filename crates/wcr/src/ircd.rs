@@ -681,7 +681,18 @@ impl IrcServer {
         self.tagmsg_progress(msgid, state, None).await;
     }
 
+    /// `[ok]` with how the receipt reached us (`rf`, `inet`, `lan`), so the
+    /// sender can tell a hub receipt from one heard on the air (#226).
+    pub async fn tagmsg_delivered_via(&self, msgid: &str, medium: &str) {
+        self.tagmsg_mark(msgid, "delivered", None, Some(medium))
+            .await;
+    }
+
     pub async fn tagmsg_progress(&self, msgid: &str, state: &str, tries: Option<u32>) {
+        self.tagmsg_mark(msgid, state, tries, None).await;
+    }
+
+    async fn tagmsg_mark(&self, msgid: &str, state: &str, tries: Option<u32>, via: Option<&str>) {
         let Some((id, target)) = self.bind_delivery(msgid) else {
             return;
         };
@@ -691,6 +702,9 @@ impl IrcServer {
         let mut tags = format!("msgid={msgid};+radio/delivery={state};+radio/msgid={msgid}");
         if let Some(n) = tries.filter(|n| *n > 0) {
             tags.push_str(&format!(";+radio/tries={n}"));
+        }
+        if let Some(via) = via.filter(|v| !v.is_empty()) {
+            tags.push_str(&format!(";+radio/via={via}"));
         }
         let line = format!("@{tags} TAGMSG {target}");
         let (has_tags, nick) = {

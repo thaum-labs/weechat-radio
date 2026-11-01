@@ -34,6 +34,12 @@ input { font: inherit; width: 100%; color: var(--fg); background: #0b0b12; borde
 .light, .chip { display: inline-block; border: 1px solid currentColor; border-radius: 3px;
   padding: 1px 8px; font-size: 12px; white-space: nowrap; }
 .up { color: var(--green); } .down { color: var(--red); } .idle { color: var(--dim); }
+.amber { color: var(--amber); }
+.pickers label { display: flex; align-items: center; gap: 6px; color: var(--dim); }
+.pickers select { min-height: 40px; padding: 6px 8px; max-width: 100%; }
+#pick-help { margin: 6px 0 0; }
+.health-more { margin-top: 4px; } .health-more summary { cursor: pointer; padding: 4px 0; }
+.health-more .facts { margin-top: 6px; }
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; }
 .facts dt { color: var(--dim); } .facts dd { margin: 0; overflow-wrap: anywhere; }
 .list { list-style: none; margin: 0; padding: 0; }

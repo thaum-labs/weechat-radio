@@ -163,12 +163,14 @@ function lineNode(l) {
   if (!l.sys) li.append(el("span", "nick", l.nick));
   li.append(el("span", "text", l.text));
   const marks = [];
-  if (l.mine && l.ticks) marks.push(l.ticks);
+  // [ok net] / [ok rf]: how the first receipt came back (#226).
+  const route = l.via ? (l.via === "inet" ? "net" : l.via) : "";
+  if (l.mine && l.ticks) marks.push(route ? l.ticks.replace(/\[(ok|all)\]/, `[$1 ${route}]`) : l.ticks);
   if (l.mine && l.tries > 1) marks.push(`[x${l.tries}]`);
-  if (!l.mine && l.via) marks.push(`[${l.via === "inet" ? "net" : l.via}]`);
+  if (!l.mine && l.via) marks.push(`[${route}]`);
   if (!l.mine && l.snr !== null && l.snr !== undefined) marks.push(`${Math.round(l.snr)} dB`);
   if (marks.length) {
-    const m = el("span", `marks${/\[(ok|all)\]/.test(l.ticks) ? " ok" : /\[no\]/.test(l.ticks) ? " no" : ""}`, marks.join(" "));
+    const m = el("span", `marks${/\[(ok|all)/.test(l.ticks) ? " ok" : /\[no\]/.test(l.ticks) ? " no" : ""}`, marks.join(" "));
     li.append(m);
   }
   return li;

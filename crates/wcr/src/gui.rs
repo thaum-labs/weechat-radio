@@ -414,6 +414,8 @@ enum IrcEvent {
         msgid: String,
         state: String,
         tries: u32,
+        /// How the receipt behind an `[ok]` came back (`rf`, `inet`, `lan`).
+        via: Option<String>,
     },
     Joined(String),
     Invited {
@@ -776,7 +778,7 @@ impl GuiApp {
     }
 
     fn configured(&self) -> bool {
-        Config::default_path().is_file() && Callsign::parse(&self.callsign).is_ok()
+        Config::active_path().is_file() && Callsign::parse(&self.callsign).is_ok()
     }
 
     fn save_setup(&mut self) {
@@ -791,8 +793,8 @@ impl GuiApp {
                 return;
             }
         }
-        let mut cfg = if Config::default_path().is_file() {
-            Config::load(&Config::default_path()).unwrap_or_default()
+        let mut cfg = if Config::active_path().is_file() {
+            Config::load(&Config::active_path()).unwrap_or_default()
         } else {
             Config::default()
         };
@@ -898,27 +900,50 @@ impl GuiApp {
         }
         cfg.mail.gateway = self.mail_gateway.trim().to_ascii_uppercase();
         cfg.ui.theme = "tron".into();
-        // The dial is set from FREQ on the main page; setup only seeds a first one.
-        if self.path != 0 && cfg.rf.frequency_khz == 0 {
-            cfg.rf.frequency_khz = match self.radio.map(|i| &RADIOS[i]) {
-                Some(r) => r.dial_khz,
-                None if self.path == 3 => 7045,
-                None => 144950,
-            };
+        // The dial is set from FREQ on the main page; setup only seeds a first
+        // one, or replaces one the chosen radio cannot use (#232, #233).
+        let mut dial_note = None;
+        if self.path != 0 {
+            match self.radio.map(|i| &RADIOS[i]) {
+                Some(r) => {
+                    let (khz, note) = r.dial_for(cfg.rf.frequency_khz);
+                    cfg.rf.frequency_khz = khz;
+                    dial_note = note;
+                }
+                None if cfg.rf.frequency_khz == 0 => {
+                    cfg.rf.frequency_khz = if self.path == 3 { 7045 } else { 144950 };
+                }
+                None => {}
+            }
         }
         if let Err(e) = config::ensure_dirs() {
             self.error = e.to_string();
             return;
         }
-        if let Err(e) = cfg.save(&Config::default_path()) {
+        let path = Config::active_path();
+        let backup = match config::backup_before_setup(&path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.error = format!("could not back up {}: {e}", path.display());
+                return;
+            }
+        };
+        if let Err(e) = cfg.save(&path) {
             self.error = e.to_string();
             return;
         }
-        let _ = crate::weechat_app::configure(&Config::default_path());
-        self.chat.push(ChatLine::sys(
-            format!("saved {}", Config::default_path().display()),
-            "",
-        ));
+        let _ = crate::weechat_app::configure(&path);
+        self.chat
+            .push(ChatLine::sys(format!("saved {}", path.display()), ""));
+        if let Some(b) = backup {
+            self.chat.push(ChatLine::sys(
+                format!("previous settings kept in {}", b.display()),
+                "",
+            ));
+        }
+        if let Some(note) = dial_note {
+            self.chat.push(ChatLine::sys(note, ""));
+        }
     }
 
     fn start_station(&mut self) {
@@ -1323,7 +1348,13 @@ impl GuiApp {
                     msgid,
                     state,
                     tries,
-                } => self.apply_delivery(&msgid, &state, tries),
+                    via,
+                } => {
+                    self.apply_delivery(&msgid, &state, tries);
+                    if let Some(via) = via {
+                        crate::chat_line::apply_receipt_via(&mut self.chat, &msgid, &via);
+                    }
+                }
                 IrcEvent::Status(s) => {
                     if let Some((nick, ch)) = crate::slash::parse_peer_left_notice(&s) {
                         if nick.eq_ignore_ascii_case(&me) {
@@ -1582,7 +1613,7 @@ impl eframe::App for GuiApp {
                         self.start_station();
                     }
                     if nav_link(ui, "weechat").clicked() {
-                        if let Err(e) = crate::weechat_app::run(false, &Config::default_path()) {
+                        if let Err(e) = crate::weechat_app::run(false, &Config::active_path()) {
                             self.error = e.to_string();
                         }
                     }
@@ -1618,271 +1649,11 @@ impl eframe::App for GuiApp {
         if !self.configured() || self.show_setup {
             self.poll_hardware_probe();
             let reopened = self.configured();
-            egui::CentralPanel::default()
+            // Save and start stays on screen however long the form is (#232).
+            egui::TopBottomPanel::bottom("setup_actions")
                 .frame(chrome(SHELL))
                 .show(ctx, |ui| {
                     ui.add_space(8.0);
-                    let setup_meta = if reopened {
-                        format!("STATION · {}", version_label())
-                    } else {
-                        format!("FIRST RUN · {}", version_label())
-                    };
-                    module_title(ui, "SETUP", &setup_meta);
-                    ui.add_space(12.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(20.0);
-                        ui.label(RichText::new("Callsign").color(DIM));
-                        let edit = egui::TextEdit::singleline(&mut self.callsign)
-                            .desired_width(160.0)
-                            .hint_text("M7TJF or ~NICK");
-                        if ui.add(edit).changed() {
-                            self.callsign = self.callsign.to_ascii_uppercase();
-                        }
-                    });
-                    if !self.callsign.trim().starts_with('~') {
-                        ui.horizontal(|ui| {
-                            ui.add_space(20.0);
-                            ui.label(RichText::new("Mail gateway").color(DIM));
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.mail_gateway)
-                                    .desired_width(160.0)
-                                    .hint_text("radio-plus only, e.g. TF101"),
-                            );
-                        });
-                    }
-                    ui.horizontal(|ui| {
-                        ui.add_space(20.0);
-                        ui.label(RichText::new("Grid    ").color(DIM));
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.grid)
-                                .desired_width(160.0)
-                                .hint_text("IO81UF"),
-                        );
-                        if ui
-                            .add(
-                                egui::Button::new(
-                                    RichText::new("Detect").color(PURPLE).monospace(),
-                                )
-                                .fill(Color32::TRANSPARENT)
-                                .stroke(hairline(LINE)),
-                            )
-                            .clicked()
-                        {
-                            self.grid_note = "detecting from IP…".into();
-                            self.grid_overwrite = true;
-                            self.grid_rx = Some(spawn_grid_detect());
-                        }
-                    });
-                    if !self.grid_note.is_empty() {
-                        ui.horizontal(|ui| {
-                            ui.add_space(20.0);
-                            ui.label(
-                                RichText::new(&self.grid_note)
-                                    .color(DIM)
-                                    .font(FontId::monospace(11.0)),
-                            );
-                        });
-                    }
-                    ui.horizontal(|ui| {
-                        ui.add_space(20.0);
-                        ui.label(RichText::new("GPS     ").color(DIM));
-                        if let Some(ports) = self.hw.as_ref().map(|h| h.ports.as_slice()) {
-                            port_combo_ui(ui, ports, &mut self.gps_port, "gps_port");
-                        }
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.gps_port)
-                                .desired_width(160.0)
-                                .hint_text("empty = no GPS"),
-                        );
-                    });
-                    ui.horizontal(|ui| {
-                        ui.add_space(20.0);
-                        ui.label(
-                            RichText::new(
-                                "On the move? A USB GPS keeps your grid and map pin current.",
-                            )
-                            .color(DIM)
-                            .font(FontId::monospace(11.0)),
-                        );
-                    });
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(20.0);
-                        ui.label(RichText::new("How you get on the air").color(DIM));
-                    });
-                    ui.horizontal(|ui| {
-                        ui.add_space(20.0);
-                        if ui.radio(self.path == 0, "Internet only").clicked() {
-                            self.path = 0;
-                            self.radio = None;
-                        }
-                    });
-                    setup_group_label(ui, "Supported radios");
-                    for (i, r) in RADIOS.iter().enumerate() {
-                        let mut clicked = false;
-                        ui.horizontal(|ui| {
-                            ui.add_space(20.0);
-                            clicked = ui.radio(self.radio == Some(i), r.name).clicked();
-                        });
-                        if clicked {
-                            self.choose_radio(i);
-                        }
-                    }
-                    setup_group_label(ui, "Other setups");
-                    for (id, label) in [
-                        (1, "Handheld + Digirig"),
-                        (2, "Audio cable (VOX)"),
-                        (3, "HF rig through rigctld (any Hamlib radio)"),
-                        (5, "KISS TNC on a serial port"),
-                    ] {
-                        ui.horizontal(|ui| {
-                            ui.add_space(20.0);
-                            if ui
-                                .radio(self.radio.is_none() && self.path == id, label)
-                                .clicked()
-                            {
-                                self.path = id;
-                                self.radio = None;
-                            }
-                        });
-                    }
-                    if let Some(r) = self.radio.map(|i| &RADIOS[i]) {
-                        ui.horizontal(|ui| {
-                            ui.add_space(20.0);
-                            ui.label(
-                                RichText::new(format!("On the radio: {}", r.radio_side))
-                                    .color(DIM)
-                                    .font(FontId::monospace(11.0)),
-                            );
-                        });
-                        if !r.cable.is_empty() {
-                            ui.horizontal(|ui| {
-                                ui.add_space(20.0);
-                                ui.label(
-                                    RichText::new("Cable:")
-                                        .color(DIM)
-                                        .font(FontId::monospace(11.0)),
-                                );
-                                // "Name: https://…" opens in the browser.
-                                match r.cable.split_once(": https://") {
-                                    Some((name, rest)) => {
-                                        ui.hyperlink_to(
-                                            RichText::new(name).font(FontId::monospace(11.0)),
-                                            format!("https://{rest}"),
-                                        );
-                                    }
-                                    None => {
-                                        ui.label(
-                                            RichText::new(r.cable)
-                                                .color(DIM)
-                                                .font(FontId::monospace(11.0)),
-                                        );
-                                    }
-                                }
-                            });
-                        }
-                    }
-                    if self.path == SUPPORTED_CAT {
-                        ui.horizontal(|ui| {
-                            ui.add_space(20.0);
-                            ui.label(RichText::new("CAT    ").color(DIM));
-                            if let Some(ports) = self.hw.as_ref().map(|h| h.ports.as_slice()) {
-                                port_combo_ui(ui, ports, &mut self.cat_port, "cat_port");
-                            }
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.cat_port)
-                                    .desired_width(120.0)
-                                    .hint_text("COM5"),
-                            );
-                        });
-                    }
-                    if self.path == 1 {
-                        ui.horizontal(|ui| {
-                            ui.add_space(20.0);
-                            ui.label(RichText::new("Serial").color(DIM));
-                            if let Some(ports) = self.hw.as_ref().map(|h| h.ports.as_slice()) {
-                                port_combo_ui(ui, ports, &mut self.com_port, "digirig_port");
-                            }
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.com_port)
-                                    .desired_width(120.0)
-                                    .hint_text("COM5"),
-                            );
-                        });
-                    }
-                    if self.path == 3 {
-                        ui.horizontal(|ui| {
-                            ui.add_space(20.0);
-                            ui.label(RichText::new("CAT    ").color(DIM));
-                            if let Some(hw) = &self.hw {
-                                if !hw.rigctld.is_empty() {
-                                    egui::ComboBox::from_id_salt("rigctl_pick")
-                                        .selected_text(self.rigctl.as_str())
-                                        .width(200.0)
-                                        .show_ui(ui, |ui| {
-                                            for h in &hw.rigctld {
-                                                ui.selectable_value(&mut self.rigctl, h.clone(), h);
-                                            }
-                                        });
-                                }
-                            }
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.rigctl)
-                                    .desired_width(160.0)
-                                    .hint_text("127.0.0.1:4532"),
-                            );
-                        });
-                    }
-                    if matches!(self.path, 4 | BT_AUDIO) {
-                        self.bluetooth_setup_ui(ui);
-                    }
-                    if self.path == 5 {
-                        ui.horizontal(|ui| {
-                            ui.add_space(20.0);
-                            ui.label(RichText::new("Port  ").color(DIM));
-                            if let Some(ports) = self.hw.as_ref().map(|h| h.ports.as_slice()) {
-                                port_combo_ui(ui, ports, &mut self.serial_path, "tnc_port");
-                            }
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.serial_path)
-                                    .desired_width(160.0)
-                                    .hint_text("COM7 or /dev/rfcomm0"),
-                            );
-                        });
-                        ui.horizontal(|ui| {
-                            ui.add_space(20.0);
-                            ui.label(
-                                RichText::new(
-                                    "Any KISS TNC: Mobilinkd, a Bluetooth COM port, or rfcomm bind on Linux.",
-                                )
-                                .color(DIM)
-                                .font(FontId::monospace(11.0)),
-                            );
-                        });
-                    }
-                    if matches!(self.path, 1 | 2 | 3 | SUPPORTED_CAT) {
-                        let (ins, outs) = self
-                            .hw
-                            .as_ref()
-                            .map(|h| (h.audio_in.as_slice(), h.audio_out.as_slice()))
-                            .unwrap_or((&[], &[]));
-                        audio_device_row(
-                            ui,
-                            "In     ",
-                            "decode — radio speaker",
-                            &mut self.audio_input,
-                            ins,
-                            "audio_in",
-                        );
-                        audio_device_row(
-                            ui,
-                            "Out    ",
-                            "transmit — radio mic",
-                            &mut self.audio_output,
-                            outs,
-                            "audio_out",
-                        );
-                    }
                     ui.add_space(16.0);
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
@@ -1910,11 +1681,9 @@ impl eframe::App for GuiApp {
                         if reopened
                             && ui
                                 .add(
-                                    egui::Button::new(
-                                        RichText::new("Back").color(DIM).monospace(),
-                                    )
-                                    .fill(Color32::TRANSPARENT)
-                                    .stroke(hairline(LINE)),
+                                    egui::Button::new(RichText::new("Back").color(DIM).monospace())
+                                        .fill(Color32::TRANSPARENT)
+                                        .stroke(hairline(LINE)),
                                 )
                                 .clicked()
                         {
@@ -1923,9 +1692,45 @@ impl eframe::App for GuiApp {
                         }
                     });
                     if !self.error.is_empty() {
-                        ui.add_space(8.0);
-                        ui.label(RichText::new(&self.error).color(ORANGE));
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(20.0);
+                            ui.label(RichText::new(&self.error).color(ORANGE));
+                        });
                     }
+                    ui.add_space(8.0);
+                });
+            egui::CentralPanel::default()
+                .frame(chrome(SHELL))
+                .show(ctx, |ui| {
+                    ui.add_space(8.0);
+                    let setup_meta = if reopened {
+                        format!("STATION · {}", version_label())
+                    } else {
+                        format!("FIRST RUN · {}", version_label())
+                    };
+                    module_title(ui, "SETUP", &setup_meta);
+                    ui.add_space(12.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt("setup_scroll")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            // Two columns when there is room: who you are and the
+                            // chosen radio's settings left, the radio list right (#232).
+                            if ui.available_width() >= SETUP_TWO_COLUMNS_PX {
+                                ui.columns(2, |cols| {
+                                    self.setup_identity_ui(&mut cols[0]);
+                                    cols[0].add_space(8.0);
+                                    self.setup_details_ui(&mut cols[0]);
+                                    self.setup_radio_list_ui(&mut cols[1]);
+                                });
+                            } else {
+                                self.setup_identity_ui(ui);
+                                self.setup_radio_list_ui(ui);
+                                self.setup_details_ui(ui);
+                            }
+                            ui.add_space(12.0);
+                        });
                 });
             return;
         }
@@ -2814,6 +2619,9 @@ fn audio_meter_row(ui: &mut egui::Ui, k: &str, db: f32, live: bool, tip: &str) {
     );
     hover_tip(&resp, tip);
 }
+
+/// Window width from which setup shows two columns.
+const SETUP_TWO_COLUMNS_PX: f32 = 900.0;
 
 fn setup_group_label(ui: &mut egui::Ui, text: &str) {
     ui.add_space(4.0);
@@ -4959,7 +4767,7 @@ struct Form {
 }
 
 fn load_form() -> Form {
-    if let Ok(cfg) = Config::load(&Config::default_path()) {
+    if let Ok(cfg) = Config::load(&Config::active_path()) {
         let radio =
             crate::radios::from_config(&cfg).and_then(|r| RADIOS.iter().position(|x| x == r));
         let path = if cfg.mode == Mode::Internet {
@@ -5040,6 +4848,290 @@ const BT_AUDIO: usize = 7;
 
 impl GuiApp {
     /// Pick a supported radio: set the path and fill what the probe can find.
+    /// Setup: callsign, mail gateway, grid and GPS.
+    fn setup_identity_ui(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.add_space(20.0);
+            ui.label(RichText::new("Callsign").color(DIM));
+            let edit = egui::TextEdit::singleline(&mut self.callsign)
+                .desired_width(160.0)
+                .hint_text("M7TJF or ~NICK");
+            if ui.add(edit).changed() {
+                self.callsign = self.callsign.to_ascii_uppercase();
+            }
+        });
+        if !self.callsign.trim().starts_with('~') {
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                ui.label(RichText::new("Mail gateway").color(DIM));
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.mail_gateway)
+                        .desired_width(160.0)
+                        .hint_text("radio-plus only, e.g. TF101"),
+                );
+            });
+        }
+        ui.horizontal(|ui| {
+            ui.add_space(20.0);
+            ui.label(RichText::new("Grid    ").color(DIM));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.grid)
+                    .desired_width(160.0)
+                    .hint_text("IO81UF"),
+            );
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("Detect").color(PURPLE).monospace())
+                        .fill(Color32::TRANSPARENT)
+                        .stroke(hairline(LINE)),
+                )
+                .clicked()
+            {
+                self.grid_note = "detecting from IP…".into();
+                self.grid_overwrite = true;
+                self.grid_rx = Some(spawn_grid_detect());
+            }
+        });
+        if !self.grid_note.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                ui.label(
+                    RichText::new(&self.grid_note)
+                        .color(DIM)
+                        .font(FontId::monospace(11.0)),
+                );
+            });
+        }
+        ui.horizontal(|ui| {
+            ui.add_space(20.0);
+            ui.label(RichText::new("GPS     ").color(DIM));
+            if let Some(ports) = self.hw.as_ref().map(|h| h.ports.as_slice()) {
+                port_combo_ui(ui, ports, &mut self.gps_port, "gps_port");
+            }
+            ui.add(
+                egui::TextEdit::singleline(&mut self.gps_port)
+                    .desired_width(160.0)
+                    .hint_text("empty = no GPS"),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.add_space(20.0);
+            ui.label(
+                RichText::new("On the move? A USB GPS keeps your grid and map pin current.")
+                    .color(DIM)
+                    .font(FontId::monospace(11.0)),
+            );
+        });
+    }
+
+    /// Setup: "How you get on the air", the radio list and the other setups.
+    fn setup_radio_list_ui(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.add_space(20.0);
+            ui.label(RichText::new("How you get on the air").color(DIM));
+        });
+        ui.horizontal(|ui| {
+            ui.add_space(20.0);
+            if ui.radio(self.path == 0, "Internet only").clicked() {
+                self.path = 0;
+                self.radio = None;
+            }
+        });
+        setup_group_label(ui, "Supported radios");
+        for (i, r) in RADIOS.iter().enumerate() {
+            let mut clicked = false;
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                clicked = ui.radio(self.radio == Some(i), r.name).clicked();
+            });
+            if !r.note.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.add_space(44.0);
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(r.note)
+                                .color(DIM)
+                                .font(FontId::monospace(11.0)),
+                        )
+                        .wrap(),
+                    );
+                });
+            }
+            if clicked {
+                self.choose_radio(i);
+            }
+        }
+        // The generic setups fold away so the radio list fits a laptop screen (#232).
+        let other_open = self.radio.is_none() && matches!(self.path, 1 | 2 | 3 | 5);
+        egui::CollapsingHeader::new(RichText::new("Other setups").color(DIM).monospace())
+            .id_salt("setup_other")
+            .default_open(other_open)
+            .show(ui, |ui| {
+                for (id, label) in [
+                    (1, "Handheld + Digirig"),
+                    (2, "Audio cable (VOX)"),
+                    (3, "HF rig through rigctld (any Hamlib radio)"),
+                    (5, "KISS TNC on a serial port"),
+                ] {
+                    ui.horizontal(|ui| {
+                        ui.add_space(20.0);
+                        if ui
+                            .radio(self.radio.is_none() && self.path == id, label)
+                            .clicked()
+                        {
+                            self.path = id;
+                            self.radio = None;
+                        }
+                    });
+                }
+            });
+    }
+
+    /// Setup: what the chosen radio or setup needs (ports, Bluetooth, audio).
+    fn setup_details_ui(&mut self, ui: &mut egui::Ui) {
+        if let Some(r) = self.radio.map(|i| &RADIOS[i]) {
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(format!("On the radio: {}", r.radio_side))
+                            .color(DIM)
+                            .font(FontId::monospace(11.0)),
+                    )
+                    .wrap(),
+                );
+            });
+            if !r.cable.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.add_space(20.0);
+                    ui.label(
+                        RichText::new("Cable:")
+                            .color(DIM)
+                            .font(FontId::monospace(11.0)),
+                    );
+                    // "Name: https://…" opens in the browser.
+                    match r.cable.split_once(": https://") {
+                        Some((name, rest)) => {
+                            ui.hyperlink_to(
+                                RichText::new(name).font(FontId::monospace(11.0)),
+                                format!("https://{rest}"),
+                            );
+                        }
+                        None => {
+                            ui.label(
+                                RichText::new(r.cable)
+                                    .color(DIM)
+                                    .font(FontId::monospace(11.0)),
+                            );
+                        }
+                    }
+                });
+            }
+        }
+        if self.path == SUPPORTED_CAT {
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                ui.label(RichText::new("CAT    ").color(DIM));
+                if let Some(ports) = self.hw.as_ref().map(|h| h.ports.as_slice()) {
+                    port_combo_ui(ui, ports, &mut self.cat_port, "cat_port");
+                }
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.cat_port)
+                        .desired_width(120.0)
+                        .hint_text("COM5"),
+                );
+            });
+        }
+        if self.path == 1 {
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                ui.label(RichText::new("Serial").color(DIM));
+                if let Some(ports) = self.hw.as_ref().map(|h| h.ports.as_slice()) {
+                    port_combo_ui(ui, ports, &mut self.com_port, "digirig_port");
+                }
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.com_port)
+                        .desired_width(120.0)
+                        .hint_text("COM5"),
+                );
+            });
+        }
+        if self.path == 3 {
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                ui.label(RichText::new("CAT    ").color(DIM));
+                if let Some(hw) = &self.hw {
+                    if !hw.rigctld.is_empty() {
+                        egui::ComboBox::from_id_salt("rigctl_pick")
+                            .selected_text(self.rigctl.as_str())
+                            .width(200.0)
+                            .show_ui(ui, |ui| {
+                                for h in &hw.rigctld {
+                                    ui.selectable_value(&mut self.rigctl, h.clone(), h);
+                                }
+                            });
+                    }
+                }
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.rigctl)
+                        .desired_width(160.0)
+                        .hint_text("127.0.0.1:4532"),
+                );
+            });
+        }
+        if matches!(self.path, 4 | BT_AUDIO) {
+            self.bluetooth_setup_ui(ui);
+        }
+        if self.path == 5 {
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                ui.label(RichText::new("Port  ").color(DIM));
+                if let Some(ports) = self.hw.as_ref().map(|h| h.ports.as_slice()) {
+                    port_combo_ui(ui, ports, &mut self.serial_path, "tnc_port");
+                }
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.serial_path)
+                        .desired_width(160.0)
+                        .hint_text("COM7 or /dev/rfcomm0"),
+                );
+            });
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                ui.label(
+                    RichText::new(
+                        "Any KISS TNC: Mobilinkd, a Bluetooth COM port, or rfcomm bind on Linux.",
+                    )
+                    .color(DIM)
+                    .font(FontId::monospace(11.0)),
+                );
+            });
+        }
+        if matches!(self.path, 1 | 2 | 3 | SUPPORTED_CAT) {
+            let (ins, outs) = self
+                .hw
+                .as_ref()
+                .map(|h| (h.audio_in.as_slice(), h.audio_out.as_slice()))
+                .unwrap_or((&[], &[]));
+            audio_device_row(
+                ui,
+                "In     ",
+                "decode — radio speaker",
+                &mut self.audio_input,
+                ins,
+                "audio_in",
+            );
+            audio_device_row(
+                ui,
+                "Out    ",
+                "transmit — radio mic",
+                &mut self.audio_output,
+                outs,
+                "audio_out",
+            );
+        }
+    }
+
     fn choose_radio(&mut self, i: usize) {
         let r = &RADIOS[i];
         self.radio = Some(i);
@@ -5162,8 +5254,12 @@ impl GuiApp {
             FindOutcome::NotFound { paired_others } => {
                 self.bt_found = None;
                 self.bt_note = if paired_others.is_empty() {
-                    "no radio found. On the radio: Menu → Pairing, and General Settings → KISS TNC → Enable. Then press Find radio."
-                        .into()
+                    if self.path == BT_AUDIO {
+                        "no radio found. On the radio: Menu → Pairing, with KISS TNC off (Bluetooth audio needs it off). Then press Find radio."
+                    } else {
+                        "no radio found. On the radio: Menu → Pairing, and General Settings → KISS TNC → Enable. Then press Find radio."
+                    }
+                    .into()
                 } else {
                     format!(
                         "no VR-N76 / UV-PRO / GA-5WB seen. Paired devices: {}. Put the radio in Pairing mode and try again.",
@@ -5241,6 +5337,10 @@ impl GuiApp {
                 );
             });
         }
+        // A supported radio already shows its own "On the radio" line.
+        if self.radio.is_some() {
+            return;
+        }
         ui.horizontal(|ui| {
             ui.add_space(20.0);
             ui.add(
@@ -5261,7 +5361,10 @@ impl GuiApp {
 
 fn spawn_node(log: Arc<Mutex<String>>, done: Arc<AtomicBool>) -> Result<Child> {
     let mut cmd = node_command();
-    cmd.arg("node")
+    // Run the station on the file this GUI loaded (`wcr -c FILE gui`, #232).
+    cmd.arg("-c")
+        .arg(Config::active_path())
+        .arg("node")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -5524,6 +5627,7 @@ fn irc_session(
                             msgid,
                             state,
                             tries,
+                            via: crate::chat_line::delivery_via(&line),
                         });
                     } else if let Some((from, ch)) = parse_invite(&line) {
                         let _ = events.send(IrcEvent::Invited { from, channel: ch });

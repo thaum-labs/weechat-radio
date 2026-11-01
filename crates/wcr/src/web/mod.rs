@@ -9,6 +9,7 @@
 
 mod auth;
 mod chat;
+mod health;
 mod station;
 mod tls;
 
@@ -202,8 +203,10 @@ fn router(web: Web) -> Router {
         )
         .route("/api/gateway", get(gateway))
         .route("/api/spectrum", get(spectrum))
+        .route("/api/health", get(health))
         .route("/api/station/start", post(start))
         .route("/api/station/stop", post(stop))
+        .route("/api/station/setting", post(setting))
         .route("/app", get(|| async { Html(APP_PAGE) }))
         .route(
             "/app.js",
@@ -357,6 +360,46 @@ async fn stop(State(web): State<Web>) -> Json<Value> {
     Json(json!({ "ok": true }))
 }
 
+#[derive(Deserialize)]
+struct SettingBody {
+    what: String,
+    value: String,
+}
+
+/// Mode or preset from the gateway view's pickers (#226).
+async fn setting(State(web): State<Web>, Json(b): Json<SettingBody>) -> Response {
+    match web.chat.radio_setting(&b.what, &b.value) {
+        Ok(()) => {
+            web.station
+                .note(&format!("{} set to {} on the web page", b.what, b.value));
+            Json(json!({ "ok": true })).into_response()
+        }
+        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
+    }
+}
+
+/// The modes, and the presets this station's link can use, for the pickers.
+fn choices(cfg: Option<&Config>) -> Value {
+    use crate::presets::Preset;
+    let modes: Vec<Value> = crate::modes::Mode::all()
+        .iter()
+        .map(|m| json!({ "value": m.as_str(), "name": m.display_name() }))
+        .collect();
+    let presets: Vec<Value> = match cfg {
+        // The radio's own TNC is fixed at 1200 bd: no preset to pick.
+        Some(c) if c.modem.uses_tnc() => Vec::new(),
+        _ => Preset::all()
+            .into_iter()
+            .filter(|p| !p.is_radio_tnc())
+            .filter(|p| {
+                !cfg.is_some_and(|c| c.modem.is_bt_audio()) || crate::btaudio::preset_allowed(*p)
+            })
+            .map(|p| json!({ "value": p.as_str(), "about": p.description() }))
+            .collect(),
+    };
+    json!({ "modes": modes, "presets": presets })
+}
+
 /// Everything the gateway view shows, in one answer.
 async fn gateway(State(web): State<Web>) -> Json<Value> {
     let state = web.station.state().await;
@@ -395,14 +438,16 @@ async fn gateway(State(web): State<Web>) -> Json<Value> {
             .collect()
     };
     let internet = internet_up(&web.cfg_path).await;
+    let cfg = Config::load(&web.cfg_path).ok();
     // The set frequency, for the Start question while the station is down.
-    let frequency = Config::load(&web.cfg_path)
+    let frequency = cfg
+        .as_ref()
         .map(|c| c.rf.frequency_khz)
-        .ok()
         .filter(|&k| k > 0)
         .map(crate::band::describe);
     Json(json!({
         "frequency": frequency,
+        "choices": choices(cfg.as_ref()),
         "station": state,
         "answering": !status.is_null(),
         "internet": internet,
@@ -413,6 +458,31 @@ async fn gateway(State(web): State<Web>) -> Json<Value> {
         "log": web.station.log_tail(60),
         "now": chrono::Utc::now().timestamp(),
     }))
+}
+
+/// The machine's health for the gateway view (#231).
+async fn health(State(web): State<Web>, headers: HeaderMap) -> Json<Value> {
+    // The address the browser used, so the page can name that interface.
+    let served_ip = headers
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| {
+            h.parse::<SocketAddr>()
+                .ok()
+                .map(|a| a.ip())
+                .or_else(|| h.parse().ok())
+        });
+    let node_pid = web.station.pid().await;
+    let data_dir = Config::load(&web.cfg_path)
+        .ok()
+        .and_then(|c| c.store.path.parent().map(Path::to_path_buf))
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(crate::config::default_data_dir);
+    let snap =
+        tokio::task::spawn_blocking(move || health::snapshot(&data_dir, served_ip, node_pid))
+            .await
+            .unwrap_or(Value::Null);
+    Json(snap)
 }
 
 /// The page's live feed: a snapshot of the chat, then each new or changed

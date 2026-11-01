@@ -212,6 +212,32 @@ pub(crate) fn delivery_ticks(state: &str) -> Option<&'static str> {
     }
 }
 
+/// How the receipt behind an `[ok]` reached the station (`rf`, `inet`,
+/// `lan`), from the mark's `+radio/via` tag (#226).
+pub(crate) fn delivery_via(line: &str) -> Option<String> {
+    irc_tags(line)
+        .get("radio/via")
+        .filter(|v| !v.is_empty())
+        .cloned()
+}
+
+/// Note on our own line `msgid` how its first receipt came back. The first
+/// receipt wins: a later one by another path does not change it.
+pub(crate) fn apply_receipt_via(chat: &mut [ChatLine], msgid: &str, via: &str) {
+    if msgid.is_empty() || via.is_empty() {
+        return;
+    }
+    if let Some(line) = chat
+        .iter_mut()
+        .rev()
+        .find(|l| !l.sys && l.msgid.eq_ignore_ascii_case(msgid))
+    {
+        if line.via.is_empty() {
+            line.via = via.to_string();
+        }
+    }
+}
+
 pub(crate) fn parse_tries(raw: Option<&str>) -> u32 {
     raw.and_then(|s| s.parse().ok()).unwrap_or(0)
 }

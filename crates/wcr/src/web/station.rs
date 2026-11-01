@@ -94,6 +94,11 @@ impl Station {
         }
     }
 
+    /// The running station's process id, for its memory on the health card.
+    pub async fn pid(&self) -> Option<u32> {
+        self.inner.lock().await.child.as_ref()?.id()
+    }
+
     pub async fn start(&self) {
         let mut inner = self.inner.lock().await;
         inner.want = true;
