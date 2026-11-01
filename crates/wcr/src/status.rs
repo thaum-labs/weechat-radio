@@ -693,7 +693,11 @@ mod tests {
         };
         s.apply_modem_audio(&st);
         assert_eq!(s.audio_in_word, "clipping");
-        assert!(s.audio_in_hint.contains("Lower RX gain"), "{}", s.audio_in_hint);
+        assert!(
+            s.audio_in_hint.contains("Lower RX gain"),
+            "{}",
+            s.audio_in_hint
+        );
         assert_eq!(s.audio_in_clip_pct, Some(26.0));
         // While we send, the input is our own audio: the idle word stays.
         let tx = ModemStatus {
