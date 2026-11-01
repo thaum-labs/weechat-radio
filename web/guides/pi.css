@@ -1,0 +1,44 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Raspberry Pi gateway guide: screenshots of the station's web page. */
+
+/* A row of screenshots; each opens full size. Two across on a phone. */
+.page-panel .shots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 16px;
+  margin: 14px 0 6px;
+  padding: 0;
+  list-style: none;
+  align-items: start;
+}
+.page-panel .shots li { margin: 0; }
+.page-panel .shots figure { margin: 0; }
+.page-panel .shots a { display: block; }
+.page-panel .shots img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #0d0d12;
+}
+.page-panel .shots a:hover img,
+.page-panel .shots a:focus-visible img { border-color: var(--accent); }
+.page-panel .shots figcaption {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--body);
+}
+.page-panel .shots figcaption strong { color: var(--fg); font-weight: 400; }
+.page-panel .shots-note {
+  font-size: 12px;
+  color: var(--dim);
+}
+
+/* The App diagram is short and wide: keep it near the size of the other diagrams. */
+.page-panel .pi-app-dgm svg.dgm {
+  display: block;
+  max-width: 520px;
+  margin: 0 auto;
+}
