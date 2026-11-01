@@ -191,7 +191,11 @@ fn memory(node_pid: Option<u32>) -> Value {
             read(format!("/proc/{pid}/status"))
                 .and_then(|t| meminfo_bytes(&t.replace('\t', " "), "VmRSS"))
         };
-        let modem73 = find_process("modem73").and_then(|pid| rss(&pid.to_string()));
+        // This station's modem73 is a child of its node; another station's
+        // modem73 on the same machine is not ours to show (#235).
+        let modem73 = node_pid
+            .and_then(|p| child_named(p, "modem73"))
+            .and_then(|pid| rss(&pid.to_string()));
         json!({
             "total": get("MemTotal"),
             "available": get("MemAvailable"),
@@ -211,13 +215,25 @@ fn memory(node_pid: Option<u32>) -> Value {
     }
 }
 
-/// The first process whose name is `name` (from /proc/*/comm).
+/// The child of `parent` whose name is `name` (from /proc/*/comm and the
+/// PPid line of /proc/*/status).
 #[cfg(target_os = "linux")]
-fn find_process(name: &str) -> Option<u32> {
+fn child_named(parent: u32, name: &str) -> Option<u32> {
     std::fs::read_dir("/proc").ok()?.flatten().find_map(|e| {
         let pid: u32 = e.file_name().to_str()?.parse().ok()?;
-        (read(e.path().join("comm"))?.trim() == name).then_some(pid)
+        if read(e.path().join("comm"))?.trim() != name {
+            return None;
+        }
+        (parent_pid(&read(e.path().join("status"))?) == Some(parent)).then_some(pid)
     })
+}
+
+/// `PPid:\t1234` from a /proc/*/status text.
+pub fn parent_pid(status: &str) -> Option<u32> {
+    status
+        .lines()
+        .find_map(|l| l.strip_prefix("PPid:"))
+        .and_then(|v| v.trim().parse().ok())
 }
 
 fn temperature() -> Option<f64> {
@@ -436,6 +452,29 @@ fn system() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parent_pid_reads_the_ppid_line() {
+        assert_eq!(
+            parent_pid("Name:\tmodem73\nPid:\t812\nPPid:\t640\n"),
+            Some(640)
+        );
+        assert_eq!(parent_pid("Name:\tx\n"), None);
+    }
+
+    /// Another station's process of the same name is not ours (#235).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_our_own_child_counts() {
+        let mut other = std::process::Command::new("sleep")
+            .arg("5")
+            .spawn()
+            .unwrap();
+        let me = std::process::id();
+        assert_eq!(child_named(me, "sleep"), Some(other.id()));
+        let _ = other.kill();
+        let _ = other.wait();
+    }
 
     #[test]
     fn throttled_bits_read_as_words() {

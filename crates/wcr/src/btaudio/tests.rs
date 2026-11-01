@@ -88,14 +88,15 @@ fn radio_audio_reaches_modem73_and_modem73_audio_keys_the_radio() {
     }
     assert_eq!(snap.lock().tnc, "FAKE linked");
 
-    // The radio hears a 1 kHz tone and streams it to us as SBC.
+    // The radio hears a 1 kHz tone and streams it to us as SBC, framed as
+    // type 3 like the real radio (#235).
     let heard: Vec<i16> = tone(1000.0, 32_000.0, 32_000, 0.4)
         .iter()
         .map(|&v| to_i16(v))
         .collect();
     let mut enc = sbc::Encode::new();
     for chunk in heard.chunks(640) {
-        radio.write_all(&frame::audio(&enc.push(chunk))).unwrap();
+        radio.write_all(&frame::rx_audio(&enc.push(chunk))).unwrap();
     }
     radio.write_all(&frame::END_OF_AUDIO).unwrap();
 
@@ -153,10 +154,16 @@ fn radio_audio_reaches_modem73_and_modem73_audio_keys_the_radio() {
         Some(&frame::Message::End),
         "unkeyed at the end"
     );
+    assert_eq!(&wire[..2], &[0x7E, 0x00], "sent as type 0 audio");
     let mut pcm = Vec::new();
     let mut dec = sbc::Decode::default();
     for m in &msgs {
         if let frame::Message::Audio(b) = m {
+            assert!(
+                b.len() <= sbc::MAX_MESSAGE_BYTES,
+                "{} bytes in one message",
+                b.len()
+            );
             dec.push(b, &mut pcm);
         }
     }
@@ -302,7 +309,7 @@ fn air(from: &mut TcpStream, to: &mut TcpStream) {
             let mut sbc_bytes = vec![0u8; whole];
             let p = enc.encode(&pcm[..whole], &mut sbc_bytes).unwrap();
             pcm.drain(..whole);
-            let mut framed = frame::audio(&sbc_bytes[..p.produced]);
+            let mut framed = frame::rx_audio(&sbc_bytes[..p.produced]);
             framed.extend(out);
             out = framed;
         }

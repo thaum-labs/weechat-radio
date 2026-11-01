@@ -68,7 +68,7 @@ The preset is fixed at `afsk-1200` (the radio modulates); the robustness ladder 
 
 The second way to use these radios: WeeChat Radio sends **modem73 audio** over the radio's Bluetooth link instead of using the 1200 bd TNC. Same no-cable setup, but you get the modem73 modes (faster, and the robustness ladder works).
 
-1. On the radio: **squelch low (1 or 2)**, **KISS TNC off**, **Digital Mode off**, then **Menu → Pairing**. Close the HT phone app.
+1. On the radio: **squelch 0 or 1**, **KISS TNC off**, **Digital Mode off**, then **Menu → Pairing**. Close the HT phone app. Data bursts are short, and at squelch 1 a VR-N76 only just opened on a Pi gateway's beacon; set the radios at the other end to squelch 0 or 1 as well.
 2. In setup choose **VR-N76 / UV-PRO / GA-5WB (Bluetooth audio, modem73)** or **VR-N7600 (Bluetooth audio, modem73)**, press **Find radio** (macOS: pair the radio in System Settings → Bluetooth first), then **Save and start**.
 3. **RADIO** reads `VR-N76 linked` in green, or `lost, reconnecting…` in red; the app reconnects by itself every 5 s.
 
@@ -85,6 +85,14 @@ bt_name = "VR-N76"      # or bt_addr = "38:D2:00:01:03:49"
 ```
 
 This needs the modem73 that comes with WeeChat Radio (it adds network audio); a stock modem73 is refused with a clear message.
+
+WeeChat Radio has no transmit level setting for Bluetooth audio: it sends modem73's audio at the radio's own SBC rate (bitpool 18, like the HT app). If you hear the radio key up but the far end does not decode it, tell us (with the SNR the far end shows).
+
+**Quick signal check** (with a second station, such as a [Pi gateway](PI-GATEWAY.md#quick-signal-check-after-setup), on the same frequency and preset):
+
+1. **Receive:** when the other station sends, the station panel's audio in rises above the floor (not stuck at -80 dB) and its callsign shows in the heard list.
+2. **Transmit:** your beacon or a bulletin shows on the other station with a comfortable SNR (well above 10 dB in the same room).
+3. **Both ways:** a direct message of about 500 characters arrives whole, and you see `[ok rf]`.
 
 ## Linux
 

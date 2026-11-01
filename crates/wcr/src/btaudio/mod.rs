@@ -325,11 +325,17 @@ impl Transmit {
         self.down.process(samples, &mut at32);
         let pcm: Vec<i16> = at32.iter().map(|&v| to_i16(v)).collect();
         let sbc = self.encode.push(&pcm);
-        if !sbc.is_empty() {
-            self.held.push(frame::audio(&sbc));
-        }
+        self.hold(&sbc);
         if self.since.elapsed() >= TX_PREROLL {
             self.flush(sh);
+        }
+    }
+
+    /// Frame whole SBC frames, at most [`sbc::MAX_MESSAGE_BYTES`] a message.
+    fn hold(&mut self, sbc: &[u8]) {
+        let per = sbc::MAX_MESSAGE_BYTES / sbc::tx_frame_bytes() * sbc::tx_frame_bytes();
+        for part in sbc.chunks(per) {
+            self.held.push(frame::audio(part));
         }
     }
 
@@ -341,9 +347,7 @@ impl Transmit {
 
     fn end(&mut self, sh: &Shared) {
         let tail = self.encode.finish();
-        if !tail.is_empty() {
-            self.held.push(frame::audio(&tail));
-        }
+        self.hold(&tail);
         self.flush(sh);
         sh.send_to_radio(frame::END_OF_AUDIO.to_vec());
     }
