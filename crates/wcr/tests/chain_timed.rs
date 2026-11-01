@@ -1050,6 +1050,7 @@ async fn a_receipt_behind_queued_frames_keys_straight_after_them() {
             slot: Duration::from_millis(100),
             quiet: Duration::from_millis(500),
             csma: true,
+            csma_sync: false,
             drain_cap: Duration::from_secs(5),
         })
         .await
