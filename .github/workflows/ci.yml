@@ -9,7 +9,10 @@ concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  # The full suite takes 1.5 to 2 h (timed radio harness tests), up to 3.5 h
+  # on loaded runners. A hung job fails at 4 h instead of GitHub's 6 h.
   test:
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
@@ -21,6 +24,11 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxdo-dev libasound2-dev libudev-dev pkg-config weechat-headless weechat-curses
       - uses: dtolnay/rust-toolchain@stable
+      # Its own step so its result shows within minutes, not after the long
+      # suite (QA #239). Bluetooth on the Mac depends on this run loop.
+      - name: macOS main-loop test
+        if: matrix.os == 'macos-latest'
+        run: cargo test -p wcr --test macos_main_loop
       - name: test
         run: cargo test --workspace
       - name: clippy
@@ -30,6 +38,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo fmt --all -- --check
   msrv:
+    timeout-minutes: 240
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

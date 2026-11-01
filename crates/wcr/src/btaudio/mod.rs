@@ -47,9 +47,13 @@ const TX_LIMIT: Duration = Duration::from_secs(120);
 const RETRY: Duration = Duration::from_secs(5);
 /// How often the receive counters go to the log while linked.
 const RX_LOG_EVERY: Duration = Duration::from_secs(10);
-/// Allowed range for `[tnc] bt_tx_level_db`.
+/// Allowed range for `[tnc] bt_tx_level_db`. modem73's own audio already
+/// peaks at full scale (vhf-fm: peak 0 dBFS, RMS -8 dBFS), so any gain above
+/// 0 dB only clips it: +6 dB clipped 24% of a QPSK burst and lowered the far
+/// end's SNR (QA #239). The radio's own Bluetooth mic gain sets the
+/// deviation.
 const TX_LEVEL_MIN_DB: f32 = -20.0;
-const TX_LEVEL_MAX_DB: f32 = 12.0;
+const TX_LEVEL_MAX_DB: f32 = 0.0;
 
 /// Presets that survive the radio's FM + SBC audio path. 8PSK (`hf-good`)
 /// fails over the air (HTCommander's measurements, #202); `vox-safe` is for
@@ -188,7 +192,11 @@ pub fn start_with_level(
         tx_gain: tx_gain(tx_level_db),
         ..Shared::default()
     });
-    if tx_level_db != 0.0 {
+    if tx_level_db > TX_LEVEL_MAX_DB {
+        tracing::warn!(
+            "btaudio: bt_tx_level_db {tx_level_db:+.1} would clip modem73's audio, which already peaks at full scale; sending at 0 dB. Raise the radio's Bluetooth mic gain instead."
+        );
+    } else if tx_level_db != 0.0 {
         tracing::info!(
             "btaudio: transmit level {:+.1} dB",
             20.0 * shared.tx_gain.log10()

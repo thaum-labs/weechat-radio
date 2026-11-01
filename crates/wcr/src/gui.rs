@@ -5316,7 +5316,7 @@ impl GuiApp {
             ui.add(
                 egui::Label::new(
                     RichText::new(if self.path == BT_AUDIO {
-                        "On the radio: squelch 0 or 1, KISS TNC and Digital Mode off. Close the HT phone app — the radio takes one Bluetooth client at a time."
+                        "On the radio: squelch 0, KISS TNC and Digital Mode off. Close the HT phone app — the radio takes one Bluetooth client at a time."
                     } else {
                         "On the radio: General Settings → KISS TNC → Enable, Digital Mode off. Close the HT phone app — the radio takes one Bluetooth client at a time."
                     })

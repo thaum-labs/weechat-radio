@@ -277,6 +277,135 @@ fn two_modem73s_talk_through_two_bridges() {
     assert!(contains(&got, &payload), "frame crossed the fake air");
 }
 
+/// QA #239: a VR-N76 at squelch 0 streams receiver hiss at about -4 dBFS.
+/// With wcr's busy test for Bluetooth audio (`csma_mode = "auto"` = sync),
+/// modem73 keys up for a queued frame within seconds. With modem73's level
+/// gate it holds the frame (the bug QA saw). The fake radio streams hiss the
+/// whole time, like the real radio. This proves modem73's behaviour, not the
+/// radio's. Run with `WCR_TEST_MODEM73=/path/to/modem73 cargo test -- --ignored`.
+#[test]
+#[ignore = "needs a modem73 with network audio (WCR_TEST_MODEM73)"]
+fn open_squelch_hiss_does_not_hold_transmit() {
+    let Ok(binary) = std::env::var("WCR_TEST_MODEM73") else {
+        return;
+    };
+    let bt = crate::config::ModemConfig {
+        ptt: "bluetooth".into(),
+        ..Default::default()
+    };
+    let level = crate::config::ModemConfig {
+        csma_mode: "level".into(),
+        ..bt.clone()
+    };
+    let wait = Duration::from_secs(15);
+    let sync_keyed = time_to_key_through_hiss(&binary, &bt, wait);
+    let level_keyed = time_to_key_through_hiss(&binary, &level, wait);
+    assert!(
+        level_keyed.is_none(),
+        "the level gate should hold the frame in hiss (#239), keyed after {level_keyed:?}"
+    );
+    let took = sync_keyed.expect("modem73 keyed up through -4 dBFS hiss");
+    println!("sync: keyed {took:?} after the frame was queued");
+    assert!(took < Duration::from_secs(10), "keyed after {took:?}");
+}
+
+/// Starts modem73 behind a bridge whose radio streams -4 dBFS hiss, queues
+/// one frame, and returns how long modem73 took to key the radio, or `None`
+/// if it did not within `wait`.
+fn time_to_key_through_hiss(
+    binary: &str,
+    m: &crate::config::ModemConfig,
+    wait: Duration,
+) -> Option<Duration> {
+    let (connector, radio_rx) = fake_radio();
+    let ports = start(connector, crate::status::new_shared()).unwrap();
+    let radio = radio_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+
+    // The radio at squelch 0: hiss, 20 ms at a time, in real time.
+    let mut to_bridge = radio.try_clone().unwrap();
+    let stop_hiss = stop.clone();
+    std::thread::spawn(move || {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let mut enc = sbc::Encode::new();
+        let start = Instant::now();
+        let mut sent = 0u32;
+        while !stop_hiss.load(Ordering::Relaxed) {
+            // Sum of four uniforms: near-Gaussian, RMS 0.63 (-4 dBFS).
+            let hiss: Vec<i16> = (0..640)
+                .map(|_| {
+                    let g: f32 = (0..4).map(|_| rng.gen_range(-1.0f32..1.0)).sum();
+                    to_i16(g * 0.63 * (3.0f32 / 4.0).sqrt())
+                })
+                .collect();
+            if to_bridge
+                .write_all(&frame::rx_audio(&enc.push(&hiss)))
+                .is_err()
+            {
+                return;
+            }
+            sent += 1;
+            let due = start + Duration::from_millis(20 * sent as u64);
+            std::thread::sleep(due.saturating_duration_since(Instant::now()));
+        }
+    });
+
+    // The first audio the bridge sends the radio means modem73 keyed up.
+    let (keyed_tx, keyed_rx) = mpsc::channel();
+    let mut from_bridge = radio.try_clone().unwrap();
+    std::thread::spawn(move || {
+        let mut deframer = frame::Deframer::default();
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = from_bridge.read(&mut buf) {
+            if n == 0 {
+                return;
+            }
+            let mut audio = false;
+            deframer.push(&buf[..n], |msg| {
+                audio |= matches!(msg, frame::Message::Audio(_));
+            });
+            if audio {
+                let _ = keyed_tx.send(Instant::now());
+                return;
+            }
+        }
+    });
+
+    let home = tempfile::tempdir().unwrap();
+    let kiss = free_port();
+    let mut modem = std::process::Command::new(binary)
+        .args(["--headless", "-p", &kiss.to_string(), "--control-port", "0"])
+        .args([
+            "-d",
+            &ports.audio_device(),
+            "--rigctl",
+            &ports.rigctl_addr(),
+        ])
+        .args(["--callsign", "TEST1A"])
+        .args(crate::presets::Preset::VhfFm.modem73_args())
+        .args(crate::modem::supervise::csma_mode_args(m))
+        .env("HOME", home.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    // Let modem73 connect and hear the hiss before the frame is queued.
+    std::thread::sleep(Duration::from_secs(3));
+    let mut k = TcpStream::connect(("127.0.0.1", kiss)).unwrap();
+    k.write_all(&crate::modem::kiss::encode_frame(b"through the hiss"))
+        .unwrap();
+    let queued = Instant::now();
+    let keyed = keyed_rx
+        .recv_timeout(wait)
+        .ok()
+        .map(|at| at.duration_since(queued));
+    stop.store(true, Ordering::Relaxed);
+    let _ = modem.kill();
+    let _ = modem.wait();
+    keyed
+}
+
 /// The fake air: what one radio is sent to transmit, the other hears, as the
 /// radio's own bitpool-18 SBC stream.
 fn air(from: &mut TcpStream, to: &mut TcpStream) {
@@ -390,8 +519,10 @@ fn sbc_frame_maths_match_the_radio() {
 #[test]
 fn transmit_level_is_kept_in_range() {
     assert_eq!(tx_gain(0.0), 1.0);
-    assert!((tx_gain(6.0) - 1.995).abs() < 0.01);
-    assert_eq!(tx_gain(40.0), tx_gain(12.0));
+    // modem73 already peaks at full scale: more than 0 dB would only clip.
+    assert_eq!(tx_gain(6.0), 1.0);
+    assert_eq!(tx_gain(40.0), 1.0);
+    assert!((tx_gain(-6.0) - 0.501).abs() < 0.01);
     assert_eq!(tx_gain(-90.0), tx_gain(-20.0));
     assert_eq!(tx_gain(f32::NAN), 1.0);
 }

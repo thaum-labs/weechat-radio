@@ -67,7 +67,7 @@ const HAMLIB_X5105: u32 = 3089;
 const HAMLIB_QDX: u32 = 2052;
 const HAMLIB_TRUSDX: u32 = 2055;
 
-const BT_AUDIO_RADIO_SIDE: &str = "Squelch 0 or 1, KISS TNC and Digital Mode off, then Menu → Pairing. Close the HT phone app: the radio takes one Bluetooth client at a time.";
+const BT_AUDIO_RADIO_SIDE: &str = "Squelch 0, KISS TNC and Digital Mode off, then Menu → Pairing. Close the HT phone app: the radio takes one Bluetooth client at a time.";
 
 const G90_CABLE: &str =
     "Xiegu DE-19, or the Digirig Xiegu G90 Cables Set: https://digirig.net/product/xiegu-g90-cables/";

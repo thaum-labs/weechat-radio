@@ -113,7 +113,7 @@ Two things are on the network. The password-protected page on 8443. And port 737
 ## The radio on a fixed channel
 
 - Set the radio to the frequency you chose in setup. Turn off scanning, dual watch, power saving and VOX on the radio itself (use the interface's PTT).
-- Set squelch to **0 or 1** on the gateway's radio and on the handhelds that talk to it. A data burst is short: at squelch 1 a VR-N76 only just opened on the Pi's beacon and cut out twice during it, and an RT-900 did not open at all; at squelch 0 both heard the whole burst. Squelch 0 hisses on the speaker, so turn the volume down rather than the squelch up.
+- Set squelch to **0** on the gateway's radio and on the handhelds that talk to it. A data burst is short: at squelch 1 a VR-N76 only just opened on the Pi's beacon and cut out twice during it, and an RT-900 did not open at all; at squelch 0 both heard the whole burst. Squelch 0 hisses on the speaker, so turn the volume down rather than the squelch up. The hiss does not stop the gateway sending: on `vhf-fm` modem73 counts only another station's data signal as busy, not hiss (`csma_mode`, see [VR-N76.md](VR-N76.md#bluetooth-audio-mode-vr-n76-vr-n7600)).
 - Set the audio levels before you leave it unattended (see below): the radio light on the web page should be up, and frames from other stations should show in the log.
 - Use a preset the path supports. On HF, robust presets are slower but get through. A Pi 3 is fine on them.
 - Make sure your licence allows unattended or remote operation of a station on that band, and that you can stop it: the Stop button, `sudo systemctl stop wcr-web`, or switching the radio off.
@@ -138,15 +138,15 @@ Then save:
 sudo alsactl store
 ```
 
-With the radio squelched and quiet, audio in on the web page reads very low. When another station sends, it should rise into "good" (between -35 and -3 dBFS), not "hot". Turn the radio's volume, not the Mic capture, first.
+At squelch 0, audio in on the web page shows the radio's hiss while the channel is quiet, and drops when a station's carrier quiets it. That is normal for FM, and the hiss no longer holds the gateway's transmit (QA #239: before 1.0.12 the Pi read -1 dBFS of hiss as a busy channel and held each beacon 30 s). If the hiss reads "hot", turn the radio's volume down a little. When another station sends, its audio should sit in "good" (between -35 and -3 dBFS), not "hot". Turn the radio's volume, not the Mic capture, first.
 
 ## Quick signal check after setup
 
-Do this once with a second station (a laptop or another Pi) a few metres away, both on the gateway's frequency and preset, squelch 0 or 1 on both radios:
+Do this once with a second station (a laptop or another Pi) a few metres away, both on the gateway's frequency and preset, squelch 0 on both radios:
 
 1. **The far station hears the gateway.** Wait for the gateway's beacon (about a minute after start). The far station's heard list shows the gateway's callsign with an SNR. Listen on a handheld too: the burst should sound clean and steady, not clipped at the start or cut in the middle.
 2. **The gateway hears the far station.** Send a bulletin from the far station. The gateway's web page shows it in the log, audio in rises into "good", and the far station's heard list gets the gateway's reply.
-3. **SNR is comfortable.** Radios in the same room should show an SNR well above 10 dB. A few dB means the transmit level is wrong (raise or lower the Digirig **Speaker** level) or the squelch is chopping the burst.
+3. **SNR is comfortable.** Target: 10 dB or more with the radios in the same room. A few dB means the transmit level is wrong (raise or lower the Digirig **Speaker** level) or the squelch is chopping the burst.
 4. **A long message gets through.** Send a direct message of about 500 characters each way. It should arrive whole, and the sender should see `[ok rf]`.
 
 If step 1 fails and step 2 works, it is the transmit side (Speaker level, PTT); if step 2 fails, it is the receive side (Mic capture, radio volume, squelch).
