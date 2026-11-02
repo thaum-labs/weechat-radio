@@ -42,6 +42,9 @@ const APP_JS: &str = include_str!("assets/app.js");
 /// The website's wordmark font (web/fonts, SIL OFL 1.1, see NOTICE), served
 /// from wcr itself so the page needs no internet and CSP stays 'self' (#254).
 const FIRA_MONO: &[u8] = include_bytes!("assets/fira-mono-400.woff2");
+/// The website's mark (web/icons/mark-accent.svg) as the tab icon, so the
+/// browser's own `/favicon.ico` ask is not a 404 (#257).
+const FAVICON: &str = include_str!("assets/favicon.svg");
 
 #[derive(Clone)]
 struct Web {
@@ -235,6 +238,8 @@ fn router(web: Web) -> Router {
             "/fonts/fira-mono-400.woff2",
             get(|| async { ([(header::CONTENT_TYPE, "font/woff2")], FIRA_MONO).into_response() }),
         )
+        .route("/favicon.svg", get(favicon))
+        .route("/favicon.ico", get(favicon))
         .route(
             "/api/whoami",
             get(|State(web): State<Web>| async move { Json(web.whoami) }),
@@ -243,6 +248,10 @@ fn router(web: Web) -> Router {
         .layer(middleware::from_fn_with_state(web.clone(), lan_only))
         .layer(middleware::from_fn(security_headers))
         .with_state(web)
+}
+
+async fn favicon() -> Response {
+    asset("image/svg+xml", FAVICON)
 }
 
 fn login_page(note: &str) -> Html<String> {
@@ -593,11 +602,17 @@ struct TrafficQ {
 }
 
 /// The all-traffic monitor (#243): frames heard or sent since `since`.
+/// A stopped station has no traffic: an empty list, not a 503, so the
+/// stopped page logs no console errors (#257).
 async fn traffic(State(web): State<Web>, Query(q): Query<TrafficQ>) -> Response {
     match web.local_get(&format!("/traffic?since={}", q.since)).await {
         Ok((code, body)) => json_response(code, body),
-        Err(r) => r,
+        Err(_) => Json(stopped_traffic(q.since)).into_response(),
     }
+}
+
+fn stopped_traffic(since: u64) -> Value {
+    json!({ "rows": [], "last": since, "stopped": true })
 }
 
 #[derive(Deserialize)]
@@ -933,6 +948,19 @@ pub fn install(_cfg_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #257: the tab icon is the website's mark, every page names it, and a
+    /// stopped station's traffic is an empty list (the page keeps its rows).
+    #[test]
+    fn favicon_and_stopped_traffic() {
+        assert!(FAVICON.starts_with("<svg") && FAVICON.contains("viewBox=\"0 0 64 60\""));
+        for page in [LOGIN_PAGE, GATEWAY_PAGE, APP_PAGE] {
+            assert!(page.contains(r#"<link rel="icon" type="image/svg+xml" href="/favicon.svg">"#));
+        }
+        let t = stopped_traffic(42);
+        assert_eq!(t["rows"], json!([]));
+        assert_eq!(t["last"], 42);
+    }
 
     #[test]
     fn the_waterfall_reaches_modem73_on_loopback() {

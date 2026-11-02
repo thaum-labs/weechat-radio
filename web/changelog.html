@@ -52,6 +52,13 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v1.0.15-rc4</p>
+          <p>Mon, 2 Nov 2026</p>
+        </h3>
+        <pre>Release candidate (wcr update --rc) with fixes from QA. A receipt no longer slips out behind your own message while the modem is still waiting for a clear channel to send it; it waits, then checks the channel for itself. Your own messages and beacons now wait until a receipt has actually gone out, and a receipt waits a random moment (up to 2 seconds) before it checks the channel, so two stations answering each other at once are less likely to talk over each other. The Pi's web page has a tab icon and shows no errors while the station is stopped.</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>v1.0.15-rc3</p>
           <p>Mon, 2 Nov 2026</p>
         </h3>
