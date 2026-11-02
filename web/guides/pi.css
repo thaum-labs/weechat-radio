@@ -43,11 +43,21 @@
   margin: 0 auto;
 }
 
-/* The Pi board's GPIO header in the diagrams. */
-svg.dgm .pi-header {
-  fill: none;
-  stroke: var(--mode-internet-radio);
-  stroke-width: 4;
-  stroke-dasharray: 3 3;
-  opacity: 0.45;
-}
+/* Diagram pieces the shared kit lacks (see docs.css section 8). */
+.live-dgm svg.dgm .lbl { font-size: 10px; fill: var(--fg); }
+.live-dgm svg.dgm .big { font-size: 15px; }
+/* inside the Pi: green line, packet and arrowhead */
+svg.dgm .gwl { stroke: var(--mode-internet-radio); stroke-width: 1.4; fill: none; }
+svg.dgm .seg.is-live .gwl { stroke-width: 2.3; }
+svg.dgm .seg-gw .pkt { stroke: #d4ffc9; filter: drop-shadow(0 0 4px var(--mode-internet-radio)); }
+svg.dgm .mk-gw { fill: var(--mode-internet-radio); }
+svg.dgm .pi-bracket { fill: none; stroke: var(--mode-internet-radio); stroke-width: 1; }
+/* home Wi-Fi: a dashed network line */
+svg.dgm .net.lan { stroke-dasharray: 5 3; }
+/* a radio path the hill blocks */
+svg.dgm .blocked { fill: none; stroke: var(--emergency); stroke-width: 1.3; stroke-dasharray: 2 5; }
+svg.dgm .on-emergency { fill: var(--emergency); }
+/* the internet, as a globe at the end of the gateway's line */
+svg.dgm .globe { fill: #050509; stroke: var(--mode-internet); stroke-width: 1.3; transition: fill 0.3s ease; }
+svg.dgm .globe-l { fill: none; stroke: var(--mode-internet); stroke-width: 1; }
+svg.dgm .is-on .globe { fill: rgba(0, 229, 255, 0.1); }
