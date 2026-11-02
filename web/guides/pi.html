@@ -61,9 +61,31 @@
     <main class="page-panel">
       <p class="crumb"><a href="/guides.html">guides</a> › <a href="/guides.html#install">Install on your computer</a> › <span aria-current="page">Raspberry Pi gateway</span></p>
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> Raspberry Pi gateway</h1>
-      <p class="lead">A Raspberry Pi and a Digirig make an always-on station: a gateway between the radio and the hub, with email. You look after it from a phone or laptop browser on your own network. About 20 minutes.</p>
+      <p class="lead">A Raspberry Pi and a Digirig make an always-on gateway in <strong>internet-radio</strong> mode: a station that is always listening, carries email and messages from the Radio+ stations around it to the internet, and needs nobody at a keyboard. You look after it from a phone or laptop browser on your own network. About 20 minutes.</p>
 
-      <section class="article-section article-section--first" aria-labelledby="flowH">
+      <section class="article-section article-section--first" aria-labelledby="whyH">
+        <h2 id="whyH">What it is for</h2>
+        <p>A station on a laptop goes off the air when the laptop closes. The Pi does not. Set to <strong>internet-radio</strong> mode, it stays on one frequency day and night and does the gateway work for everyone who can reach it:</p>
+        <ul class="cards">
+          <li>
+            <svg class="card-ico" aria-hidden="true"><use href="#ico-radio" /></svg>
+            <strong>A reliable point for sending email</strong>
+            <span>A station in Radio+ mode has no internet. Its email goes out by radio to the <strong>Mail gateway</strong> callsign in its setup, and that gateway posts it. Because the Pi is always on, that callsign is always there, and replies come back the same way.</span>
+          </li>
+          <li>
+            <svg class="card-ico" aria-hidden="true"><use href="#ico-board" /></svg>
+            <strong>A high-point gateway for a group on Radio+</strong>
+            <span>Put the Pi where the radio reaches furthest: a loft, a mast, a hill with power and a connection. When everyone else is out on Radio+, it is the one station that hears them all and carries their messages, <code>#bulletin</code> and mail onto the internet.</span>
+          </li>
+          <li>
+            <svg class="card-ico" aria-hidden="true"><use href="#ico-phone" /></svg>
+            <strong>Looked after from a browser</strong>
+            <span>Its web page shows whether it is on the air, what it hears, levels and health. The page can also send chat and mail through the station, which is handy, but not why you build one.</span>
+          </li>
+        </ul>
+      </section>
+
+      <section class="article-section" aria-labelledby="flowH">
         <h2 id="flowH">How it fits together</h2>
         <figure class="diagram live-dgm live-dgm--wide pi-hero" data-live-dgm>
           <div class="live-dgm__body">
@@ -186,14 +208,14 @@
           <script type="application/json" data-live-steps>
           {
             "main": {
-              "done": "The Pi relays between the radio and the hub on its own. Your phone watches it and steers it.",
+              "done": "The Pi carries radio traffic to the internet and back on its own, all day. Your phone only watches it.",
               "steps": [
-                { "say": "G4ABC, out walking, sends “back by 4” to #walk on the gateway’s frequency.", "segs": ["<rf"], "on": ["other"], "ms": 1800 },
+                { "say": "G4ABC, out walking on Radio+ with no internet, sends “back by 4” to #walk on the gateway’s frequency.", "segs": ["<rf"], "on": ["other"], "ms": 2000 },
                 { "say": "The gateway’s radio hears it. The Digirig turns the sound into USB audio for the Pi.", "segs": ["<jack", "<usb"], "chain": true, "on": ["radio", "digirig"], "ms": 2100 },
-                { "say": "modem73 on the Pi decodes it, and WeeChat Radio passes it to the hub, where G4XYZ reads it in #walk.", "segs": ["net"], "on": ["pi", "hub"], "ms": 2200 },
+                { "say": "modem73 on the Pi decodes it, and the gateway posts it to the hub, where G4XYZ reads it in #walk. An email from G4ABC takes the same path.", "segs": ["net"], "on": ["pi", "hub"], "ms": 2600 },
                 { "say": "Your phone, on the home Wi-Fi, shows the frame live on the Pi’s page with its SNR.", "segs": ["lan"], "on": ["phone"], "show": ["ph1"], "ms": 1900 },
                 { "say": "The Pi keys the radio through the Digirig and sends a receipt back on the air.", "segs": ["usb", "jack", "rf"], "chain": true, "on": ["pi", "radio"], "show": ["ph2"], "ms": 3000 },
-                { "say": "G4ABC’s line shows [ok]. Nobody had to sit at a computer.", "on": ["other"], "show": ["w-ok"], "ms": 1800 }
+                { "say": "G4ABC’s line shows [ok]. Nobody sat at a computer; the gateway was simply there.", "on": ["other"], "show": ["w-ok"], "ms": 1800 }
               ]
             }
           }
@@ -249,7 +271,7 @@
           <li>
             <strong class="step-title">Set the station up</strong>
             <pre>wcr setup</pre>
-            <p>Choose <strong>Handheld + Digirig</strong> (or your radio), the preset for the band, and the frequency the radio stays on. The serial and audio pickers start on the Digirig (<code>plughw:CARD=Device,DEV=0</code>), so Enter is right; the Pi’s own <code>Headphones</code> card cannot hear the radio. With a radio and the internet, setup picks <code>internet-radio</code> mode, which is what a gateway needs.</p>
+            <p>Choose <strong>Handheld + Digirig</strong> (or your radio), the preset for the band, and the frequency the radio stays on. The serial and audio pickers start on the Digirig (<code>plughw:CARD=Device,DEV=0</code>), so Enter is right; the Pi’s own <code>Headphones</code> card cannot hear the radio. With a radio and the internet, setup picks <code>internet-radio</code> mode. That is the gateway mode: keep it, or the Pi is just another radio.</p>
           </li>
           <li>
             <strong class="step-title">Choose a password for the web page</strong>
@@ -293,8 +315,8 @@
       </section>
 
       <section class="article-section" aria-labelledby="appH">
-        <h2 id="appH">The App view: chat and mail in the browser</h2>
-        <p><strong>App</strong> at the top of the page (or <code>/app</code>) turns the Pi into a field computer you use from a phone, without the desktop app. It sends through the station exactly as the desktop app does, so the same on-air, hub and gateway rules apply.</p>
+        <h2 id="appH">An extra: chat and mail from the browser</h2>
+        <p>The gateway runs without anyone using it. But since it is a full station, its page also has an <strong>App</strong> view (at the top of the page, or <code>/app</code>) that lets a phone on your network chat and send mail through it, without the desktop app. It sends exactly as the desktop app does, so the same on-air, hub and gateway rules apply.</p>
         <figure class="diagram live-dgm live-dgm--wide pi-app-dgm" data-live-dgm>
           <div class="live-dgm__body">
             <div class="live-dgm__pic">
