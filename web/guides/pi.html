@@ -25,7 +25,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="/styles.css?v=57" />
   <link rel="stylesheet" href="/docs.css?v=5" />
-  <link rel="stylesheet" href="/guides/pi.css?v=1" />
+  <link rel="stylesheet" href="/guides/pi.css?v=2" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -83,6 +83,69 @@
             <span>Its web portal shows whether it is on the air, what it hears, levels and health. The portal can also send chat and mail through the station, which is handy, but not why you build one.</span>
           </li>
         </ul>
+        <figure class="diagram live-dgm live-dgm--wide pi-relay" data-live-dgm>
+          <div class="live-dgm__body">
+            <div class="live-dgm__pic">
+              <div class="dgm-wrap">
+              <svg class="dgm" data-layout="wide" viewBox="0 0 780 300" role="img" aria-labelledby="rlTRW rlDRW">
+                <title id="rlTRW">The Pi gateway as a relay station on a hill</title>
+                <desc id="rlDRW">The Pi gateway sits on a hilltop. G4ABC on one side and 2E0RST on the other can each reach its mast by radio, but the hill stops them hearing each other. The gateway carries both to the hub over its internet line.</desc>
+                <defs>
+                  <marker id="pmRfRW" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-rf" d="M0 0 L6 3 L0 6 z" /></marker>
+                  <marker id="pmAcRW" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-accent" d="M0 0 L6 3 L0 6 z" /></marker>
+                  <marker id="pmNetRW" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-net" d="M0 0 L6 3 L0 6 z" /></marker>
+                  <marker id="pmGwRW" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-gw" d="M0 0 L6 3 L0 6 z" /></marker>
+                </defs>
+                <g class="seg seg-rf" data-seg="los-a"><path class="rf" d="M112 217 L384.8 63" marker-end="url(#pmRfRW)" /><path class="pkt" d="M112 217 L384.8 63" /></g>
+                <g class="seg seg-rf" data-seg="los-b"><path class="rf" d="M662 216 L395.2 63" marker-end="url(#pmRfRW)" /><path class="pkt" d="M662 216 L395.2 63" /></g>
+                <path class="land" d="M0 260 L60 250 L130 240 L200 215 L280 180 L340 135 L390 112 L440 130 L500 170 L560 205 L620 240 L700 245 L780 250 V300 H0 Z" />
+                <g data-show="blk"><path class="blocked" d="M112 217 H662" /><path class="cross" d="M190 213 L198 221 M198 213 L190 221" /><path class="cross" d="M577 213 L585 221 M585 213 L577 221" /><text class="sub on-emergency" x="390" y="236" text-anchor="middle">can’t hear each other</text></g>
+                <g class="seg seg-net" data-seg="cable"><path class="net" d="M390 112 V149" marker-end="url(#pmNetRW)" /><path class="pkt" d="M390 112 V149" /></g>
+                <g data-node="hub"><circle class="globe" cx="390" cy="166" r="15" /><ellipse class="globe-l" cx="390" cy="166" rx="6" ry="15" /><path class="globe-l" d="M375 166 H405 M378 158 H402 M378 174 H402" /><text class="sub on-hub" x="390" y="198" text-anchor="middle">internet → hub</text></g>
+                <g data-node="gw"><rect class="box gw" x="376" y="98" width="28" height="14" rx="2" /><path class="mast" d="M390 98 V62 M383 70 H397 M385 78 H395" /><circle class="antenna-tip" cx="390" cy="60" r="2.5" /><text class="on-gw" x="390" y="44" text-anchor="middle">Pi gateway</text></g>
+                <g data-node="abc"><line class="antenna" x1="112" y1="225" x2="112" y2="219" /><circle class="antenna-tip" cx="112" cy="217" r="2" /><rect class="box orange" x="106" y="225" width="12" height="18" rx="2" /><text class="on-orange" x="112" y="264" text-anchor="middle">G4ABC</text></g>
+                <g data-node="rst"><line class="antenna" x1="662" y1="225" x2="662" y2="219" /><circle class="antenna-tip" cx="662" cy="217" r="2" /><rect class="box orange" x="656" y="225" width="12" height="18" rx="2" /><text class="on-orange" x="662" y="264" text-anchor="middle">2E0RST</text></g>
+              </svg>
+              <svg class="dgm" data-layout="narrow" viewBox="0 0 440 300" role="img" aria-labelledby="rlTRN rlDRN">
+                <title id="rlTRN">The Pi gateway as a relay station on a hill</title>
+                <desc id="rlDRN">The Pi gateway sits on a hilltop. G4ABC on one side and 2E0RST on the other can each reach its mast by radio, but the hill stops them hearing each other. The gateway carries both to the hub over its internet line.</desc>
+                <defs>
+                  <marker id="pmRfRN" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-rf" d="M0 0 L6 3 L0 6 z" /></marker>
+                  <marker id="pmAcRN" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-accent" d="M0 0 L6 3 L0 6 z" /></marker>
+                  <marker id="pmNetRN" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-net" d="M0 0 L6 3 L0 6 z" /></marker>
+                  <marker id="pmGwRN" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-gw" d="M0 0 L6 3 L0 6 z" /></marker>
+                </defs>
+                <g class="seg seg-rf" data-seg="los-a"><path class="rf" d="M63 217 L215.8 64.2" marker-end="url(#pmRfRN)" /><path class="pkt" d="M63 217 L215.8 64.2" /></g>
+                <g class="seg seg-rf" data-seg="los-b"><path class="rf" d="M373 216 L224.2 64.3" marker-end="url(#pmRfRN)" /><path class="pkt" d="M373 216 L224.2 64.3" /></g>
+                <path class="land" d="M0 260 L34 250 L73 240 L113 215 L158 180 L192 135 L220 112 L248 130 L282 170 L316 205 L350 240 L395 245 L440 250 V300 H0 Z" />
+                <g data-show="blk"><path class="blocked" d="M63 217 H373" /><path class="cross" d="M106 213 L114 221 M114 213 L106 221" /><path class="cross" d="M324 213 L332 221 M332 213 L324 221" /><text class="sub on-emergency" x="220" y="236" text-anchor="middle">can’t hear each other</text></g>
+                <g class="seg seg-net" data-seg="cable"><path class="net" d="M220 112 V149" marker-end="url(#pmNetRN)" /><path class="pkt" d="M220 112 V149" /></g>
+                <g data-node="hub"><circle class="globe" cx="220" cy="166" r="15" /><ellipse class="globe-l" cx="220" cy="166" rx="6" ry="15" /><path class="globe-l" d="M205 166 H235 M208 158 H232 M208 174 H232" /><text class="sub on-hub" x="220" y="198" text-anchor="middle">internet → hub</text></g>
+                <g data-node="gw"><rect class="box gw" x="206" y="98" width="28" height="14" rx="2" /><path class="mast" d="M220 98 V62 M213 70 H227 M215 78 H225" /><circle class="antenna-tip" cx="220" cy="60" r="2.5" /><text class="on-gw" x="220" y="44" text-anchor="middle">Pi gateway</text></g>
+                <g data-node="abc"><line class="antenna" x1="63" y1="225" x2="63" y2="219" /><circle class="antenna-tip" cx="63" cy="217" r="2" /><rect class="box orange" x="57" y="225" width="12" height="18" rx="2" /><text class="on-orange" x="63" y="264" text-anchor="middle">G4ABC</text></g>
+                <g data-node="rst"><line class="antenna" x1="373" y1="225" x2="373" y2="219" /><circle class="antenna-tip" cx="373" cy="217" r="2" /><rect class="box orange" x="367" y="225" width="12" height="18" rx="2" /><text class="on-orange" x="373" y="264" text-anchor="middle">2E0RST</text></g>
+              </svg>
+              </div>
+              <div class="live-status">
+                <p class="live-status__text" data-live-status aria-live="polite"></p>
+                <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
+              </div>
+            </div>
+          </div>
+          <script type="application/json" data-live-steps>
+          {
+            "main": {
+              "done": "Up high, the Pi hears stations that can’t hear each other.",
+              "steps": [
+                { "say": "G4ABC reaches the gateway.", "segs": ["los-a"], "on": ["abc", "gw"], "ms": 1800 },
+                { "say": "So does 2E0RST, on the other side of the hill.", "segs": ["los-b"], "on": ["rst", "gw"], "ms": 1800 },
+                { "say": "The gateway passes both to the hub over its internet line.", "segs": ["cable"], "on": ["gw", "hub"], "ms": 2200 },
+                { "say": "The two can’t hear each other. They don’t need to.", "on": ["abc", "rst"], "show": ["blk"], "ms": 2400 }
+              ]
+            }
+          }
+          </script>
+        </figure>
       </section>
 
       <section class="article-section" aria-labelledby="flowH">
@@ -91,112 +154,106 @@
           <div class="live-dgm__body">
             <div class="live-dgm__pic">
               <div class="dgm-wrap">
-                <svg class="dgm" data-layout="wide" viewBox="0 0 800 312" role="img" aria-labelledby="piTw piDw">
-                <title id="piTw">How a Raspberry Pi gateway fits together</title>
-                <desc id="piDw">G4ABC, out walking with a handheld, sends a message on 144.950 FM. At home, the gateway's radio hears it on the mast antenna, the Digirig passes the sound over USB to the Raspberry Pi, and modem73 on the Pi decodes it. WeeChat Radio on the Pi passes it to the hub, where internet stations such as G4XYZ read it. The web portal on the home network shows it live. The Pi then keys the radio through the Digirig and sends a receipt back on the air.</desc>
-                <g data-node="other">
-                  <line class="antenna" x1="84" y1="116" x2="84" y2="80" />
-                  <circle class="antenna-tip" cx="84" cy="78" r="2.5" />
-                  <rect class="box orange" x="60" y="116" width="48" height="88" rx="5" />
-                  <circle class="led" cx="98" cy="128" r="3.5" />
-                  <path class="grille" d="M70 164 H98 M70 171 H98 M70 178 H98 M70 185 H98" />
-                  <text class="on-orange" x="84" y="226" text-anchor="middle">G4ABC</text>
-                  <text class="scr ok" data-show="w-ok" x="84" y="250" text-anchor="middle">[ok]</text>
-                </g>
-                <g class="seg seg-rf" data-seg="rf"><path class="rf" d="M90 78 q6 -7 12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0" /><path class="pkt" d="M90 78 q6 -7 12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0 t12 0" /></g>
-                <text class="sub on-rf" x="192" y="58" text-anchor="middle">on the air</text>
-                <path class="house" d="M220 130 L390 60 L560 130 V300 H220 Z" />
-                <path class="mast" d="M300 80 V230 M292 88 H308 M294 96 H306" />
-                <circle class="antenna-tip" cx="300" cy="78" r="2.5" />
-                <text class="sub" x="390" y="120" text-anchor="middle">home</text>
-                <g data-node="radio">
-                  <rect class="box orange" x="250" y="230" width="70" height="34" rx="3" />
-                  <circle class="led" cx="260" cy="240" r="3.5" />
-                  <path class="grille" d="M274 240 H312 M274 247 H312 M274 254 H312" />
-                  <text class="sub" x="268" y="222" text-anchor="middle">radio</text>
-                </g>
-                <g class="seg seg-sound" data-seg="jack"><path class="wire" d="M320 247 H350" /><path class="pkt" d="M320 247 H350" /></g>
-                <g data-node="digirig">
-                  <rect class="box accent" x="350" y="232" width="70" height="30" />
-                  <text class="on-accent" x="385" y="251" text-anchor="middle">Digirig</text>
-                </g>
-                <g class="seg seg-sound" data-seg="usb"><path class="wire" d="M420 247 H450" /><path class="pkt" d="M420 247 H450" /></g>
-                <text class="sub" x="435" y="240" text-anchor="middle">USB</text>
-                <g data-node="pi">
-                  <rect class="box gw" x="450" y="196" width="96" height="74" rx="4" />
-                  <path class="pi-header" d="M460 205 H536" />
-                  <circle class="led" cx="537" cy="261" r="3.5" />
-                  <text class="on-gw" x="498" y="232" text-anchor="middle">Raspberry Pi</text>
-                </g>
-                <g class="seg seg-net" data-seg="net"><path class="net" d="M530 196 V62 H600" /><path class="pkt" d="M530 196 V62 H600" /></g>
-                <text class="sub" x="536" y="160">internet</text>
-                <g data-node="hub">
-                  <rect class="box hub" x="600" y="40" width="180" height="44" />
-                  <text class="on-hub" x="690" y="58" text-anchor="middle">hub</text>
-                  <text class="sub" x="690" y="75" text-anchor="middle">internet stations</text>
-                </g>
-                <g class="seg seg-net" data-seg="lan"><path class="net" d="M546 235 H612" /><path class="pkt" d="M546 235 H612" /></g>
-                <text class="sub" x="579" y="227" text-anchor="middle">Wi-Fi</text>
-                <g data-node="phone">
-                  <rect class="box accent" x="612" y="116" width="170" height="130" rx="12" />
-                  <text class="sub" x="626" y="140">web portal</text>
-                  <text class="scr" data-show="ph1" x="626" y="172">G4ABC → #walk</text>
-                  <text class="scr ok" data-show="ph2" x="626" y="200">receipt sent</text>
-                </g>
-                </svg>
-                <svg class="dgm" data-layout="narrow" viewBox="0 0 440 340" role="img" aria-labelledby="piTn piDn">
-                <title id="piTn">How a Raspberry Pi gateway fits together</title>
-                <desc id="piDn">G4ABC, out walking with a handheld, sends a message on 144.950 FM. At home, the gateway's radio hears it, the Digirig passes the sound over USB to the Raspberry Pi, and the Pi passes it to the hub for internet stations such as G4XYZ. The web portal on the home network shows it live. The Pi then sends a receipt back on the air.</desc>
-                <g data-node="other">
-                  <line class="antenna" x1="58" y1="70" x2="58" y2="44" />
-                  <circle class="antenna-tip" cx="58" cy="42" r="2.5" />
-                  <rect class="box orange" x="40" y="70" width="36" height="64" rx="5" />
-                  <circle class="led" cx="68" cy="80" r="3.5" />
-                  <path class="grille" d="M48 104 H68 M48 111 H68 M48 118 H68" />
-                  <text class="on-orange" x="58" y="152" text-anchor="middle">G4ABC</text>
-                  <text class="scr ok" data-show="w-ok" x="58" y="170" text-anchor="middle">[ok]</text>
-                </g>
-                <g class="seg seg-rf" data-seg="rf"><path class="rf" d="M64 42 q5.5 -6 11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0" /><path class="pkt" d="M64 42 q5.5 -6 11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0 t11 0" /></g>
-                <text class="sub on-rf" x="120" y="24" text-anchor="middle">on the air</text>
-                <path class="house" d="M140 130 L270 80 L400 130 V330 H140 Z" />
-                <path class="mast" d="M180 44 V150 M172 52 H188 M174 60 H186" />
-                <circle class="antenna-tip" cx="180" cy="42" r="2.5" />
-                <text class="sub" x="270" y="318" text-anchor="middle">home</text>
-                <g data-node="radio">
-                  <rect class="box orange" x="160" y="150" width="70" height="34" rx="3" />
-                  <circle class="led" cx="170" cy="160" r="3.5" />
-                  <path class="grille" d="M184 160 H222 M184 167 H222 M184 174 H222" />
-                  <text class="sub" x="195" y="200" text-anchor="middle">radio</text>
-                </g>
-                <g class="seg seg-sound" data-seg="jack"><path class="wire" d="M230 167 H250" /><path class="pkt" d="M230 167 H250" /></g>
-                <g data-node="digirig">
-                  <rect class="box accent" x="250" y="152" width="70" height="30" />
-                  <text class="on-accent" x="285" y="171" text-anchor="middle">Digirig</text>
-                </g>
-                <g class="seg seg-sound" data-seg="usb"><path class="wire" d="M285 182 V220" /><path class="pkt" d="M285 182 V220" /></g>
-                <text class="sub" x="291" y="205">USB</text>
-                <g data-node="pi">
-                  <rect class="box gw" x="230" y="220" width="110" height="70" rx="4" />
-                  <path class="pi-header" d="M240 229 H322" />
-                  <circle class="led" cx="331" cy="281" r="3.5" />
-                  <text class="on-gw" x="285" y="256" text-anchor="middle">Raspberry Pi</text>
-                </g>
-                <g class="seg seg-net" data-seg="net"><path class="net" d="M330 220 V50" /><path class="pkt" d="M330 220 V50" /></g>
-                <text class="sub" x="336" y="112">internet</text>
-                <g data-node="hub">
-                  <rect class="box hub" x="250" y="8" width="180" height="42" />
-                  <text class="on-hub" x="340" y="25" text-anchor="middle">hub</text>
-                  <text class="sub" x="340" y="41" text-anchor="middle">internet stations</text>
-                </g>
-                <g class="seg seg-net" data-seg="lan"><path class="net" d="M230 255 H126" /><path class="pkt" d="M230 255 H126" /></g>
-                <text class="sub" x="178" y="247" text-anchor="middle">Wi-Fi</text>
-                <g data-node="phone">
-                  <rect class="box accent" x="10" y="206" width="116" height="84" rx="10" />
-                  <text class="sub" x="20" y="224">web portal</text>
-                  <text class="scr" data-show="ph1" x="20" y="248">G4ABC #walk</text>
-                  <text class="scr ok" data-show="ph2" x="20" y="272">receipt sent</text>
-                </g>
-                </svg>
+              <svg class="dgm" data-layout="wide" viewBox="0 0 780 420" role="img" aria-labelledby="piTW piDW">
+                <title id="piTW">One message through the Pi gateway, hop by hop</title>
+                <desc id="piDW">G4ABC sends a message by radio. The gateway radio hears it, the Digirig passes the audio over USB to the Pi, modem73 decodes it and wcr posts it to #walk on the hub. The web portal shows it live. A receipt goes back the same way to G4ABC.</desc>
+                <defs>
+                  <marker id="pmRfW" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-rf" d="M0 0 L6 3 L0 6 z" /></marker>
+                  <marker id="pmAcW" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-accent" d="M0 0 L6 3 L0 6 z" /></marker>
+                  <marker id="pmNetW" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-net" d="M0 0 L6 3 L0 6 z" /></marker>
+                  <marker id="pmGwW" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-gw" d="M0 0 L6 3 L0 6 z" /></marker>
+                </defs>
+                <rect class="lane-bg" x="116" y="22" width="548" height="390" rx="4" />
+                <text class="sub" x="124" y="16">home</text>
+                <path class="pi-bracket" d="M342 26 V22 H548 V26" />
+                <text class="sub on-gw" x="445" y="16" text-anchor="middle">Raspberry Pi</text>
+                <line class="lane" x1="60" y1="60" x2="60" y2="410" />
+                <line class="lane" x1="170" y1="60" x2="170" y2="410" />
+                <line class="lane" x1="280" y1="60" x2="280" y2="410" />
+                <line class="lane" x1="390" y1="60" x2="390" y2="410" />
+                <line class="lane" x1="500" y1="60" x2="500" y2="410" />
+                <line class="lane" x1="610" y1="60" x2="610" y2="410" />
+                <line class="lane" x1="720" y1="60" x2="720" y2="410" />
+                <g data-node="other"><rect class="box orange" x="12" y="30" width="96" height="30" rx="3" /><text class="on-orange" x="60" y="50" text-anchor="middle">G4ABC</text></g>
+                <g data-node="radio"><rect class="box orange" x="122" y="30" width="96" height="30" rx="3" /><text x="170" y="50" text-anchor="middle">radio</text></g>
+                <g data-node="digirig"><rect class="box accent" x="232" y="30" width="96" height="30" rx="3" /><text class="on-accent" x="280" y="50" text-anchor="middle">Digirig</text></g>
+                <g data-node="modem"><rect class="box gw" x="342" y="30" width="96" height="30" rx="3" /><text class="on-gw" x="390" y="50" text-anchor="middle">modem73</text></g>
+                <g data-node="wcr"><rect class="box gw" x="452" y="30" width="96" height="30" rx="3" /><text class="on-gw" x="500" y="50" text-anchor="middle">wcr</text></g>
+                <g data-node="portal"><rect class="box accent" x="562" y="30" width="96" height="30" rx="3" /><text class="on-accent" x="610" y="50" text-anchor="middle">portal</text></g>
+                <g data-node="hub"><rect class="box hub" x="672" y="30" width="96" height="30" rx="3" /><text class="on-hub" x="720" y="50" text-anchor="middle">hub</text></g>
+                <g class="seg seg-rf" data-seg="r1"><path class="rf" d="M60 90 H167" marker-end="url(#pmRfW)" /><path class="pkt" d="M60 90 H167" /></g>
+                <text class="lbl" x="115" y="84" text-anchor="middle">“back by 4”</text>
+                <g class="seg seg-sound" data-seg="r2"><path class="wire" d="M170 120 H277" marker-end="url(#pmAcW)" /><path class="pkt" d="M170 120 H277" /></g>
+                <text class="lbl" x="225" y="114" text-anchor="middle">audio</text>
+                <g class="seg seg-sound" data-seg="r3"><path class="wire" d="M280 150 H387" marker-end="url(#pmAcW)" /><path class="pkt" d="M280 150 H387" /></g>
+                <text class="lbl" x="335" y="144" text-anchor="middle">USB</text>
+                <g class="seg seg-gw" data-seg="r4"><path class="gwl" d="M390 180 H497" marker-end="url(#pmGwW)" /><path class="pkt" d="M390 180 H497" /></g>
+                <text class="lbl" x="445" y="174" text-anchor="middle">frame</text>
+                <g class="seg seg-net" data-seg="r5"><path class="net" d="M500 210 H717" marker-end="url(#pmNetW)" /><path class="pkt" d="M500 210 H717" /></g>
+                <text class="lbl" x="665" y="204" text-anchor="middle">#walk</text>
+                <g class="seg seg-net" data-seg="r6"><path class="net lan" d="M500 240 H607" marker-end="url(#pmNetW)" /><path class="pkt" d="M500 240 H607" /></g>
+                <text class="lbl" x="555" y="234" text-anchor="middle">live view</text>
+                <line class="lane" x1="10" y1="255" x2="770" y2="255" />
+                <g class="seg seg-gw" data-seg="r7"><path class="gwl" d="M500 280 H393" marker-end="url(#pmGwW)" /><path class="pkt" d="M500 280 H393" /></g>
+                <text class="lbl" x="445" y="274" text-anchor="middle">receipt</text>
+                <g class="seg seg-sound" data-seg="r8"><path class="wire" d="M390 310 H283" marker-end="url(#pmAcW)" /><path class="pkt" d="M390 310 H283" /></g>
+                <text class="lbl" x="335" y="304" text-anchor="middle">USB</text>
+                <g class="seg seg-sound" data-seg="r9"><path class="wire" d="M280 340 H173" marker-end="url(#pmAcW)" /><path class="pkt" d="M280 340 H173" /></g>
+                <text class="lbl" x="225" y="334" text-anchor="middle">audio + PTT</text>
+                <g class="seg seg-rf" data-seg="r10"><path class="rf" d="M170 370 H63" marker-end="url(#pmRfW)" /><path class="pkt" d="M170 370 H63" /></g>
+                <text class="lbl" x="115" y="364" text-anchor="middle">receipt</text>
+                <g data-show="w-ok"><rect class="box gw" x="34" y="386" width="52" height="20" rx="3" /><text class="on-gw" x="60" y="400" text-anchor="middle">[ok]</text></g>
+              </svg>
+              <svg class="dgm" data-layout="narrow" viewBox="0 0 440 420" role="img" aria-labelledby="piTN piDN">
+                <title id="piTN">One message through the Pi gateway, hop by hop</title>
+                <desc id="piDN">G4ABC sends a message by radio. The gateway radio hears it, the Digirig passes the audio over USB to the Pi, modem73 decodes it and wcr posts it to #walk on the hub. The web portal shows it live. A receipt goes back the same way to G4ABC.</desc>
+                <defs>
+                  <marker id="pmRfN" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-rf" d="M0 0 L6 3 L0 6 z" /></marker>
+                  <marker id="pmAcN" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-accent" d="M0 0 L6 3 L0 6 z" /></marker>
+                  <marker id="pmNetN" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-net" d="M0 0 L6 3 L0 6 z" /></marker>
+                  <marker id="pmGwN" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-gw" d="M0 0 L6 3 L0 6 z" /></marker>
+                </defs>
+                <rect class="lane-bg" x="70" y="22" width="300" height="390" rx="4" />
+                <text class="sub" x="78" y="16">home</text>
+                <path class="pi-bracket" d="M192 26 V22 H308 V26" />
+                <text class="sub on-gw" x="250" y="16" text-anchor="middle">Raspberry Pi</text>
+                <line class="lane" x1="40" y1="60" x2="40" y2="410" />
+                <line class="lane" x1="100" y1="60" x2="100" y2="410" />
+                <line class="lane" x1="160" y1="60" x2="160" y2="410" />
+                <line class="lane" x1="220" y1="60" x2="220" y2="410" />
+                <line class="lane" x1="280" y1="60" x2="280" y2="410" />
+                <line class="lane" x1="340" y1="60" x2="340" y2="410" />
+                <line class="lane" x1="400" y1="60" x2="400" y2="410" />
+                <g data-node="other"><rect class="box orange" x="12" y="30" width="56" height="30" rx="3" /><text class="on-orange" x="40" y="50" text-anchor="middle">G4ABC</text></g>
+                <g data-node="radio"><rect class="box orange" x="72" y="30" width="56" height="30" rx="3" /><text x="100" y="50" text-anchor="middle">radio</text></g>
+                <g data-node="digirig"><rect class="box accent" x="132" y="30" width="56" height="30" rx="3" /><text class="on-accent" x="160" y="50" text-anchor="middle">Digirig</text></g>
+                <g data-node="modem"><rect class="box gw" x="192" y="30" width="56" height="30" rx="3" /><text class="on-gw" x="220" y="50" text-anchor="middle">modem73</text></g>
+                <g data-node="wcr"><rect class="box gw" x="252" y="30" width="56" height="30" rx="3" /><text class="on-gw" x="280" y="50" text-anchor="middle">wcr</text></g>
+                <g data-node="portal"><rect class="box accent" x="312" y="30" width="56" height="30" rx="3" /><text class="on-accent" x="340" y="50" text-anchor="middle">portal</text></g>
+                <g data-node="hub"><rect class="box hub" x="372" y="30" width="56" height="30" rx="3" /><text class="on-hub" x="400" y="50" text-anchor="middle">hub</text></g>
+                <g class="seg seg-rf" data-seg="r1"><path class="rf" d="M40 90 H97" marker-end="url(#pmRfN)" /><path class="pkt" d="M40 90 H97" /></g>
+                <text class="lbl" x="70" y="84" text-anchor="middle">“back by 4”</text>
+                <g class="seg seg-sound" data-seg="r2"><path class="wire" d="M100 120 H157" marker-end="url(#pmAcN)" /><path class="pkt" d="M100 120 H157" /></g>
+                <text class="lbl" x="130" y="114" text-anchor="middle">audio</text>
+                <g class="seg seg-sound" data-seg="r3"><path class="wire" d="M160 150 H217" marker-end="url(#pmAcN)" /><path class="pkt" d="M160 150 H217" /></g>
+                <text class="lbl" x="190" y="144" text-anchor="middle">USB</text>
+                <g class="seg seg-gw" data-seg="r4"><path class="gwl" d="M220 180 H277" marker-end="url(#pmGwN)" /><path class="pkt" d="M220 180 H277" /></g>
+                <text class="lbl" x="250" y="174" text-anchor="middle">frame</text>
+                <g class="seg seg-net" data-seg="r5"><path class="net" d="M280 210 H397" marker-end="url(#pmNetN)" /><path class="pkt" d="M280 210 H397" /></g>
+                <text class="lbl" x="370" y="204" text-anchor="middle">#walk</text>
+                <g class="seg seg-net" data-seg="r6"><path class="net lan" d="M280 240 H337" marker-end="url(#pmNetN)" /><path class="pkt" d="M280 240 H337" /></g>
+                <text class="lbl" x="310" y="234" text-anchor="middle">live view</text>
+                <line class="lane" x1="10" y1="255" x2="430" y2="255" />
+                <g class="seg seg-gw" data-seg="r7"><path class="gwl" d="M280 280 H223" marker-end="url(#pmGwN)" /><path class="pkt" d="M280 280 H223" /></g>
+                <text class="lbl" x="250" y="274" text-anchor="middle">receipt</text>
+                <g class="seg seg-sound" data-seg="r8"><path class="wire" d="M220 310 H163" marker-end="url(#pmAcN)" /><path class="pkt" d="M220 310 H163" /></g>
+                <text class="lbl" x="190" y="304" text-anchor="middle">USB</text>
+                <g class="seg seg-sound" data-seg="r9"><path class="wire" d="M160 340 H103" marker-end="url(#pmAcN)" /><path class="pkt" d="M160 340 H103" /></g>
+                <text class="lbl" x="130" y="334" text-anchor="middle">audio + PTT</text>
+                <g class="seg seg-rf" data-seg="r10"><path class="rf" d="M100 370 H43" marker-end="url(#pmRfN)" /><path class="pkt" d="M100 370 H43" /></g>
+                <text class="lbl" x="70" y="364" text-anchor="middle">receipt</text>
+                <g data-show="w-ok"><rect class="box gw" x="14" y="386" width="52" height="20" rx="3" /><text class="on-gw" x="40" y="400" text-anchor="middle">[ok]</text></g>
+              </svg>
               </div>
               <div class="live-status">
                 <p class="live-status__text" data-live-status aria-live="polite"></p>
@@ -204,18 +261,18 @@
               </div>
             </div>
           </div>
-          <figcaption>The radio, Digirig and Pi stay at home. The Pi links the radio to the hub, and you check on it from the web portal.</figcaption>
+          <figcaption>Orange: radio. Blue: audio. Green: inside the Pi. Cyan: network, dashed for your home Wi-Fi.</figcaption>
           <script type="application/json" data-live-steps>
           {
             "main": {
-              "done": "The Pi carries radio traffic to the internet and back on its own, all day. The web portal only watches it.",
+              "done": "One message in, one receipt out. Nobody at a keyboard.",
               "steps": [
-                { "say": "G4ABC, out walking on Radio+ with no internet, sends “back by 4” to #walk on the gateway’s frequency.", "segs": ["<rf"], "on": ["other"], "ms": 2000 },
-                { "say": "The gateway’s radio hears it. The Digirig turns the sound into USB audio for the Pi.", "segs": ["<jack", "<usb"], "chain": true, "on": ["radio", "digirig"], "ms": 2100 },
-                { "say": "modem73 on the Pi decodes it, and the gateway posts it to the hub, where G4XYZ reads it in #walk. An email from G4ABC takes the same path.", "segs": ["net"], "on": ["pi", "hub"], "ms": 2600 },
-                { "say": "The web portal, on your home network, shows the frame live with its SNR.", "segs": ["lan"], "on": ["phone"], "show": ["ph1"], "ms": 1900 },
-                { "say": "The Pi keys the radio through the Digirig and sends a receipt back on the air.", "segs": ["usb", "jack", "rf"], "chain": true, "on": ["pi", "radio"], "show": ["ph2"], "ms": 3000 },
-                { "say": "G4ABC’s line shows [ok]. Nobody sat at a computer; the gateway was simply there.", "on": ["other"], "show": ["w-ok"], "ms": 1800 }
+                { "say": "G4ABC, out walking on Radio+, sends “back by 4” to #walk by radio.", "segs": ["r1"], "on": ["other"], "ms": 1800 },
+                { "say": "The gateway’s radio hears it. The Digirig passes the audio to the Pi.", "segs": ["r2", "r3"], "chain": true, "on": ["radio", "digirig"], "ms": 2200 },
+                { "say": "modem73 decodes it. wcr posts it to #walk on the hub.", "segs": ["r4", "r5"], "chain": true, "on": ["modem", "wcr", "hub"], "ms": 2200 },
+                { "say": "The web portal shows it live.", "segs": ["r6"], "on": ["portal"], "ms": 1600 },
+                { "say": "The Pi sends a receipt back by radio.", "segs": ["r7", "r8", "r9", "r10"], "chain": true, "on": ["modem", "digirig", "radio"], "ms": 4000 },
+                { "say": "G4ABC sees [ok].", "on": ["other"], "show": ["w-ok"], "ms": 1600 }
               ]
             }
           }
@@ -321,41 +378,25 @@
           <div class="live-dgm__body">
             <div class="live-dgm__pic">
               <div class="dgm-wrap">
-                <svg class="dgm" viewBox="0 0 440 156" role="img" aria-labelledby="apT apD">
-                <title id="apT">Sending a chat line from the web portal through the Pi</title>
-                <desc id="apD">The web portal sends a line to the Raspberry Pi over the local network. The Pi keys the radio through the Digirig and the line goes on the air to G4ABC. G4ABC's receipt comes back the same way and the portal shows ok rf. G4ABC's answer arrives with its SNR.</desc>
-                <g data-node="phone">
-                  <rect class="box accent" x="8" y="30" width="78" height="108" rx="8" />
-                  <text class="sub" x="47" y="52" text-anchor="middle">web portal</text>
-                  <text class="scr" x="47" y="86" text-anchor="middle">/app</text>
-                </g>
-                <g class="seg seg-net" data-seg="lan"><path class="net" d="M86 84 H124" /><path class="pkt" d="M86 84 H124" /></g>
-                <g data-node="pi">
-                  <rect class="box gw" x="124" y="58" width="104" height="52" rx="3" />
-                  <circle class="led" cx="133" cy="67" r="3.5" />
-                  <text class="on-gw" x="176" y="82" text-anchor="middle">Raspberry Pi</text>
-                  <text class="sub" x="176" y="99" text-anchor="middle">M0GWY</text>
-                </g>
-                <g class="seg seg-sound" data-seg="cab"><path class="wire" d="M228 84 H276" /><path class="pkt" d="M228 84 H276" /></g>
-                <text class="sub" x="252" y="76" text-anchor="middle">Digirig</text>
-                <g data-node="radio">
-                  <line class="antenna" x1="294" y1="56" x2="294" y2="32" />
-                  <circle class="antenna-tip" cx="294" cy="30" r="2.5" />
-                  <rect class="box orange" x="276" y="56" width="36" height="68" rx="5" />
-                  <circle class="led" cx="302" cy="66" r="3.5" />
-                  <path class="grille" d="M284 94 H304 M284 101 H304 M284 108 H304" />
-                  <text class="on-orange" x="294" y="142" text-anchor="middle">radio</text>
-                </g>
-                <g class="seg seg-rf" data-seg="rf"><path class="rf" d="M300 28 q5 -6 10 0 t10 0 t10 0 t10 0 t10 0 t10 0 t10 0 t10 0 t10 0 t10 0" /><path class="pkt" d="M300 28 q5 -6 10 0 t10 0 t10 0 t10 0 t10 0 t10 0 t10 0 t10 0 t10 0 t10 0" /></g>
-                <text class="sub on-rf" x="350" y="14" text-anchor="middle">on the air</text>
-                <g data-node="other">
-                  <line class="antenna" x1="412" y1="56" x2="412" y2="34" />
-                  <circle class="antenna-tip" cx="412" cy="32" r="2.5" />
-                  <rect class="box orange" x="396" y="56" width="32" height="60" rx="5" />
-                  <circle class="led" cx="420" cy="66" r="3.5" />
-                  <text class="on-orange" x="412" y="134" text-anchor="middle">G4ABC</text>
-                </g>
-                </svg>
+              <svg class="dgm" viewBox="0 0 440 132" role="img" aria-labelledby="mkT mkD">
+                <title id="mkT">The marks on a chat line</title>
+                <desc id="mkD">A line shows [..] while it waits, [tx] once it is sent on the air when the channel is free, and [ok rf] once the receipt comes back by radio.</desc>
+                <defs>
+                  <marker id="pmRfM" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-rf" d="M0 0 L6 3 L0 6 z" /></marker>
+                  <marker id="pmAcM" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-accent" d="M0 0 L6 3 L0 6 z" /></marker>
+                  <marker id="pmNetM" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-net" d="M0 0 L6 3 L0 6 z" /></marker>
+                  <marker id="pmGwM" viewBox="0 0 6 6" refX="5.2" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path class="mk-gw" d="M0 0 L6 3 L0 6 z" /></marker>
+                </defs>
+                <text class="sub" x="65" y="16" text-anchor="middle">Send</text>
+                <g class="seg seg-sound" data-seg="send"><path class="wire" d="M65 22 V59" marker-end="url(#pmAcM)" /><path class="pkt" d="M65 22 V59" /></g>
+                <g data-node="s-wait"><rect class="box off" x="10" y="62" width="110" height="56" rx="28" /><text class="big" x="65" y="89" text-anchor="middle">[..]</text><text class="sub" x="65" y="107" text-anchor="middle">waiting</text></g>
+                <g data-node="s-tx"><rect class="box orange" x="165" y="62" width="110" height="56" rx="28" /><text class="big on-orange" x="220" y="89" text-anchor="middle">[tx]</text><text class="sub" x="220" y="107" text-anchor="middle">sent</text></g>
+                <g data-node="s-ok"><rect class="box gw" x="320" y="62" width="110" height="56" rx="28" /><text class="big on-gw" x="375" y="89" text-anchor="middle">[ok rf]</text><text class="sub" x="375" y="107" text-anchor="middle">delivered</text></g>
+                <g class="seg seg-rf" data-seg="t1"><path class="rf" d="M120 90 H162" marker-end="url(#pmRfM)" /><path class="pkt" d="M120 90 H162" /></g>
+                <text class="lbl" x="142" y="52" text-anchor="middle">channel free</text>
+                <g class="seg seg-gw" data-seg="t2"><path class="gwl" d="M275 90 H317" marker-end="url(#pmGwM)" /><path class="pkt" d="M275 90 H317" /></g>
+                <text class="lbl" x="297" y="52" text-anchor="middle">receipt</text>
+              </svg>
               </div>
               <div class="app-win mode-internet-radio">
                 <p class="app-win__bar"><span class="app-win__dot" aria-hidden="true"></span><b>M0GWY · App · 144.950</b><span>raspberrypi.local</span></p>
@@ -375,17 +416,15 @@
               </div>
             </div>
           </div>
-          <figcaption>Your line’s marks change as it goes: [..] waiting, [tx] sent on air, [ok rf] delivered by radio.</figcaption>
           <script type="application/json" data-live-steps>
           {
             "main": {
-              "done": "Your line shows [ok rf]: delivered, by radio. G4ABC’s answer shows it came by radio, and its SNR.",
+              "done": "[..] waiting · [tx] sent · [ok rf] delivered by radio.",
               "steps": [
-                { "say": "You type in the portal’s App view and press Send. The line shows [..] while it waits to go out.", "segs": ["lan"], "on": ["phone"], "show": ["c1"], "ms": 1800 },
-                { "say": "The station on the Pi waits for a quiet channel, then keys the radio through the Digirig: [tx].", "segs": ["cab", "rf"], "chain": true, "on": ["pi", "radio"], "show": ["c1tx"], "ms": 2400 },
-                { "say": "G4ABC hears it and sends a receipt back.", "segs": ["<rf"], "on": ["other"], "ms": 1700 },
-                { "say": "The receipt comes back through the Pi to the portal: [ok rf].", "segs": ["<cab", "<lan"], "chain": true, "show": ["c1ok"], "ms": 2000 },
-                { "say": "G4ABC answers. The line shows it came by radio, and its SNR.", "segs": ["<rf", "<cab", "<lan"], "chain": true, "on": ["other"], "show": ["c2"], "ms": 3000 }
+                { "say": "You press Send. The line shows [..] while it waits.", "segs": ["send"], "on": ["s-wait"], "show": ["c1"], "ms": 1800 },
+                { "say": "The channel is free, so it goes on the air: [tx].", "segs": ["t1"], "on": ["s-tx"], "show": ["c1tx"], "ms": 2000 },
+                { "say": "G4ABC’s receipt comes back by radio: [ok rf].", "segs": ["t2"], "on": ["s-ok"], "show": ["c1ok"], "ms": 2000 },
+                { "say": "G4ABC replies. The line shows it came by radio, at 16 dB.", "show": ["c2"], "ms": 2400 }
               ]
             }
           }
