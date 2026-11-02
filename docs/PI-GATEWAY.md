@@ -13,6 +13,10 @@ A Raspberry Pi can run a WeeChat Radio station on its own, for example an always
 
 **A gateway must be able to transmit.** It acknowledges each mail chunk, confirms that the hub took the mail, answers inbox requests and keys receipts. A receive-only radio cannot be a gateway.
 
+## Write the SD card
+
+On your laptop, open [Raspberry Pi Imager](https://www.raspberrypi.com/software/). Pick your Pi model, then under **Operating System → Raspberry Pi OS (other)** choose **Raspberry Pi OS Lite (64-bit)**. It must be the 64-bit image: the installer only has a 64-bit (`aarch64`) build. Lite is enough. When Imager asks to apply OS customisation, choose Edit settings: hostname, your username and password, Wi-Fi if needed, and SSH on under Services. Write the card, boot the Pi, wait about two minutes, then `ssh you@raspberrypi.local`.
+
 ## Install
 
 On the Pi, logged in as your own user (not root):

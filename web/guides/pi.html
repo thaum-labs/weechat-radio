@@ -207,7 +207,7 @@
             <li>
               <svg class="card-ico" aria-hidden="true"><use href="#ico-board" /></svg>
               <strong>A Raspberry Pi 3, 4 or 5</strong>
-              <span><strong>64-bit</strong> Raspberry Pi OS (Lite is enough), a 16 GB+ microSD card, and the <strong>official power supply</strong>: a weak one makes the Pi drop the Digirig.</span>
+              <span>A 16 GB+ microSD card for <strong>Raspberry Pi OS Lite (64-bit)</strong>, and the <strong>official power supply</strong>: a weak one makes the Pi drop the Digirig.</span>
             </li>
             <li>
               <svg class="card-ico" aria-hidden="true"><use href="#ico-cable" /></svg>
@@ -229,8 +229,13 @@
 
       <section class="article-section" aria-labelledby="installH">
         <h2 id="installH">Install and start it</h2>
-        <p>On the Pi, logged in as your own user (not root). Over SSH is fine: Raspberry Pi Imager can set the hostname, your user, Wi-Fi and SSH before the first boot.</p>
+        <p>Start with a fresh microSD card. Everything after step 1 happens on the Pi, logged in as your own user (not root), over SSH or with a keyboard and screen.</p>
         <ol class="steps">
+          <li>
+            <strong class="step-title">Write the SD card</strong>
+            <p>On your laptop, open <a href="https://www.raspberrypi.com/software/">Raspberry Pi Imager</a>. Pick your Pi model, then under <strong>Operating System → Raspberry Pi OS (other)</strong> choose <strong>Raspberry Pi OS Lite (64-bit)</strong>. It must be the <strong>64-bit</strong> image: the installer only has a 64-bit build. Lite is enough, there is no desktop to run.</p>
+            <p>When Imager asks to apply OS customisation, say <strong>Edit settings</strong>: set the hostname (<code>raspberrypi</code> is fine), your username and password, your Wi-Fi if the Pi is not on Ethernet, and on the <strong>Services</strong> tab turn on <strong>SSH</strong>. Write the card, put it in the Pi, power it on and wait about two minutes. Then from your laptop: <code>ssh you@raspberrypi.local</code> (or the Pi’s IP address from your router).</p>
+          </li>
           <li>
             <strong class="step-title">Install WeeChat Radio</strong>
             <pre>curl -fsSL https://weechatradio.com/install.sh | sh</pre>
