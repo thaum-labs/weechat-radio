@@ -995,6 +995,21 @@ pub fn ack_step(
     }
 }
 
+/// Our own frame is on the air, or waits in modem73's queue for its busy
+/// test (#254 B2). A receipt handed over now either sees the cap run out
+/// under our own PTT and is forced, or rides behind that frame as modem73's
+/// `burst continuation`, with no busy test of its own.
+pub fn ack_own_tx_pending(st: &ModemStatus) -> bool {
+    st.ptt_on
+        || st.tx_queue.is_some_and(|n| n > 0)
+        || st.channel_state.trim().eq_ignore_ascii_case("tx")
+}
+
+/// Longest our own frames hold a sync receipt back. Past this the cap counts
+/// again, so a modem that never drains its queue cannot hold a receipt
+/// forever.
+const ACK_OWN_TX_MAX: Duration = Duration::from_secs(60);
+
 /// A frame decoded this recently may be the first of a run its sender is
 /// still keying: modem73 reports `rx` only for half a second after each
 /// decode, not while the next frame is on the air. A receipt keyed over that
@@ -1024,6 +1039,7 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
     let window = ack_listen_window(tx.preset);
     let listen_max = window * ACK_LISTEN_FRAMES;
     let mut busy_test_since: Option<Instant> = None;
+    let mut own_tx_logged = false;
     if tx.csma {
         loop {
             if tx.sense.is_some_and(|s| {
@@ -1052,6 +1068,33 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
                 Some(c) => c.get_status().await.ok(),
                 None => None,
             };
+            // Sync test: our own frame on the air or queued at modem73 is
+            // not the channel. The receipt waits for it, and its busy test
+            // and cap start after our PTT OFF with modem73's queue empty, so
+            // it neither runs out the cap under our own TX nor rides our
+            // frame as a burst continuation (#254 B2).
+            let own_tx = tx.csma_sync && status.as_ref().is_some_and(ack_own_tx_pending);
+            if own_tx {
+                if started.elapsed() < ACK_OWN_TX_MAX {
+                    if !own_tx_logged {
+                        own_tx_logged = true;
+                        tracing::info!(
+                            "receipt: our own frame is on the air or queued at modem73; the receipt waits for it, its busy test and {} ms cap start after our PTT OFF",
+                            tx.cap.as_millis()
+                        );
+                    }
+                    busy_test_since = None;
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+                if own_tx_logged {
+                    own_tx_logged = false;
+                    tracing::warn!(
+                        "receipt: our own frames held it {} ms; the cap counts again",
+                        started.elapsed().as_millis()
+                    );
+                }
+            }
             let modem_busy = status.as_ref().is_some_and(|st| modem_reports_busy(st));
             let sense_rx = tx.sense.is_some_and(|s| s.state() == ChannelState::Rx);
             let channel = status
@@ -2113,6 +2156,17 @@ mod tests {
         occupancy: i32,
         ahead: u64,
     ) -> AckModem {
+        spawn_ack_modem_inner(channel_state, occupancy, ahead, None).await
+    }
+
+    /// Like [`spawn_ack_modem`], with our own frame on the air (PTT on, one
+    /// more queued) until `own_tx_until`.
+    async fn spawn_ack_modem_inner(
+        channel_state: &'static str,
+        occupancy: i32,
+        ahead: u64,
+        own_tx_until: Option<Instant>,
+    ) -> AckModem {
         use crate::modem::control::{decode_control_frames, encode_control_frame};
         use crate::modem::kiss::KissDecoder;
         use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
@@ -2153,8 +2207,14 @@ mod tests {
                                 }
                             }
                             let reply = if cmd == "get_status" {
+                                let own = own_tx_until.is_some_and(|t| Instant::now() < t);
+                                let (state, ahead) = if own {
+                                    ("tx", ahead.max(2))
+                                } else {
+                                    (channel_state, ahead)
+                                };
                                 serde_json::json!({
-                                    "channel_state": channel_state,
+                                    "channel_state": state,
                                     "occupancy_pct": occupancy,
                                     "tx_frame_count": tx_c.load(AtomicOrdering::SeqCst),
                                     "ptt_on": ahead > 0,
@@ -2453,6 +2513,63 @@ mod tests {
             started.elapsed()
         );
         assert_eq!(modem.csma_seen.lock().first().copied(), Some(false));
+    }
+
+    /// #254 B2: our own frame on the air during a sync receipt's busy test
+    /// used to run out its cap, and the receipt was forced out with the busy
+    /// test off right after our PTT OFF. Now the receipt waits for our own
+    /// frames to leave modem73 and goes with its busy test on.
+    #[tokio::test]
+    async fn our_own_frame_on_the_air_does_not_run_out_the_receipt_cap() {
+        let own_tx = Duration::from_millis(2500);
+        let modem = spawn_ack_modem_inner("idle", 0, 0, Some(Instant::now() + own_tx)).await;
+        let sense = FakeSense::new();
+        let ack = vec![vec![0xB2, 0x54]];
+        let started = Instant::now();
+        let keyed = transmit_ack(AckTx {
+            frames: &ack,
+            preset: Preset::VhfFm,
+            air: None,
+            sense: Some(sense.as_ref()),
+            control: Some(&modem.control),
+            kiss: Some(&modem.kiss),
+            cap: Duration::from_millis(1000),
+            slot: Duration::from_millis(20),
+            quiet: Duration::from_millis(50),
+            csma: true,
+            csma_sync: true,
+            drain_cap: Duration::from_millis(300),
+        })
+        .await;
+        assert!(keyed);
+        assert!(
+            started.elapsed() >= own_tx,
+            "receipt handed over after {:?}, while our own frame was still at modem73",
+            started.elapsed()
+        );
+        assert!(
+            modem.csma_seen.lock().is_empty(),
+            "receipt was forced with the busy test off: {:?}",
+            modem.csma_seen.lock()
+        );
+        assert_eq!(modem.got.lock().len(), 1);
+    }
+
+    #[test]
+    fn own_frames_at_modem73_hold_a_sync_receipt() {
+        let st = |state: &str, ptt: bool, queue: Option<u64>| ModemStatus {
+            channel_state: state.into(),
+            ptt_on: ptt,
+            tx_queue: queue,
+            ..Default::default()
+        };
+        assert!(ack_own_tx_pending(&st("tx", true, Some(0))));
+        // Our DM waits in modem73's queue for its own busy test: the receipt
+        // would follow it as a burst continuation.
+        assert!(ack_own_tx_pending(&st("idle", false, Some(1))));
+        assert!(ack_own_tx_pending(&st("rx", true, None)));
+        assert!(!ack_own_tx_pending(&st("idle", false, Some(0))));
+        assert!(!ack_own_tx_pending(&st("rx", false, None)));
     }
 
     /// #243 item 1: in sync mode a receipt waits for modem73's busy test

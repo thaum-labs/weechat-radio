@@ -23,9 +23,13 @@ code { color: var(--purple); }
 header { display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--bg); }
 h1 { font-size: 17px; margin: 0; font-weight: 600; color: var(--accent); white-space: nowrap; }
+/* The website's font, served by wcr itself (#254). 400 only, as on the
+   website, so "weechat" bold is synthesised there and here alike. */
+@font-face { font-family: "Fira Mono"; src: url("/fonts/fira-mono-400.woff2") format("woff2");
+  font-weight: 400; font-style: normal; font-display: swap; }
 /* Wordmark as on the website and in the desktop app (#247): the mark, then
    "weechat" bold and "radio" in blue, monospace, no space between. */
-.brand-line { display: flex; align-items: center; gap: 10px; font-family: var(--mono);
+.brand-line { display: flex; align-items: center; gap: 10px; font-family: "Fira Mono", ui-monospace, monospace;
   font-size: 18px; line-height: 1; letter-spacing: -0.06em; }
 .brand-mark { width: 28px; height: 26px; flex: none; display: block; }
 .brand-weechat { color: #d8d0e8; font-weight: 700; }

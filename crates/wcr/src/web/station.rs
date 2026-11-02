@@ -31,6 +31,8 @@ pub const STATE_FILE: &str = "web-station.state";
 /// What the state file holds.
 pub const STATE_START: &str = "start";
 pub const STATE_STOP: &str = "stop";
+/// Start of the note `resume` leaves when the station stays stopped.
+const NOT_STARTED: &str = "station not started";
 
 #[derive(Default)]
 struct Inner {
@@ -163,7 +165,7 @@ impl Station {
             } else {
                 "no saved Start yet (first run of this version)"
             };
-            let line = format!("station not started: {why}. Press Start to put it on the air");
+            let line = format!("{NOT_STARTED}: {why}. Press Start to put it on the air");
             self.note(&line);
             self.inner.lock().await.last_exit = line;
         }
@@ -233,6 +235,7 @@ impl Station {
                 }
                 inner.child = Some(child);
                 inner.started = Some(Instant::now());
+                clear_not_started(&mut inner.last_exit);
                 self.note("station started");
             }
             Err(e) => {
@@ -241,6 +244,14 @@ impl Station {
                 self.note(&inner.last_exit.clone());
             }
         }
+    }
+}
+
+/// "station not started … Press Start" is an instruction, not a stop: it
+/// goes once the station runs (QA #254). A real last stop stays.
+fn clear_not_started(last_exit: &mut String) {
+    if last_exit.starts_with(NOT_STARTED) {
+        last_exit.clear();
     }
 }
 
@@ -365,6 +376,13 @@ mod tests {
         // Start was saved: a restart wants it running.
         std::fs::write(state_path(&cfg), "start\n").unwrap();
         assert!(saved_start(&cfg));
+        // Start clears the "Press Start" note, but not a real last stop.
+        let mut note = format!("{NOT_STARTED}: no saved Start yet. Press Start");
+        clear_not_started(&mut note);
+        assert!(note.is_empty());
+        let mut stop = String::from("station ended: exit status: 1");
+        clear_not_started(&mut stop);
+        assert_eq!(stop, "station ended: exit status: 1");
         // Shutting down keeps the saved choice.
         let s = Station::new(cfg.clone());
         s.shutdown().await;
