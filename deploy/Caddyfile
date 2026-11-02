@@ -9,6 +9,10 @@ weechatradio.com, www.weechatradio.com {
   }
   handle {
     root * /srv/web
+    # Pages always revalidate, so a browser never shows an old guide after a
+    # deploy. Scripts, styles and images carry a version in their URL.
+    @page path / *.html
+    header @page Cache-Control "no-cache"
     file_server
     try_files {path} /index.html
   }
