@@ -6,6 +6,9 @@
 //! frames take real airtime from a serial queue, the transmit mode is global,
 //! and a station cannot hear while it keys.
 
+#[path = "common/watchdog.rs"]
+mod common_watchdog;
+use common_watchdog::{watchdog, TEST_LIMIT};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -400,6 +403,7 @@ fn long_body() -> String {
 /// the mail lease: carrier sense off, and never after chat's config is back.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn long_mail_recovers_a_lost_final_chunk() {
+    let _hang = watchdog(TEST_LIMIT);
     let lost = Arc::new(AtomicU64::new(0));
     let lost_c = lost.clone();
     let drop_rx: LinkDrop = Arc::new(move |from, to, frame| {
@@ -483,6 +487,7 @@ async fn long_mail_recovers_a_lost_final_chunk() {
 /// a set planned from older progress.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_resend_keys_only_what_the_latest_report_lacks() {
+    let _hang = watchdog(TEST_LIMIT);
     let lost = Arc::new(Mutex::new(std::collections::HashSet::new()));
     let lost_c = lost.clone();
     let drop_rx: LinkDrop = Arc::new(move |from, to, frame| {
@@ -566,6 +571,7 @@ async fn a_resend_keys_only_what_the_latest_report_lacks() {
 /// gateway repeats the acceptance it already has, and the row reaches Sent.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_lost_acceptance_is_answered_by_one_probe() {
+    let _hang = watchdog(TEST_LIMIT);
     let lost = Arc::new(AtomicU64::new(0));
     let lost_c = lost.clone();
     let drop_rx: LinkDrop = Arc::new(move |from, to, frame| {
@@ -655,6 +661,7 @@ async fn a_lost_acceptance_is_answered_by_one_probe() {
 /// the whole mail again.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_long_mail_at_real_airtime_is_accepted_on_the_first_pass() {
+    let _hang = watchdog(TEST_LIMIT);
     let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
     let pair = Pair::start_with(
         TimedOpts {
@@ -712,6 +719,7 @@ async fn a_long_mail_at_real_airtime_is_accepted_on_the_first_pass() {
 /// between the end of the burst and the gateway's reply.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_first_beacon_waits_for_the_reply_to_our_mail() {
+    let _hang = watchdog(TEST_LIMIT);
     let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
     let pair = Pair::start_tweaked(
         TimedOpts {
@@ -876,6 +884,7 @@ fn acceptance_end(log: &[wcr::sim::TimedKey]) -> Option<Instant> {
 /// goes only after the gateway's acceptance.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_beacon_on_its_way_when_a_mail_starts_waits_for_the_acceptance() {
+    let _hang = watchdog(TEST_LIMIT);
     let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
     let pair = Pair::start_tweaked(
         TimedOpts {
@@ -947,6 +956,7 @@ async fn a_beacon_on_its_way_when_a_mail_starts_waits_for_the_acceptance() {
 /// time.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_gateway_takes_its_beacon_back_when_mail_chunks_arrive() {
+    let _hang = watchdog(TEST_LIMIT);
     let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
     let pair = Pair::start_tweaked(
         TimedOpts {
@@ -1014,6 +1024,7 @@ async fn the_gateway_takes_its_beacon_back_when_mail_chunks_arrive() {
 /// beacons from the first chunk until the gateway's acceptance.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_big_mail_with_stuck_carrier_sense_goes_in_one_burst() {
+    let _hang = watchdog(TEST_LIMIT);
     let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
     let pair = Pair::start_with(
         TimedOpts {
@@ -1097,6 +1108,7 @@ async fn irc(port: u16, nick: &str) -> (Arc<Mutex<Vec<String>>>, tokio::net::tcp
 /// carrier sense: QA's six-minute stall in the middle of a 56-chunk mail.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_receipt_keyed_as_a_mail_starts_leaves_the_burst_alone() {
+    let _hang = watchdog(TEST_LIMIT);
     let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
     let pair = Pair::start_with(
         TimedOpts {
@@ -1160,6 +1172,7 @@ async fn a_receipt_keyed_as_a_mail_starts_leaves_the_burst_alone() {
 /// one post, and no chunk keyed more than twice.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_big_mail_started_just_after_start_reaches_the_gateway() {
+    let _hang = watchdog(TEST_LIMIT);
     let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
     let started = Instant::now();
     let pair = Pair::start_with(
@@ -1208,6 +1221,7 @@ async fn a_big_mail_started_just_after_start_reaches_the_gateway() {
 /// stuck.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_gateway_that_missed_the_first_chunk_still_gets_the_mail() {
+    let _hang = watchdog(TEST_LIMIT);
     let lost = Arc::new(AtomicU64::new(0));
     let lost_c = lost.clone();
     let drop_rx: LinkDrop = Arc::new(move |from, to, frame| {
@@ -1426,6 +1440,7 @@ fn is_done(state: &str) -> bool {
 /// outbox rows must reach Sent.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_senders_a_few_seconds_apart_both_get_through() {
+    let _hang = watchdog(TEST_LIMIT);
     let trio = Trio::start(
         TimedOpts {
             frame_ms: 4_000,

@@ -4,6 +4,9 @@
 //! Every drop rule is deterministic (the first copy of a chosen frame on a
 //! chosen link) so a failure is the protocol, not the dice.
 
+#[path = "common/watchdog.rs"]
+mod common_watchdog;
+use common_watchdog::{watchdog, TEST_LIMIT};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -415,6 +418,7 @@ fn is_roster(env: &Envelope) -> bool {
 /// copy between C and D. NAMES must still list all five on every station.
 #[tokio::test]
 async fn roster_reaches_every_station_on_a_lossy_chain() {
+    let _hang = watchdog(TEST_LIMIT);
     let _suite = suite_lock().lock().await;
     let rules = vec![Rule {
         from: 3,
@@ -475,6 +479,7 @@ async fn roster_reaches_every_station_on_a_lossy_chain() {
 /// [rl], no [no], and every member seeing the line once.
 #[tokio::test]
 async fn far_group_receipts_return_through_lossy_relays() {
+    let _hang = watchdog(TEST_LIMIT);
     let _suite = suite_lock().lock().await;
     let rules = vec![Rule {
         from: 3,
@@ -537,6 +542,7 @@ async fn far_group_receipts_return_through_lossy_relays() {
 /// their first copy between C and D.
 #[tokio::test]
 async fn far_group_receipts_return_to_the_far_end_sender() {
+    let _hang = watchdog(TEST_LIMIT);
     let _suite = suite_lock().lock().await;
     let rules = vec![Rule {
         from: 3,
@@ -576,6 +582,7 @@ async fn far_group_receipts_return_to_the_far_end_sender() {
 /// key it again until it hears D carry it on, so D and E still get it once.
 #[tokio::test]
 async fn bulletin_keeps_walking_past_the_second_relay() {
+    let _hang = watchdog(TEST_LIMIT);
     let _suite = suite_lock().lock().await;
     let rules = vec![Rule {
         from: 3,
@@ -648,6 +655,7 @@ async fn bulletin_keeps_walking_past_the_second_relay() {
 /// round trip on a loaded machine can let A's first retry go out.
 #[tokio::test]
 async fn the_station_next_to_the_sender_repeats_a_receipt_once() {
+    let _hang = watchdog(TEST_LIMIT);
     let _suite = suite_lock().lock().await;
     let mut chain = Chain::start(Vec::new(), None).await;
     chain.clients[0].send("PRIVMSG M0DDD :hello-d").await;
@@ -682,6 +690,7 @@ async fn the_station_next_to_the_sender_repeats_a_receipt_once() {
 /// on the way to A. B repeats it once, a retry interval later.
 #[tokio::test]
 async fn a_receipt_lost_beside_the_sender_is_repeated() {
+    let _hang = watchdog(TEST_LIMIT);
     let _suite = suite_lock().lock().await;
     let rules = vec![Rule {
         from: 2,
@@ -723,6 +732,7 @@ async fn a_receipt_lost_beside_the_sender_is_repeated() {
 /// last wait.
 #[tokio::test]
 async fn a_late_receipt_after_a_relay_never_shows_no() {
+    let _hang = watchdog(TEST_LIMIT);
     let _suite = suite_lock().lock().await;
     let t0 = std::time::Instant::now();
     let rules = vec![Rule {
@@ -773,6 +783,7 @@ async fn a_late_receipt_after_a_relay_never_shows_no() {
 /// at D. A's later retry has to get past C.
 #[tokio::test]
 async fn a_relay_that_missed_the_next_beacons_passes_a_retry_on() {
+    let _hang = watchdog(TEST_LIMIT);
     let _suite = suite_lock().lock().await;
     let rules = vec![
         Rule {
