@@ -199,6 +199,7 @@ impl ModemSense {
             loop {
                 if let Ok(st) = control.get_status().await {
                     self.apply_status(&st);
+                    queue.note_modem(&st);
                     let mut st = st;
                     if st.audio_connected {
                         unhealthy = 0;
@@ -421,6 +422,20 @@ struct QueueInner {
     /// A gateway hearing another station's mail burst keys no chat or relay
     /// until then, so it does not go deaf to the rest of the burst.
     heard_mail_until: Option<Instant>,
+    /// When our last frame reached modem73, until modem73 has keyed it and
+    /// let PTT go again. Read by a waiting receipt only (#257): modem73
+    /// takes a frame off its queue for its busy test, so while it contends
+    /// for the channel it shows PTT off and an empty queue.
+    own_handed_at: Option<Instant>,
+    /// PTT seen on since `own_handed_at`.
+    own_keyed: bool,
+    /// Frames that reached the modem, counted, so a receipt knows when its
+    /// own frame has been noted.
+    own_handed_count: u64,
+    /// The modem reports its transmitter (modem73 sends `tx_queue` with
+    /// `ptt_on`). One that does not (a simple sim) can never clear
+    /// `own_handed_at`, so the hand-off does not count there.
+    tracks_tx: bool,
 }
 
 impl QueueInner {
@@ -457,6 +472,10 @@ impl AirQueue {
                 in_flight_beacon: false,
                 congested: false,
                 heard_mail_until: None,
+                own_handed_at: None,
+                own_keyed: false,
+                own_handed_count: 0,
+                tracks_tx: false,
             })),
             notify: Arc::new(Notify::new()),
         }
@@ -594,6 +613,61 @@ impl AirQueue {
             g.in_flight = None;
             g.in_flight_id = None;
         }
+        g.own_handed_at = Some(Instant::now());
+        g.own_keyed = false;
+        g.own_handed_count += 1;
+    }
+
+    /// Frames noted by [`AirQueue::note_keyed`] so far.
+    pub fn own_handed_count(&self) -> u64 {
+        self.inner.lock().own_handed_count
+    }
+
+    /// The modem reports its transmitter, so hand-offs can be tracked.
+    pub fn tracks_tx(&self) -> bool {
+        self.inner.lock().tracks_tx
+    }
+
+    /// One modem73 status read: see [`AirQueue::note_ptt`].
+    pub fn note_modem(&self, st: &ModemStatus) {
+        self.note_ptt(ptt_or_tx(st), st.tx_queue.is_some());
+    }
+
+    /// modem73's PTT as last read. Our frame handed to modem73 is out once
+    /// PTT has been on and gone off again since (#257).
+    pub fn note_ptt(&self, on: bool, tracks_tx: bool) {
+        let mut g = self.inner.lock();
+        g.tracks_tx = tracks_tx;
+        if g.own_handed_at.is_none() {
+            return;
+        }
+        if on {
+            g.own_keyed = true;
+        } else if g.own_keyed {
+            g.own_handed_at = None;
+            g.own_keyed = false;
+        }
+    }
+
+    /// Why a sync receipt must not go to modem73 yet, if one of our own
+    /// frames is still on its way (#257): taken off the queue and waiting
+    /// for the channel in wcr, or handed to modem73 since our last PTT OFF.
+    /// modem73 holds such a frame in its busy test with PTT off and an empty
+    /// queue, and a receipt handed over then rides it as a `burst
+    /// continuation`. A hand-off older than `OWN_HANDED_MAX` no longer
+    /// counts, so a PTT edge we never saw cannot hold receipts.
+    pub fn own_frame_on_its_way(&self) -> Option<&'static str> {
+        let mut g = self.inner.lock();
+        if g.in_flight.is_some() {
+            return Some("waiting for the channel before it goes to modem73");
+        }
+        let at = g.own_handed_at.filter(|_| g.tracks_tx)?;
+        if at.elapsed() >= OWN_HANDED_MAX {
+            g.own_handed_at = None;
+            g.own_keyed = false;
+            return None;
+        }
+        Some("handed to modem73 and not keyed yet (its busy test, PTT off)")
     }
 
     /// An item taken off the queue has not reached the modem yet. It may
@@ -999,11 +1073,27 @@ pub fn ack_step(
 /// test (#254 B2). A receipt handed over now either sees the cap run out
 /// under our own PTT and is forced, or rides behind that frame as modem73's
 /// `burst continuation`, with no busy test of its own.
+/// modem73 is keying: PTT on, or its channel reads `tx`.
+pub fn ptt_or_tx(st: &ModemStatus) -> bool {
+    st.ptt_on || st.channel_state.trim().eq_ignore_ascii_case("tx")
+}
+
 pub fn ack_own_tx_pending(st: &ModemStatus) -> bool {
     st.ptt_on
         || st.tx_queue.is_some_and(|n| n > 0)
         || st.channel_state.trim().eq_ignore_ascii_case("tx")
 }
+
+/// Longest a frame handed to modem73 counts as on its way without a PTT
+/// edge seen for it (#257).
+const OWN_HANDED_MAX: Duration = Duration::from_secs(20);
+
+/// Longest random wait before a sync receipt's busy test starts (#257,
+/// approved by Tobias: 0-2 s). After a crossed pair both receipts start
+/// their busy tests right after each station's PTT OFF; the spread lets
+/// the second one hear the first (the Pi takes about 1 s from clear to
+/// keying).
+const ACK_JITTER_MAX: Duration = Duration::from_millis(2000);
 
 /// Longest our own frames hold a sync receipt back. Past this the cap counts
 /// again, so a modem that never drains its queue cannot hold a receipt
@@ -1039,7 +1129,8 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
     let window = ack_listen_window(tx.preset);
     let listen_max = window * ACK_LISTEN_FRAMES;
     let mut busy_test_since: Option<Instant> = None;
-    let mut own_tx_logged = false;
+    let mut own_tx_logged: Option<&'static str> = None;
+    let mut jittered = false;
     if tx.csma {
         loop {
             if tx.sense.is_some_and(|s| {
@@ -1050,6 +1141,7 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
                 // from before, it had already run out by then, and the
                 // receipt went to modem73 with the busy test off straight
                 // after that frame (#247 B2, the Mac's receipt at 21:16:05).
+                jittered = false;
                 if busy_test_since.take().is_some() && tx.csma_sync {
                     tracing::info!(
                         "receipt: a frame was heard during the busy test; its {} ms cap starts again after that run",
@@ -1063,6 +1155,16 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
             // mode the cap counts from here: the listen window above is
             // longer than the cap on FM, so counted from the start every
             // receipt was forced out with the busy test off (#243).
+            if tx.csma_sync && busy_test_since.is_none() && !jittered {
+                jittered = true;
+                let wait = rand::thread_rng().gen_range(Duration::ZERO..=ACK_JITTER_MAX);
+                tracing::info!(
+                    "receipt: random wait {} ms before its busy test, so a receipt keyed at the same moment can be heard first",
+                    wait.as_millis()
+                );
+                tokio::time::sleep(wait).await;
+                continue;
+            }
             let testing = *busy_test_since.get_or_insert_with(Instant::now);
             let status = match tx.control {
                 Some(c) => c.get_status().await.ok(),
@@ -1073,22 +1175,44 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
             // and cap start after our PTT OFF with modem73's queue empty, so
             // it neither runs out the cap under our own TX nor rides our
             // frame as a burst continuation (#254 B2).
-            let own_tx = tx.csma_sync && status.as_ref().is_some_and(ack_own_tx_pending);
-            if own_tx {
+            //
+            // modem73 takes a frame off its queue for its busy test and shows
+            // PTT off and an empty queue while it contends, so wcr also
+            // remembers what it handed over since our last PTT OFF, and a
+            // line still waiting for the channel in wcr (#257: the Mac's M5
+            // retry went to modem73 during the receipt's busy test, and the
+            // receipt rode it as a burst continuation). Checked on every
+            // pass, so also right before the receipt is handed over.
+            let own_tx = if !tx.csma_sync {
+                None
+            } else if let Some(st) = status.as_ref() {
+                if let Some(a) = tx.air {
+                    a.note_modem(st);
+                }
+                if ack_own_tx_pending(st) {
+                    Some("on the air or queued at modem73")
+                } else {
+                    tx.air.and_then(|a| a.own_frame_on_its_way())
+                }
+            } else {
+                None
+            };
+            if let Some(why) = own_tx {
                 if started.elapsed() < ACK_OWN_TX_MAX {
-                    if !own_tx_logged {
-                        own_tx_logged = true;
+                    if own_tx_logged != Some(why) {
+                        own_tx_logged = Some(why);
                         tracing::info!(
-                            "receipt: our own frame is on the air or queued at modem73; the receipt waits for it, its busy test and {} ms cap start after our PTT OFF",
+                            "receipt: our own frame is {why}; the receipt waits for it, its busy test and {} ms cap start after our PTT OFF",
                             tx.cap.as_millis()
                         );
                     }
                     busy_test_since = None;
+                    jittered = false;
                     tokio::time::sleep(Duration::from_millis(50)).await;
                     continue;
                 }
-                if own_tx_logged {
-                    own_tx_logged = false;
+                if own_tx_logged.is_some() {
+                    own_tx_logged = None;
                     tracing::warn!(
                         "receipt: our own frames held it {} ms; the cap counts again",
                         started.elapsed().as_millis()
@@ -1160,6 +1284,7 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
         Some(c) => c.get_status().await.ok(),
         None => None,
     };
+    let handed_before = tx.air.map(|a| a.own_handed_count());
     let mut sent = false;
     if let Some(k) = tx.kiss {
         for frame in tx.frames {
@@ -1172,21 +1297,49 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
     if let (Some(c), Some(before)) = (tx.control, before) {
         let target = before.tx_frame_count.saturating_add(tx.frames.len() as u64);
         let cap = ack_drain_cap(tx.preset, tx.drain_cap, frames_ahead(&before));
+        // Sync test (#257 BACKLOG 2, approved by Tobias): upstream modem73
+        // never counts frames sent, so the receipt used to let chat go
+        // again after the cap while it still sat in modem73's busy test,
+        // and a due beacon then rode it as a burst continuation. Chat now
+        // stays paused until modem73 has keyed the receipt and let PTT go,
+        // at most `OWN_HANDED_MAX`.
+        let track = tx
+            .air
+            .filter(|a| sent && tx.csma_sync && a.tracks_tx())
+            .zip(handed_before);
         let start = Instant::now();
+        let mut logged = false;
         loop {
             match c.get_status().await {
                 Ok(st) if ack_left_queue(&st, target) => break,
+                Ok(st) => {
+                    if let Some((a, before)) = track {
+                        a.note_modem(&st);
+                        if a.own_handed_count() > before && a.own_frame_on_its_way().is_none() {
+                            break;
+                        }
+                    }
+                }
                 Err(_) => break,
-                _ => {}
             }
             // A mail lease waits at most 20 s for this receipt, then sets the
             // modem for its burst. Waiting out the frames ahead must not
             // outlast that, or this restore lands under the burst.
             let limit = if tx.air.is_some_and(|a| a.is_held_for_mail()) {
                 tx.drain_cap
+            } else if track.is_some() {
+                cap.max(OWN_HANDED_MAX)
             } else {
                 cap
             };
+            if track.is_some() && !logged && start.elapsed() >= cap {
+                logged = true;
+                tracing::info!(
+                    "receipt: still at modem73 after {} ms; chat stays paused until it is keyed and PTT is off (at most {} s)",
+                    cap.as_millis(),
+                    OWN_HANDED_MAX.as_secs()
+                );
+            }
             if start.elapsed() >= limit {
                 break;
             }
@@ -2553,6 +2706,234 @@ mod tests {
             modem.csma_seen.lock()
         );
         assert_eq!(modem.got.lock().len(), 1);
+    }
+
+    /// A fake modem73 with its busy test: a frame from KISS leaves the queue
+    /// at once (`tx_queue` 0), waits `contention` with PTT off, then keys for
+    /// `airtime`. A frame that reached the queue while one is keying goes
+    /// out behind it with no busy test of its own, as modem73's `burst
+    /// continuation`. The channel reads `rx` (another station) until
+    /// `peer_until`. Each frame keyed is logged with how it went.
+    struct ContentionModem {
+        control: crate::modem::ControlClient,
+        kiss: crate::modem::KissClient,
+        aired: Arc<Mutex<Vec<Aired>>>,
+    }
+
+    /// A frame keyed by [`ContentionModem`] and how: `channel clear` or
+    /// `burst continuation`.
+    type Aired = (Vec<u8>, &'static str);
+
+    async fn spawn_contention_modem(
+        peer_until: Instant,
+        contention: Duration,
+        airtime: Duration,
+    ) -> ContentionModem {
+        use crate::modem::control::{decode_control_frames, encode_control_frame};
+        use crate::modem::kiss::KissDecoder;
+        use std::collections::VecDeque;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        #[derive(Default)]
+        struct Modem {
+            queue: VecDeque<Vec<u8>>,
+            ptt: bool,
+        }
+        let m = Arc::new(Mutex::new(Modem::default()));
+        let aired = Arc::new(Mutex::new(Vec::new()));
+        let ctrl_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ctrl_addr = ctrl_listener.local_addr().unwrap();
+        let kiss_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let kiss_addr = kiss_listener.local_addr().unwrap();
+
+        let mc = m.clone();
+        tokio::spawn(async move {
+            let (mut stream, _) = ctrl_listener.accept().await.unwrap();
+            let mut stash = Vec::new();
+            let mut buf = [0u8; 2048];
+            loop {
+                let n = match stream.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                stash.extend_from_slice(&buf[..n]);
+                let Ok(frames) = decode_control_frames(&mut stash) else {
+                    continue;
+                };
+                for v in frames {
+                    let cmd = v.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
+                    let reply = if cmd == "get_status" {
+                        let g = mc.lock();
+                        let state = if g.ptt {
+                            "tx"
+                        } else if Instant::now() < peer_until {
+                            "rx"
+                        } else {
+                            "idle"
+                        };
+                        serde_json::json!({
+                            "channel_state": state,
+                            "ptt_on": g.ptt,
+                            "tx_queue": g.queue.len(),
+                            "tx_frame_count": 0,
+                            "audio_connected": true
+                        })
+                    } else {
+                        serde_json::json!({"ok": true})
+                    };
+                    if let Ok(f) = encode_control_frame(&reply) {
+                        if stream.write_all(&f).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        let mk = m.clone();
+        tokio::spawn(async move {
+            let (mut stream, _) = kiss_listener.accept().await.unwrap();
+            let mut dec = KissDecoder::new();
+            let mut buf = [0u8; 2048];
+            loop {
+                let n = match stream.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                for payload in dec.push(&buf[..n]) {
+                    mk.lock().queue.push_back(payload);
+                }
+            }
+        });
+        let mt = m.clone();
+        let at = aired.clone();
+        tokio::spawn(async move {
+            loop {
+                let Some(first) = mt.lock().queue.pop_front() else {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    continue;
+                };
+                // Its busy test: off the queue, PTT off.
+                tokio::time::sleep(contention).await;
+                mt.lock().ptt = true;
+                let mut cur = (first, "channel clear");
+                loop {
+                    at.lock().push(cur.clone());
+                    tokio::time::sleep(airtime).await;
+                    let next = mt.lock().queue.pop_front();
+                    match next {
+                        Some(f) => cur = (f, "burst continuation"),
+                        None => break,
+                    }
+                }
+                mt.lock().ptt = false;
+            }
+        });
+
+        let (control, _ev) = crate::modem::ControlClient::connect(&ctrl_addr.to_string())
+            .await
+            .unwrap();
+        let (kiss, _rx) = crate::modem::KissClient::connect(&kiss_addr.to_string())
+            .await
+            .unwrap();
+        ContentionModem {
+            control,
+            kiss,
+            aired,
+        }
+    }
+
+    /// #257 blocker, the Mac at 18:20:32-38: the peer's frame is heard and
+    /// the receipt's busy test starts; our own line goes to modem73 during
+    /// it; modem73 holds that line in its busy test with PTT off and an
+    /// empty queue. The receipt used to go over then and ride our line as a
+    /// `burst continuation`. Now it waits for our PTT OFF and runs its own
+    /// busy test.
+    #[tokio::test]
+    async fn a_receipt_does_not_ride_our_line_held_in_modem73s_busy_test() {
+        let start = Instant::now();
+        let contention = Duration::from_millis(1200);
+        let airtime = Duration::from_millis(800);
+        let modem =
+            spawn_contention_modem(start + Duration::from_millis(600), contention, airtime).await;
+        let q = AirQueue::new();
+        // As node.rs watch_keyed: each frame that reaches modem73.
+        let mut keyed = modem.kiss.keyed();
+        let qk = q.clone();
+        tokio::spawn(async move {
+            while let Ok(f) = keyed.recv().await {
+                qk.note_keyed(&f);
+            }
+        });
+        // As the station's status poller.
+        let qp = q.clone();
+        let poll = modem.control.clone();
+        tokio::spawn(async move {
+            loop {
+                if let Ok(st) = poll.get_status().await {
+                    qp.note_modem(&st);
+                }
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+        });
+        // Our own line: wcr hands it to modem73 400 ms into the receipt's
+        // busy test, while the peer's frame still holds the channel.
+        let own_line = vec![0x4D, 0x35];
+        let kiss = modem.kiss.clone();
+        let line = own_line.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            kiss.send(&line).await.unwrap();
+        });
+        let sense = FakeSense::new();
+        let receipt = vec![0xAC, 0x4B];
+        let keyed = transmit_ack(AckTx {
+            frames: std::slice::from_ref(&receipt),
+            preset: Preset::VhfFm,
+            air: Some(&q),
+            sense: Some(sense.as_ref()),
+            control: Some(&modem.control),
+            kiss: Some(&modem.kiss),
+            cap: Duration::from_millis(3000),
+            slot: Duration::from_millis(20),
+            quiet: Duration::from_millis(50),
+            csma: true,
+            csma_sync: true,
+            drain_cap: Duration::from_millis(300),
+        })
+        .await;
+        assert!(keyed, "the receipt was not handed to modem73");
+        // #257 BACKLOG 2: chat stays paused until the receipt has keyed and
+        // PTT is off, although it sat in modem73's busy test (1.2 s) longer
+        // than the 300 ms drain cap. Before, a due beacon went to modem73
+        // then and rode the receipt.
+        // So by the time chat may go again, the receipt is already out.
+        let aired = modem.aired.lock().clone();
+        assert_eq!(
+            aired,
+            vec![(own_line, "channel clear"), (receipt, "channel clear")],
+            "the receipt must run its own busy test, not ride our line"
+        );
+    }
+
+    /// #257: what holds a sync receipt for our own frame on its way.
+    #[test]
+    fn a_frame_handed_since_our_last_ptt_off_holds_a_receipt() {
+        let q = AirQueue::new();
+        assert_eq!(q.own_frame_on_its_way(), None);
+        // Taken off the queue, waiting for the channel in wcr.
+        q.enqueue(item(AirClass::Own, 1));
+        let it = q.pop_ready().unwrap();
+        assert!(q.own_frame_on_its_way().is_some());
+        // At modem73, in its busy test: PTT off.
+        q.note_keyed(&it.frames[0]);
+        q.note_ptt(false, true);
+        assert!(q.own_frame_on_its_way().is_some());
+        // Keyed, then PTT OFF: gone.
+        q.note_ptt(true, true);
+        assert!(q.own_frame_on_its_way().is_some());
+        q.note_ptt(false, true);
+        assert_eq!(q.own_frame_on_its_way(), None);
     }
 
     #[test]
