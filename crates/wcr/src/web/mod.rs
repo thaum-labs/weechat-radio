@@ -39,6 +39,9 @@ const STYLE: &str = include_str!("assets/station.css");
 const GATEWAY_JS: &str = include_str!("assets/gateway.js");
 const APP_PAGE: &str = include_str!("assets/app.html");
 const APP_JS: &str = include_str!("assets/app.js");
+/// The website's wordmark font (web/fonts, SIL OFL 1.1, see NOTICE), served
+/// from wcr itself so the page needs no internet and CSP stays 'self' (#254).
+const FIRA_MONO: &[u8] = include_bytes!("assets/fira-mono-400.woff2");
 
 #[derive(Clone)]
 struct Web {
@@ -228,6 +231,10 @@ fn router(web: Web) -> Router {
     Router::new()
         .route("/login", get(|| async { login_page("") }).post(login))
         .route("/station.css", get(|| async { asset("text/css", STYLE) }))
+        .route(
+            "/fonts/fira-mono-400.woff2",
+            get(|| async { ([(header::CONTENT_TYPE, "font/woff2")], FIRA_MONO).into_response() }),
+        )
         .route(
             "/api/whoami",
             get(|State(web): State<Web>| async move { Json(web.whoami) }),

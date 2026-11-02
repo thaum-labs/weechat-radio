@@ -98,15 +98,52 @@ fn hamlib_args(m: &crate::config::ModemConfig) -> Vec<String> {
     ]
 }
 
+/// How long a stopping station waits for modem73 to exit after SIGTERM
+/// before it kills it. Under `wcr web`'s own 10 s wait for the station.
+const MODEM_STOP_WAIT: Duration = Duration::from_secs(5);
+
 /// Ends the modem73 this station started. For a stop signal, where the
 /// station exits without dropping its [`ModemProcess`].
+///
+/// Waits for modem73 to exit before returning (QA #254): the station used to
+/// exit straight after the signal, `wcr web` then exited too, and systemd
+/// killed the modem73 still closing down with SIGKILL.
 pub fn stop_managed() {
     let Some(pid) = MANAGED_PID.lock().ok().and_then(|mut p| p.take()) else {
         return;
     };
     #[cfg(unix)]
-    unsafe {
-        libc::kill(pid as libc::pid_t, libc::SIGTERM);
+    {
+        let pid = pid as libc::pid_t;
+        // SAFETY: plain signals to, and a reap of, our own child process.
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+        let start = std::time::Instant::now();
+        let gone = || {
+            let mut status = 0;
+            // The pid, or -1 when it is not our child (already reaped).
+            unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) != 0 }
+        };
+        loop {
+            if gone() {
+                tracing::info!("modem73 stopped after {} ms", start.elapsed().as_millis());
+                return;
+            }
+            if start.elapsed() >= MODEM_STOP_WAIT {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        tracing::warn!(
+            "modem73 did not exit {} s after SIGTERM; killing it",
+            MODEM_STOP_WAIT.as_secs()
+        );
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+            let mut status = 0;
+            libc::waitpid(pid, &mut status, 0);
+        }
     }
     #[cfg(windows)]
     {
@@ -284,6 +321,32 @@ async fn confirm_still_running(child: &mut Child, log_path: &Path) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA #254: a stop waits for modem73 to finish its own SIGTERM clean-up
+    /// instead of leaving it for systemd's SIGKILL.
+    #[cfg(unix)]
+    #[test]
+    fn a_stop_waits_for_modem73_to_exit() {
+        let child = std::process::Command::new("sh")
+            .args([
+                "-c",
+                "trap 'sleep 0.4; exit 0' TERM; while :; do sleep 0.05; done",
+            ])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        // Let the shell set its trap.
+        std::thread::sleep(Duration::from_millis(200));
+        *MANAGED_PID.lock().unwrap() = Some(pid);
+        let start = std::time::Instant::now();
+        stop_managed();
+        assert!(start.elapsed() >= Duration::from_millis(300));
+        assert!(start.elapsed() < MODEM_STOP_WAIT);
+        // Reaped: no such child any more.
+        let mut status = 0;
+        let r = unsafe { libc::waitpid(pid as libc::pid_t, &mut status, libc::WNOHANG) };
+        assert_eq!(r, -1);
+    }
 
     #[test]
     fn unlicensed_callsign_is_modem_safe() {
