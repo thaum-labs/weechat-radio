@@ -1,6 +1,8 @@
 # Builds the modem73 that ships inside WeeChat Radio: upstream RFnexus/modem73
 # (modem73-win on Windows) at a pinned tag, plus our network-audio patch
-# (third_party/modem73/patches). Network audio lets wcr feed modem73 the
+# (third_party/modem73/patches). Linux and macOS also get
+# encode-before-busy-test.patch (the frame is encoded before the CSMA busy
+# test, so PTT keys straight after "Channel clear"). Network audio lets wcr feed modem73 the
 # radio's Bluetooth audio (VR-N76 / VR-N7600) with no sound card.
 #
 # Each job uploads one artifact named after the release asset it makes,
@@ -47,6 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           git apply ../third_party/modem73/patches/network-audio.patch
+          git apply ../third_party/modem73/patches/encode-before-busy-test.patch
           make -f packaging/Makefile.pkg ARCH_FLAGS="${{ matrix.arch_flags }}" VERSION="${MODEM73_TAG#v}-wcr" -j"$(nproc)"
       - name: check
         working-directory: m73
@@ -90,6 +93,7 @@ jobs:
         run: |
           set -euo pipefail
           git apply ../third_party/modem73/patches/network-audio.patch
+          git apply ../third_party/modem73/patches/encode-before-busy-test.patch
           make ARCHFLAGS="${{ matrix.arch_flags }}" VERSION="${MODEM73_TAG#v}-wcr" -j"$(sysctl -n hw.ncpu)"
       # Same layout as upstream's macOS tarball: modem73 next to libs/.
       - name: bundle libraries
