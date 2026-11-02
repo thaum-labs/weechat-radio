@@ -9,6 +9,9 @@
 //! Lines start in the middle (C) and at the far end (E), so a fix that only
 //! works for traffic flowing away from A cannot pass.
 
+#[path = "common/watchdog.rs"]
+mod common_watchdog;
+use common_watchdog::{ci_line, watchdog, TEST_LIMIT};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -799,6 +802,7 @@ fn assert_relays_capped(from: usize, keys: &[(&'static str, usize)], trace: &str
 /// G1 on the live chain: A keys a group line and it reaches everyone.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn group_line_from_the_near_end_reaches_all() {
+    let _hang = watchdog(TEST_LIMIT);
     group_line_reaches_everyone(0, "g1-from-the-near-end").await;
 }
 
@@ -810,6 +814,7 @@ async fn group_line_from_the_near_end_reaches_all() {
 /// copies, or A's copies at B.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_relay_that_never_heard_beyond_keeps_relaying() {
+    let _hang = watchdog(TEST_LIMIT);
     let body = "g1-past-an-unheard-neighbour";
     let copies_to_c = AtomicU64::new(0);
     let drop_rx: LinkDrop = Arc::new(move |from, to, frame| {
@@ -874,6 +879,7 @@ async fn a_relay_that_never_heard_beyond_keeps_relaying() {
 /// relay and no repeats.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_relay_that_knows_one_neighbour_still_relays_once() {
+    let _hang = watchdog(TEST_LIMIT);
     let setup = setup_lock().lock().await;
     let air = wcr::sim::SharedAir::new(0.0);
     let log: TimedLog = Arc::new(Mutex::new(Vec::new()));
@@ -1017,6 +1023,7 @@ async fn key_as(
 /// both answer at once. Their receipts collide at C.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn group_line_from_the_middle_reaches_all() {
+    let _hang = watchdog(TEST_LIMIT);
     group_line_reaches_everyone(2, "g3-from-the-middle").await;
 }
 
@@ -1024,6 +1031,7 @@ async fn group_line_from_the_middle_reaches_all() {
 /// saw it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn group_line_from_the_far_end_reaches_all() {
+    let _hang = watchdog(TEST_LIMIT);
     group_line_reaches_everyone(4, "g2-from-the-far-end").await;
 }
 
@@ -1035,6 +1043,7 @@ async fn group_line_from_the_far_end_reaches_all() {
 /// queue, so it keys straight after the frames ahead of it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_receipt_behind_queued_frames_keys_straight_after_them() {
+    let _hang = watchdog(TEST_LIMIT);
     use wcr::modem::{ControlClient, KissClient};
 
     async fn key_receipt(kiss: &KissClient, control: &ControlClient, frame: &[u8]) -> bool {
@@ -1128,6 +1137,7 @@ async fn a_receipt_behind_queued_frames_keys_straight_after_them() {
 /// B2 on the live chain: E's bulletin reached D only.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn bulletin_from_the_far_end_reaches_the_other_end() {
+    let _hang = watchdog(TEST_LIMIT);
     catch_echo_holds();
     let mut chain = Chain::start(None).await;
     chain.join("#bulletin").await;
@@ -1151,6 +1161,10 @@ async fn bulletin_from_the_far_end_reaches_the_other_end() {
         .unwrap_or_else(|| "\n  E's bulletin has no msgid tag".into());
     let trace = format!("{}{decision}", chain.trace());
     eprintln!("{trace}");
+    // Shown even when the test passes (QA #259 BACKLOG 6/7).
+    ci_line(&format!(
+        "bulletin_from_the_far_end_reaches_the_other_end: seen {seen:?}{decision}"
+    ));
     chain.stop();
     assert!(ok, "bulletin from E did not reach A: {seen:?}{trace}");
     assert!(
@@ -1310,6 +1324,7 @@ fn names_reply(client: &Client, chan: &str) -> Vec<String> {
 /// direct message's three.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn busy_chain_with_invites_reaches_everyone() {
+    let _hang = watchdog(TEST_LIMIT);
     let mut chain = Chain::start(None).await;
     chain.join("#bulletin").await;
     chain.clients[0].send("JOIN #qa").await;
@@ -1448,6 +1463,7 @@ fn got_invite(client: &Client, chan: &str) -> bool {
 /// lost at A's own modem.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn invite_reaches_the_far_end() {
+    let _hang = watchdog(TEST_LIMIT);
     let mut chain = Chain::start(None).await;
     chain.clients[0].send("JOIN #qa").await;
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -1489,6 +1505,7 @@ async fn invite_reaches_the_far_end() {
 /// before).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn each_beacon_keys_when_its_countdown_says() {
+    let _hang = watchdog(TEST_LIMIT);
     let chain = Chain::start(None).await;
     let sampled_at = Instant::now();
     let slack = Duration::from_secs(2);
@@ -1616,6 +1633,7 @@ async fn each_beacon_keys_when_its_countdown_says() {
 /// reached the modem.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn beacons_go_on_a_channel_that_reads_busy() {
+    let _hang = watchdog(TEST_LIMIT);
     let chain = Chain::start_noisy(99).await;
     let warm_end = Instant::now();
     let beacons = |st: usize| -> Vec<Instant> {
@@ -1843,6 +1861,7 @@ fn beacon_from(st: usize) -> Envelope {
 /// hf-poor timing on a channel that reads 99% busy with carrier sense stuck.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_due_beacon_waits_for_the_receipt() {
+    let _hang = watchdog(TEST_LIMIT);
     let solo = Solo::start(3, 99, |_| {}).await;
     let due = solo.idle_due().await;
     let line = Envelope::new_msg(
@@ -1933,6 +1952,7 @@ async fn a_due_beacon_waits_for_the_receipt() {
 /// the beacon off its modem for the air queue's 15 s cap.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_countdown_says_pending_until_the_beacon_reaches_the_modem() {
+    let _hang = watchdog(TEST_LIMIT);
     let solo = Solo::start(3, 99, |_| {}).await;
     let due = solo.idle_due().await;
     sleep_until_unix(due - 3.0).await;
@@ -2017,6 +2037,7 @@ async fn the_countdown_says_pending_until_the_beacon_reaches_the_modem() {
 /// and the line's first retry does not follow straight behind it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_line_sent_just_after_start_waits_for_another_station() {
+    let _hang = watchdog(TEST_LIMIT);
     let solo = Solo::start(1, 99, |cfg| cfg.rf.beacon_jitter_s = 0).await;
     let mut client = Client::connect(solo.irc, CALLS[0]).await;
     tokio::time::sleep_until((solo.t0 + Duration::from_secs(15)).into()).await;
@@ -2079,6 +2100,7 @@ async fn a_line_sent_just_after_start_waits_for_another_station() {
 /// minutes after the last, and under 9 minutes even while it carries lines.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn beacons_keep_their_pace_through_traffic() {
+    let _hang = watchdog(TEST_LIMIT);
     let mut chain = Chain::start_cold(Some("net"), 99).await;
     chain.join("#net").await;
     let t0 = chain.t0;
@@ -2155,6 +2177,7 @@ async fn beacons_keep_their_pace_through_traffic() {
 /// may ever show failed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_early_line_to_the_neighbour_is_delivered() {
+    let _hang = watchdog(TEST_LIMIT);
     let mut chain = Chain::start_modems(None, None, 99, false, true).await;
     let started = chain.t0;
     chain.clients[0].send("JOIN #qa95a").await;
@@ -2215,6 +2238,7 @@ async fn an_early_line_to_the_neighbour_is_delivered() {
 /// go ahead of the queued lines.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn warm_up_beacons_go_between_queued_frames() {
+    let _hang = watchdog(TEST_LIMIT);
     let solo = Solo::start(1, 99, |cfg| cfg.rf.beacon_jitter_s = 0).await;
     let mut client = Client::connect(solo.irc, CALLS[0]).await;
     tokio::time::sleep_until((solo.t0 + Duration::from_secs(5)).into()).await;
@@ -2295,6 +2319,7 @@ fn beacon_counts(log: &TimedLog) -> Vec<usize> {
 /// fall to 0 and stay there while each station keys and hears another beacon.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_send_queue_empties_after_traffic_stops() {
+    let _hang = watchdog(TEST_LIMIT);
     let mut chain = Chain::start(Some("net")).await;
     chain.join("#net").await;
     let dm = send_tracked(&mut chain, 0, "PRIVMSG 2E0CCC :dm-two-hops").await;
@@ -2425,6 +2450,7 @@ fn keyed_around(log: &TimedLog, st: u64, at: f64) -> bool {
 /// whose copies reached B clear gets no verdict.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_early_direct_message_reaches_the_neighbour_first_time() {
+    let _hang = watchdog(TEST_LIMIT);
     let (chain, dm, invite) = qa96_early_start().await;
     let delivered = |c: &Chain, id: &str| {
         marks_for(&c.clients[0], id)
@@ -2506,6 +2532,7 @@ async fn an_early_direct_message_reaches_the_neighbour_first_time() {
 /// `WARMUP_QUEUE_GAP_MAX_SECS`, as for the eight queued lines above.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn warm_up_beacons_keep_their_pace_with_five_lines_queued() {
+    let _hang = watchdog(TEST_LIMIT);
     let (chain, _, _) = qa96_early_start().await;
     let t0 = chain.t0;
     let beacons = |st: usize| -> Vec<Instant> {
@@ -2596,6 +2623,7 @@ fn copies_handed(log: &TimedLog, st: u64, id: &str) -> Vec<f64> {
 /// apart, and none may go out within a frame of B's receipt.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_retry_waits_for_the_neighbours_receipt() {
+    let _hang = watchdog(TEST_LIMIT);
     let lost = Arc::new(AtomicU64::new(0));
     let drop_first_receipt: LinkDrop = {
         let lost = lost.clone();
@@ -2662,13 +2690,19 @@ async fn a_retry_waits_for_the_neighbours_receipt() {
             // another frame, so B heard more than the test expected, not
             // less. CI 41461252597 (macOS): copy 2 came 4.0 s after C's
             // beacon, right on the FRAME_MS edge, and B showed it (#257).
+            // Shown even when the test passes (QA #259 BACKLOG 6/7).
+            ci_line(&format!(
+                "a_retry_waits_for_the_neighbours_receipt: B showed the line after copy {before}; clear copies before it: {heard} (flagged only above 1; 0 is fine)"
+            ));
             if heard > 1 {
                 problems.push(format!(
                     "B showed the line after A's copy {before}, not the first it could hear"
                 ));
             }
         }
-        Some(_) => {}
+        Some(_) => ci_line(
+            "a_retry_waits_for_the_neighbours_receipt: every copy met another frame, the first-copy check is skipped",
+        ),
     }
     if handed.len() < 2 {
         problems.push(format!(
@@ -2707,6 +2741,7 @@ async fn a_retry_waits_for_the_neighbours_receipt() {
 /// modem.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn warm_up_beacons_keep_their_pace_with_a_direct_message_queued() {
+    let _hang = watchdog(TEST_LIMIT);
     let solo = Solo::start(1, 99, |cfg| cfg.rf.beacon_jitter_s = 0).await;
     let mut client = Client::connect(solo.irc, CALLS[0]).await;
     tokio::time::sleep_until((solo.t0 + Duration::from_secs(5)).into()).await;
@@ -2757,6 +2792,7 @@ async fn warm_up_beacons_keep_their_pace_with_a_direct_message_queued() {
 /// after it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn receipts_for_a_group_line_are_capped() {
+    let _hang = watchdog(TEST_LIMIT);
     let mut chain = Chain::start(Some("net")).await;
     chain.join("#net").await;
     let id = send_tracked(&mut chain, 0, "PRIVMSG #net :g1-receipts-capped").await;
@@ -2794,6 +2830,7 @@ async fn receipts_for_a_group_line_are_capped() {
 /// 567 s and 662 s), and E stays `[ok]` with A's receipt home.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_far_receipt_walks_past_two_lost_copies_to_the_sender() {
+    let _hang = watchdog(TEST_LIMIT);
     let lost = Arc::new(AtomicU64::new(0));
     // B's copies are counted as keyed, not as they reach C: one that met a
     // frame of D's at C never reaches this check (msrv CI for #64: B's first

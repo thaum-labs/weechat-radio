@@ -138,7 +138,7 @@ impl Station {
     /// across restarts of `wcr web` too.
     pub async fn stop(&self) {
         self.save(STATE_STOP);
-        self.end("stopped from the web page").await;
+        self.end(STOPPED_FROM_WEB).await;
     }
 
     /// `wcr web` is ending: stop the station but keep the saved choice, so
@@ -247,10 +247,15 @@ impl Station {
     }
 }
 
-/// "station not started … Press Start" is an instruction, not a stop: it
-/// goes once the station runs (QA #254). A real last stop stays.
+/// The note Stop leaves on the card.
+const STOPPED_FROM_WEB: &str = "stopped from the web page";
+
+/// "station not started … Press Start" is an instruction, not a stop, and
+/// "stopped from the web page" is the operator's own Stop: both go once the
+/// station runs again (QA #254, #259 Stop then Start). A real last stop (the
+/// station ended by itself) stays.
 fn clear_not_started(last_exit: &mut String) {
-    if last_exit.starts_with(NOT_STARTED) {
+    if last_exit.starts_with(NOT_STARTED) || last_exit == STOPPED_FROM_WEB {
         last_exit.clear();
     }
 }
@@ -383,6 +388,10 @@ mod tests {
         let mut stop = String::from("station ended: exit status: 1");
         clear_not_started(&mut stop);
         assert_eq!(stop, "station ended: exit status: 1");
+        // Stop then Start without a restart: the Stop note goes too (#259).
+        let mut stopped = String::from(STOPPED_FROM_WEB);
+        clear_not_started(&mut stopped);
+        assert!(stopped.is_empty());
         // Shutting down keeps the saved choice.
         let s = Station::new(cfg.clone());
         s.shutdown().await;

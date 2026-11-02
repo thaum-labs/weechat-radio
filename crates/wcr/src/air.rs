@@ -1100,6 +1100,25 @@ const ACK_JITTER_MAX: Duration = Duration::from_millis(2000);
 /// forever.
 const ACK_OWN_TX_MAX: Duration = Duration::from_secs(60);
 
+/// Longest another station's frame on the air holds a sync receipt (#259).
+/// While modem73 reports `rx` (a frame it may never decode), the cap starts
+/// again after that frame, so a frame longer than the cap (3.65 s on
+/// RDM-600S, plus modem73's tail) cannot run it out. Past this the cap
+/// counts again, so a modem stuck in `rx` cannot hold a receipt forever.
+/// The longest frame on any rung is under 10 s.
+const ACK_PEER_RX_MAX: Duration = Duration::from_secs(30);
+
+/// Sync test: another station's frame is on the air. modem73 reads `rx`
+/// (or `busy`) while it hears a data signal, decoded or not; our own sense
+/// reads `Rx` once a frame decodes. Our own TX (`tx`) is not counted here.
+pub fn ack_peer_on_air(sense_rx: bool, channel_state: &str) -> bool {
+    sense_rx
+        || matches!(
+            channel_state.trim().to_ascii_lowercase().as_str(),
+            "rx" | "busy"
+        )
+}
+
 /// A frame decoded this recently may be the first of a run its sender is
 /// still keying: modem73 reports `rx` only for half a second after each
 /// decode, not while the next frame is on the air. A receipt keyed over that
@@ -1131,6 +1150,7 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
     let mut busy_test_since: Option<Instant> = None;
     let mut own_tx_logged: Option<&'static str> = None;
     let mut jittered = false;
+    let mut peer_logged = false;
     if tx.csma {
         loop {
             if tx.sense.is_some_and(|s| {
@@ -1225,6 +1245,35 @@ async fn transmit_ack_while_paused(tx: &AckTx<'_>) -> bool {
                 .as_ref()
                 .map(|st| st.channel_state.as_str())
                 .unwrap_or("");
+            // Sync test (#259, the Pi at 20:43:17): another station's frame
+            // longer than the cap, which modem73 never decoded, ran the cap
+            // out while modem73 still read `rx`, and the receipt went with
+            // the busy test off. The cap now starts again while a frame is on
+            // the air and counts from its end; once modem73 reads the channel
+            // clear the receipt goes with its busy test on.
+            let mut testing = testing;
+            if tx.csma_sync && ack_peer_on_air(sense_rx, channel) {
+                if started.elapsed() < ACK_PEER_RX_MAX {
+                    if !peer_logged {
+                        peer_logged = true;
+                        tracing::info!(
+                            "receipt: another station's frame is on the air (modem73 {}); the busy test waits, its {} ms cap starts again after that frame",
+                            if channel.is_empty() { "?" } else { channel },
+                            tx.cap.as_millis()
+                        );
+                    }
+                    testing = Instant::now();
+                    busy_test_since = Some(testing);
+                } else if peer_logged {
+                    peer_logged = false;
+                    tracing::warn!(
+                        "receipt: the channel has read busy for {} ms; the cap counts again",
+                        started.elapsed().as_millis()
+                    );
+                }
+            } else {
+                peer_logged = false;
+            }
             // Level test: do not send early just because we have not decoded
             // a frame. That left CSMA on, and modem73 then held the ACK over
             // noise. Do not force CSMA off while a frame is being received.
@@ -2624,14 +2673,23 @@ mod tests {
     }
 
     /// #247 B2: a frame heard while a sync receipt runs its busy test starts
-    /// the cap again. Before, the cap had already run out when that frame
-    /// ended, and the receipt was forced out with the busy test off at once.
+    /// the listen window again. Before, the cap had already run out when that
+    /// frame ended, and the receipt was forced out with the busy test off at
+    /// once. Since #259 the receipt then goes with its busy test on once
+    /// modem73 reads the channel clear.
     #[tokio::test]
     async fn a_frame_heard_during_the_busy_test_restarts_the_cap() {
-        let modem = spawn_ack_modem("rx", 40).await;
-        let sense = FakeSense::new();
         let preset = Preset::VhfFm;
         let window = ack_listen_window(preset);
+        let start = Instant::now();
+        // modem73 reads `rx` past the second frame's decode.
+        let modem = spawn_contention_modem(
+            start + window + Duration::from_millis(1500),
+            Duration::from_millis(50),
+            Duration::from_millis(300),
+        )
+        .await;
+        let sense = FakeSense::new();
         let cap = Duration::from_millis(1500);
         sense.note_decode();
         let s2 = sense.clone();
@@ -2641,7 +2699,6 @@ mod tests {
             s2.note_decode();
         });
         let ack = vec![vec![0xB2]];
-        let started = Instant::now();
         let keyed = transmit_ack(AckTx {
             frames: &ack,
             preset,
@@ -2658,14 +2715,20 @@ mod tests {
         })
         .await;
         assert!(keyed);
-        // Second run ends at about 2 windows + 1 s; the cap counts after it.
-        let earliest = window * 2 + Duration::from_millis(1000) + cap - Duration::from_millis(200);
+        // The second run ends at about 2 windows + 1 s.
+        let earliest = window * 2 + Duration::from_millis(1000) - Duration::from_millis(200);
+        let handed = modem.handed.lock().clone();
+        assert_eq!(handed.len(), 1);
         assert!(
-            started.elapsed() >= earliest,
-            "forced after {:?}, before the cap had run after the last frame ({earliest:?})",
-            started.elapsed()
+            handed[0].1 - start >= earliest,
+            "handed over after {:?}, inside the second frame's run ({earliest:?})",
+            handed[0].1 - start
         );
-        assert_eq!(modem.csma_seen.lock().first().copied(), Some(false));
+        assert!(
+            modem.csma_seen.lock().is_empty(),
+            "receipt was forced with the busy test off: {:?}",
+            modem.csma_seen.lock()
+        );
     }
 
     /// #254 B2: our own frame on the air during a sync receipt's busy test
@@ -2718,11 +2781,18 @@ mod tests {
         control: crate::modem::ControlClient,
         kiss: crate::modem::KissClient,
         aired: Arc<Mutex<Vec<Aired>>>,
+        /// Each `csma_enabled` wcr set: `false` is the busy test turned off.
+        csma_seen: Arc<Mutex<Vec<bool>>>,
+        /// Each frame wcr handed over on KISS, and when.
+        handed: Arc<Mutex<Vec<Handed>>>,
     }
 
     /// A frame keyed by [`ContentionModem`] and how: `channel clear` or
     /// `burst continuation`.
     type Aired = (Vec<u8>, &'static str);
+
+    /// A frame wcr handed to [`ContentionModem`] on KISS, and when.
+    type Handed = (Vec<u8>, Instant);
 
     async fn spawn_contention_modem(
         peer_until: Instant,
@@ -2742,12 +2812,15 @@ mod tests {
         }
         let m = Arc::new(Mutex::new(Modem::default()));
         let aired = Arc::new(Mutex::new(Vec::new()));
+        let csma_seen = Arc::new(Mutex::new(Vec::<bool>::new()));
+        let handed = Arc::new(Mutex::new(Vec::<Handed>::new()));
         let ctrl_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let ctrl_addr = ctrl_listener.local_addr().unwrap();
         let kiss_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let kiss_addr = kiss_listener.local_addr().unwrap();
 
         let mc = m.clone();
+        let seen_c = csma_seen.clone();
         tokio::spawn(async move {
             let (mut stream, _) = ctrl_listener.accept().await.unwrap();
             let mut stash = Vec::new();
@@ -2763,6 +2836,11 @@ mod tests {
                 };
                 for v in frames {
                     let cmd = v.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
+                    if cmd == "set_config" {
+                        if let Some(on) = v.get("csma_enabled").and_then(|x| x.as_bool()) {
+                            seen_c.lock().push(on);
+                        }
+                    }
                     let reply = if cmd == "get_status" {
                         let g = mc.lock();
                         let state = if g.ptt {
@@ -2791,6 +2869,7 @@ mod tests {
             }
         });
         let mk = m.clone();
+        let hk = handed.clone();
         tokio::spawn(async move {
             let (mut stream, _) = kiss_listener.accept().await.unwrap();
             let mut dec = KissDecoder::new();
@@ -2801,6 +2880,7 @@ mod tests {
                     Ok(n) => n,
                 };
                 for payload in dec.push(&buf[..n]) {
+                    hk.lock().push((payload.clone(), Instant::now()));
                     mk.lock().queue.push_back(payload);
                 }
             }
@@ -2840,6 +2920,8 @@ mod tests {
             control,
             kiss,
             aired,
+            csma_seen,
+            handed,
         }
     }
 
@@ -2914,6 +2996,89 @@ mod tests {
             vec![(own_line, "channel clear"), (receipt, "channel clear")],
             "the receipt must run its own busy test, not ride our line"
         );
+    }
+
+    /// #259 blocker, the Pi at 20:43:11-17: another station's frame longer
+    /// than the 3 s cap is on the air during the receipt's busy test, and
+    /// modem73 reads `rx` for it (and its tail) without ever decoding it.
+    /// The cap used to run out under that frame and the receipt went with
+    /// the busy test off. Now the cap starts again while the frame is on the
+    /// air, and the receipt goes with its own busy test once it has ended.
+    async fn receipt_over_a_long_peer_frame(decoded_first: bool) {
+        let preset = Preset::VhfFm;
+        let window = ack_listen_window(preset);
+        let start = Instant::now();
+        // Undecoded frame: 3.65 s + modem73's 1.3 s `rx` tail, from the
+        // start of the busy test (at most 2 s of random wait in). Past the
+        // longest the old cap could reach (2 s + 3 s), so the old code
+        // always forced it.
+        let lead = if decoded_first {
+            window
+        } else {
+            Duration::ZERO
+        };
+        let peer_until = start + lead + Duration::from_millis(5600);
+        let modem = spawn_contention_modem(
+            peer_until,
+            Duration::from_millis(50),
+            Duration::from_millis(300),
+        )
+        .await;
+        let sense = FakeSense::new();
+        if decoded_first {
+            // The sender's frame decoded just now; the next one never does.
+            sense.note_decode();
+        }
+        let receipt = vec![0xAC, 0x59];
+        let keyed = transmit_ack(AckTx {
+            frames: std::slice::from_ref(&receipt),
+            preset,
+            air: None,
+            sense: Some(sense.as_ref()),
+            control: Some(&modem.control),
+            kiss: Some(&modem.kiss),
+            cap: Duration::from_millis(3000),
+            slot: Duration::from_millis(20),
+            quiet: Duration::from_millis(50),
+            csma: true,
+            csma_sync: true,
+            drain_cap: Duration::from_millis(300),
+        })
+        .await;
+        assert!(keyed, "the receipt was not handed to modem73");
+        assert!(
+            modem.csma_seen.lock().is_empty(),
+            "the receipt went with its busy test OFF (emergency cap): {:?}",
+            modem.csma_seen.lock()
+        );
+        let handed = modem.handed.lock().clone();
+        assert_eq!(handed.len(), 1);
+        assert!(
+            handed[0].1 >= peer_until,
+            "the receipt was handed over {:?} before the peer frame ended",
+            peer_until - handed[0].1
+        );
+        assert_eq!(modem.aired.lock().clone(), vec![(receipt, "channel clear")]);
+    }
+
+    #[tokio::test]
+    async fn a_long_undecoded_peer_frame_does_not_run_out_the_receipt_cap() {
+        receipt_over_a_long_peer_frame(false).await;
+    }
+
+    #[tokio::test]
+    async fn a_long_peer_frame_after_a_decode_does_not_run_out_the_receipt_cap() {
+        receipt_over_a_long_peer_frame(true).await;
+    }
+
+    #[test]
+    fn what_counts_as_another_station_on_the_air() {
+        assert!(ack_peer_on_air(true, "idle"));
+        assert!(ack_peer_on_air(false, "rx"));
+        assert!(ack_peer_on_air(false, " BUSY "));
+        assert!(!ack_peer_on_air(false, "tx"));
+        assert!(!ack_peer_on_air(false, "idle"));
+        assert!(!ack_peer_on_air(false, ""));
     }
 
     /// #257: what holds a sync receipt for our own frame on its way.
