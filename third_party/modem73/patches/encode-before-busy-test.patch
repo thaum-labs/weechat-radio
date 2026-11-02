@@ -1,0 +1,184 @@
+diff --git a/kiss_tnc.hh b/kiss_tnc.hh
+index 241f41c..fade2fe 100644
+--- a/kiss_tnc.hh
++++ b/kiss_tnc.hh
+@@ -473,6 +473,13 @@ struct TxPacket {
+     int64_t enqueue_ms;
+     bool beacon = false;
+     bool manual = false;
++    // wcr: audio encoded before the CSMA busy test, so PTT keys straight
++    // after "Channel clear". enc_key names the settings it was encoded with;
++    // transmit() encodes again if they changed while the frame waited.
++    bool encoded = false;
++    bool oversize = false;
++    std::string enc_key;
++    std::vector<float> samples;
+     TxPacket() : oper_mode(-1), enqueue_ms(steady_now_ms()) {}
+     TxPacket(std::vector<uint8_t> d, int mode = -1)
+         : data(std::move(d)), oper_mode(mode), enqueue_ms(steady_now_ms()) {}
+diff --git a/kiss_tnc_impl.hh b/kiss_tnc_impl.hh
+index 7ac1a59..86366ae 100644
+--- a/kiss_tnc_impl.hh
++++ b/kiss_tnc_impl.hh
+@@ -712,6 +712,17 @@ private:
+                         continue;
+                     }
+                 }
++                // wcr: encode now, before the busy test. On a slow CPU (Pi 3)
++                // encoding takes ~1 s; doing it after "Channel clear" left the
++                // channel open for another station to key first.
++                if (!pkt.beacon) {
++                    int64_t enc_start = steady_now_ms();
++                    pkt.samples = encode_frame(pkt.data, pkt.oper_mode, pkt.oversize);
++                    pkt.enc_key = encode_key(pkt.oper_mode);
++                    pkt.encoded = true;
++                    std::cerr << "TX: frame encoded before the busy test ("
++                              << (steady_now_ms() - enc_start) << " ms)" << std::endl;
++                }
+                 // CSMA
+                 bool csma_enabled, csma_sync_only, csma_fast_floor, csma_ranked;
+                 int csma_band;
+@@ -988,7 +999,7 @@ private:
+                     }
+ #endif
+                     bool sent = transmit(cur.data, cur.oper_mode, first, !have_next,
+-                                         cur.beacon);
++                                         cur.beacon, &cur);
+                     if (!have_next) {
+                         if (!cur.beacon)
+                             last_burst_end = steady_now_ms();
+@@ -1096,11 +1107,74 @@ private:
+         return config_.tx_delay_ms;
+     }
+ 
++    // wcr: the settings a frame's audio depends on. A frame encoded early is
++    // encoded again in transmit() when these changed while it waited.
++    std::string encode_key(int oper_mode_override) {
++        return std::to_string(config_.modem_type) + "/" +
++               std::to_string(config_.mfsk_mode) + "/" +
++               std::to_string(config_.robust_mode) + "/" +
++               std::to_string(modem_config_.oper_mode) + "/" +
++               std::to_string(oper_mode_override) + "/" +
++               std::to_string(modem_config_.center_freq) + "/" +
++               std::to_string(modem_config_.call_sign) + "/" +
++               std::to_string(config_.postamble) + "/" +
++               std::to_string(payload_size_.load());
++    }
++
++    // Frame + encode one data frame to audio. Empty when it does not fit the
++    // mode (oversize set) or the encoder fails.
++    std::vector<float> encode_frame(const std::vector<uint8_t>& data,
++                                    int oper_mode_override, bool& oversize) {
++        int tx_mode = (oper_mode_override >= 0) ? oper_mode_override : modem_config_.oper_mode;
++        oversize = false;
++        {
++            size_t cap = payload_size_;
++            if (config_.modem_type == 0 && oper_mode_override >= 0)
++                cap = encoder_->get_payload_size(oper_mode_override);
++            else if (config_.modem_type == 2 && oper_mode_override >= 0 &&
++                     oper_mode_override < ROBUST_MODE_COUNT)
++                cap = robust_encoder_->get_payload_size((RobustMode)oper_mode_override);
++            if (cap < 2 || data.size() > cap - 2) {
++                ui_log("(!) TX: " + std::to_string(data.size()) + " byte frame exceeds " +
++                       std::to_string(cap >= 2 ? cap - 2 : 0) + " byte capacity of current mode, dropped");
++                oversize = true;
++                return {};
++            }
++        }
++        auto framed_data = frame_with_length(data);
++        if (config_.modem_type == 1) {
++            return mfsk_encoder_->encode(
++                framed_data.data(), framed_data.size(),
++                modem_config_.center_freq,
++                (MFSKMode)config_.mfsk_mode
++            );
++        } else if (config_.modem_type == 2) {
++            RobustMode tx_rmode = (oper_mode_override >= 0 &&
++                                   oper_mode_override < ROBUST_MODE_COUNT)
++                ? (RobustMode)oper_mode_override
++                : (RobustMode)config_.robust_mode;
++            return robust_encoder_->encode(
++                framed_data.data(), framed_data.size(),
++                modem_config_.center_freq,
++                tx_rmode
++            );
++        }
++        return encoder_->encode(
++            framed_data.data(), framed_data.size(),
++            modem_config_.center_freq,
++            modem_config_.call_sign,
++            tx_mode,
++            config_.postamble
++        );
++    }
++
+     bool transmit(const std::vector<uint8_t>& data, int oper_mode_override = -1,
+-                  bool first = true, bool last = true, bool beacon = false) {
++                  bool first = true, bool last = true, bool beacon = false,
++                  TxPacket* pre = nullptr) {
+         while (alc_tune_active_.load() && g_running)
+             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+         int tx_mode = (oper_mode_override >= 0) ? oper_mode_override : modem_config_.oper_mode;
++        (void)tx_mode;  // wcr: only the UI reads it now
+ 
+         if (beacon) {
+             ui_log("TX: presence tone");
+@@ -1133,51 +1207,18 @@ private:
+         }
+ #endif
+ 
+-        // Add length prefix framing
++        // Encode to audio (wcr: reuse the audio encoded before the busy test
++        // when the settings are unchanged)
+         bool data_oversize = false;
+-        {
+-            size_t cap = payload_size_;
+-            if (config_.modem_type == 0 && oper_mode_override >= 0)
+-                cap = encoder_->get_payload_size(oper_mode_override);
+-            else if (config_.modem_type == 2 && oper_mode_override >= 0 &&
+-                     oper_mode_override < ROBUST_MODE_COUNT)
+-                cap = robust_encoder_->get_payload_size((RobustMode)oper_mode_override);
+-            if (cap < 2 || data.size() > cap - 2) {
+-                ui_log("(!) TX: " + std::to_string(data.size()) + " byte frame exceeds " +
+-                       std::to_string(cap >= 2 ? cap - 2 : 0) + " byte capacity of current mode, dropped");
+-                data_oversize = true;
+-            }
+-        }
+-        auto framed_data = frame_with_length(data);
+-
+-        // Encode to audio
+         std::vector<float> samples;
+         if (beacon) {
+             // tone only, no data frame
+-        } else if (config_.modem_type == 1) {
+-            samples = mfsk_encoder_->encode(
+-                framed_data.data(), framed_data.size(),
+-                modem_config_.center_freq,
+-                (MFSKMode)config_.mfsk_mode
+-            );
+-        } else if (config_.modem_type == 2) {
+-            RobustMode tx_rmode = (oper_mode_override >= 0 &&
+-                                   oper_mode_override < ROBUST_MODE_COUNT)
+-                ? (RobustMode)oper_mode_override
+-                : (RobustMode)config_.robust_mode;
+-            samples = robust_encoder_->encode(
+-                framed_data.data(), framed_data.size(),
+-                modem_config_.center_freq,
+-                tx_rmode
+-            );
++        } else if (pre && pre->encoded && pre->enc_key == encode_key(oper_mode_override)) {
++            samples = std::move(pre->samples);
++            data_oversize = pre->oversize;
++            pre->encoded = false;
+         } else {
+-            samples = encoder_->encode(
+-                framed_data.data(), framed_data.size(),
+-                modem_config_.center_freq,
+-                modem_config_.call_sign,
+-                tx_mode,
+-                config_.postamble
+-            );
++            samples = encode_frame(data, oper_mode_override, data_oversize);
+         }
+         
+         if (data_oversize) samples.clear();

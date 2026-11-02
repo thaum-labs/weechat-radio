@@ -52,6 +52,13 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v1.0.15-rc6</p>
+          <p>Mon, 2 Nov 2026</p>
+        </h3>
+        <pre>Release candidate (wcr update --rc) with one fix from QA. The bundled modem now prepares a message's audio before it listens to check the channel is free, so the radio keys as soon as the channel is clear. On slow computers such as a Raspberry Pi 3, that preparation took about a second after the check, long enough for another station to start talking first. Linux, Raspberry Pi and macOS builds; Windows is unchanged.</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>v1.0.15-rc5</p>
           <p>Mon, 2 Nov 2026</p>
         </h3>
