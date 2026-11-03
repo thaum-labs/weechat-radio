@@ -28,7 +28,7 @@ use serde_json::{json, Value};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub use auth::{hash_password, MIN_PASSWORD};
 pub use station::Station;
@@ -59,6 +59,9 @@ struct Web {
     /// modem73's control port, for the waterfall.
     modem_addr: String,
     modem: Arc<tokio::sync::Mutex<Option<crate::modem::control::ControlClient>>>,
+    /// The last spectrum row with bins, and when it came: shown again for a
+    /// moment when modem73 has no new audio yet (QA #264).
+    spectrum_last: Arc<std::sync::Mutex<Option<(Instant, Value)>>>,
     /// The `/api/whoami` answer: no login, nothing private; `wcr webui`
     /// uses it to tell a wcr web page from anything else on port 8443.
     whoami: Value,
@@ -111,6 +114,7 @@ pub async fn run(cfg_path: &Path, stop: impl std::future::Future<Output = ()>) -
             .map_err(|e| Error::Msg(e.to_string()))?,
         modem_addr: modem_control_addr(&cfg.modem.host, cfg.modem.control_port),
         modem: Arc::new(tokio::sync::Mutex::new(None)),
+        spectrum_last: Arc::new(std::sync::Mutex::new(None)),
         whoami: json!({
             "app": WHOAMI_APP,
             "callsign": cfg.callsign,
@@ -761,8 +765,10 @@ fn modem_control_addr(host: &str, port: u16) -> String {
 ///
 /// `bins` is dB below full scale from 0 Hz up, `hz_per_bin` apart; empty
 /// with a `why` when there is nothing to show (`stopped`, `no modem`,
-/// `old modem`, or `no audio` when no new audio came in since the last ask,
-/// so a stalled capture never repeats the last row).
+/// `old modem`, or `no audio` when no new audio came in for longer than
+/// [`SPECTRUM_HOLD`], so a stalled capture is not shown as live for long).
+/// A short gap (audio comes in chunks, or another client asked just before)
+/// answers the last good row again with `held: true` (QA #264).
 async fn spectrum(State(web): State<Web>) -> Json<Value> {
     let empty = |why: &str| Json(json!({ "bins": [], "why": why }));
     if !web.station.state().await.running {
@@ -781,22 +787,47 @@ async fn spectrum(State(web): State<Web>) -> Json<Value> {
     };
     let ask = client.request(json!({ "cmd": "get_spectrum" }));
     match tokio::time::timeout(Duration::from_secs(1), ask).await {
-        Ok(Ok(v)) if v["no_audio"] == json!(true) => Json(json!({
-            "bins": [],
-            "why": "no audio",
-            "tx": v["tx"],
-        })),
-        Ok(Ok(v)) if v["bins"].is_array() => Json(json!({
-            "bins": v["bins"],
-            "hz_per_bin": v["hz_per_bin"],
-            "tx": v["tx"],
-        })),
+        Ok(Ok(v)) if v["no_audio"] == json!(true) || v["bins"].is_array() => {
+            let mut last = web.spectrum_last.lock().unwrap_or_else(|e| e.into_inner());
+            Json(spectrum_row(&v, &mut last, Instant::now()))
+        }
         // A modem73 without the wcr patch answers "unknown command".
         Ok(Ok(_)) => empty("old modem"),
         _ => {
             *slot = None;
             empty("no modem")
         }
+    }
+}
+
+/// How long the last good spectrum row stands in for "no audio". The page
+/// asks every 250 ms; a capture that stays quiet longer than this is
+/// reported as `no audio`.
+const SPECTRUM_HOLD: Duration = Duration::from_secs(2);
+
+/// The page's answer for one modem73 `get_spectrum` reply `v`. A row with
+/// bins is remembered in `last`; a `no_audio` reply while receiving gets
+/// that row back (`held: true`) if it is younger than [`SPECTRUM_HOLD`].
+fn spectrum_row(v: &Value, last: &mut Option<(Instant, Value)>, now: Instant) -> Value {
+    if v["no_audio"] != json!(true) {
+        let row = json!({
+            "bins": v["bins"],
+            "hz_per_bin": v["hz_per_bin"],
+            "tx": v["tx"],
+        });
+        if v["bins"].as_array().is_some_and(|b| !b.is_empty()) {
+            *last = Some((now, row.clone()));
+        }
+        return row;
+    }
+    let receiving = v["tx"] != json!(true);
+    match last.as_ref() {
+        Some((at, row)) if receiving && now.duration_since(*at) < SPECTRUM_HOLD => {
+            let mut row = row.clone();
+            row["held"] = json!(true);
+            row
+        }
+        _ => json!({ "bins": [], "why": "no audio", "tx": v["tx"] }),
     }
 }
 
@@ -960,6 +991,35 @@ mod tests {
         let t = stopped_traffic(42);
         assert_eq!(t["rows"], json!([]));
         assert_eq!(t["last"], 42);
+    }
+
+    /// QA #264: 3 of 20 spectrum asks on the Pi answered "no audio" while
+    /// receiving. A short gap shows the last good row again; a long one, or
+    /// one with nothing to show yet, still says "no audio".
+    #[test]
+    fn a_short_audio_gap_keeps_the_last_spectrum_row() {
+        let t0 = Instant::now();
+        let mut last = None;
+        let gap = json!({ "no_audio": true, "tx": false });
+        let none = spectrum_row(&gap, &mut last, t0);
+        assert_eq!(none["why"], "no audio");
+        let good = json!({ "bins": [-80.0, -70.0], "hz_per_bin": 31.25, "tx": false });
+        let row = spectrum_row(&good, &mut last, t0);
+        assert_eq!(row["bins"], json!([-80.0, -70.0]));
+        assert!(row.get("held").is_none());
+        let held = spectrum_row(&gap, &mut last, t0 + Duration::from_millis(250));
+        assert_eq!(held["bins"], json!([-80.0, -70.0]));
+        assert_eq!(held["hz_per_bin"], 31.25);
+        assert_eq!(held["held"], true);
+        assert!(held.get("why").is_none());
+        let stale = spectrum_row(&gap, &mut last, t0 + SPECTRUM_HOLD);
+        assert_eq!(stale["why"], "no audio");
+        assert_eq!(stale["bins"], json!([]));
+        // Our own TX is shown as TX, never as an old receive row.
+        let tx = json!({ "no_audio": true, "tx": true });
+        let keyed = spectrum_row(&tx, &mut last, t0 + Duration::from_millis(500));
+        assert_eq!(keyed["tx"], true);
+        assert_eq!(keyed["bins"], json!([]));
     }
 
     #[test]

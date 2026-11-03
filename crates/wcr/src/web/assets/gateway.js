@@ -308,12 +308,14 @@ async function wfTick() {
       note.textContent = "transmitting";
     } else if (d.bins.length) {
       const hz = d.hz_per_bin || WF_MAX_HZ / d.bins.length;
-      wfTrack(d.bins, hz);
+      // A held row is the last good reading again, shown through a short
+      // audio gap (#264): paint it, but do not count it into the floor twice.
+      if (!d.held) wfTrack(d.bins, hz);
       wfRow(d.bins, hz, false);
       note.textContent = `noise floor ${Math.round(wfFloor)} dB`;
     } else if (d.why === "no audio") {
-      // No new audio since the last row: draw nothing rather than repeat
-      // it. A short gap right after our TX is normal; say so after 1 s.
+      // No new audio for over 2 s (the server holds the last row that
+      // long): draw nothing rather than repeat it; say so after 1 s more.
       if (wfNoAudio >= 4) note.textContent = "no audio coming from the radio";
     } else {
       note.textContent = {
