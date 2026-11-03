@@ -1141,6 +1141,19 @@ async fn bulletin_from_the_far_end_reaches_the_other_end() {
     catch_echo_holds();
     let mut chain = Chain::start(None).await;
     chain.join("#bulletin").await;
+    // CI 41547649096 (QA #264): every beacon of C was lost at D during the
+    // warm-up, so D knew only E, held E's bulletin under the echo rule
+    // (#247 B3, right for a station at the end of the chain) and A never
+    // got it. The case is a chain where D has heard C: wait for that.
+    let deadline = Instant::now() + Duration::from_secs(MAX_BEACON_GAP_SECS);
+    while !beacon_heard_lately(&chain.log, 3, 4) {
+        assert!(
+            Instant::now() < deadline,
+            "D never heard a beacon of C{}",
+            chain.trace()
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
     let body = "b2-from-the-far-end";
     chain.clients[4]
         .send(&format!("PRIVMSG #bulletin :{body}"))
@@ -1175,6 +1188,28 @@ async fn bulletin_from_the_far_end_reaches_the_other_end() {
         dropped, 0,
         "modem dropped a frame wider than its mode{trace}"
     );
+}
+
+/// Station `to` (1-based) decoded a beacon of `from` in the last 8 minutes,
+/// well inside the node's neighbour TTL: on the air neither `to` nor any
+/// other station it hears keyed over it, as the timed modem judges it.
+fn beacon_heard_lately(log: &TimedLog, from: u64, to: u64) -> bool {
+    let log = log.lock().unwrap();
+    let hear = hear_set(to);
+    let edge = Duration::from_millis(20);
+    log.iter()
+        .filter(|b| b.station == from && !b.dropped)
+        .filter(|b| b.at.elapsed() >= b.len && b.at.elapsed() < Duration::from_secs(480))
+        .filter(|b| Envelope::decode(&b.payload).is_ok_and(|e| e.kind == MsgType::Beacon))
+        .any(|b| {
+            !log.iter().any(|k| {
+                k.station != from
+                    && !k.dropped
+                    && (k.station == to || hear.contains(&k.station))
+                    && k.at < b.at + b.len + edge
+                    && k.at + k.len + edge > b.at
+            })
+        })
 }
 
 /// What station `st` (0-based) did with someone else's line `id`, from its
