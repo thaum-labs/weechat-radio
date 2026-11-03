@@ -9,12 +9,15 @@
 <p align="center">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.89-DEA584?logo=rust&logoColor=white" alt="Rust 1.89" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="Apache-2.0" /></a>
-  <img src="https://img.shields.io/badge/version-1.0.15--rc8-7d9bff" alt="Version 1.0.15-rc8" />
+  <a href="https://github.com/thaum-labs/weechat-radio/releases"><img src="https://img.shields.io/badge/version-1.0.15--rc8-7d9bff" alt="Version 1.0.15-rc8" /></a>
+  <a href="https://github.com/thaum-labs/weechat-radio/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/thaum-labs/weechat-radio/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
+  <a href="https://github.com/thaum-labs/weechat-radio/releases/latest"><img src="https://img.shields.io/github/v/release/thaum-labs/weechat-radio?label=stable&color=39ff14" alt="Latest stable release" /></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6" alt="Windows, macOS and Linux" />
   <br/>
   <a href="https://weechat.org/"><img src="https://img.shields.io/badge/WeeChat-IRC-00A7E0" alt="WeeChat" /></a>
   <a href="https://github.com/RFnexus/modem73"><img src="https://img.shields.io/badge/modem73-KISS%20TNC-39ff14" alt="modem73" /></a>
   <img src="https://img.shields.io/badge/desktop-GUI-7d9bff" alt="desktop GUI" />
+  <a href="https://weechatradio.com/guides/pi.html"><img src="https://img.shields.io/badge/Raspberry%20Pi-gateway-C51A4A?logo=raspberrypi&logoColor=white" alt="Raspberry Pi gateway" /></a>
   <img src="https://img.shields.io/badge/SQLite-store--and--forward-003B57?logo=sqlite&logoColor=white" alt="SQLite" />
   <a href="https://weechatradio.com"><img src="https://img.shields.io/website?url=https%3A%2F%2Fweechatradio.com&up_message=live&down_message=down&label=weechatradio.com" alt="weechatradio.com status" /></a>
 </p>
@@ -28,7 +31,9 @@ With WeeChat Radio you can:
 1. Chat from the desktop app (`wcr gui`), a terminal UI (`wcr tui`), or WeeChat
 2. Run internet-only, radio-only, or both at once
 3. Store and forward messages so stations catch up later
-4. Appear on the public map: [weechatradio.com/map.html](https://weechatradio.com/map.html)
+4. Send and receive email over the radio through a gateway station
+5. Run an always-on gateway on a Raspberry Pi, with a web portal for status, chat and mail: [Pi guide](https://weechatradio.com/guides/pi.html)
+6. Appear on the public map: [weechatradio.com/map.html](https://weechatradio.com/map.html)
 
 The site, desktop app, TUI, and CLI share one dark terminal shell: indigo `#7d9bff` prompts, orange accents, and the chevron-and-waves mark. The mark recolours with the live station mode (cyan / green / amber / magenta). The default UI theme is `tron`; change it with `/radio theme hacker` or `/radio theme terminal`.
 
@@ -38,6 +43,19 @@ The site, desktop app, TUI, and CLI share one dark terminal shell: indigo `#7d9b
 WeeChat is a trademark of Sébastien Helleu. This project is independent.
 
 > Early software — it works, but things may still change.
+
+---
+
+## What's new in v1.0.15
+
+Now a release candidate (`v1.0.15-rc8`, get it with `wcr update --rc`). Full list: [changelog](https://weechatradio.com/changelog.html).
+
+- **On the air list.** Every message heard or sent (chat, receipts, beacons, bulletins, mail) with who, when, signal and radio or internet. In the desktop app, the Pi web page and `/traffic` in any client.
+- **Levels in plain words.** The receive level says good, low, high, clipping or noisy, and names the knob to turn. RX gain and TX level sliders (or `/level`) are saved and set again at every start.
+- **Works at squelch 0.** Hiss no longer counts as a busy channel. The busy test is automatic: data signal on VHF/UHF FM, audio level on HF (`[modem] csma_mode`).
+- **Fewer collisions.** On FM, stations pick start times at least 1.3 s apart. Receipts wait for a clear channel like every other message, and the modem prepares the audio before it checks, so it keys as soon as the channel is free.
+- **Raspberry Pi gateway.** The web portal has a Health card, a one-column Station page, a waterfall that keeps the last good reading, and only goes back on the air after a restart if you left it running.
+- **Bluetooth (VR-N76 / UV-PRO).** Hears and sends on Mac at squelch 0, and reconnects a radio that links but sends no audio.
 
 ---
 
@@ -93,7 +111,7 @@ On the radio the status bar counts down to the next beacon. The first three go a
 
 A closed group is any channel except `#bulletin`. `/join #net` creates it. `MODE #net` replies with `+i`. `/invite CALL` adds that station and keys a direct notice to them; the notice names you, the inviter. The reply says whether that notice was sent. They are notified only if that direct message arrives; it carries the group's 6 hops. `NAMES` after you join lists the members stored on this station, not the whole chain. Creating the group or inviting someone also keys a roster at 6 hops. A station that sends on the channel, or answers one of its lines, is added on every member station that hears it, so the lists catch up even when a roster is lost. A station that never hears any of that still shows only its own list, and the end of `NAMES` says so. `/radio status` includes `relayed` (every frame this station forwarded, including a repeat of the same message), `unique` (distinct messages in that count), and `groups` (the `group_prios` list: each closed group's default priority, `routine`, `priority`, or `emergency`). `#bulletin` is always routine and is not in that list. Set a default with `/prio emergency` on the channel. Delivery marks are sent only to the client that sent the line, with the message id, so another station does not paint your `[ok]` or `[all]`.
 
-Radio guides: [VR-N76 / UV-PRO over Bluetooth](https://weechatradio.com/guides/vr-n76.html) · [handheld + Digirig](https://weechatradio.com/guides/handheld.html) · [VOX cable](https://weechatradio.com/guides/vox.html) · [HF + CAT](https://weechatradio.com/guides/hf.html)
+Radio guides: [VR-N76 / UV-PRO over Bluetooth](https://weechatradio.com/guides/vr-n76.html) · [Raspberry Pi gateway](https://weechatradio.com/guides/pi.html) · [handheld + Digirig](https://weechatradio.com/guides/handheld.html) · [VOX cable](https://weechatradio.com/guides/vox.html) · [HF + CAT](https://weechatradio.com/guides/hf.html)
 
 ---
 
@@ -159,7 +177,7 @@ You need a valid licence, a radio, and audio into the PC. [modem73](https://gith
 | VOX cable | Any radio that keys on VOX, plus a 3.5 mm audio cable |
 | HF + CAT | HF rig with `rigctl` (Hamlib) for PTT and frequency |
 
-Run `wcr setup` and pick your radio, or "Other setup" for the paths above. Suggested calling frequencies: [calling](https://weechatradio.com/docs/calling.html). You are the control operator — check your band plan before you transmit.
+Run `wcr setup` and pick your radio, or "Other setup" for the paths above. Set squelch to 0 for data. The receive level then tells you in words if it is right; turn RX gain or TX level from the app or with `/level`. Suggested calling frequencies: [calling](https://weechatradio.com/docs/calling.html). You are the control operator — check your band plan before you transmit.
 
 ---
 
@@ -198,6 +216,8 @@ Step-by-step: [WeeChat guide](https://weechatradio.com/guides/weechat.html)
 - Changelog: [changelog](https://weechatradio.com/changelog.html)
 - 5-minute start: [guides/start](https://weechatradio.com/guides/start.html)
 - Radio setup: [guides/radio](https://weechatradio.com/guides/radio.html)
+- Raspberry Pi gateway: [guides/pi](https://weechatradio.com/guides/pi.html)
+- Email over radio: [docs/email](https://weechatradio.com/docs/email.html)
 - Protocol: [docs/protocol](https://weechatradio.com/docs/protocol.html)
 - Public API: [docs/api](https://weechatradio.com/docs/api.html)
 - Licence: [Apache-2.0](LICENSE) (WeeChat script is [GPL-3.0-or-later](weechat/LICENSE))
