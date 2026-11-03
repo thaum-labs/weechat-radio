@@ -461,7 +461,8 @@ function trafficRow(r) {
   const t = new Date(r.ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
   li.append(el("span", "t-time", t), el("span", `chip k-${r.kind}`, KIND_WORD[r.kind] || r.kind));
   const who = el("span", "t-who");
-  who.append(document.createTextNode(r.from || "?"));
+  // A frame we keyed is ours even when it names no sender (#266).
+  who.append(document.createTextNode(r.from || (r.dir === "sent" && !r.relayed && chat.me) || "?"));
   if (r.to) who.append(el("span", "dir", " → "), document.createTextNode(r.to));
   li.append(who);
   const side = el("span", "t-side");

@@ -40,12 +40,29 @@ pub struct Row {
     pub id: String,
     /// Sent by this station for another (a relay), not its own (#247).
     pub relayed: bool,
+    /// A mail receiver's answer (chunk ack, complete ack, list reply). Only
+    /// used to name its sender; not sent to clients.
+    #[serde(skip)]
+    pub mail_answer: bool,
+}
+
+/// Mail exchanges remembered, so later frames can name their stations.
+const MAIL_KEEP: usize = 32;
+
+/// Who sent a mail and which station it went to over RF, learned from the
+/// first chunk (the only one with addresses).
+#[derive(Debug)]
+struct MailExchange {
+    id: String,
+    sender: String,
+    receiver: String,
 }
 
 #[derive(Debug, Default)]
 pub struct Log {
     next: u64,
     rows: VecDeque<Row>,
+    mail: VecDeque<MailExchange>,
 }
 
 pub type Shared = Arc<Mutex<Log>>;
@@ -56,11 +73,54 @@ pub fn new_shared() -> Shared {
 
 impl Log {
     pub fn push(&mut self, mut row: Row) {
+        if row.kind == "mail" {
+            self.name_mail_stations(&mut row);
+        }
         self.next += 1;
         row.seq = self.next;
         self.rows.push_back(row);
         while self.rows.len() > KEEP {
             self.rows.pop_front();
+        }
+    }
+
+    /// Only a mail's first chunk carries addresses: later chunks and the
+    /// receiver's acks showed "?" as the sender (#266). Fill them in from the
+    /// first chunk of the same mail. Display only.
+    fn name_mail_stations(&mut self, row: &mut Row) {
+        if row.id.is_empty() {
+            return;
+        }
+        let known = self.mail.iter().find(|m| m.id == row.id);
+        if row.mail_answer {
+            // The station the chunks went to answers the mail's sender.
+            if let Some(m) = known {
+                let to_sender = row.to.is_empty() || row.to.eq_ignore_ascii_case(&m.sender);
+                if row.from.is_empty() && to_sender {
+                    row.from = m.receiver.clone();
+                }
+                if row.to.is_empty() {
+                    row.to = m.sender.clone();
+                }
+            }
+            return;
+        }
+        if let Some(m) = known {
+            if row.from.is_empty() {
+                row.from = m.sender.clone();
+            }
+            if row.to.is_empty() {
+                row.to = m.receiver.clone();
+            }
+        } else if !row.from.is_empty() && !row.to.is_empty() {
+            self.mail.push_back(MailExchange {
+                id: row.id.clone(),
+                sender: row.from.clone(),
+                receiver: row.to.clone(),
+            });
+            while self.mail.len() > MAIL_KEEP {
+                self.mail.pop_front();
+            }
         }
     }
 
@@ -147,11 +207,13 @@ pub fn envelope_row(env: &Envelope, dir: &'static str, via: &str, snr: Option<f3
         snr: if via == "rf" { snr } else { None },
         id: short_id(env),
         relayed: false,
+        mail_answer: false,
     }
 }
 
 /// A mail frame on the air as a row.
 pub fn mail_row(m: &crate::mail::Incoming, dir: &'static str, snr: Option<f32>) -> Row {
+    let mail_answer = m.answers();
     let (from, to, text, id) = match m {
         crate::mail::Incoming::Wire(w) => {
             let what = format!("{:?}", w.op).to_ascii_lowercase();
@@ -165,10 +227,11 @@ pub fn mail_row(m: &crate::mail::Incoming, dir: &'static str, snr: Option<f32>) 
             } else {
                 format!(" \u{b7} {}", w.meta.subject)
             };
+            // A station's own WCR address is shown as its callsign (#266).
             let from = if w.meta.from.is_empty() {
                 w.meta.via.clone()
             } else {
-                w.meta.from.clone()
+                crate::mail::callsign_from_wcr(&w.meta.from).unwrap_or_else(|| w.meta.from.clone())
             };
             let to = if w.meta.dest.is_empty() {
                 w.meta.to.clone()
@@ -203,6 +266,7 @@ pub fn mail_row(m: &crate::mail::Incoming, dir: &'static str, snr: Option<f32>) 
         snr,
         id,
         relayed: false,
+        mail_answer,
     }
 }
 
@@ -320,5 +384,52 @@ mod tests {
         // SNR belongs to RF only.
         assert_eq!(a.snr, None);
         assert!(super::line(&r).contains("heard rf dm M7TJF -> M0BBB 12 dB: hello there"));
+    }
+
+    /// A mail frame as it comes off the air.
+    fn mail(op: u8, idx: u16, count: u16, meta: &str) -> crate::mail::Incoming {
+        let id = "ab12cd34".repeat(8);
+        let raw = format!("WCRM\t{op}\t{id}\t{idx}\t{count}\t{meta}\tbody");
+        crate::mail::try_decode(raw.as_bytes()).expect("mail frame")
+    }
+
+    #[test]
+    fn mail_rows_name_both_stations_after_the_first_chunk() {
+        // #266: only the first chunk carries addresses. The second chunk and
+        // the gateway's complete ack showed "?" as the sender.
+        let mut log = Log::default();
+        let first = r#"{"f":"M7TJF/M@mail.weechatradio.com","t":"qa@example.com","s":"rc7","d":"M7TJF","v":"M7TJF"}"#;
+        log.push(mail_row(&mail(5, 0, 2, first), "heard", Some(8.0)));
+        log.push(mail_row(&mail(5, 1, 2, "{}"), "heard", Some(8.0)));
+        log.push(mail_row(&mail(7, 0, 1, r#"{"d":"M7TJF/M"}"#), "sent", None));
+        let rows = log.since(0, KEEP);
+        let who: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|r| (r.from.as_str(), r.to.as_str()))
+            .collect();
+        assert_eq!(
+            who,
+            [
+                ("M7TJF/M", "M7TJF"),
+                ("M7TJF/M", "M7TJF"),
+                ("M7TJF", "M7TJF/M")
+            ]
+        );
+        assert_eq!(rows[1].text, "mail voxdata 2/2");
+        assert_eq!(rows[2].text, "mail completeack");
+        // Another station's address stays as it is.
+        let out = r#"{"f":"someone@example.com","d":"M7TJF/M","v":"M7TJF"}"#;
+        assert_eq!(
+            mail_row(&mail(0, 0, 1, out), "heard", None).from,
+            "someone@example.com"
+        );
+        // An ack for a mail never seen keeps an empty sender ("?").
+        let mut fresh = Log::default();
+        fresh.push(mail_row(
+            &mail(7, 0, 1, r#"{"d":"M7TJF/M"}"#),
+            "heard",
+            None,
+        ));
+        assert_eq!(fresh.since(0, 1)[0].from, "");
     }
 }
