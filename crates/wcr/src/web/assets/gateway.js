@@ -352,7 +352,8 @@ function trafficRow(r) {
   li.append(el("span", "t-time", clock(r.ts, true)));
   li.append(el("span", `chip k-${r.kind}`, KIND_WORD[r.kind] || r.kind));
   const who = el("span", "t-who");
-  who.append(document.createTextNode(r.from || "?"));
+  // A frame we keyed is ours even when it names no sender (#266).
+  who.append(document.createTextNode(r.from || (r.dir === "sent" && !r.relayed && me) || "?"));
   if (r.to) {
     who.append(el("span", "dir", " → "), document.createTextNode(r.to));
   }
