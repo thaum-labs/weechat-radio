@@ -61,6 +61,15 @@ jobs:
             echo "Release $TAG already exists"
             exit 0
           fi
+          # Hand-written notes win when docs/release-notes/<tag>.md exists on main.
+          if [ -f "docs/release-notes/$TAG.md" ]; then
+            cp "docs/release-notes/$TAG.md" release-notes.md
+            cat release-notes.md
+            PRE=""
+            case "$TAG" in *-rc*) PRE="--prerelease" ;; esac
+            gh release create "$TAG" --repo "${GITHUB_REPOSITORY}" --verify-tag --draft $PRE --title "$TAG" --notes-file release-notes.md
+            exit 0
+          fi
           # versionsort.suffix sorts v1.0.0-rc1 before v1.0.0.
           PREV="$(git -c versionsort.suffix=-rc tag --list 'v*' --sort=-v:refname | awk -v t="$TAG" '$0==t {getline; print; exit}')"
           {
