@@ -52,6 +52,13 @@
       <p class="lead">Numbers are the app. Run <code>wcr update</code> for those. The website has no version; it just changes when we publish it.</p>
       <article class="release">
         <h3 class="title">
+          <p>v1.0.15</p>
+          <p>Wed, 4 Nov 2026</p>
+        </h3>
+        <pre>The final v1.0.15, the same code as rc8, which passed QA. Since v1.0.14: on FM, stations waiting to send after the channel goes quiet start at least 1.3 seconds apart, so the later one hears the first and waits. Receipts now wait until your own message has gone out and check the channel is free before they send, even while another station's long message is still on the air. The bundled modem prepares a message's audio before it checks the channel (Linux, Pi and macOS), so the radio keys as soon as the channel is clear. On the Pi's web page: restarting the web service no longer puts the station on the air by itself, the waterfall keeps its last good reading when audio arrives late, the page has a design pass to match the website, and the "On the air" list shows its right-hand column on Macs and phones and names who sent each mail frame.</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>v1.0.15-rc8</p>
           <p>Tue, 3 Nov 2026</p>
         </h3>
