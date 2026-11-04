@@ -50,3 +50,6 @@ Grok has removed.
 Actions → **release** → Run workflow → version `vX.Y.Z`.
 The version must match Cargo.toml on main. Running it for a tag that already
 exists rebuilds and re-uploads that release's assets (repair).
+Optional: put hand-written notes in `docs/release-notes/vX.Y.Z.md` on main
+before pressing the button; otherwise the notes are the commit list since
+the previous tag.
