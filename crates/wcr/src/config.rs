@@ -36,7 +36,6 @@ pub struct Config {
     pub mail: MailConfig,
     pub gps: GpsConfig,
     pub web: WebConfig,
-    pub update: UpdateConfig,
 }
 
 impl Default for Config {
@@ -62,7 +61,6 @@ impl Default for Config {
             mail: MailConfig::default(),
             gps: GpsConfig::default(),
             web: WebConfig::default(),
-            update: UpdateConfig::default(),
         }
     }
 }
@@ -96,25 +94,6 @@ impl Default for WebConfig {
             key: String::new(),
             gateway: String::new(),
         }
-    }
-}
-
-/// Updates from the web page, the desktop app and `wcr update` (#280).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct UpdateConfig {
-    /// "Get test versions (rc)": offer release candidates too. Unset: off,
-    /// except on a station already running a release candidate (so a QA
-    /// station keeps getting the next one until it says otherwise).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub test_versions: Option<bool>,
-}
-
-impl UpdateConfig {
-    /// Whether release candidates are offered to a station running `running`.
-    pub fn takes_test_versions(&self, running: &str) -> bool {
-        self.test_versions
-            .unwrap_or_else(|| crate::update::is_test_version(running))
     }
 }
 

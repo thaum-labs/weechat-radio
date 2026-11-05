@@ -143,11 +143,12 @@ pub async fn run(cfg_path: &Path, stop: impl std::future::Future<Output = ()>) -
             ""
         }
     );
-    software::write_run_file(cfg_path, listener_port(&cfg.web.bind));
     software::restore_sessions(&web);
     // Settle the last update first: a version that must roll back restarts
-    // on the previous one here, before the station keys anything.
+    // on the previous one here, before the station keys anything. Only the
+    // version that stays writes the run file `wcr restart` waits on.
     let probation = software::on_start(&web);
+    software::write_run_file(cfg_path, listener_port(&cfg.web.bind));
     station.resume().await;
     tokio::spawn(station.clone().supervise());
     if probation {
@@ -235,10 +236,6 @@ fn router(web: Web) -> Router {
         .route("/api/update/check", post(software::check))
         .route("/api/update/apply", post(software::apply))
         .route("/api/update/restart", post(software::restart_now))
-        .route(
-            "/api/update/test-versions",
-            post(software::set_test_versions),
-        )
         .route("/app", get(|| async { Html(APP_PAGE) }))
         .route(
             "/app.js",

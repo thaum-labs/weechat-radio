@@ -166,7 +166,7 @@ Open the web page and look at the **Software** card. When it says **Update avail
 
 If the card ever shows **Installed x / Running y** (for example after `wcr update` over SSH), press **Restart to finish**.
 
-**Get test versions (rc)** on the card offers release candidates. It is off by default. Turn it off on a test version and the card offers the next stable release, or **Go back to stable**.
+Release candidates are not offered on the card unless the station already runs one. To move to one, use the terminal: `wcr update --rc`. QA can force a bad update to check the rollback with `wcr update --test-rollback`.
 
 Updating from v1.0.16-rc2 or older: those versions cannot restart themselves yet, so do this one update over SSH: `wcr update --rc`, then `sudo systemctl restart wcr-web` (or reboot the Pi). After that, use the page.
 

@@ -1,19 +1,17 @@
 //! SPDX-License-Identifier: Apache-2.0
 //! The web page's Software card (#280): see and install updates, restart on
-//! the installed version, and turn test versions (release candidates) on or
-//! off. No terminal and no password: `wcr web` replaces its own process with
+//! the installed version. Release candidates and the rollback test are
+//! command-line only (`wcr update --rc`, `--test-rollback`). No terminal and no password: `wcr web` replaces its own process with
 //! the new binary once the radio is idle ([`crate::restart`]).
 
 use super::Web;
-use crate::config::Config;
 use crate::restart::{self, OnStart};
-use crate::update::{self, Outcome, Target};
+use crate::update::{self, Outcome};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use parking_lot::Mutex;
-use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -163,12 +161,6 @@ pub(super) async fn check_now_and_then(web: Web) {
     }
 }
 
-fn test_versions(cfg_path: &Path) -> bool {
-    Config::load(cfg_path)
-        .map(|c| c.update.takes_test_versions(update::current_version()))
-        .unwrap_or(false)
-}
-
 async fn refresh(web: &Web, force: bool) {
     let recent = web
         .update
@@ -179,8 +171,9 @@ async fn refresh(web: &Web, force: bool) {
     if recent && !force {
         return;
     }
-    let rc = test_versions(&web.cfg_path);
-    let result = update::check(rc).await;
+    // Release candidates only reach a station already on one; otherwise
+    // they are `wcr update --rc` in a terminal.
+    let result = update::check(false).await;
     let mut g = web.update.inner.lock();
     g.checked_at = Some(Instant::now());
     match result {
@@ -211,13 +204,9 @@ fn snapshot(web: &Web) -> Value {
         "installed": installed,
         "restart_needed": restart_needed,
         "available": check.available,
-        "stable": check.stable,
-        "stable_note": check.stable_note,
         "building": check.building,
         "checked": g.checked_at.map(|t| t.elapsed().as_secs()),
         "check_error": g.check_error,
-        "test_versions": test_versions(&web.cfg_path),
-        "on_test_version": update::is_test_version(running),
         "phase": g.phase,
         "error": g.error,
         "note": g.note,
@@ -230,41 +219,18 @@ pub(super) async fn check(State(web): State<Web>) -> Json<Value> {
     Json(snapshot(&web))
 }
 
-#[derive(Deserialize)]
-pub(super) struct ApplyBody {
-    /// `newest` (default) or `stable` (back from a test version).
-    #[serde(default)]
-    target: String,
-    /// QA: the new version pretends to fail its start, to test the rollback.
-    /// Taken only while test versions are on.
-    #[serde(default)]
-    simulate_failure: bool,
-}
-
 /// `POST /api/update/apply`: install the update, then restart on it once
 /// the radio is idle. Answers at once; the card follows `phase`.
-pub(super) async fn apply(State(web): State<Web>, Json(b): Json<ApplyBody>) -> Response {
+pub(super) async fn apply(State(web): State<Web>) -> Response {
     if web.update.busy() {
         return refuse("An update or restart is already under way.");
     }
-    let rc = test_versions(&web.cfg_path);
-    let target = if b.target == "stable" {
-        Target::BackToStable
-    } else {
-        Target::Newest { rc }
-    };
-    let simulate = b.simulate_failure && rc;
     web.update.set_phase("Checking for updates");
-    web.station.note(&format!(
-        "update pressed on the web page{}",
-        if simulate { " (rollback test)" } else { "" }
-    ));
+    web.station.note("update pressed on the web page");
     tokio::spawn(async move {
         let panel = web.update.clone();
-        let outcome = update::install(target, Some(&web.cfg_path), simulate, |p| {
-            panel.set_phase(p)
-        })
-        .await;
+        let outcome =
+            update::install(false, Some(&web.cfg_path), false, |p| panel.set_phase(p)).await;
         web.update.forget_installed();
         match outcome {
             Ok(Outcome::UpToDate(msg)) => web.update.fail(msg),
@@ -307,34 +273,6 @@ pub(super) fn start_safe_restart(web: Web) {
     }
     web.update.set_phase("Waiting for the radio to go quiet");
     tokio::spawn(async move { safe_restart(&web).await });
-}
-
-#[derive(Deserialize)]
-pub(super) struct TestVersionsBody {
-    on: bool,
-}
-
-/// `POST /api/update/test-versions`: the "Get test versions (rc)" switch.
-/// Changes only `[update] test_versions` in wcr.toml.
-pub(super) async fn set_test_versions(
-    State(web): State<Web>,
-    Json(b): Json<TestVersionsBody>,
-) -> Response {
-    let mut cfg = match Config::load(&web.cfg_path) {
-        Ok(c) => c,
-        Err(e) => return refuse(&e.to_string()),
-    };
-    cfg.update.test_versions = Some(b.on);
-    if let Err(e) = cfg.save(&web.cfg_path) {
-        return refuse(&e.to_string());
-    }
-    web.station.note(&format!(
-        "test versions turned {} on the web page",
-        if b.on { "on" } else { "off" }
-    ));
-    web.update.inner.lock().checked_at = None;
-    refresh(&web, true).await;
-    Json(snapshot(&web)).into_response()
 }
 
 /// Wait for the radio to be idle, stop the station (its Start/Stop choice

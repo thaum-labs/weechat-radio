@@ -124,9 +124,12 @@ async fn real_main(cli: Cli) -> Result<()> {
                 ServiceAction::Status => println!("{}", wcr::service::status()?),
             }
         }
-        Command::Update { rc } => {
+        Command::Update { rc, test_rollback } => {
             wcr::ui_style::panel("WEECHAT RADIO", "UPDATE");
-            println!("{}", wcr::update_cli::update(&cfg_path, rc).await?);
+            println!(
+                "{}",
+                wcr::update_cli::update(&cfg_path, rc, test_rollback).await?
+            );
         }
         Command::Status => {
             wcr::ui_style::panel("WEECHAT RADIO", "STATUS");

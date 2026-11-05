@@ -282,6 +282,20 @@ impl Rig {
         panic!("timed out; last /api/update: {last}\nlog:\n{}", self.log());
     }
 
+    /// `wcr -c … <args>` as the operator would run it over ssh: no terminal.
+    fn cli(&self, args: &[&str]) -> tokio::process::Command {
+        let mut cmd = tokio::process::Command::new(&self.install);
+        cmd.arg("-c")
+            .arg(&self.cfg)
+            .args(args)
+            .env("WCR_HOME", self.root.join("home"))
+            .env(wcr::update::TEST_RELEASES_ENV, &self.releases)
+            .env("NO_PROXY", "127.0.0.1,localhost")
+            .env("TMPDIR", &self.root)
+            .stdin(Stdio::null());
+        cmd
+    }
+
     fn run_file(&self) -> Value {
         let text = std::fs::read_to_string(self.cfg.with_file_name("web-run.json")).unwrap();
         serde_json::from_str(&text).unwrap()
@@ -417,14 +431,24 @@ async fn waits_for_idle_radio_before_restart() {
 #[tokio::test(flavor = "multi_thread")]
 async fn rolls_back_on_failed_start() {
     let _guard = watchdog::watchdog(Duration::from_secs(300).min(watchdog::TEST_LIMIT));
-    let rig = rig("start", "[update]\ntest_versions = true\n").await;
+    let rig = rig("start", "").await;
     rig.wait_station(old(), Duration::from_secs(30)).await;
-    let v = rig
-        .wait_update(Duration::from_secs(30), |v| v["available"] == NEW)
-        .await;
-    assert_eq!(v["test_versions"], true);
-    rig.post("/api/update/apply", json!({ "simulate_failure": true }))
-        .await;
+    // QA's forced bad build is a command-line flag (the app has no switch).
+    let out = rig
+        .cli(&["update", "--test-rollback"])
+        .output()
+        .await
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+    assert!(
+        !out.status.success(),
+        "a rolled-back update must not say it worked"
+    );
+    assert!(
+        err.contains(&format!("Rolled back to {}: {NEW} did not start", old())),
+        "{err}\n{}",
+        rig.log()
+    );
     let after = rig
         .wait_update(Duration::from_secs(90), |v| {
             v["note"]
@@ -457,18 +481,7 @@ async fn the_cli_updates_restarts_and_says_so_in_one_line() {
     let rig = rig("start", "").await;
     rig.wait_station(old(), Duration::from_secs(30)).await;
     let pid = rig.run_file()["pid"].as_u64().unwrap();
-    let cli = |args: &[&str]| {
-        let mut cmd = tokio::process::Command::new(&rig.install);
-        cmd.arg("-c")
-            .arg(&rig.cfg)
-            .args(args)
-            .env("WCR_HOME", rig.root.join("home"))
-            .env(wcr::update::TEST_RELEASES_ENV, &rig.releases)
-            .env("NO_PROXY", "127.0.0.1,localhost")
-            .env("TMPDIR", &rig.root)
-            .stdin(Stdio::null());
-        cmd
-    };
+    let cli = |args: &[&str]| rig.cli(args);
     let out = cli(&["update"]).output().await.unwrap();
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     assert!(

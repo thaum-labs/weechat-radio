@@ -1,7 +1,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //! The desktop app's Software window (#280): "Update available", Update,
-//! "Installed x / Running y" with Restart to finish, and "Get test versions
-//! (rc)". Same steps as the web page: install with the SHA-256 check, wait
+//! "Installed x / Running y" with Restart to finish. Release candidates are
+//! command-line only (`wcr update --rc`). Same steps as the web page: install with the SHA-256 check, wait
 //! for the radio to be idle, stop the station, start the new app with the
 //! station as it was, and roll back if the new version does not stay up.
 
@@ -9,7 +9,7 @@ use super::{hair_btn, ACCENT, AMBER, DIM, FG, GREEN, ORANGE, RED};
 use crate::config::Config;
 use crate::restart::{self, IdleWatch, OnStart, Verdict};
 use crate::status::StatusSnapshot;
-use crate::update::{self, Outcome, Target};
+use crate::update::{self, Outcome};
 use eframe::egui::{self, RichText};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -36,7 +36,6 @@ struct Shared {
 pub struct Software {
     shared: Arc<Mutex<Shared>>,
     pub open: bool,
-    simulate: bool,
     last_check: Option<Instant>,
     installed: Option<(Instant, Option<String>)>,
     /// A restart waiting for the radio to go quiet.
@@ -74,7 +73,6 @@ impl Software {
                 ..Shared::default()
             })),
             open: false,
-            simulate: false,
             last_check: None,
             installed: None,
             restart: None,
@@ -84,12 +82,6 @@ impl Software {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Shared> {
         self.shared.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    fn test_versions() -> bool {
-        Config::load(&Config::active_path())
-            .map(|c| c.update.takes_test_versions(update::current_version()))
-            .unwrap_or(false)
     }
 
     fn installed_version(&mut self) -> Option<String> {
@@ -116,9 +108,8 @@ impl Software {
         self.last_check = Some(Instant::now());
         self.lock().checking = true;
         let shared = self.shared.clone();
-        let rc = Self::test_versions();
         std::thread::spawn(move || {
-            let result = runtime().and_then(|rt| rt.block_on(update::check(rc)));
+            let result = runtime().and_then(|rt| rt.block_on(update::check(false)));
             let mut g = shared.lock().unwrap_or_else(|e| e.into_inner());
             g.checking = false;
             match result {
@@ -131,8 +122,7 @@ impl Software {
         });
     }
 
-    fn apply(&mut self, target: Target) {
-        let simulate = self.simulate && Self::test_versions();
+    fn apply(&mut self) {
         let shared = self.shared.clone();
         {
             let mut g = self.lock();
@@ -146,7 +136,7 @@ impl Software {
             };
             let cfg = Config::active_path();
             let result = runtime()
-                .and_then(|rt| rt.block_on(update::install(target, Some(&cfg), simulate, set)));
+                .and_then(|rt| rt.block_on(update::install(false, Some(&cfg), false, set)));
             let mut g = shared.lock().unwrap_or_else(|e| e.into_inner());
             match result {
                 Ok(Outcome::Installed(done)) => {
@@ -255,7 +245,6 @@ impl Software {
         let running = update::current_version().to_string();
         let restart_needed = self.restart_needed();
         let installed = self.installed_version();
-        let rc = Self::test_versions();
         let (check, check_error, checking, phase, error, note) = {
             let g = self.lock();
             (
@@ -270,7 +259,6 @@ impl Software {
         let busy = !phase.is_empty();
         let mut open = self.open;
         let mut action: Option<&str> = None;
-        let mut rc_now = rc;
         egui::Window::new("Software")
             .open(&mut open)
             .collapsible(false)
@@ -291,11 +279,6 @@ impl Software {
                     (format!("Update available ({v})."), AMBER)
                 } else if let Some(v) = &c.building {
                     (format!("{v} is still being built."), DIM)
-                } else if let Some(v) = &c.stable {
-                    (
-                        format!("You run a test version. Test versions are off: go back to stable {v}, or wait for the next stable release."),
-                        DIM,
-                    )
                 } else if !check_error.is_empty() {
                     (format!("Could not check for updates: {check_error}"), RED)
                 } else if checking || check.is_none() {
@@ -326,33 +309,11 @@ impl Software {
                                     action = Some("update");
                                 }
                             }
-                            if let Some(v) = &c.stable {
-                                if ui
-                                    .add(hair_btn(&format!("Go back to stable {v}"), ACCENT))
-                                    .on_hover_text(&c.stable_note)
-                                    .clicked()
-                                {
-                                    action = Some("stable");
-                                }
-                            }
                         }
                         if ui.add(hair_btn("Check now", DIM)).clicked() {
                             action = Some("check");
                         }
                     });
-                    ui.add_space(8.0);
-                    ui.checkbox(&mut rc_now, "Get test versions (rc)");
-                    ui.label(
-                        RichText::new("Test versions are release candidates for QA. Off: only stable releases are offered.")
-                            .color(DIM)
-                            .small(),
-                    );
-                    if rc {
-                        ui.checkbox(
-                            &mut self.simulate,
-                            "Test the rollback: the next update pretends to fail its start",
-                        );
-                    }
                 });
                 if let Some(i) = &installed {
                     if restart_needed.is_none() && i != &running {
@@ -376,24 +337,8 @@ impl Software {
                 );
             });
         self.open = open;
-        if rc_now != rc {
-            let path = Config::active_path();
-            match Config::load(&path).and_then(|mut cfg| {
-                cfg.update.test_versions = Some(rc_now);
-                cfg.save(&path)
-            }) {
-                Ok(()) => {
-                    if !rc_now {
-                        self.simulate = false;
-                    }
-                    self.check_now();
-                }
-                Err(e) => self.lock().error = e.to_string(),
-            }
-        }
         match action {
-            Some("update") => self.apply(Target::Newest { rc }),
-            Some("stable") => self.apply(Target::BackToStable),
+            Some("update") => self.apply(),
             Some("restart") => self.begin_restart(),
             Some("check") => self.check_now(),
             _ => {}

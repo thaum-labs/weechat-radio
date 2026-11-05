@@ -7,7 +7,7 @@ use crate::config::{Config, StatusConfig};
 use crate::error::{Error, Result};
 use crate::restart;
 use crate::status::StatusSnapshot;
-use crate::update::{self, Outcome, Target};
+use crate::update::{self, Outcome};
 use crate::web::software::{read_run_file, RunFile};
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -32,19 +32,12 @@ fn http() -> Result<reqwest::Client> {
         .map_err(|e| Error::Msg(e.to_string()))
 }
 
-/// `wcr update [--rc]`: install, restart safely, check, one line.
-pub async fn update(cfg_path: &Path, rc_flag: bool) -> Result<String> {
-    let cfg = Config::load(cfg_path).ok();
-    let running = update::current_version();
-    let rc = rc_flag
-        || cfg
-            .as_ref()
-            .is_some_and(|c| c.update.takes_test_versions(running));
-    let cfg_for_backup = cfg.as_ref().map(|_| cfg_path);
-    let outcome = update::install(Target::Newest { rc }, cfg_for_backup, false, |p| {
-        println!("{p}…")
-    })
-    .await?;
+/// `wcr update [--rc] [--test-rollback]`: install, restart safely, check,
+/// one line. `test_rollback`: the new version pretends to fail its start, so
+/// the previous one must come back (QA).
+pub async fn update(cfg_path: &Path, rc: bool, test_rollback: bool) -> Result<String> {
+    let cfg_for_backup = cfg_path.is_file().then_some(cfg_path);
+    let outcome = update::install(rc, cfg_for_backup, test_rollback, |p| println!("{p}…")).await?;
     match outcome {
         Outcome::UpToDate(msg) => Ok(msg),
         Outcome::Installed(done) => {
@@ -274,10 +267,8 @@ pub async fn status(cfg_path: &Path) -> Result<String> {
         )),
         None => lines.push("Station:   stopped".into()),
     }
-    let rc = Config::load(cfg_path)
-        .map(|c| c.update.takes_test_versions(update::current_version()))
-        .unwrap_or(false);
-    match update::check(rc).await {
+    let rc = update::takes_rc(false, update::current_version());
+    match update::check(false).await {
         Ok(c) => lines.push(match (c.available, c.building) {
             (Some(v), _) => format!(
                 "Update:    {v} available. Press Update on the web page or in the app, or run wcr update"
@@ -285,7 +276,7 @@ pub async fn status(cfg_path: &Path) -> Result<String> {
             (None, Some(v)) => format!("Update:    {v} is still being built"),
             (None, None) => format!(
                 "Update:    up to date{}",
-                if rc { " (test versions on)" } else { "" }
+                if rc { " (on a test version: wcr update --rc for the next one)" } else { "" }
             ),
         }),
         Err(e) => lines.push(format!("Update:    could not check ({e})")),

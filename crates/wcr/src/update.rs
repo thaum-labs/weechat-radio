@@ -236,56 +236,30 @@ pub struct ReleaseInfo {
     pub sums_url: Option<String>,
 }
 
-/// What to install: the newest release offered, or (from a release
-/// candidate, test versions off) the newest stable release, even if older.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Target {
-    Newest { rc: bool },
-    BackToStable,
-}
-
 /// What the update panel and `wcr status` show.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct Check {
     pub running: String,
     /// Newer release offered, without the `v`.
     pub available: Option<String>,
-    /// Running a release candidate with test versions off: the newest stable
-    /// release to go back to.
-    pub stable: Option<String>,
     /// A newer tag still building (no assets yet).
     pub building: Option<String>,
-    /// Said before going back to `stable` when that version cannot update
-    /// itself from the app yet.
-    pub stable_note: String,
 }
 
-/// The first release that updates and restarts itself from the app (#280).
-pub const FIRST_SELF_UPDATING: &str = "1.0.16-rc3";
-
-/// Going back to `version` loses the Update button when it is older than
-/// [`FIRST_SELF_UPDATING`]; say so before.
-pub fn stable_note(version: &str) -> String {
-    if version_cmp(version, FIRST_SELF_UPDATING) == Ordering::Less {
-        format!(
-            "{version} has no Update button yet: to come back to a test version later, run the installer or wcr update --rc in a terminal."
-        )
-    } else {
-        String::new()
-    }
+/// Release candidates (`v1.0.0-rc1`) are offered only with `wcr update --rc`
+/// or to a station that already runs one. The app has no switch for them
+/// (Tobias, #280): test versions are a command-line choice.
+pub fn takes_rc(asked: bool, current: &str) -> bool {
+    asked || is_rc(current)
 }
 
-/// Look for updates. `rc`: test versions are on (or `--rc`).
+/// Look for updates. `rc`: `wcr update --rc` asked for release candidates.
 pub async fn check(rc: bool) -> Result<Check> {
     let client = github_client()?;
     let releases = fetch_releases(&client).await?;
     let current = current_version();
+    let rc = takes_rc(rc, current);
     let available = best_downloadable(&releases, current, rc).map(|i| i.version);
-    let stable = if is_rc(current) && !rc && available.is_none() {
-        newest_stable(&releases).map(|i| i.version)
-    } else {
-        None
-    };
     let building = if available.is_none() {
         highest_newer_tag(&releases, current, rc)
     } else {
@@ -294,15 +268,8 @@ pub async fn check(rc: bool) -> Result<Check> {
     Ok(Check {
         running: current.to_string(),
         available,
-        stable_note: stable.as_deref().map(stable_note).unwrap_or_default(),
-        stable,
         building,
     })
-}
-
-/// The newest stable release with a binary for this platform.
-fn newest_stable(releases: &[Release]) -> Option<ReleaseInfo> {
-    best_downloadable(releases, "0.0.0", false)
 }
 
 /// What an install did.
@@ -323,8 +290,9 @@ pub enum Outcome {
 /// Download, check the SHA-256, back up the config, install, test that the
 /// new binary starts, and leave the update note for the restart
 /// ([`crate::restart`]). Does not restart anything.
+/// `rc`: `wcr update --rc`. `simulate_failure`: `wcr update --test-rollback`.
 pub async fn install(
-    target: Target,
+    rc: bool,
     cfg_path: Option<&Path>,
     simulate_failure: bool,
     progress: impl Fn(&str),
@@ -333,14 +301,8 @@ pub async fn install(
     let client = github_client()?;
     let releases = fetch_releases(&client).await?;
     let current = current_version();
-    let picked = match target {
-        Target::Newest { rc } => best_downloadable(&releases, current, rc),
-        Target::BackToStable => {
-            newest_stable(&releases).filter(|i| version_cmp(&i.version, current) != Ordering::Equal)
-        }
-    };
-    let Some(info) = picked else {
-        let rc = matches!(target, Target::Newest { rc: true });
+    let rc = takes_rc(rc, current);
+    let Some(info) = best_downloadable(&releases, current, rc) else {
         return up_to_date(&client, &releases, current, rc).await;
     };
     let url = info
@@ -430,7 +392,7 @@ async fn up_to_date(
         ),
         None => match highest_newer_tag(releases, current, true) {
             Some(tag) if !rc => format!(
-                "Already up to date ({current}). Test version {tag} is out: turn on \"Get test versions\" (or run wcr update --rc) to try it."
+                "Already up to date ({current}). Test version {tag} is out: run wcr update --rc to try it."
             ),
             _ => format!("Already up to date ({current})."),
         },
@@ -510,11 +472,6 @@ fn quiet_command(exe: &Path) -> Command {
 fn parse_version_line(line: &str) -> Option<String> {
     let v = line.split_whitespace().nth(1)?.trim_start_matches('v');
     parse_version(v).map(|_| v.to_string())
-}
-
-/// True when this version is a release candidate.
-pub fn is_test_version(v: &str) -> bool {
-    is_rc(v)
 }
 
 /// Run the freshly installed `wcr --version`; Err holds why it did not start.
@@ -1108,13 +1065,6 @@ mod tests {
     }
 
     #[test]
-    fn going_back_to_an_old_stable_says_it_has_no_update_button() {
-        assert!(stable_note("1.0.15").contains("no Update button"));
-        assert_eq!(stable_note("1.0.16"), "");
-        assert_eq!(stable_note(FIRST_SELF_UPDATING), "");
-    }
-
-    #[test]
     fn release_candidates_sort_before_their_final_release() {
         assert!(parse_version("v1.0.0-rc1") > parse_version("v0.1.114"));
         assert!(parse_version("v1.0.0-rc2") > parse_version("v1.0.0-rc1"));
@@ -1128,7 +1078,8 @@ mod tests {
         let releases = vec![release("v1.0.0-rc1", win()), release("v0.1.114", win())];
         let plain = best_downloadable_for(&releases, "0.1.113", false, "windows", "x86_64");
         assert_eq!(plain.unwrap().version, "0.1.114");
-        let info = best_downloadable_for(&releases, "0.1.114", true, "windows", "x86_64");
+        let asked = takes_rc(true, "0.1.114");
+        let info = best_downloadable_for(&releases, "0.1.114", asked, "windows", "x86_64");
         assert_eq!(info.unwrap().version, "1.0.0-rc1");
         assert!(best_downloadable_for(&releases, "0.1.114", false, "windows", "x86_64").is_none());
         // A station on an RC moves on to the next RC and the final release.
@@ -1137,11 +1088,9 @@ mod tests {
             release("v1.0.0-rc2", win()),
             release("v1.0.0-rc1", win()),
         ];
-        let info = best_downloadable_for(&later, "1.0.0-rc1", true, "windows", "x86_64");
+        let rc = takes_rc(false, "1.0.0-rc1");
+        let info = best_downloadable_for(&later, "1.0.0-rc1", rc, "windows", "x86_64");
         assert_eq!(info.unwrap().version, "1.0.0");
-        // Test versions off on an RC: only the final release is offered.
-        let next_rc = vec![release("v1.0.0-rc2", win()), release("v0.1.114", win())];
-        assert!(best_downloadable_for(&next_rc, "1.0.0-rc1", false, "windows", "x86_64").is_none());
     }
 
     #[test]

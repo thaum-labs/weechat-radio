@@ -729,7 +729,7 @@ for (const id of ["log-box", "health-more", "settings-box", "level-help", "wf-ke
 
 
 // Software card (#280): see and install updates, restart on the installed
-// version, test versions on or off. While an update restarts the page's own
+// version. Release candidates are command-line only (wcr update --rc). While an update restarts the page's own
 // process, the page waits for it to answer again and reloads.
 const SW_MS = 15000;
 let sw = null;
@@ -751,9 +751,6 @@ function swDraw(d) {
   } else if (d.building) {
     text = `${d.building} is still being built. It will be offered when it is ready.`;
     cls = "";
-  } else if (d.stable) {
-    text = `You run test version ${d.running}. Test versions are off: go back to stable ${d.stable}, or wait for the next stable release.`;
-    cls = "";
   } else if (d.check_error) {
     text = `Could not check for updates: ${d.check_error}`;
     cls = "down";
@@ -769,13 +766,8 @@ function swDraw(d) {
   const busy = !!phase;
   $("sw-update").hidden = !d.available || d.restart_needed;
   $("sw-update").textContent = d.available ? `Update to ${d.available}` : "Update";
-  $("sw-stable").hidden = !d.stable || d.restart_needed;
-  $("sw-stable").textContent = d.stable ? `Go back to stable ${d.stable}` : "Go back to stable";
   $("sw-restart").hidden = !d.restart_needed;
-  for (const id of ["sw-update", "sw-stable", "sw-restart", "sw-check", "sw-rc", "sw-sim"]) $(id).disabled = busy;
-  $("sw-rc").checked = !!d.test_versions;
-  $("sw-sim-row").hidden = !d.test_versions;
-  if (!d.test_versions) $("sw-sim").checked = false;
+  for (const id of ["sw-update", "sw-restart", "sw-check"]) $(id).disabled = busy;
   $("sw-note").textContent = d.note || "";
   $("sw-note").className = /^Rolled back|^Could not roll back/.test(d.note || "") ? "note" : "meta";
   if (phase === "Restarting") swAwaitRestart(d.running);
@@ -828,20 +820,15 @@ async function swAwaitRestart(was) {
   swTick();
 }
 
-async function swApply(target) {
-  if (!sw) return;
-  const v = target === "stable" ? sw.stable : sw.available;
-  const sim = $("sw-sim").checked;
-  const ask = `Update to ${v}? The station restarts once the radio is quiet (nothing is cut off) and comes back as it is now (${$("start").hidden ? "running" : "stopped"}).`
-    + (target === "stable" && sw.stable_note ? `\n\n${sw.stable_note}` : "")
-    + (sim ? "\n\nRollback test is on: the new version will pretend to fail and this version comes back." : "");
+async function swApply() {
+  if (!sw || !sw.available) return;
+  const ask = `Update to ${sw.available}? The station restarts once the radio is quiet (nothing is cut off) and comes back as it is now (${$("start").hidden ? "running" : "stopped"}). If the new version does not start, this one comes back by itself.`;
   if (!confirm(ask)) return;
-  const d = await swFetch("/api/update/apply", { target, simulate_failure: sim });
+  const d = await swFetch("/api/update/apply", {});
   if (d) swTick();
 }
 
-$("sw-update").addEventListener("click", () => swApply("newest"));
-$("sw-stable").addEventListener("click", () => swApply("stable"));
+$("sw-update").addEventListener("click", swApply);
 $("sw-restart").addEventListener("click", async () => {
   if (!confirm("Restart on the installed version? It waits for the radio to be quiet, then the station comes back as it is now.")) return;
   if (await swFetch("/api/update/restart", {})) swTick();
@@ -850,10 +837,6 @@ $("sw-check").addEventListener("click", async () => {
   $("sw-line").textContent = "Checking for updates…";
   const d = await swFetch("/api/update/check", {});
   if (d) swDraw(d);
-});
-$("sw-rc").addEventListener("change", async (e) => {
-  const d = await swFetch("/api/update/test-versions", { on: e.target.checked });
-  if (d) swDraw(d); else e.target.checked = !e.target.checked;
 });
 swTick();
 

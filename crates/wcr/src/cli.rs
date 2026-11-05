@@ -41,10 +41,13 @@ pub enum Command {
     },
     /// Update, restart safely once the radio is idle, and check it runs
     Update {
-        /// Also take release candidates (e.g. v1.0.0-rc1), like the
-        /// "Get test versions" setting
+        /// Also take release candidates (e.g. v1.0.0-rc1)
         #[arg(long)]
         rc: bool,
+        /// QA: the new version pretends to fail its start, so the previous
+        /// one must come back by itself
+        #[arg(long)]
+        test_rollback: bool,
     },
     /// Installed and running versions, station, radio and updates
     Status,
