@@ -45,7 +45,7 @@ On the web (with pictures): https://weechatradio.com/guides/start.html
    wcr gui
    ```
 
-`wcr update` replaces the binary with a newer release. On Linux and macOS it restarts a station installed with `wcr service install`. A station you started by hand keeps the old code until you stop it and start it again. On Windows, restart that station yourself, including a service.
+Update from the app: click the version at the bottom left (on a Pi, the web page's **Software** card) and press **Update**. It waits for the radio to go quiet, restarts on the new version and shows it; a version that does not start is rolled back. `wcr update` in a terminal does the same (`wcr status`, `wcr restart`; no sudo).
 
 ## How you know it worked
 

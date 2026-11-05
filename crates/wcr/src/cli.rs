@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser, Debug)]
 #[command(
     name = "wcr",
-    version,
+    version = crate::update::current_version(),
     about = "WeeChat Radio — chat over internet and HF/VHF radio",
     disable_help_subcommand = true
 )]
@@ -39,12 +39,17 @@ pub enum Command {
         #[command(subcommand)]
         action: ServiceAction,
     },
-    /// Check or apply an update
+    /// Update, restart safely once the radio is idle, and check it runs
     Update {
-        /// Also take release candidates (e.g. v1.0.0-rc1)
+        /// Also take release candidates (e.g. v1.0.0-rc1), like the
+        /// "Get test versions" setting
         #[arg(long)]
         rc: bool,
     },
+    /// Installed and running versions, station, radio and updates
+    Status,
+    /// Restart the station on the installed version once the radio is idle (no sudo)
+    Restart,
     /// Offline help
     Help { topic: Option<String> },
     /// Desktop window: setup, station, and chat

@@ -264,3 +264,14 @@ main.wide { max-width: 1100px; }
   .traffic .t-who { grid-column: 1 / -1; grid-row: 2; }
   .traffic .t-text { grid-column: 1 / -1; }
 }
+
+/* Software card (#280) */
+.check { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 14px; min-height: 40px; }
+.check input { width: 18px; height: 18px; margin: 0; flex: none; accent-color: var(--accent); }
+.sw-phase { margin: 8px 0 0; font-size: 14px; color: var(--amber); }
+.sw-phase::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%;
+  background: currentColor; animation: sw-pulse 1s ease-in-out infinite alternate; }
+@keyframes sw-pulse { from { opacity: .3; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .sw-phase::before { animation: none; } }
+#sw-actions button { min-height: 40px; }
+#sw-line.up { color: var(--green); } #sw-line.amber { color: var(--amber); } #sw-line.down { color: var(--red); }

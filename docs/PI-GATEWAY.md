@@ -61,7 +61,7 @@ On the Pi, logged in as your own user (not root):
 
    This writes `/etc/systemd/system/wcr-web.service`, which runs as your user, and starts it. Check it with `systemctl status wcr-web` and read its log with `journalctl -u wcr-web -f`. The journal has the station's own log too, including modem73 problems (modem73's full log is `~/.local/share/wcr/modem73.log`).
 
-   The page's Start and Stop are remembered (in `web-station.state` next to `wcr.toml`). After a reboot, an update or `systemctl restart wcr-web`, the station goes back on the air only if you left it running; a station you stopped stays stopped and the log says `station not started`.
+   The page's Start and Stop are remembered (in `web-station.state` next to `wcr.toml`). After a reboot, an update, or a restart from the page or `wcr restart`, the station goes back on the air only if you left it running; a station you stopped stays stopped and the log says `station not started`.
 
 ## The web page
 
@@ -149,7 +149,7 @@ If step 1 fails and step 2 works, it is the transmit side (Speaker level, TX lev
 
 - **The Digirig does not show up** (`lsusb` has no `10c4:ea60 Silicon Labs CP210x UART Bridge` and no `0d8c:013c C-Media Electronics, Inc. CM108 Audio Controller`; the IDs are what matters, the names vary): try a USB-C cable that carries data, and the official power supply. `vcgencmd get_throttled` must say `0x0`.
 - **`raspberrypi.local` does not answer:** run `wcr webui` on your laptop, or use the Pi's IP address (see The web page).
-- **Audio in says "not measured":** the modem73 next to `wcr` is an older one. Run `wcr update`.
+- **Audio in says "not measured":** the modem73 next to `wcr` is an older one. Update from the page's Software card.
 
 ## Without a monitor
 
@@ -157,4 +157,23 @@ Raspberry Pi Imager can set the hostname, your user, Wi-Fi and SSH before the fi
 
 ## Updating
 
-Run `wcr update`, then `sudo systemctl restart wcr-web`. The station comes back only if it was running before. Updating from v1.0.14 or older, the first restart leaves it stopped (there is no saved Start yet): press Start on the page once.
+Open the web page and look at the **Software** card. When it says **Update available**, press **Update**. No SSH and no password:
+
+1. It downloads the release, checks its SHA-256, keeps a copy of `wcr.toml` (`wcr.toml.before-update`) and the previous program (`wcr.bak`), and installs.
+2. It waits until the radio is quiet: nothing sending, nothing queued, no mail being sent, no beacon about to go. A restart never cuts off a transmission or a mail burst. If the radio stays busy for 15 minutes it gives up and says so; press Update or Restart again later.
+3. It restarts in place (same service, no sudo), and the page reloads on the new version within a minute. The station comes back as you left it: running, or stopped.
+4. If the new version does not start, or its station does not stay up for a minute, the previous version is put back and started, and the card says **Rolled back to …** with the reason.
+
+If the card ever shows **Installed x / Running y** (for example after `wcr update` over SSH), press **Restart to finish**.
+
+**Get test versions (rc)** on the card offers release candidates. It is off by default. Turn it off on a test version and the card offers the next stable release, or **Go back to stable**.
+
+Updating from v1.0.16-rc2 or older: those versions cannot restart themselves yet, so do this one update over SSH: `wcr update --rc`, then `sudo systemctl restart wcr-web` (or reboot the Pi). After that, use the page.
+
+In a terminal, without sudo:
+
+- `wcr update`: the same steps as the button, ending with one line such as `Updated to 1.0.16, running, radio idle.`
+- `wcr status`: installed and running versions, the station, the radio, and whether an update is out.
+- `wcr restart`: restart on the installed version once the radio is quiet.
+
+The installer and `sudo wcr web install` link `wcr` into `/usr/local/bin`, so `ssh pi@raspberrypi.local wcr status` works too.

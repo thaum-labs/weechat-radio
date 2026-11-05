@@ -60,7 +60,7 @@ Leave the window open; WeeChat installs through Cygwin after the program and can
 
 You are set up when the status bar shows your callsign. Send a line in `#bulletin`: `[tx]` means sent, `[ok]` means delivered, `[no]` means it never got through.
 
-`wcr update` installs a newer release and checks its SHA256. Release candidates are skipped unless you run `wcr update --rc`. Trouble? See the [troubleshooting page](https://weechatradio.com/guides/troubleshooting.html).
+**Updating needs no terminal.** In the desktop app, click the version at the bottom left; on a Pi, open the web page's **Software** card. Press **Update**: it checks the SHA-256, installs, waits for the radio to go quiet, restarts on the new version and shows it. The station comes back as you left it. If the new version does not start, the previous one comes back and the app says so. **Get test versions (rc)** there offers release candidates (off by default). In a terminal, `wcr update` does the same and ends with one line (`Updated to 1.0.16, running, radio idle.`); `wcr status` and `wcr restart` need no sudo. Trouble? See the [troubleshooting page](https://weechatradio.com/guides/troubleshooting.html).
 
 ---
 

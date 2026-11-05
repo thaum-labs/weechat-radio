@@ -20,9 +20,9 @@ Marks: [..] waiting  [tx] sent  [rl] heard again  [gw] gateway took it
 Signal report: /report CALL   (answered automatically, /report auto off)
 Weather:       /wx  or  /wx CALL   (your grid, needs internet)
 
-Update: wcr update. Linux and macOS restart a service. A station you
-started by hand keeps the old code until you start it again. Windows
-too, including a service.
+Update: click the version in the app (Pi: web page, Software card) and
+press Update. It waits for a quiet radio, restarts and rolls back if the
+new version fails. Terminal: wcr update, wcr status, wcr restart (no sudo).
 
 Beacons count down on the status bar (after exchange, pending, busy).
 First three about a minute apart, then every 5 minutes.

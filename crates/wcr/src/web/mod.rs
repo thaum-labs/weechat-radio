@@ -10,6 +10,7 @@
 mod auth;
 mod chat;
 mod health;
+pub mod software;
 mod station;
 mod tls;
 
@@ -31,7 +32,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub use auth::{hash_password, MIN_PASSWORD};
-pub use station::Station;
+pub use station::{state_path as station_state_path, Station};
 
 const LOGIN_PAGE: &str = include_str!("assets/login.html");
 const GATEWAY_PAGE: &str = include_str!("assets/gateway.html");
@@ -67,6 +68,8 @@ struct Web {
     whoami: Value,
     /// Live Chat, as one more IRC client of the station.
     chat: Arc<chat::Chat>,
+    /// The Software card: updates and restarts (#280).
+    update: Arc<software::Panel>,
 }
 
 /// The mDNS service `wcr web` advertises and `wcr webui` looks for.
@@ -126,6 +129,7 @@ pub async fn run(cfg_path: &Path, stop: impl std::future::Future<Output = ()>) -
             cfg.callsign.clone(),
             cfg_path.with_file_name("web-chat.json"),
         ),
+        update: Arc::new(software::Panel::default()),
     };
     // Kept for as long as the page runs, so `wcr webui` finds it by name.
     let _mdns = advertise(&cfg.callsign, listener_port(&cfg.web.bind));
@@ -139,8 +143,18 @@ pub async fn run(cfg_path: &Path, stop: impl std::future::Future<Output = ()>) -
             ""
         }
     );
+    software::write_run_file(cfg_path, listener_port(&cfg.web.bind));
+    software::restore_sessions(&web);
+    // Settle the last update first: a version that must roll back restarts
+    // on the previous one here, before the station keys anything.
+    let probation = software::on_start(&web);
     station.resume().await;
     tokio::spawn(station.clone().supervise());
+    if probation {
+        tokio::spawn(software::watch_probation(web.clone()));
+    }
+    tokio::spawn(software::check_now_and_then(web.clone()));
+    tokio::spawn(software::restart_on_hangup(web.clone()));
     let app = router(web).into_make_service_with_connect_info::<Peer>();
     tokio::select! {
         r = axum::serve(listener, app) => r.map_err(|e| Error::Msg(e.to_string()))?,
@@ -217,6 +231,14 @@ fn router(web: Web) -> Router {
         .route("/api/station/start", post(start))
         .route("/api/station/stop", post(stop))
         .route("/api/station/setting", post(setting))
+        .route("/api/update", get(software::get))
+        .route("/api/update/check", post(software::check))
+        .route("/api/update/apply", post(software::apply))
+        .route("/api/update/restart", post(software::restart_now))
+        .route(
+            "/api/update/test-versions",
+            post(software::set_test_versions),
+        )
         .route("/app", get(|| async { Html(APP_PAGE) }))
         .route(
             "/app.js",
@@ -1002,7 +1024,41 @@ pub fn install(cfg_path: &Path) -> Result<()> {
         }
     }
     println!("installed {UNIT_PATH}; it starts at boot and restarts after a crash");
+    match link_for_ssh(&exe, Path::new(SSH_LINK)) {
+        Ok(Some(note)) => println!("{note}"),
+        Ok(None) => {}
+        Err(e) => println!("could not link {SSH_LINK}: {e} (ssh commands need the full path)"),
+    }
+    println!(
+        "updates and restarts need no sudo from now on: use the web page's Software card, or wcr update / wcr restart"
+    );
     Ok(())
+}
+
+/// Where `wcr web install` links wcr, so `ssh pi@host wcr status` finds it:
+/// a non-interactive shell never reads ~/.bashrc's PATH (#280).
+pub const SSH_LINK: &str = "/usr/local/bin/wcr";
+
+/// Link `link` to `exe` unless it already is, or is a real file (left alone).
+pub fn link_for_ssh(exe: &Path, link: &Path) -> std::io::Result<Option<String>> {
+    if std::fs::read_link(link).is_ok_and(|t| t == exe) {
+        return Ok(None);
+    }
+    if link.exists() && std::fs::symlink_metadata(link).is_ok_and(|m| !m.file_type().is_symlink()) {
+        return Ok(Some(format!(
+            "left {} alone (it is not a link to {})",
+            link.display(),
+            exe.display()
+        )));
+    }
+    let _ = std::fs::remove_file(link);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(exe, link)?;
+    Ok(Some(format!(
+        "linked {} to {} (for ssh commands)",
+        link.display(),
+        exe.display()
+    )))
 }
 
 /// `path` moved from `from` to `to` when it lies under `from`.
@@ -1107,6 +1163,28 @@ mod tests {
         for ip in ["8.8.8.8", "172.32.0.1", "2001:db8::1", "::ffff:1.1.1.1"] {
             assert!(!is_lan(ip.parse().unwrap()), "{ip}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wcr_is_linked_for_ssh_once_and_a_real_file_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("wcr");
+        std::fs::write(&exe, "bin").unwrap();
+        let link = dir.path().join("usr-local-wcr");
+        assert!(link_for_ssh(&exe, &link)
+            .unwrap()
+            .unwrap()
+            .starts_with("linked"));
+        assert_eq!(std::fs::read_link(&link).unwrap(), exe);
+        assert_eq!(link_for_ssh(&exe, &link).unwrap(), None);
+        let real = dir.path().join("real-wcr");
+        std::fs::write(&real, "other").unwrap();
+        assert!(link_for_ssh(&exe, &real)
+            .unwrap()
+            .unwrap()
+            .starts_with("left"));
+        assert_eq!(std::fs::read_to_string(&real).unwrap(), "other");
     }
 
     #[test]

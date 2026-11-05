@@ -81,7 +81,59 @@ impl Sessions {
     pub fn close(&self, token: &str) {
         self.live.lock().remove(token);
     }
+
+    /// Hand the live logins to the next `wcr web` across a restart after an
+    /// update (#280), so the page reloads without asking for the password.
+    /// The file is readable by this user only and read back once.
+    pub fn save_for_restart(&self, path: &std::path::Path) -> std::io::Result<()> {
+        let live: Vec<(String, u64)> = self
+            .live
+            .lock()
+            .iter()
+            .filter(|(_, seen)| seen.elapsed() < SESSION_IDLE)
+            .map(|(t, seen)| (t.clone(), seen.elapsed().as_secs()))
+            .collect();
+        let text = serde_json::to_string(&live).map_err(std::io::Error::other)?;
+        let _ = std::fs::remove_file(path);
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        use std::io::Write;
+        opts.open(path)?.write_all(text.as_bytes())
+    }
+
+    /// Take back the logins `save_for_restart` left, if it was just now, and
+    /// remove the file either way.
+    pub fn restore_after_restart(&self, path: &std::path::Path) -> usize {
+        let fresh = std::fs::metadata(path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age < RESTART_HANDOFF);
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let _ = std::fs::remove_file(path);
+        if !fresh {
+            return 0;
+        }
+        let Ok(list) = serde_json::from_str::<Vec<(String, u64)>>(&text) else {
+            return 0;
+        };
+        let mut live = self.live.lock();
+        let now = Instant::now();
+        for (token, idle) in &list {
+            let seen = now.checked_sub(Duration::from_secs(*idle)).unwrap_or(now);
+            live.insert(token.clone(), seen);
+        }
+        list.len()
+    }
 }
+
+/// Logins handed over by a restart are taken back only this soon after.
+const RESTART_HANDOFF: Duration = Duration::from_secs(120);
 
 /// The session token in a `Cookie` header, if any.
 pub fn cookie_token(header: &str) -> Option<&str> {
@@ -116,6 +168,20 @@ mod tests {
         assert!(!s.check("nope"));
         s.close(&t);
         assert!(!s.check(&t));
+    }
+
+    #[test]
+    fn logins_survive_a_restart_after_an_update() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("web-sessions");
+        let s = Sessions::default();
+        let t = s.open();
+        s.save_for_restart(&file).unwrap();
+        let next = Sessions::default();
+        assert_eq!(next.restore_after_restart(&file), 1);
+        assert!(next.check(&t));
+        assert!(!file.exists(), "read once");
+        assert_eq!(Sessions::default().restore_after_restart(&file), 0);
     }
 
     #[test]

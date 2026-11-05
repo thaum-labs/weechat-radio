@@ -23,6 +23,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
+mod software;
+
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 // Match weechatradio.com :root in web/styles.css
@@ -613,6 +615,8 @@ struct GuiApp {
     tray_icon_key: i8,
     allow_close: bool,
     user_stopped: bool,
+    /// Updates and restarts (#280).
+    software: software::Software,
     active_channel: String,
     joined: Vec<String>,
     chan_new: String,
@@ -745,7 +749,9 @@ impl GuiApp {
             tray_quit: MenuId::new(""),
             tray_icon_key: 0,
             allow_close: false,
-            user_stopped: false,
+            // After an update restart, the station comes back as it was.
+            user_stopped: software::station_was_stopped(),
+            software: software::Software::start(),
             active_channel: session.active_channel,
             joined: session.joined,
             chan_new: String::new(),
@@ -1558,6 +1564,17 @@ impl eframe::App for GuiApp {
                 self.poll_traffic();
             }
         }
+        let station_failed = self.configured()
+            && self.auto_started
+            && !self.user_stopped
+            && self.status.is_none()
+            && self.node.is_none();
+        if let software::Tick::Relaunch = self.software.tick(self.status.as_ref(), station_failed) {
+            let was_running = self.status.is_some() && !self.user_stopped;
+            self.stop_station();
+            let err = software::relaunch(was_running);
+            self.error = format!("Could not restart: {err}");
+        }
         if self.configured() && !self.auto_started && !self.user_stopped {
             self.auto_started = true;
             self.start_station();
@@ -1678,6 +1695,8 @@ impl eframe::App for GuiApp {
                     if nav_link(ui, "quit").clicked() {
                         self.quit_app(ctx);
                     }
+                    ui.add_space(10.0);
+                    self.software.top_link(ui);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
                             RichText::new(chrono::Local::now().format("LCL %H:%M").to_string())
@@ -1692,6 +1711,8 @@ impl eframe::App for GuiApp {
                     });
                 });
             });
+
+        self.software.window(ctx);
 
         if !self.configured() || self.show_setup {
             self.poll_hardware_probe();
@@ -2033,11 +2054,17 @@ impl eframe::App for GuiApp {
                         egui::vec2(ui.available_width(), leftover.max(0.0)),
                         egui::Layout::bottom_up(egui::Align::Min),
                         |ui| {
-                            ui.label(
-                                RichText::new(version_label())
-                                    .color(DIM)
-                                    .font(FontId::monospace(11.0)),
+                            let version = ui.add(
+                                egui::Label::new(
+                                    RichText::new(version_label())
+                                        .color(DIM)
+                                        .font(FontId::monospace(11.0)),
+                                )
+                                .sense(egui::Sense::click()),
                             );
+                            if version.on_hover_text("Software: updates and restarts").clicked() {
+                                self.software.open = true;
+                            }
                             ui.add_space(6.0);
                             egui::ScrollArea::vertical()
                                 .id_salt("cheat_sheet")

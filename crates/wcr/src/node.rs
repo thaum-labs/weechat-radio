@@ -4602,7 +4602,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                 )
             }
         }
-        "update" => "run `wcr update` in a terminal".into(),
+        "update" => "press Update in the desktop app (click the version) or on the web page's Software card, or run `wcr update`".into(),
         "modem" | "tnc" => {
             let c = cfg.lock();
             if c.modem.is_bluetooth() {
