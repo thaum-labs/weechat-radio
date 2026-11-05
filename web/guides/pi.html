@@ -329,20 +329,11 @@
             <strong class="step-title">Set the station up</strong>
             <pre>wcr setup</pre>
             <p>Choose <strong>Handheld + Digirig</strong> (or your radio), the preset for the band, and the frequency the radio stays on. The serial and audio pickers start on the Digirig (<code>plughw:CARD=Device,DEV=0</code>), so Enter is right; the Pi’s own <code>Headphones</code> card cannot hear the radio. With a radio and the internet, setup picks <code>internet-radio</code> mode. That is the gateway mode: keep it, or the Pi is just another radio.</p>
+            <p>At the end, setup asks for a <strong>password for the web page</strong> (at least 8 characters), then whether to <strong>start the station now and at every boot</strong>. Say yes; sudo asks for your password once. That adds the <code>wcr-web</code> service, which runs as your user and restarts by itself after a crash. Check it with <code>systemctl status wcr-web</code>; its log is <code>journalctl -u wcr-web -f</code>. If you said no, run <code>sudo ~/.local/bin/wcr web install</code> later.</p>
           </li>
           <li>
-            <strong class="step-title">Choose a password for the web page</strong>
-            <pre>wcr web password</pre>
-            <p>At least 8 characters.</p>
-          </li>
-          <li>
-            <strong class="step-title">Run it at boot</strong>
-            <pre>sudo ~/.local/bin/wcr web install</pre>
-            <p>This adds the <code>wcr-web</code> service, which runs as your user and restarts by itself after a crash. Check it with <code>systemctl status wcr-web</code>; its log is <code>journalctl -u wcr-web -f</code>.</p>
-          </li>
-          <li>
-            <strong class="step-title">Press Start on the page</strong>
-            <p>Open the web portal (below), log in and press <strong>Start</strong>. It asks first, because the station then transmits. Start and Stop are remembered: after a reboot or an update the station goes back on the air only if you left it running.</p>
+            <strong class="step-title">Open the page</strong>
+            <p>Open the web portal (below) and log in. The station is on the air; <strong>Stop</strong> and <strong>Start</strong> are on the Station card. They are remembered: after a reboot or an update the station goes back on the air only if you left it running.</p>
           </li>
         </ol>
       </section>
