@@ -333,7 +333,7 @@
           </li>
           <li>
             <strong class="step-title">Open the page</strong>
-            <p>Open the web portal (below) and log in. The station is on the air; <strong>Stop</strong> and <strong>Start</strong> are on the Station card. They are remembered: after a reboot or an update the station goes back on the air only if you left it running.</p>
+            <p>Open <code>https://raspberrypi.local:8443</code> (your Pi’s name; more under Open the web portal, below) and log in. The station is on the air; <strong>Stop</strong> and <strong>Start</strong> are on the Station card. They are remembered: after a reboot or an update the station goes back on the air only if you left it running.</p>
           </li>
         </ol>
       </section>
@@ -341,7 +341,7 @@
       <section class="article-section" aria-labelledby="openH">
         <h2 id="openH">Open the web portal</h2>
         <p>From any browser on the same network, open <code>https://raspberrypi.local:8443</code> (your Pi’s name), or its IP address, for example <code>https://192.168.1.158:8443</code>. Right after the first boot the <code>.local</code> name can take a few minutes to work; <code>hostname -I</code> on the Pi shows the address.</p>
-        <p>Or let a laptop find it: run <code>wcr webui</code> on any computer with WeeChat Radio. It finds the Pi on your network, prints the address and opens it. <code>--qr</code> also prints a QR code to scan.</p>
+        <p>Or let a laptop find it: run <code>wcr webui</code> on any computer with WeeChat Radio. It finds the Pi on your network, prints the address and opens it. <code>--qr</code> also prints a QR code to scan. On the Pi itself, <code>wcr webui</code> prints the page’s addresses and a QR code for your phone.</p>
         <ul>
           <li><strong>HTTPS.</strong> The Pi makes its own certificate, so the browser warns once. Check it is your Pi’s address, then continue.</li>
           <li><strong>Password.</strong> A login lasts 12 hours of use.</li>
@@ -483,9 +483,74 @@
 
       <section class="article-section" aria-labelledby="updH">
         <h2 id="updH">Updating</h2>
-        <p>Open the web page’s <strong>Software</strong> card and press <strong>Update</strong> when it says <strong>Update available</strong>. No SSH, no password. It checks the download’s SHA-256, waits until the radio is quiet (nothing sending, no mail burst), restarts on the new version, and the page reloads showing it within a minute. If the new version does not start, the previous one comes back and the card says <strong>Rolled back</strong>.</p>
-        <p>Coming from v1.0.16-rc2 or older, do that one update over SSH: <code>wcr update --rc</code>, then <code>sudo systemctl restart wcr-web</code>. After that, the page does it. In a terminal, <code>wcr update</code>, <code>wcr status</code> and <code>wcr restart</code> need no sudo.</p>
-        <p>The station comes back on the air only if it was running before. Make sure your licence allows unattended or remote operation on that band, and that you can always stop it: the Stop button, <code>sudo systemctl stop wcr-web</code>, or the radio’s power switch.</p>
+        <p>Updates happen on the web page, with no SSH and no password. The <strong>Software</strong> card says <strong>Update available</strong> when there is a new version; press <strong>Update</strong>.</p>
+        <ul class="shots">
+          <li><figure><a href="/guides/pi/software.png"><img src="/guides/pi/software.png" width="366" height="147" loading="lazy" alt="Software card: running 1.0.16-rc3, Update available (1.0.16), an Update to 1.0.16 button and a Check now button." /></a><figcaption><strong>Software.</strong> The running version, Update when there is one, and Check now.</figcaption></figure></li>
+        </ul>
+        <ol class="steps">
+          <li>
+            <strong class="step-title">It downloads and checks</strong>
+            <p>The download’s SHA-256 must match, and <code>wcr.toml</code> is copied to <code>wcr.toml.before-update</code> first.</p>
+          </li>
+          <li>
+            <strong class="step-title">It waits for a quiet radio</strong>
+            <p>Nothing sending or being heard, no mail being passed, no beacon about to go. The card says what it is waiting for. It never cuts a transmission off; after 15 minutes of a busy channel it gives up and says so.</p>
+          </li>
+          <li>
+            <strong class="step-title">It restarts itself</strong>
+            <p>Same service, same user, no sudo. The page reloads on the new version within a minute and you stay logged in. The station comes back on the air only if it was running before.</p>
+          </li>
+          <li>
+            <strong class="step-title">It rolls back if it has to</strong>
+            <p>If the new version does not start, or its station does not stay up for a minute, the previous version comes back by itself and the card says <strong>Rolled back</strong> and why.</p>
+          </li>
+        </ol>
+        <p>If the card says <strong>Installed x / Running y</strong>, a newer version is installed but not running yet (for example after <code>wcr update</code> in a terminal); press <strong>Restart to finish</strong>.</p>
+        <p>Coming from v1.0.16-rc2 or older, do that one update over SSH: <code>wcr update --rc</code>, then <code>sudo systemctl restart wcr-web</code>. After that, the page does it.</p>
+        <p>Make sure your licence allows unattended or remote operation on that band, and that you can always stop it: the Stop button, <code>sudo systemctl stop wcr-web</code>, or the radio’s power switch.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="cmdH">
+        <h2 id="cmdH">From a terminal</h2>
+        <p>You do not need these day to day; the web page does it all. Over SSH they work as your own user, without sudo unless shown. <code>wcr</code> is on every shell’s path, so <code>ssh you@raspberrypi.local wcr status</code> works from a laptop too.</p>
+        <dl class="fix-list">
+          <div>
+            <dt><code>wcr status</code></dt>
+            <dd><p>Installed and running version, the web page, the station and whether the radio is busy, and whether an update is out.</p></dd>
+          </div>
+          <div>
+            <dt><code>wcr update</code></dt>
+            <dd><p>The same as the Update button: download, check, wait for a quiet radio, restart, check it runs. Ends with one line, for example <code>Updated to 1.0.16, running, radio idle.</code></p></dd>
+          </div>
+          <div>
+            <dt><code>wcr restart</code></dt>
+            <dd><p>Restart on the installed version once the radio is quiet. The station comes back as you left it.</p></dd>
+          </div>
+          <div>
+            <dt><code>wcr webui</code></dt>
+            <dd><p>On the Pi: the page’s addresses, whether the service runs, and a QR code for your phone. On a laptop: finds the Pi and opens the page.</p></dd>
+          </div>
+          <div>
+            <dt><code>wcr setup</code></dt>
+            <dd><p>Change the radio, band or frequency. Safe to run again: it keeps the password and settings it does not ask about. Stop the station first if you want to test the sound card.</p></dd>
+          </div>
+          <div>
+            <dt><code>wcr web password</code></dt>
+            <dd><p>Change the web page password.</p></dd>
+          </div>
+          <div>
+            <dt><code>sudo ~/.local/bin/wcr web install</code></dt>
+            <dd><p>Start it at boot, if you said no at the end of setup.</p></dd>
+          </div>
+          <div>
+            <dt><code>sudo systemctl stop wcr-web</code></dt>
+            <dd><p>Stop everything until the next boot (<code>start</code> brings it back). The log: <code>journalctl -u wcr-web -f</code>.</p></dd>
+          </div>
+          <div>
+            <dt><code>wcr update --rc</code></dt>
+            <dd><p>Test versions (release candidates). Only from a terminal; once on one, the page offers the next test version too.</p></dd>
+          </div>
+        </dl>
       </section>
 
       <p class="next">Every detail and setting: <a href="https://github.com/thaum-labs/weechat-radio/blob/main/docs/PI-GATEWAY.md">PI-GATEWAY.md</a>. Related: <a href="/guides/handheld.html">handheld + Digirig</a> · <a href="/docs/email.html">email</a> · <a href="/docs/bridging.html">cross-frequency chat</a>.</p>
