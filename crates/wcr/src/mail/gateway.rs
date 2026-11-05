@@ -35,6 +35,11 @@ pub fn resend_accepted(http_ok: bool) -> bool {
 
 pub const NO_GATEWAY_ACK: &str =
     "Gateway did not acknowledge. The message may not have been heard.";
+/// Radio+ with Auto off and no gateway callsign typed.
+pub const NO_GATEWAY_SET: &str =
+    "Radio+ mail needs a mail gateway: in setup pick Auto, or type the callsign of the internet-radio station that posts your email.";
+/// Auto asked, and no gateway replied.
+pub const NONE_HEARD_TEXT: &str = "No mail gateway heard. No internet-radio station on this frequency and preset answered. Retry later, or type a gateway callsign in setup.";
 pub const RADIO_NOT_RUNNING: &str = "Radio is not running.";
 pub const GATEWAY_NOT_ACCEPTED: &str = "Gateway has the message, but it was not accepted.";
 pub const TX_STUCK: &str = "Timed out while transmitting. The message stayed at tx.";
@@ -262,7 +267,7 @@ pub fn failure_text(payload: &str) -> Option<String> {
 
 pub fn state_mark(state: &str) -> &'static str {
     match state {
-        "queued" => "[..]",
+        "queued" | "locating" => "[..]",
         "tx" => "[tx]",
         "gateway" => "[gw]",
         "sent" => "[ok]",

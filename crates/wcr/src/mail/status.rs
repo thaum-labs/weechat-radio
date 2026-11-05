@@ -7,7 +7,7 @@
 //! tell when it is opened.
 
 use super::gateway;
-use super::store::{Hop, MailRow};
+use super::store::{Hop, MailRow, Via};
 use serde::{Deserialize, Serialize};
 
 /// Sent mail without a final answer after this long says "no delivery report".
@@ -43,6 +43,10 @@ pub struct MailView {
     pub status: MailStatus,
     #[serde(default)]
     pub hops: Vec<Hop>,
+    /// Radio+ gateways this mail was keyed to, first used first. The last
+    /// one is the gateway in use (#275).
+    #[serde(default)]
+    pub via: Vec<Via>,
 }
 
 /// `online` is false when the last delivery check could not reach the hub.
@@ -55,6 +59,13 @@ pub fn mail_status(row: &MailRow, hops: &[Hop], now: i64, online: bool) -> MailS
     };
     let (key, label, word, reason) = match state {
         "queued" => ("queued", "Queued", "", String::new()),
+        "locating" => (
+            "locating",
+            "Finding gateway",
+            "",
+            "Not sent yet. Asking which mail gateways hear this station; the mail goes once one answers."
+                .to_string(),
+        ),
         // The burst has finished keying; the gateway has not answered yet.
         "tx" if hops.iter().any(|h| h.stage == "keyed") => (
             "keyed",
@@ -77,7 +88,7 @@ pub fn mail_status(row: &MailRow, hops: &[Hop], now: i64, online: bool) -> MailS
     // Resend's bad news is a [no], although the row's state is `sent`.
     let mark = match key {
         "bounced" | "spam" | "failed" => "[no]",
-        "delayed" | "keyed" | "no_record" => "[..]",
+        "delayed" | "keyed" | "no_record" | "locating" => "[..]",
         "received" => "",
         _ => gateway::state_mark(state).trim(),
     }
@@ -336,10 +347,15 @@ mod tests {
             row: row("sent", "delivered"),
             status: mail_status(&row("sent", "delivered"), &[], 0, true),
             hops: vec![hop("sent", 7)],
+            via: vec![Via {
+                gateway: "TF101".into(),
+                ts: 6,
+            }],
         };
         let json = serde_json::to_value(&view).unwrap();
         assert_eq!(json["state"], "sent");
         assert_eq!(json["status"]["label"], "Delivered");
+        assert_eq!(json["via"][0]["gateway"], "TF101");
         let back: MailRow = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(back, view.row);
         let again: MailView = serde_json::from_value(json).unwrap();

@@ -387,8 +387,12 @@ struct SettingBody {
     value: String,
 }
 
-/// Mode or preset from the gateway view's pickers (#226).
+/// Mode or preset from the gateway view's pickers (#226), or the Radio+
+/// mail gateway (#274): `auto` or a callsign.
 async fn setting(State(web): State<Web>, Json(b): Json<SettingBody>) -> Response {
+    if b.what == "mail_gateway" {
+        return set_mail_gateway(&web, &b.value).await;
+    }
     // The node refuses some presets on this link and only says so in chat;
     // give the page the same answer instead of ok (#235).
     if b.what == "preset" {
@@ -409,6 +413,52 @@ async fn setting(State(web): State<Web>, Json(b): Json<SettingBody>) -> Response
         }
         Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
     }
+}
+
+/// Save the mail gateway in wcr.toml and, when the station runs, use it now.
+/// A typed callsign is kept when Auto is picked (#274).
+async fn set_mail_gateway(web: &Web, value: &str) -> Response {
+    let v = value.trim().to_ascii_uppercase();
+    let auto = v == "AUTO" || v.is_empty();
+    if !auto && !crate::proto::is_plausible_callsign(&v) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": format!("{value} is not a callsign") })),
+        )
+            .into_response();
+    }
+    let mut cfg = match Config::load(&web.cfg_path) {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": e.to_string() })),
+            )
+                .into_response()
+        }
+    };
+    if !auto {
+        cfg.mail.gateway = v.clone();
+    }
+    cfg.mail.auto = Some(auto);
+    if let Err(e) = cfg.save(&web.cfg_path) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": e.to_string() })),
+        )
+            .into_response();
+    }
+    let _ = web
+        .http
+        .post(format!("{}/mail/gateway", web.local))
+        .json(&json!({ "gateway": cfg.mail.gateway, "auto": auto }))
+        .send()
+        .await;
+    web.station.note(&format!(
+        "mail gateway set to {} on the web page",
+        if auto { "Auto" } else { v.as_str() }
+    ));
+    Json(json!({ "ok": true })).into_response()
 }
 
 /// The modes, and the presets this station's link can use, for the pickers.
@@ -466,6 +516,7 @@ async fn gateway(State(web): State<Web>) -> Json<Value> {
                     "to": r["to_addr"],
                     "subject": r["subject"],
                     "status": r["status"],
+                    "via": r["via"],
                 })
             })
             .collect()
@@ -478,8 +529,17 @@ async fn gateway(State(web): State<Web>) -> Json<Value> {
         .map(|c| c.rf.frequency_khz)
         .filter(|&k| k > 0)
         .map(crate::band::describe);
+    // Setup's mail gateway (#274), from wcr.toml so it shows while stopped.
+    let mail_gateway = cfg.as_ref().map(|c| {
+        json!({
+            "auto": c.mail.auto(),
+            "gateway": c.mail.gateway,
+            "mode": c.mode.as_str(),
+        })
+    });
     Json(json!({
         "frequency": frequency,
+        "mail_gateway": mail_gateway,
         "choices": choices(cfg.as_ref()),
         "station": state,
         "answering": !status.is_null(),
@@ -631,25 +691,24 @@ async fn mail_list(State(web): State<Web>, Query(q): Query<FolderQ>) -> Response
         return (StatusCode::BAD_REQUEST, "unknown folder").into_response();
     }
     let path = format!("/mail/list?folder={}", q.folder);
-    let (code, mut body) = match web.local_get(&path).await {
+    let (code, body) = match web.local_get(&path).await {
         Ok(r) => r,
         Err(r) => return r,
     };
+    let mut out = json!({ "rows": serde_json::from_str::<Value>(&body).unwrap_or(Value::Null) });
     // Radio+ headers waiting at the gateway sit at the top of the inbox.
     if q.folder == "inbox" && code.is_success() {
         if let Ok((_, waiting)) = web.local_get("/mail/waiting").await {
-            body = json!({
-                "rows": serde_json::from_str::<Value>(&body).unwrap_or(Value::Null),
-                "waiting": serde_json::from_str::<Value>(&waiting).unwrap_or(Value::Null),
-            })
-            .to_string();
-            return json_response(code, body);
+            out["waiting"] = serde_json::from_str::<Value>(&waiting).unwrap_or(Value::Null);
         }
     }
-    json_response(
-        code,
-        json!({ "rows": serde_json::from_str::<Value>(&body).unwrap_or(Value::Null) }).to_string(),
-    )
+    // Why mail cannot go, and the Radio+ gateway in use (#274, #275).
+    if let Ok((_, tab)) = web.local_get("/mail/tab").await {
+        let tab = serde_json::from_str::<Value>(&tab).unwrap_or(Value::Null);
+        out["block"] = tab["block"].clone();
+        out["gateway_line"] = tab["gateway_line"].clone();
+    }
+    json_response(code, out.to_string())
 }
 
 #[derive(Deserialize)]

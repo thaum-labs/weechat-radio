@@ -79,12 +79,15 @@
       <section class="article-section" aria-labelledby="addrH">
         <h2 id="addrH">Your address</h2>
         <p>A licensed callsign is <code>M7TJF@mail.weechatradio.com</code> (your callsign). There is no domain box. Tell that address to people on the internet once.</p>
-        <p>Compose <strong>To:</strong> is an internet mailbox only, such as <code>alex@example.com</code>. Mail to another ham is still live chat. In Setup, <strong>Mail gateway</strong> is the <code>internet-radio</code> callsign on your dial. Radio+ without that callsign stays grey and the tooltip says to set it.</p>
+        <p>Compose <strong>To:</strong> is an internet mailbox only, such as <code>alex@example.com</code>. Mail to another ham is still live chat. In Setup, on <code>radio-plus</code> only, <strong>Mail gateway</strong> is the <code>internet-radio</code> station that posts your email, such as your home Pi. Leave it on <strong>Auto</strong> (the default) or type a callsign to always use that station. With Auto off and no callsign, the Email tab stays grey and says so.</p>
+        <h3>Auto: finding a mail gateway</h3>
+        <p>On Auto your station keys a short signed ask. Every <code>internet-radio</code> gateway on your frequency and preset that hears it tells the hub how well it heard you. The hub lets the best three answer one after the other, so the replies never key over each other. Each reply says how well that gateway heard you, and your station measures how well it hears the reply. It keeps the gateway whose <em>weaker</em> direction is best. Distance only settles a tie: on HF a nearer station can be in the skip zone.</p>
+        <p>Setup and the status panel show the pick, for example <code>Auto: TF101, link 6 dB</code>, or <strong>No mail gateway heard</strong>. Your station asks when it starts, after a band or preset change, after about an hour, or after repeated failures, not for every mail. Mail and Check mail go to the one picked gateway, so a mail is posted once. If that gateway stops answering, the mail moves to the next one heard. While a gateway is being found, the send window says <em>Finding a mail gateway… Not sent yet</em>, then moves on to sending. The outbox and the mail's timeline name the gateway that was used. Timings follow your preset, so Auto works on VHF/UHF FM and on HF alike.</p>
       </section>
 
       <section class="article-section" aria-labelledby="pathH">
         <h2 id="pathH">How mail travels</h2>
-        <p class="section-lead">On <code>radio-plus</code>, mail goes over the air to your Mail gateway, and that station uses the hub. Watch a mail go out to Alex and the reply come back.</p>
+        <p class="section-lead">On <code>radio-plus</code>, mail goes over the air to your Mail gateway (picked by Auto, or the callsign you typed), and that station uses the hub. Watch a mail go out to Alex and the reply come back.</p>
 
         <figure class="diagram live-dgm" data-live-dgm data-setup="out">
           <div class="setup-switch" role="group" aria-label="Direction" data-setup-switch hidden>
@@ -134,7 +137,7 @@
                     <text class="sub" x="336" y="228" text-anchor="middle">mail gateway</text>
                   </g>
                   <text class="sub" x="355" y="298" text-anchor="middle">internet-radio · 144.950</text>
-                  <text class="sub" x="355" y="312" text-anchor="middle">named in Mail gateway</text>
+                  <text class="sub" x="355" y="312" text-anchor="middle">picked by Auto or named</text>
 
                   <!-- you, out on the hill -->
                   <g data-node="you">
@@ -262,7 +265,7 @@
           <div class="mode-internet"><dt><code>internet</code></dt><dd>Send to the internet: hub only. Confirm says there is no radio.<br />Read inbound mail: Email tab syncs; badge and tray</dd></div>
           <div class="mode-internet-radio"><dt><code>internet-radio</code></dt><dd>Send to the internet: this station is the gateway. Its own mail uses the hub when the hub is up.<br />Read inbound mail: sync over the internet. It also accepts radio-plus mail and posts that.</dd></div>
           <div class="mode-radio"><dt><code>radio</code></dt><dd>Send to the internet: grey. Use Internet, Internet+Radio, or Radio+ with a gateway.<br />Read inbound mail: no path to the hub</dd></div>
-          <div class="mode-radio-plus"><dt><code>radio-plus</code></dt><dd>Send to the internet: always RF to the Mail gateway callsign, then that station posts to the hub<br />Read inbound mail: Check mail over RF. Confirm every time.</dd></div>
+          <div class="mode-radio-plus"><dt><code>radio-plus</code></dt><dd>Send to the internet: always RF to one Mail gateway (Auto's pick, or the callsign typed in setup), then that station posts to the hub<br />Read inbound mail: Check mail over RF. Confirm every time.</dd></div>
         </dl>
         <p>Frequency and preset stay station-wide, same as chat. A 4 KB mail on <code>hf-deep</code> takes a long time on the air. The confirm exists so you see that before you key.</p>
       </section>

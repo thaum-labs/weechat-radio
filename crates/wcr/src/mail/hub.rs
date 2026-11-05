@@ -5,6 +5,9 @@ use crate::error::{Error, Result};
 use crate::proto::IdentityKeys;
 use serde_json::{json, Value};
 
+/// Where a gateway reports a heard gateway ask (#275).
+pub const GATEWAY_ASK_PATH: &str = "/api/v1/mail/gateway/ask";
+
 pub fn http_base_from_hub(url: &str) -> String {
     let trimmed = url.trim().trim_end_matches('/');
     let mut s = if let Some(rest) = trimmed.strip_prefix("wss://") {

@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.89-DEA584?logo=rust&logoColor=white" alt="Rust 1.89" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="Apache-2.0" /></a>
-  <a href="https://github.com/thaum-labs/weechat-radio/releases"><img src="https://img.shields.io/badge/version-1.0.15-7d9bff" alt="Version 1.0.15" /></a>
+  <a href="https://github.com/thaum-labs/weechat-radio/releases"><img src="https://img.shields.io/badge/version-1.0.16--rc1-7d9bff" alt="Version 1.0.16-rc1" /></a>
   <a href="https://github.com/thaum-labs/weechat-radio/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/thaum-labs/weechat-radio/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
   <a href="https://github.com/thaum-labs/weechat-radio/releases/latest"><img src="https://img.shields.io/github/v/release/thaum-labs/weechat-radio?label=stable&color=39ff14" alt="Latest stable release" /></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6" alt="Windows, macOS and Linux" />
@@ -73,7 +73,7 @@ Switch with `/radio mode <name>` or `F2` in the TUI.
 | `internet` | Chat with no radio. This computer talks to the hub. |
 | `internet-radio` | Radio plus internet. This computer is a gateway: it keys the radio, talks to the hub, and carries other stations' radio-plus traffic onward. |
 | `radio` | Radio only. A gateway that hears you leaves the message on the air. |
-| `radio-plus` | Radio only from this computer, but a gateway that hears you may carry the message and email onto the internet. |
+| `radio-plus` | Radio only from this computer, but a gateway that hears you may carry the message and email onto the internet. Mail finds a gateway by itself (Auto), or goes to one you name. |
 
 Details and a worked example: [modes](https://weechatradio.com/docs/modes.html) or `wcr help modes`.
 

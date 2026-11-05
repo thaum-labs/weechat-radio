@@ -10,8 +10,36 @@ The address is `{callsign}@mail.weechatradio.com`. There is no domain setting. G
 | --- | --- |
 | internet | Hub, when the hub is up. No radio. |
 | internet-radio | This station is a gateway. Its own mail goes to the hub when the hub is up. It also accepts radio-plus mail and posts that to the hub. |
-| radio-plus | Always RF to the callsign in `[mail] gateway`. No shortcut to the hub. |
+| radio-plus | Always RF to one mail gateway: Auto's pick (the default), or the callsign in `[mail] gateway` when Auto is off. No shortcut to the hub. |
 | radio | The tab stays grey. There is no path to Resend. |
+
+## Mail gateway: Auto or a callsign (radio-plus)
+
+Setup shows **Mail gateway** only in `radio-plus`, with the line "Callsign of the internet-radio station that posts your email, e.g. your home Pi." It offers **Auto** (the default) or a typed **Callsign**. A typed callsign is kept when Auto is on or the mode changes. In `wcr.toml`:
+
+```toml
+[mail]
+auto = true        # default; leave out and an older config with a gateway stays pinned
+gateway = "TF101"  # used when auto = false
+```
+
+**Auto** asks which gateways hear this station instead of needing a callsign:
+
+1. The station keys a short signed **gateway ask** (its callsign, a nonce, its grid).
+2. Every `internet-radio` gateway that decodes it reports it to the hub (`POST /api/v1/mail/gateway/ask`) with the SNR it heard and its own grid. The hub checks the station signed the ask.
+3. The hub waits a short window (about 2 s, longer on slow presets), then gives the reporting gateways reply slots in turn, best SNR first, at most three, so no two replies key at once.
+4. Each reply carries the SNR at which that gateway heard the ask. The station measures each reply's SNR too.
+5. The station ranks by the **weaker of the two SNRs** (the link only works if both directions do). Distance only breaks a tie (links within half a dB); it is never a quality signal, because on HF a nearer station can sit in the skip zone.
+
+The winner becomes the current gateway. Setup and the status panel show it (`Auto: TF101, link 6 dB, 1 more heard`). If nobody replies they say `No mail gateway heard`, and mail waiting for a gateway fails with that reason.
+
+Auto works on any band and preset. Only gateways on the same frequency and preset can hear the ask. The request window and the hub's slot length follow the preset's airtime: a slot is one reply's airtime plus 4 s for the gateway's quiet-channel wait, about 5 s on `vhf-fm` and well over 10 s on `hf-deep`. Nothing uses fixed 70 cm timings.
+
+The station asks when it starts (and when Radio+ or Auto is switched on), after a band or preset change, before the next mail once the pick is an hour old, and after repeated failures. It does not ask for every mail. Mail and Check mail (list and get) go to the one picked gateway, so a mail is posted once and Check mail has one responder. If a mail runs out of tries on that gateway, it moves to the next one on the list and starts again from the first chunk; when the list is used up it asks once more, then fails with the gateways it tried. Check mail with no answer twice in a row also moves to the next gateway. The hub still drops a second post of the same mail id as a safety net.
+
+While Auto is finding a gateway the outbox row says **Finding gateway** and the send window says `Finding a mail gateway: asking which stations hear you. Not sent yet…` before it moves on to the usual sending steps. The outbox row names the gateway used (`via TF101`) and the timeline lists each gateway the mail went to, with its time.
+
+Radio+ with Auto off and no callsign keeps the Email tab grey with the reason: open setup and pick Auto, or type the gateway's callsign.
 
 `[gateway] third_party = deny` blocks chat relay only. It does not block a gateway from posting mail.
 

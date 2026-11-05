@@ -651,8 +651,40 @@ impl Default for RfConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MailConfig {
-    /// Radio-plus sends RF to this callsign. Empty until set in setup.
+    /// Radio+ sends RF to this callsign when Auto is off. Kept when Auto is
+    /// on or the mode changes, so switching back restores it.
     pub gateway: String,
+    /// Radio+ asks which internet-radio gateways hear it and picks the best
+    /// two-way link (#275). Unset means on, unless a gateway callsign is
+    /// saved: a config that already named one keeps that pin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto: Option<bool>,
+}
+
+impl MailConfig {
+    /// Auto is the default. An older config with a named gateway stays pinned.
+    pub fn auto(&self) -> bool {
+        self.auto.unwrap_or(self.gateway.trim().is_empty())
+    }
+
+    /// What Radio+ mail goes to: `AUTO`, the pinned callsign, or empty
+    /// when neither is set.
+    pub fn choice(&self) -> String {
+        if self.auto() {
+            "AUTO".into()
+        } else {
+            self.pinned()
+        }
+    }
+
+    /// The pinned gateway, or empty when Auto picks one.
+    pub fn pinned(&self) -> String {
+        if self.auto() {
+            String::new()
+        } else {
+            self.gateway.trim().to_ascii_uppercase()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -814,6 +846,10 @@ impl Config {
             self.lan.service = DEFAULT_LAN_SERVICE.into();
         }
         self.mail.gateway = self.mail.gateway.trim().to_ascii_uppercase();
+        if self.mail.gateway == "AUTO" {
+            self.mail.gateway.clear();
+            self.mail.auto = Some(true);
+        }
         if self.modem.uses_tnc() {
             // The radio's TNC is fixed 1200 bd AFSK; modem73 is not involved.
             self.modem.manage = false;
@@ -1138,6 +1174,29 @@ mod tests {
         // Saving again with nothing changed leaves the file as it is.
         back.save(&path).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+    }
+
+    #[test]
+    fn mail_gateway_auto_is_the_default_but_an_old_pin_stays() {
+        let fresh = Config::default();
+        assert!(fresh.mail.auto());
+        assert_eq!(fresh.mail.pinned(), "");
+        let old: Config =
+            toml::from_str("callsign = \"G4ABC\"\n[mail]\ngateway = \"tf101\"\n").unwrap();
+        assert!(!old.mail.auto());
+        let mut pinned = old.clone();
+        pinned.normalize();
+        assert_eq!(pinned.mail.pinned(), "TF101");
+        let mut auto = old.clone();
+        auto.mail.auto = Some(true);
+        assert!(auto.mail.auto());
+        assert_eq!(auto.mail.pinned(), "");
+        assert_eq!(auto.mail.gateway, "tf101", "the typed callsign is kept");
+        let mut word: Config =
+            toml::from_str("callsign = \"G4ABC\"\n[mail]\ngateway = \"auto\"\n").unwrap();
+        word.normalize();
+        assert!(word.mail.auto());
+        assert_eq!(word.mail.gateway, "");
     }
 
     #[test]

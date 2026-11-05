@@ -40,6 +40,18 @@
         <label id="preset-label">Preset <select id="preset-pick" aria-label="Modem preset"></select></label>
       </div>
       <p class="meta">The preset picks the modem family. Inside it the speed steps down by itself on a poor path and back up when it clears; the step in use is shown after the preset.</p>
+      <div id="mailgw-box" class="mailgw" hidden>
+        <fieldset class="pickers">
+          <legend>Mail gateway</legend>
+          <label class="inline"><input type="radio" name="mailgw" id="mailgw-auto" value="auto"> Auto</label>
+          <label class="inline"><input type="radio" name="mailgw" id="mailgw-pin" value="pin"> Callsign</label>
+          <input id="mailgw-call" placeholder="e.g. TF101" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Mail gateway callsign" maxlength="12">
+          <button type="button" id="mailgw-save" class="quiet">Save</button>
+        </fieldset>
+        <p class="meta">Callsign of the internet-radio station that posts your email, e.g. your home Pi.</p>
+        <p class="meta" id="mailgw-how"></p>
+        <p class="meta" id="mailgw-now"></p>
+      </div>
     </details>
   </section>
 

@@ -306,6 +306,12 @@ async function loadMail() {
     return;
   }
   mailRows = d.rows || [];
+  // Why mail cannot go (for example Radio+ with no mail gateway), or the
+  // Radio+ gateway in use (#274, #275).
+  const note = $("mail-note");
+  note.textContent = d.block || (d.gateway_line ? `Mail gateway: ${d.gateway_line}` : "");
+  note.className = d.block ? "small warn" : "small dim";
+  note.hidden = !note.textContent;
   const ul = $("mail-list");
   ul.replaceChildren();
   for (const w of d.waiting || []) {
@@ -328,7 +334,8 @@ async function loadMail() {
   for (const m of mailRows) {
     const li = el("li", m.unread ? "unread" : "");
     const what = el("span", "what");
-    const who = folder === "inbox" ? m.from_addr : m.to_addr;
+    const via = (m.via || []).at(-1);
+    const who = folder === "inbox" ? m.from_addr : `${m.to_addr}${via ? ` · via ${via.gateway}` : ""}`;
     what.append(el("span", "subject", m.subject || "(no subject)"), el("span", "who", who));
     li.append(el("span", "when", clock(m.ts)), chip(m.status || {}), what);
     li.tabIndex = 0;
@@ -342,7 +349,7 @@ async function loadMail() {
   }
 }
 
-const STAGES = { air: "on air", gateway: "at the gateway", sent: "sent (Resend took it)", report: "delivery report", failed: "failed", fetched: "fetched", keyed: "burst keyed" };
+const STAGES = { locate: "finding a mail gateway", air: "on air", gateway: "at the gateway", sent: "sent (Resend took it)", report: "delivery report", failed: "failed", fetched: "fetched", keyed: "burst keyed" };
 
 function drawMail(m) {
   openMail = m;
@@ -354,7 +361,10 @@ function drawMail(m) {
   const p = $("mv-status");
   p.replaceChildren(chip(st), document.createTextNode(` ${st.word || ""}`));
   if (st.reason) p.append(el("span", "dim small block", st.reason));
-  $("mv-hops").replaceChildren(...(m.hops || []).map((h) => el("li", "", `${clock(h.ts)} ${STAGES[h.stage] || h.stage}`)));
+  const steps = (m.hops || []).map((h) => ({ ts: h.ts, text: STAGES[h.stage] || h.stage }))
+    .concat((m.via || []).map((v) => ({ ts: v.ts, text: `via gateway ${v.gateway}` })))
+    .sort((a, b) => a.ts - b.ts);
+  $("mv-hops").replaceChildren(...steps.map((h) => el("li", "", `${clock(h.ts)} ${h.text}`)));
   $("mv-body").textContent = m.body || "";
   $("mail-retry").hidden = !st.retry;
   $("mail-reply").hidden = m.folder !== "inbox";

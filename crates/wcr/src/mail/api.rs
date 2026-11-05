@@ -29,6 +29,7 @@ pub fn router(slot: MailSlot) -> Router {
         .route("/mail/get", post(get_msgs))
         .route("/mail/copy", post(copy_set))
         .route("/mail/copy/confirm", post(copy_confirm))
+        .route("/mail/gateway", post(gateway_set))
         .layer(axum::Extension(slot))
         .layer(middleware::from_fn(
             crate::http_local::require_loopback_host,
@@ -192,6 +193,24 @@ async fn copy_confirm(
     let call = h.cfg.lock().callsign.clone();
     let state = h.store.copy(&call).map(|c| c.state).unwrap_or_default();
     Ok(Json(json!({ "ok": ok, "hub": hub, "state": state })))
+}
+
+#[derive(Deserialize)]
+struct GatewayBody {
+    #[serde(default)]
+    gateway: String,
+    auto: bool,
+}
+
+/// Setup changed the mail gateway (#274): apply it to the running station.
+/// Memory only. Setup has saved wcr.toml already.
+async fn gateway_set(
+    axum::Extension(slot): axum::Extension<MailSlot>,
+    Json(b): Json<GatewayBody>,
+) -> Result<Json<Value>, StatusCode> {
+    let h = handle(&slot).await?;
+    h.set_gateway(&b.gateway, b.auto).await;
+    Ok(Json(h.tab_json()))
 }
 
 fn store_err(_: crate::error::Error) -> StatusCode {
