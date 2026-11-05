@@ -51,7 +51,9 @@ function mailRow(m) {
   chip.title = st.reason || st.line || "";
   chip.setAttribute("aria-label", `${st.mark || ""} ${st.label || ""}`.trim());
   const what = el("span", "what");
-  what.append(el("span", "subject", m.subject || "(no subject)"), el("span", "who", `${m.from} → ${m.to}`));
+  const via = (m.via || []).at(-1);
+  const hop = via ? ` · via ${via.gateway}` : "";
+  what.append(el("span", "subject", m.subject || "(no subject)"), el("span", "who", `${m.from} → ${m.to}${hop}`));
   what.title = `${m.subject}\n${m.from} → ${m.to}${st.reason ? `\n${st.reason}` : ""}`;
   li.append(el("span", "when", clock(m.ts)), what, chip);
   return li;
@@ -474,6 +476,7 @@ function draw(d) {
   shown = { mode: s.mode, preset: s.preset };
   drawStatus(d);
   drawPickers(d.choices || {}, running, s);
+  drawMailGateway(d.mail_gateway, s);
   drawRadio(running, s);
   drawLists(d);
   drawDiagnostics(d);
@@ -561,6 +564,53 @@ async function pick(what, sel, current) {
     setTimeout(poll, 500);
   }
 }
+
+// Setup's mail gateway (#274): only in Radio+, Auto or a callsign. The
+// typed callsign is kept when Auto is picked.
+let mailgwEdited = false;
+
+function drawMailGateway(g, s) {
+  const box = $("mailgw-box");
+  const mode = s.mode || (g && g.mode) || "";
+  box.hidden = !g || mode !== "radio-plus";
+  if (box.hidden) return;
+  if (!mailgwEdited) {
+    $("mailgw-auto").checked = !!g.auto;
+    $("mailgw-pin").checked = !g.auto;
+    if (document.activeElement !== $("mailgw-call")) $("mailgw-call").value = g.gateway || "";
+  }
+  const auto = $("mailgw-auto").checked;
+  $("mailgw-call").disabled = auto;
+  $("mailgw-how").textContent = auto
+    ? "Auto asks which gateways hear you and uses the best two-way link."
+    : "Mail and Check mail always go to this station.";
+  $("mailgw-now").textContent = s.mail_gateway ? `Now: ${s.mail_gateway}` : "";
+}
+
+for (const id of ["mailgw-auto", "mailgw-pin"]) {
+  $(id).addEventListener("change", () => {
+    mailgwEdited = true;
+    $("mailgw-call").disabled = $("mailgw-auto").checked;
+  });
+}
+$("mailgw-call").addEventListener("input", () => { mailgwEdited = true; });
+$("mailgw-save").addEventListener("click", async () => {
+  const value = $("mailgw-auto").checked ? "auto" : $("mailgw-call").value.trim().toUpperCase();
+  if (!value) { $("action").textContent = "Type the gateway's callsign, or pick Auto."; return; }
+  $("action").textContent = "Saving the mail gateway…";
+  try {
+    const r = await fetch("/api/station/setting", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ what: "mail_gateway", value }),
+    });
+    const d = await r.json().catch(() => ({}));
+    $("action").textContent = r.ok ? "Mail gateway saved." : d.error || "could not save the mail gateway";
+    if (r.ok) mailgwEdited = false;
+  } finally {
+    setTimeout(poll, 500);
+  }
+});
 
 let shown = {};
 $("mode-pick").addEventListener("change", (e) => pick("mode", e.target, shown.mode));

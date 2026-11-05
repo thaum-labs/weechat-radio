@@ -80,7 +80,7 @@ label { display: block; }
 .light::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .up { color: var(--green); } .down { color: var(--red); } .idle { color: var(--dim); } .amber { color: var(--amber); }
 .chip.delivered { color: var(--green); } .chip.sent { color: var(--accent); } .chip.tx, .chip.keyed { color: var(--orange); }
-.chip.gateway, .chip.waiting { color: var(--purple); } .chip.delayed { color: var(--amber); }
+.chip.gateway, .chip.waiting, .chip.locating { color: var(--purple); } .chip.delayed { color: var(--amber); }
 .chip.bounced, .chip.spam, .chip.failed { color: var(--red); } .chip.queued, .chip.no_record, .chip.received { color: var(--dim); }
 
 /* Key/value facts */
@@ -104,6 +104,12 @@ details.more > :not(summary) { margin-top: 8px; }
 .pickers { display: flex; flex-wrap: wrap; gap: 12px; }
 .pickers label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--dim); }
 .pickers select { min-height: 40px; min-width: 12em; max-width: 100%; }
+.mailgw { margin-top: 12px; }
+.mailgw fieldset { border: 0; padding: 0; margin: 0; align-items: center; }
+.mailgw legend { font-size: 13px; color: var(--dim); padding: 0; margin-bottom: 4px; }
+.pickers label.inline { flex-direction: row; align-items: center; gap: 6px; min-height: 40px; color: var(--fg, inherit); }
+.mailgw input#mailgw-call { min-height: 40px; width: 9em; max-width: 100%; text-transform: uppercase; }
+.mailgw button { min-height: 40px; }
 
 /* Lists */
 .list { list-style: none; margin: 0; padding: 0; }

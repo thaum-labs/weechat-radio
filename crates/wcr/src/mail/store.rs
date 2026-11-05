@@ -32,6 +32,12 @@ CREATE TABLE IF NOT EXISTS mail_hop (
     ts INTEGER NOT NULL,
     PRIMARY KEY (id, stage)
 );
+CREATE TABLE IF NOT EXISTS mail_via (
+    id TEXT NOT NULL,
+    gateway TEXT NOT NULL,
+    ts INTEGER NOT NULL,
+    PRIMARY KEY (id, gateway)
+);
 CREATE TABLE IF NOT EXISTS mail_wait (
     id TEXT PRIMARY KEY,
     from_addr TEXT NOT NULL,
@@ -87,12 +93,20 @@ pub struct Hop {
 /// The hop a state change reaches, if any.
 fn hop_for_state(state: &str) -> Option<&'static str> {
     match state {
+        "locating" => Some("locate"),
         "tx" => Some("air"),
         "gateway" => Some("gateway"),
         "sent" => Some("sent"),
         "failed" => Some("failed"),
         _ => None,
     }
+}
+
+/// A gateway a Radio+ mail was keyed to, and when it was first used for it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Via {
+    pub gateway: String,
+    pub ts: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -152,6 +166,8 @@ pub struct MailStore {
     other_mail: Mutex<Option<std::time::Instant>>,
     notice: Mutex<String>,
     get: Mutex<GetProgress>,
+    /// Mail gateway Auto: the ranked gateways heard and the one in use.
+    pick: Mutex<super::pick::GatewayPick>,
 }
 
 impl MailStore {
@@ -169,6 +185,7 @@ impl MailStore {
             other_mail: Mutex::new(None),
             notice: Mutex::new(String::new()),
             get: Mutex::new(GetProgress::default()),
+            pick: Mutex::new(super::pick::GatewayPick::default()),
         })
     }
 
@@ -182,6 +199,7 @@ impl MailStore {
             other_mail: Mutex::new(None),
             notice: Mutex::new(String::new()),
             get: Mutex::new(GetProgress::default()),
+            pick: Mutex::new(super::pick::GatewayPick::default()),
         })
     }
 
@@ -191,6 +209,60 @@ impl MailStore {
 
     pub fn notice(&self) -> String {
         self.notice.lock().clone()
+    }
+
+    pub fn pick(&self) -> super::pick::GatewayPick {
+        self.pick.lock().clone()
+    }
+
+    /// Change the Auto pick in place and return what `f` returns.
+    pub fn with_pick<T>(&self, f: impl FnOnce(&mut super::pick::GatewayPick) -> T) -> T {
+        f(&mut self.pick.lock())
+    }
+
+    /// The gateway this mail is keyed to now. The first use of each counts.
+    pub fn note_via(&self, id: &str, gateway: &str) -> Result<()> {
+        self.conn.lock().execute(
+            "INSERT OR IGNORE INTO mail_via(id, gateway, ts) VALUES(?1, ?2, ?3)",
+            params![
+                id,
+                gateway.to_ascii_uppercase(),
+                chrono::Utc::now().timestamp()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Gateways this mail was keyed to, in the order they were used.
+    pub fn via(&self, id: &str) -> Result<Vec<Via>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare("SELECT gateway, ts FROM mail_via WHERE id = ?1 ORDER BY ts ASC, rowid ASC")?;
+        let rows = stmt.query_map(params![id], |r| {
+            Ok(Via {
+                gateway: r.get(0)?,
+                ts: r.get(1)?,
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Error::from)
+    }
+
+    /// Auto moves a mail to the next gateway: a fresh send from the start,
+    /// since the new gateway holds none of its chunks.
+    pub fn reset_for_gateway(&self, id: &str) -> Result<bool> {
+        let n = self.conn.lock().execute(
+            "UPDATE mail SET state = 'failed' WHERE id = ?1 AND folder = 'outbox'",
+            params![id],
+        )?;
+        if n == 0 || !self.reset_for_retry(id)? {
+            return Ok(false);
+        }
+        self.conn.lock().execute(
+            "UPDATE mail SET got = '', chunks = 0 WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(true)
     }
 
     pub fn get_progress(&self) -> GetProgress {
@@ -240,6 +312,7 @@ impl MailStore {
         )?;
         // A new row (or the same mail composed again) starts a new timeline.
         conn.execute("DELETE FROM mail_hop WHERE id = ?1", params![row.id])?;
+        conn.execute("DELETE FROM mail_via WHERE id = ?1", params![row.id])?;
         if row.folder == "inbox" {
             add_hop(&conn, &row.id, "fetched", chrono::Utc::now().timestamp())?;
         }
@@ -456,7 +529,7 @@ impl MailStore {
         let ids: Vec<String> = {
             let conn = self.conn.lock();
             let mut stmt = conn.prepare(
-                "SELECT id FROM mail WHERE folder = 'outbox' AND state IN ('queued', 'tx', 'gateway')",
+                "SELECT id FROM mail WHERE folder = 'outbox' AND state IN ('locating', 'queued', 'tx', 'gateway')",
             )?;
             let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
             rows.collect::<std::result::Result<Vec<_>, _>>()?

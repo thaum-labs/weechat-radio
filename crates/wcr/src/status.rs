@@ -42,6 +42,10 @@ pub struct StatusSnapshot {
     pub queue_hold: u64,
     pub hub_ok: bool,
     pub hub_banner: String,
+    /// Radio+ mail gateway in use: Auto's pick (`Auto: TF101, link 6 dB`),
+    /// `No mail gateway heard`, or the pinned callsign. Empty off Radio+.
+    #[serde(default)]
+    pub mail_gateway: String,
     pub lan_peers: usize,
     pub update_available: Option<String>,
     pub clock_warn: bool,
@@ -536,6 +540,7 @@ impl Default for StatusSnapshot {
             queue_hold: 0,
             hub_ok: false,
             hub_banner: String::new(),
+            mail_gateway: String::new(),
             lan_peers: 0,
             update_available: None,
             clock_warn: false,

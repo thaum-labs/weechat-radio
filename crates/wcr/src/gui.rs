@@ -652,6 +652,10 @@ struct GuiApp {
     mail_confirm: Option<MailConfirm>,
     mail_unread: u64,
     mail_gateway: String,
+    /// Radio+ picks its mail gateway by asking (#275). On by default.
+    mail_auto: bool,
+    /// The mode saved in wcr.toml, for setup while the station is stopped.
+    saved_mode: Mode,
     copy_addr: String,
     copy_code: String,
     copy_note: String,
@@ -772,6 +776,8 @@ impl GuiApp {
             mail_confirm: None,
             mail_unread: 0,
             mail_gateway: form.mail_gateway,
+            mail_auto: form.mail_auto,
+            saved_mode: form.mode,
             copy_addr: String::new(),
             copy_code: String::new(),
             copy_note: String::new(),
@@ -913,7 +919,23 @@ impl GuiApp {
             cfg.modem.audio_input = self.audio_input.trim().to_string();
             cfg.modem.audio_output = self.audio_output.trim().to_string();
         }
+        // A radio setup saved again keeps Radio or Radio+: setup picks how the
+        // station reaches the air, the main page picks the mode.
+        if self.path != 0 && matches!(self.saved_mode, Mode::Radio | Mode::RadioPlus) {
+            cfg.mode = self.saved_mode;
+        }
+        // Kept whatever the mode, so Radio+ finds it again (#274).
         cfg.mail.gateway = self.mail_gateway.trim().to_ascii_uppercase();
+        cfg.mail.auto = Some(self.mail_auto);
+        if fetch_status().is_some() {
+            let body = serde_json::json!({
+                "gateway": cfg.mail.gateway,
+                "auto": self.mail_auto,
+            })
+            .to_string();
+            let _ = mail_http("POST", "/mail/gateway", Some(&body));
+        }
+        self.saved_mode = cfg.mode;
         cfg.ui.theme = "tron".into();
         // The dial is set from FREQ on the main page; setup only seeds a first
         // one, or replaces one the chosen radio cannot use (#232, #233).
@@ -1941,6 +1963,21 @@ impl eframe::App for GuiApp {
                             );
                             let (hub_text, hub_color) = hub_row(s.mode, s.hub_ok);
                             kv(ui, "HUB", hub_text, hub_color);
+                            if s.mode == Mode::RadioPlus && !s.mail_gateway.is_empty() {
+                                let color = if s.mail_gateway.starts_with("No ")
+                                    || s.mail_gateway.starts_with("Radio+")
+                                {
+                                    ORANGE
+                                } else {
+                                    DIM
+                                };
+                                ui.label(
+                                    RichText::new(format!("MAIL GW {}", s.mail_gateway))
+                                        .color(color)
+                                        .small()
+                                        .monospace(),
+                                );
+                            }
                             if s.mode.uses_internet() && !s.hub_ok && !s.hub_banner.is_empty() {
                                 ui.label(
                                     RichText::new(&s.hub_banner)
@@ -3800,7 +3837,7 @@ impl GuiApp {
         let reason = crate::mail::email_block_reason(
             &self.callsign,
             mode,
-            &self.mail_gateway,
+            &self.mail_gateway_choice(),
             hub_ok,
             running,
         );
@@ -4112,6 +4149,11 @@ impl GuiApp {
             }
         } else {
             let row = send.row.clone().unwrap_or_default();
+            // Finding a gateway first (#275): the airtime estimate starts
+            // once it is over, not when Send was pressed.
+            if row.state == "locating" {
+                send.started = Instant::now();
+            }
             crate::mail::send_step(&crate::mail::SendView {
                 state: if row.state.is_empty() {
                     "queued"
@@ -4429,6 +4471,12 @@ impl GuiApp {
                     let row = &view.row;
                     let st = &view.status;
                     let who = if outgoing { &row.to_addr } else { &row.from_addr };
+                    // The gateway actually used (#275), after the status word.
+                    let word = match view.via.last() {
+                        Some(v) if outgoing && st.word.is_empty() => format!("via {}", v.gateway),
+                        Some(v) if outgoing => format!("{} · via {}", st.word, v.gateway),
+                        _ => st.word.clone(),
+                    };
                     let act = mail_list_row(
                         ui,
                         &MailListRow {
@@ -4440,7 +4488,7 @@ impl GuiApp {
                             key: &st.key,
                             label: &st.label,
                             mark: &st.mark,
-                            word: &st.word,
+                            word: &word,
                             tip: &st.reason,
                             who,
                             subject: &row.subject,
@@ -4502,7 +4550,7 @@ impl GuiApp {
         );
         let bytes = self.mail_body.trim().len();
         let from = crate::mail::wcr_address(&self.callsign);
-        let gateway = self.mail_gateway.trim().to_ascii_uppercase();
+        let gateway = self.mail_gateway_for_airtime();
         let preview = crate::mail::AirtimeMail {
             from: &from,
             to: self.mail_to.trim(),
@@ -4627,6 +4675,12 @@ impl GuiApp {
         for hop in &open.hops {
             times.push((hop_name(&hop.stage, &st.label).into(), hop.ts));
         }
+        for v in &open.via {
+            times.push((format!("Via gateway {}", v.gateway), v.ts));
+        }
+        // In time order; a gateway first used in the same second as a hop
+        // goes after it.
+        times.sort_by_key(|(_, ts)| *ts);
         egui::Grid::new("mail_hops")
             .num_columns(2)
             .spacing([12.0, 2.0])
@@ -4668,7 +4722,7 @@ impl GuiApp {
             self.mail_toast_warn = true;
             return;
         }
-        let gateway = self.mail_gateway.trim().to_ascii_uppercase();
+        let gateway = self.mail_gateway_for_airtime();
         let preview = crate::mail::AirtimeMail {
             from: &row.from_addr,
             to: &row.to_addr,
@@ -4708,7 +4762,7 @@ impl GuiApp {
     ) {
         let hub = matches!(crate::mail::gateway_path(mode), crate::mail::SendPath::Hub);
         let from = crate::mail::wcr_address(&self.callsign);
-        let gateway = self.mail_gateway.trim().to_ascii_uppercase();
+        let gateway = self.mail_gateway_for_airtime();
         let body = self.mail_body.trim();
         let preview = crate::mail::AirtimeMail {
             from: &from,
@@ -4859,7 +4913,7 @@ fn mail_chip_color(key: &str) -> Color32 {
         "delivered" => GREEN,
         "sent" => ACCENT,
         "tx" => ORANGE,
-        "gateway" | "waiting" | "keyed" => PURPLE,
+        "gateway" | "waiting" | "keyed" | "locating" => PURPLE,
         "delayed" => AMBER,
         "bounced" | "spam" | "failed" => RED,
         _ => DIM,
@@ -5010,6 +5064,7 @@ fn mail_list_row(ui: &mut egui::Ui, r: &MailListRow<'_>) -> MailRowAct {
 /// final answer, which the chip already names.
 fn hop_name<'a>(stage: &str, report: &'a str) -> &'a str {
     match stage {
+        "locate" => "Finding a mail gateway",
         "air" => "On air",
         "keyed" => "Burst done, waiting for gateway",
         "gateway" => "At gateway",
@@ -5072,7 +5127,6 @@ fn spawn_hardware_probe() -> Receiver<HardwareProbe> {
     rx
 }
 
-#[derive(Default)]
 struct Form {
     callsign: String,
     grid: String,
@@ -5088,6 +5142,31 @@ struct Form {
     audio_input: String,
     audio_output: String,
     mail_gateway: String,
+    mail_auto: bool,
+    mode: Mode,
+}
+
+impl Default for Form {
+    fn default() -> Self {
+        Self {
+            callsign: String::new(),
+            grid: String::new(),
+            path: 0,
+            radio: None,
+            cat_port: String::new(),
+            com_port: String::new(),
+            bt_name: String::new(),
+            bt_addr: String::new(),
+            serial: String::new(),
+            gps_port: String::new(),
+            rigctl: String::new(),
+            audio_input: String::new(),
+            audio_output: String::new(),
+            mail_gateway: String::new(),
+            mail_auto: true,
+            mode: Mode::InternetRadio,
+        }
+    }
 }
 
 fn load_form() -> Form {
@@ -5126,7 +5205,9 @@ fn load_form() -> Form {
             rigctl: cfg.modem.rigctl,
             audio_input: cfg.modem.audio_input,
             audio_output: cfg.modem.audio_output,
+            mail_auto: cfg.mail.auto(),
             mail_gateway: cfg.mail.gateway,
+            mode: cfg.mode,
         };
     }
     Form {
@@ -5165,6 +5246,13 @@ impl GuiApp {
     }
 }
 
+/// Setup's one-line explanation of the mail gateway (#274).
+const MAIL_GATEWAY_HELP: &str =
+    "Callsign of the internet-radio station that posts your email, e.g. your home Pi.";
+const MAIL_GATEWAY_AUTO_HELP: &str =
+    "Auto asks which gateways hear you and uses the best two-way link.";
+const MAIL_GATEWAY_PIN_HELP: &str = "Mail and Check mail always go to this station.";
+
 /// Setup path for a supported CAT radio ([`crate::radios::Radio::setup_path`]).
 const SUPPORTED_CAT: usize = 6;
 /// Setup path for modem73 over a radio's Bluetooth audio channel.
@@ -5184,16 +5272,8 @@ impl GuiApp {
                 self.callsign = self.callsign.to_ascii_uppercase();
             }
         });
-        if !self.callsign.trim().starts_with('~') {
-            ui.horizontal(|ui| {
-                ui.add_space(20.0);
-                ui.label(RichText::new("Mail gateway").color(DIM));
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.mail_gateway)
-                        .desired_width(160.0)
-                        .hint_text("radio-plus only, e.g. TF101"),
-                );
-            });
+        if !self.callsign.trim().starts_with('~') && self.setup_mode() == Mode::RadioPlus {
+            self.setup_mail_gateway_ui(ui);
         }
         ui.horizontal(|ui| {
             ui.add_space(20.0);
@@ -5246,6 +5326,85 @@ impl GuiApp {
                     .font(FontId::monospace(11.0)),
             );
         });
+    }
+
+    /// The mode setup shows the mail gateway for: the running station's, or
+    /// the saved one while it is stopped.
+    fn setup_mode(&self) -> Mode {
+        self.status
+            .as_ref()
+            .map(|s| s.mode)
+            .unwrap_or(self.saved_mode)
+    }
+
+    /// Setup, Radio+ only (#274): Auto, or a typed gateway callsign. The
+    /// typed callsign is kept while Auto is on.
+    fn setup_mail_gateway_ui(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.add_space(20.0);
+            ui.label(RichText::new("Mail gateway").color(DIM));
+            if ui.radio(self.mail_auto, "Auto").clicked() {
+                self.mail_auto = true;
+            }
+            if ui.radio(!self.mail_auto, "Callsign").clicked() {
+                self.mail_auto = false;
+            }
+            let edit = ui.add_enabled(
+                !self.mail_auto,
+                egui::TextEdit::singleline(&mut self.mail_gateway)
+                    .desired_width(110.0)
+                    .hint_text("e.g. TF101"),
+            );
+            if edit.changed() {
+                self.mail_gateway = self.mail_gateway.to_ascii_uppercase();
+            }
+        });
+        for line in [
+            MAIL_GATEWAY_HELP,
+            if self.mail_auto {
+                MAIL_GATEWAY_AUTO_HELP
+            } else {
+                MAIL_GATEWAY_PIN_HELP
+            },
+        ] {
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                ui.label(RichText::new(line).color(DIM).font(FontId::monospace(11.0)));
+            });
+        }
+        let now = self
+            .status
+            .as_ref()
+            .map(|s| s.mail_gateway.clone())
+            .unwrap_or_default();
+        if !now.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                ui.label(
+                    RichText::new(format!("Now: {now}"))
+                        .color(PURPLE)
+                        .font(FontId::monospace(11.0)),
+                );
+            });
+        }
+    }
+
+    /// `AUTO`, the typed callsign, or empty: what Radio+ mail goes to.
+    fn mail_gateway_choice(&self) -> String {
+        if self.mail_auto {
+            "AUTO".into()
+        } else {
+            self.mail_gateway.trim().to_ascii_uppercase()
+        }
+    }
+
+    /// A gateway callsign for the airtime estimate. Auto's pick is not known
+    /// here, so a long callsign stands in.
+    fn mail_gateway_for_airtime(&self) -> String {
+        match self.mail_gateway_choice().as_str() {
+            "AUTO" | "" => "MM0ABC".into(),
+            g => g.to_string(),
+        }
     }
 
     /// Setup: "How you get on the air", the radio list and the other setups.

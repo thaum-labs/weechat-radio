@@ -1513,3 +1513,465 @@ async fn two_senders_a_few_seconds_apart_both_get_through() {
         "station 3's body: {posts:?}"
     );
 }
+
+// ---------- Mail gateway Auto (#274, #275) ----------
+
+const GATEWAY_TWO: &str = "G4TWO";
+
+/// One post the mock hub took: who posted it and the JSON body.
+type Posts = Arc<Mutex<Vec<(String, serde_json::Value)>>>;
+
+/// The hub as Auto needs it: Resend posts (every one recorded, so a double
+/// post shows), an empty inbox for Check mail, and the real slot board for
+/// gateway asks.
+async fn auto_hub(posts: Posts) -> u16 {
+    use axum::http::HeaderMap;
+    use axum::routing::post;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let board = wcr::mail::pick::AskBoard::new();
+    let app = axum::Router::new()
+        .route(
+            "/api/v1/mail/send",
+            post(move |h: HeaderMap, body: axum::body::Bytes| {
+                let posts = posts.clone();
+                async move {
+                    let who = h
+                        .get("x-wcr-callsign")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("")
+                        .to_string();
+                    if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&body) {
+                        posts.lock().unwrap().push((who, v));
+                    }
+                    axum::Json(serde_json::json!({ "ok": true, "id": "re_harness" }))
+                }
+            }),
+        )
+        .route(
+            "/api/v1/mail/inbox",
+            post(|| async { axum::Json(serde_json::json!({ "ok": true, "headers": [] })) }),
+        )
+        .route(
+            wcr::mail::GATEWAY_ASK_PATH,
+            post(move |h: HeaderMap, body: axum::body::Bytes| {
+                let board = board.clone();
+                async move {
+                    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+                    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let report = wcr::mail::pick::Report {
+                        gateway: h
+                            .get("x-wcr-callsign")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("")
+                            .to_string(),
+                        snr: v.get("snr").and_then(|x| x.as_f64()).map(|x| x as f32),
+                        grid: s("grid"),
+                    };
+                    let preset = wcr::presets::Preset::parse(&s("preset"))
+                        .unwrap_or(wcr::presets::Preset::HfPoor);
+                    let slot = board
+                        .report(&s("for"), &s("n"), &s("g"), preset, report)
+                        .await;
+                    axum::Json(serde_json::json!({ "ok": true, "slot": slot }))
+                }
+            }),
+        );
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    port
+}
+
+/// A Radio+ sender on Auto (no gateway typed) and two internet-radio
+/// gateways. All hear each other. G4GW sits nearer the sender, so with equal
+/// links (the mock modem reports no SNR) it ranks first.
+struct AutoGroup {
+    log: TimedLog,
+    posts: Posts,
+    status: [u16; 3],
+    nodes: Vec<tokio::task::JoinHandle<wcr::error::Result<()>>>,
+}
+
+impl AutoGroup {
+    async fn start(opts: TimedOpts, drop_rx: LinkDrop, tweak: impl Fn(usize, &mut Config)) -> Self {
+        let mut errors = Vec::new();
+        for attempt in 1..=3 {
+            match Self::try_start(opts, drop_rx.clone(), &tweak).await {
+                Ok(g) => {
+                    g.wait_mail().await;
+                    return g;
+                }
+                Err(e) => {
+                    eprintln!("auto group start attempt {attempt}/3 failed: {e}");
+                    errors.push(e);
+                }
+            }
+        }
+        panic!("auto group never started: {}", errors.join("; "));
+    }
+
+    async fn try_start(
+        opts: TimedOpts,
+        drop_rx: LinkDrop,
+        tweak: &impl Fn(usize, &mut Config),
+    ) -> Result<Self, String> {
+        let _setup = setup_lock().lock().await;
+        let air = wcr::sim::SharedAir::new(0.0);
+        let log: TimedLog = Arc::new(Mutex::new(Vec::new()));
+        let posts: Posts = Arc::new(Mutex::new(Vec::new()));
+        let hub = auto_hub(posts.clone()).await;
+        let hub_url = format!("ws://127.0.0.1:{hub}/ws");
+        let ports = reserve_ports(6).await;
+        let mut nodes = Vec::new();
+        let stations = [
+            (SENDER, Mode::RadioPlus, "IO91WM"),
+            (GATEWAY, Mode::InternetRadio, "IO91WN"),
+            (GATEWAY_TWO, Mode::InternetRadio, "IO93AA"),
+        ];
+        for (i, (call, mode, grid)) in stations.into_iter().enumerate() {
+            let me = i as u64 + 1;
+            let hear = (1..=3u64).filter(|s| *s != me).collect();
+            let (kiss, ctrl) = wcr::sim::mock_modem73_timed(
+                air.clone(),
+                me,
+                hear,
+                Some(drop_rx.clone()),
+                opts,
+                log.clone(),
+            )
+            .await
+            .unwrap();
+            let home = scratch(call);
+            let mut cfg = station_cfg(
+                call,
+                &home,
+                mode,
+                kiss,
+                ctrl,
+                ports[i * 2],
+                ports[i * 2 + 1],
+                &hub_url,
+            );
+            cfg.grid = grid.into();
+            cfg.mail.gateway.clear();
+            cfg.mail.auto = None;
+            tweak(i, &mut cfg);
+            nodes.push(tokio::spawn(async move {
+                wcr::node::run_node(cfg, false).await
+            }));
+        }
+        let status = [ports[1], ports[3], ports[5]];
+        for (i, p) in status.into_iter().enumerate() {
+            if let Err(e) = wait_listening(p, &mut nodes[i], 60).await {
+                for n in &nodes {
+                    n.abort();
+                }
+                return Err(e);
+            }
+        }
+        Ok(Self {
+            log,
+            posts,
+            status,
+            nodes,
+        })
+    }
+
+    async fn wait_mail(&self) {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while Instant::now() < deadline {
+            let mut ok = true;
+            for p in self.status {
+                let r = reqwest::get(format!("http://127.0.0.1:{p}/mail/tab")).await;
+                ok &= r.is_ok_and(|r| r.status().is_success());
+            }
+            if ok {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        panic!("mail never started");
+    }
+
+    async fn tab(&self) -> serde_json::Value {
+        reqwest::get(format!("http://127.0.0.1:{}/mail/tab", self.status[0]))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap_or_default()
+    }
+
+    /// The sender's Auto pick, once an ask has finished.
+    async fn wait_pick(&self, secs: u64) -> serde_json::Value {
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        let mut tab = serde_json::Value::Null;
+        while Instant::now() < deadline {
+            tab = self.tab().await;
+            let state = tab["pick"]["state"].as_str().unwrap_or("");
+            if state == "picked" || state == "none_heard" {
+                return tab;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        tab
+    }
+
+    async fn compose(&self, body: &str) -> String {
+        let v: serde_json::Value = reqwest::Client::new()
+            .post(format!("http://127.0.0.1:{}/mail/compose", self.status[0]))
+            .json(&serde_json::json!({
+                "to": "operator@example.com",
+                "subject": "auto",
+                "body": body,
+            }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        v.get("id")
+            .and_then(|x| x.as_str())
+            .unwrap_or_else(|| panic!("compose: {v}"))
+            .to_string()
+    }
+
+    async fn row(&self, id: &str) -> serde_json::Value {
+        for folder in ["outbox", "sent"] {
+            let rows: Vec<serde_json::Value> = reqwest::get(format!(
+                "http://127.0.0.1:{}/mail/list?folder={folder}",
+                self.status[0]
+            ))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap_or_default();
+            if let Some(r) = rows.into_iter().find(|r| r["id"] == id) {
+                return r;
+            }
+        }
+        serde_json::Value::Null
+    }
+
+    async fn wait_done(&self, id: &str, secs: u64) -> serde_json::Value {
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        let mut row = serde_json::Value::Null;
+        while Instant::now() < deadline {
+            row = self.row(id).await;
+            if is_done(row["state"].as_str().unwrap_or("")) {
+                return row;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        row
+    }
+
+    fn trace(&self, t0: Instant) -> String {
+        let mut out = String::new();
+        for k in self.log.lock().unwrap().iter() {
+            let what = match chunk_of(&k.payload) {
+                Some((op, idx, count)) => format!("WCRM op{op} {}/{count}", idx + 1),
+                None if k.payload.starts_with(b"WCRP\t") => "WCRP slice".to_string(),
+                None => format!("chat {} B", k.payload.len()),
+            };
+            out.push_str(&format!(
+                "{:7.1}s st{} {what}{}\n",
+                k.at.saturating_duration_since(t0).as_secs_f64(),
+                k.station,
+                if k.dropped { " DROPPED" } else { "" }
+            ));
+        }
+        out
+    }
+
+    /// `(station, start, end)` of every frame with mail op `op`.
+    fn frames_of(&self, op: u8) -> Vec<(u64, Instant, Instant)> {
+        self.log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|k| chunk_of(&k.payload).is_some_and(|(o, _, _)| o == op))
+            .map(|k| (k.station, k.at, k.at + k.len))
+            .collect()
+    }
+
+    fn stop(self) {
+        for n in self.nodes {
+            n.abort();
+        }
+    }
+}
+
+fn auto_opts() -> TimedOpts {
+    TimedOpts {
+        frame_ms: 1_500,
+        count_tx: false,
+        collide: true,
+        csma_stuck_ms: 0,
+        rung_airtime: false,
+        noise_pct: 0,
+        rx_after_decode: false,
+    }
+}
+
+fn hear_all() -> LinkDrop {
+    Arc::new(|_, _, _| false)
+}
+
+/// `MailOp::GwReply` and `MailOp::ListHdr` on the wire.
+const OP_GW_REPLY: u8 = 9;
+const OP_LIST_HDR: u8 = 2;
+
+/// Two gateways hear the ask. The hub gives them slots so their replies do
+/// not overlap, the sender picks one, the mail goes to that one only and is
+/// posted once, and the outbox row names the gateway used.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn auto_picks_one_gateway_and_the_mail_is_posted_once() {
+    let _hang = watchdog(TEST_LIMIT);
+    let g = AutoGroup::start(auto_opts(), hear_all(), |_, _| {}).await;
+    let t0 = Instant::now();
+    let tab = g.wait_pick(180).await;
+    let trace = g.trace(t0);
+    assert_eq!(tab["pick"]["state"], "picked", "{tab}\n{trace}");
+    let list: Vec<&str> = tab["pick"]["list"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["call"].as_str())
+        .collect();
+    assert_eq!(
+        list,
+        [GATEWAY, GATEWAY_TWO],
+        "both replied, nearer first on a tie\n{trace}"
+    );
+    assert!(
+        tab["gateway_line"].as_str().unwrap_or("").contains(GATEWAY),
+        "{tab}"
+    );
+
+    // The replies keyed in turn: no two gateways on the air at once.
+    let replies = g.frames_of(OP_GW_REPLY);
+    assert!(replies.len() >= 2, "{trace}");
+    for a in &replies {
+        for b in &replies {
+            if a.0 != b.0 {
+                assert!(a.2 <= b.1 || b.2 <= a.1, "replies overlap\n{trace}");
+            }
+        }
+    }
+
+    let id = g.compose("Auto picked a gateway for this one.").await;
+    let row = g.wait_done(&id, 300).await;
+    let trace = g.trace(t0);
+    let posts = g.posts.lock().unwrap().clone();
+    g.stop();
+    assert_eq!(row["state"], "sent", "{row}\n{trace}");
+    assert_eq!(row["via"][0]["gateway"], GATEWAY, "{row}");
+    assert_eq!(row["via"].as_array().map(Vec::len), Some(1), "{row}");
+    assert_eq!(posts.len(), 1, "posted once: {posts:?}\n{trace}");
+    assert_eq!(posts[0].0, GATEWAY);
+}
+
+/// Check mail goes to the picked gateway only: one list reply on the air.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn auto_check_mail_is_answered_by_one_gateway() {
+    let _hang = watchdog(TEST_LIMIT);
+    let g = AutoGroup::start(auto_opts(), hear_all(), |_, _| {}).await;
+    let t0 = Instant::now();
+    let tab = g.wait_pick(180).await;
+    assert_eq!(tab["pick"]["state"], "picked", "{tab}\n{}", g.trace(t0));
+    reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{}/mail/check", g.status[0]))
+        .send()
+        .await
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let mut notice = String::new();
+    while Instant::now() < deadline {
+        notice = g.tab().await["notice"].as_str().unwrap_or("").to_string();
+        if !notice.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    // Room for a stray second reply to show up.
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    let trace = g.trace(t0);
+    let lists = g.frames_of(OP_LIST_HDR);
+    g.stop();
+    assert_eq!(notice, "no new mail", "{trace}");
+    let who: std::collections::HashSet<u64> = lists.iter().map(|l| l.0).collect();
+    assert_eq!(
+        who,
+        [2u64].into_iter().collect(),
+        "one responder, G4GW\n{trace}"
+    );
+}
+
+/// The picked gateway stops hearing the sender's mail. After its tries the
+/// mail moves to the next gateway heard, is posted once, and the row shows
+/// both gateways in the order they were used.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn auto_falls_back_to_the_next_gateway() {
+    let _hang = watchdog(TEST_LIMIT);
+    // Station 2 (G4GW) never hears station 1's mail chunks.
+    let drop_rx: LinkDrop = Arc::new(|from, to, frame: &[u8]| {
+        from == 1
+            && to == 2
+            && (frame.starts_with(b"WCRP\t")
+                || chunk_of(frame).is_some_and(|(op, _, _)| is_data_op(op)))
+    });
+    let g = AutoGroup::start(auto_opts(), drop_rx, |i, cfg| {
+        if i == 0 {
+            cfg.rf.max_retries = 1;
+        }
+    })
+    .await;
+    let t0 = Instant::now();
+    let tab = g.wait_pick(180).await;
+    assert_eq!(tab["pick"]["state"], "picked", "{tab}\n{}", g.trace(t0));
+    let id = g.compose("The first gateway cannot hear this one.").await;
+    let row = g.wait_done(&id, 600).await;
+    let trace = g.trace(t0);
+    let posts = g.posts.lock().unwrap().clone();
+    g.stop();
+    assert_eq!(row["state"], "sent", "{row}\n{trace}");
+    let via: Vec<&str> = row["via"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v["gateway"].as_str())
+        .collect();
+    assert_eq!(via, [GATEWAY, GATEWAY_TWO], "{row}");
+    assert_eq!(posts.len(), 1, "{posts:?}");
+    assert_eq!(posts[0].0, GATEWAY_TWO);
+}
+
+/// Nobody hears the sender: the mail fails with "No mail gateway heard".
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn auto_with_no_gateway_heard_says_so() {
+    let _hang = watchdog(TEST_LIMIT);
+    let deaf: LinkDrop = Arc::new(|from, _, _| from == 1);
+    let g = AutoGroup::start(auto_opts(), deaf, |_, _| {}).await;
+    let t0 = Instant::now();
+    let tab = g.wait_pick(180).await;
+    assert_eq!(tab["pick"]["state"], "none_heard", "{tab}\n{}", g.trace(t0));
+    assert_eq!(tab["gateway_line"], "No mail gateway heard");
+    let id = g.compose("Nobody will hear this.").await;
+    let row = g.wait_done(&id, 300).await;
+    let trace = g.trace(t0);
+    let posts = g.posts.lock().unwrap().len();
+    g.stop();
+    assert_eq!(row["state"], "failed", "{row}\n{trace}");
+    assert!(
+        row["detail"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("No mail gateway heard"),
+        "{row}"
+    );
+    assert_eq!(posts, 0);
+}

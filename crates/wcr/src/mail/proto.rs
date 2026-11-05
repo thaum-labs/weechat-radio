@@ -20,6 +20,10 @@ pub enum MailOp {
     VoxData = 5,
     ChunkAck = 6,
     CompleteAck = 7,
+    /// Radio+ Auto: "which gateways hear me?" Signed, wire id is a nonce.
+    GwAsk = 8,
+    /// A gateway's answer to `GwAsk`, in the slot the hub gave it.
+    GwReply = 9,
 }
 
 impl MailOp {
@@ -33,6 +37,8 @@ impl MailOp {
             5 => Some(Self::VoxData),
             6 => Some(Self::ChunkAck),
             7 => Some(Self::CompleteAck),
+            8 => Some(Self::GwAsk),
+            9 => Some(Self::GwReply),
             _ => None,
         }
     }

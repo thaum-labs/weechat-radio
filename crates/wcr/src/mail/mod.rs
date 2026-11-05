@@ -6,6 +6,7 @@ mod api;
 mod gateway;
 mod hub;
 mod lease;
+pub mod pick;
 mod progress;
 mod proto;
 mod status;
@@ -19,6 +20,7 @@ use crate::proto::IdentityKeys;
 use crate::status::SharedStatus;
 pub use air::{confirm_air_line, AirtimeMail};
 pub use gateway::{local_send_path as gateway_path, state_mark, SendPath};
+pub use hub::GATEWAY_ASK_PATH;
 pub use lease::RadioPorts;
 pub use progress::{delivery_word, get_step, send_step, SendStep, SendView};
 
@@ -31,7 +33,7 @@ pub use status::{mail_status, MailStatus, MailView};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-pub use store::{GetProgress, Hop, MailRow, WaitHeader};
+pub use store::{GetProgress, Hop, MailRow, Via, WaitHeader};
 use tokio::sync::{broadcast, mpsc};
 
 pub use api::{router, MailSlot};
@@ -65,7 +67,28 @@ impl ComposeHold {
     }
 }
 
-/// Why the Email tab stays grey. `None` means it can be used.
+/// The Radio+ gateway line for setup and status: Auto's pick and how good
+/// it is, `No mail gateway heard`, the pinned callsign, or the missing piece.
+pub fn gateway_line(cfg: &Config, pick: &pick::GatewayPick) -> String {
+    if cfg.mode != Mode::RadioPlus {
+        return String::new();
+    }
+    let pinned = cfg.mail.pinned();
+    if !pinned.is_empty() {
+        format!("{pinned} (typed in setup)")
+    } else if cfg.mail.auto() {
+        pick.summary()
+    } else {
+        NO_GATEWAY_REASON.to_string()
+    }
+}
+
+/// Radio+ with neither Auto nor a gateway callsign: said on the grey Email tab.
+pub const NO_GATEWAY_REASON: &str =
+    "Radio+ mail needs a mail gateway: open setup and pick Auto, or type the gateway's callsign";
+
+/// Why the Email tab stays grey. `None` means it can be used. `gateway` is
+/// [`crate::config::MailConfig::choice`]: `AUTO`, a callsign, or empty.
 pub fn email_block_reason(
     callsign: &str,
     mode: Mode,
@@ -82,9 +105,7 @@ pub fn email_block_reason(
     }
     match mode {
         Mode::Radio => Some("Use Internet, Internet+Radio, or Radio+ with a gateway"),
-        Mode::RadioPlus if gateway.trim().is_empty() => {
-            Some("Set a mail gateway callsign in setup")
-        }
+        Mode::RadioPlus if gateway.trim().is_empty() => Some(NO_GATEWAY_REASON),
         Mode::Internet | Mode::InternetRadio if !hub_ok => Some("Email needs the hub"),
         _ => None,
     }
@@ -124,6 +145,20 @@ pub enum MailCmd {
         incoming: Incoming,
         /// The burst was still keying when this frame arrived.
         during_burst: bool,
+        /// SNR modem73 reported for the frame, when it did.
+        snr: Option<f32>,
+    },
+    /// Mail gateway Auto: key a gateway ask now.
+    Ask,
+    /// The ask's listening time is over: rank the replies.
+    AskDone {
+        gen: u64,
+    },
+    /// This gateway's reply slot has come: answer `to`'s ask.
+    GwReplyDue {
+        to: String,
+        nonce: String,
+        snr: Option<f32>,
     },
     SyncHub,
     AckWait {
@@ -264,7 +299,7 @@ pub fn heard_mail_hold_secs(incoming: &Incoming, frame_secs: f64) -> Option<f64>
     }
 }
 
-pub async fn on_rf(mail: &MailHandle, incoming: Incoming) {
+pub async fn on_rf(mail: &MailHandle, incoming: Incoming, snr: Option<f32>) {
     let us = mail.cfg.lock().callsign.to_ascii_uppercase();
     let _ = note_have_report(&mail.store, &us, &incoming);
     let _ = note_complete_ack(&mail.store, &us, &incoming);
@@ -290,6 +325,7 @@ pub async fn on_rf(mail: &MailHandle, incoming: Incoming) {
         .send(MailCmd::Inbound {
             incoming,
             during_burst,
+            snr,
         })
         .await;
 }
@@ -307,7 +343,10 @@ impl MailHandle {
             "notice": self.store.notice(),
             "get": self.store.get_progress(),
             "gateway": cfg.mail.gateway,
-            "block": email_block_reason(&cfg.callsign, cfg.mode, &cfg.mail.gateway, snap.hub_ok, true),
+            "auto": cfg.mail.auto(),
+            "pick": self.store.pick(),
+            "gateway_line": gateway_line(&cfg, &self.store.pick()),
+            "block": email_block_reason(&cfg.callsign, cfg.mode, &cfg.mail.choice(), snap.hub_ok, true),
         })
     }
 
@@ -321,15 +360,24 @@ impl MailHandle {
             ));
         }
         if matches!(gateway::local_send_path(cfg.mode), SendPath::Rf)
-            && cfg.mail.gateway.trim().is_empty()
+            && cfg.mail.choice().is_empty()
         {
-            return Err(Error::config("Set a mail gateway callsign in setup."));
+            return Err(Error::config(gateway::NO_GATEWAY_SET));
         }
         let from = proto::wcr_address(&cfg.callsign);
         let ack = matches!(gateway::local_send_path(cfg.mode), SendPath::Rf);
         let to_addr = to.trim();
         let subject_s = subject.trim();
-        let gateway = cfg.mail.gateway.trim().to_ascii_uppercase();
+        // Auto's gateway is only known once picked; the hint allows for one.
+        let gateway = match cfg.mail.pinned() {
+            g if g.is_empty() => self
+                .store
+                .pick()
+                .current_call()
+                .unwrap_or("MM0ABC")
+                .to_string(),
+            g => g,
+        };
         let preview = AirtimeMail {
             from: &from,
             to: to_addr,
@@ -373,10 +421,12 @@ impl MailHandle {
         let hops = self.store.hops(&row.id).unwrap_or_default();
         let online = self.cfg.lock().hub.enabled() && self.store.hub_reachable();
         let now = chrono::Utc::now().timestamp();
+        let via = self.store.via(&row.id).unwrap_or_default();
         MailView {
             status: mail_status(&row, &hops, now, online),
             row,
             hops,
+            via,
         }
     }
 
@@ -389,6 +439,26 @@ impl MailHandle {
         tracing::info!("mail retry by hand {id}");
         let _ = self.cmd.send(MailCmd::Send { id: id.to_string() }).await;
         Ok(true)
+    }
+
+    /// Use a new mail gateway setting now. Auto starts over and asks again.
+    pub async fn set_gateway(&self, gateway: &str, auto: bool) {
+        let ask = {
+            let mut cfg = self.cfg.lock();
+            cfg.mail.gateway = gateway.trim().to_ascii_uppercase();
+            cfg.mail.auto = Some(auto);
+            cfg.mode == Mode::RadioPlus && auto
+        };
+        self.store.with_pick(|p| *p = pick::GatewayPick::default());
+        let line = gateway_line(&self.cfg.lock().clone(), &self.store.pick());
+        self.snap.lock().mail_gateway = line;
+        tracing::info!(
+            "mail gateway set to {}",
+            if auto { "Auto" } else { gateway.trim() }
+        );
+        if ask {
+            let _ = self.cmd.send(MailCmd::Ask).await;
+        }
     }
 
     pub async fn check_list(&self) -> Result<()> {
@@ -737,7 +807,12 @@ mod tests {
         );
         assert_eq!(
             email_block_reason("M7TJF", Mode::RadioPlus, "", true, true),
-            Some("Set a mail gateway callsign in setup")
+            Some(NO_GATEWAY_REASON)
+        );
+        assert_eq!(
+            email_block_reason("M7TJF", Mode::RadioPlus, "AUTO", false, true),
+            None,
+            "Auto needs no callsign"
         );
         assert_eq!(
             email_block_reason("M7TJF", Mode::RadioPlus, "TF101", true, false),

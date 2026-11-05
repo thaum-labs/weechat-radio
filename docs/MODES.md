@@ -59,7 +59,7 @@ Four modes. Switch with `/radio mode <name>` or `F2` in the TUI.
 | Can a gateway forward my messages to the internet? | Yes, if an internet-radio gateway hears you. It may forward a direct message, a closed group, `#bulletin`, and email. |
 | Map data (callsign/grid/tx-rx, never text) sent if `[telemetry]` url set? | Yes, if the URL is set. Callsign, grid, and tx/rx ids. Never message text. |
 | Receipts from internet stations? | Not on a hub socket from this computer. The gateway can bring an internet station's ACK back on the radio if it has heard you on this dial. |
-| Email? | Yes, by radio to the Mail gateway callsign in setup. That station posts it. This computer does not open the hub. |
+| Email? | Yes, by radio to one mail gateway: Auto's pick (the default, the best two-way link heard) or the callsign typed in setup. That station posts it. This computer does not open the hub. |
 | Map colour | Magenta (`#ff4dff`). |
 
 ## Which mode should I pick

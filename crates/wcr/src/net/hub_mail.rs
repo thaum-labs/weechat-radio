@@ -381,13 +381,38 @@ fn authorize_pull(
     Ok(wanted.to_ascii_uppercase())
 }
 
-/// `bound` is the pubkey this callsign already registered. A different key is refused.
-pub fn owner_pull_ok(
+/// A Radio+ station's gateway ask, as a gateway that heard it reports it.
+#[derive(Deserialize, Default)]
+struct GatewayAskReq {
+    #[serde(default, rename = "for")]
+    for_call: String,
+    #[serde(default)]
+    n: String,
+    #[serde(default)]
+    ts: i64,
+    #[serde(default)]
+    pk: String,
+    #[serde(default)]
+    sig: String,
+    /// The asking station's grid.
+    #[serde(default)]
+    g: String,
+    #[serde(default)]
+    snr: Option<f32>,
+    /// The reporting gateway's grid.
+    #[serde(default)]
+    grid: String,
+    #[serde(default)]
+    preset: String,
+}
+
+/// `bound` is the pubkey this callsign already registered. A different key
+/// is refused. True when `sig` signs `msg` and `ts` is within ten minutes.
+pub fn owner_sig_ok(
     pk_hex: &str,
     sig_hex: &str,
-    callsign: &str,
+    msg: &[u8],
     ts: i64,
-    ids: &[String],
     now: i64,
     bound: Option<&[u8; 32]>,
 ) -> bool {
@@ -415,11 +440,78 @@ pub fn owner_pull_ok(
     let Ok(key) = VerifyingKey::from_bytes(&pk_arr) else {
         return false;
     };
-    key.verify(
+    key.verify(msg, &Signature::from_bytes(&sig_arr)).is_ok()
+}
+
+/// Mail gateway Auto (#275). A gateway reports a Radio+ station's ask that it
+/// heard. The hub checks the station signed it, waits a short window for the
+/// other gateways' reports, then answers each with its reply slot: best SNR
+/// first, at most three, one after the other so no replies overlap.
+pub async fn post_gateway_ask(
+    State(st): State<HubState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    let gateway = match verify(&headers, &body) {
+        Ok(c) => c,
+        Err((s, m)) => return bad(s, &m).into_response(),
+    };
+    let req: GatewayAskReq = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(_) => return bad(StatusCode::BAD_REQUEST, "bad json").into_response(),
+    };
+    let asker = req.for_call.trim().to_ascii_uppercase();
+    let nonce = req.n.trim();
+    if asker.is_empty() || nonce.is_empty() || nonce.len() > 32 {
+        return bad(StatusCode::BAD_REQUEST, "ask needs for and n").into_response();
+    }
+    let bound = st.telemetry.get_pubkey(&asker);
+    let now = chrono::Utc::now().timestamp();
+    let token = crate::mail::pick::ask_token(&asker, req.ts, nonce);
+    if !owner_sig_ok(&req.pk, &req.sig, &token, req.ts, now, bound.as_ref()) {
+        return bad(StatusCode::UNAUTHORIZED, "gateway ask").into_response();
+    }
+    if bound.is_none() {
+        if let Ok(bytes) = hex::decode(req.pk.trim()) {
+            if bytes.len() == 32 {
+                let mut pk = [0u8; 32];
+                pk.copy_from_slice(&bytes);
+                let _ = st.telemetry.bind_callsign(&asker, &pk);
+            }
+        }
+    }
+    let preset =
+        crate::presets::Preset::parse(&req.preset).unwrap_or(crate::presets::Preset::HfPoor);
+    let report = crate::mail::pick::Report {
+        gateway,
+        snr: req.snr.filter(|s| s.is_finite()),
+        grid: crate::grid::position(&req.grid).unwrap_or_default(),
+    };
+    let slot = st
+        .gateway_asks
+        .report(&asker, nonce, &req.g, preset, report)
+        .await;
+    Json(json!({ "ok": true, "slot": slot })).into_response()
+}
+
+/// `bound` is the pubkey this callsign already registered. A different key is refused.
+pub fn owner_pull_ok(
+    pk_hex: &str,
+    sig_hex: &str,
+    callsign: &str,
+    ts: i64,
+    ids: &[String],
+    now: i64,
+    bound: Option<&[u8; 32]>,
+) -> bool {
+    owner_sig_ok(
+        pk_hex,
+        sig_hex,
         &pull_token(callsign, ts, ids),
-        &Signature::from_bytes(&sig_arr),
+        ts,
+        now,
+        bound,
     )
-    .is_ok()
 }
 
 /// Copy-to belongs to whoever wrote the mail. A relaying station cannot attach
@@ -481,6 +573,14 @@ pub async fn post_send(
             "From must be a WeeChat Radio address",
         )
         .into_response();
+    }
+    // Safety net (#275): Auto sends Radio+ mail to one gateway, but should two
+    // gateways ever post the same mail, Resend gets it once.
+    if let Some(prev) = st.mail.out_status(req.mail_id.trim()) {
+        if !prev.resend_id.is_empty() && prev.from_addr.eq_ignore_ascii_case(&from) {
+            return Json(json!({ "ok": true, "id": prev.resend_id, "duplicate": true }))
+                .into_response();
+        }
     }
     let bcc = author_bcc(&call, &from, req.bcc, |a| st.mail.copy_to(a));
     match resend_send(
@@ -981,6 +1081,87 @@ mod tests {
         assert_eq!(req.auth.pk, "aa");
         assert_eq!(req.auth.sig, "bb");
         assert_eq!(req.auth.ts, 1_700_000_000);
+    }
+
+    fn signed(keys: &crate::proto::IdentityKeys, call: &str, body: &Value) -> (HeaderMap, Bytes) {
+        let raw = serde_json::to_vec(body).unwrap();
+        let mut h = HeaderMap::new();
+        h.insert("x-wcr-callsign", call.parse().unwrap());
+        h.insert("x-wcr-pubkey", keys.public_hex().parse().unwrap());
+        h.insert(
+            "x-wcr-signature",
+            hex::encode(keys.sign_bytes(&raw)).parse().unwrap(),
+        );
+        (h, Bytes::from(raw))
+    }
+
+    async fn json_of(r: axum::response::Response) -> (StatusCode, Value) {
+        let code = r.status();
+        let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        (code, serde_json::from_slice(&b).unwrap_or(Value::Null))
+    }
+
+    /// #275 safety net: a second gateway posting the same mail id gets the
+    /// first post's Resend id back, and Resend is not called again.
+    #[tokio::test]
+    async fn the_hub_posts_a_mail_id_once() {
+        let st = crate::net::hub_server::test_hub_state();
+        let from = wcr_address("M7SND");
+        st.mail
+            .insert_out(
+                "G4GW",
+                &from,
+                "op@example.com",
+                "hi",
+                "body",
+                "re_first",
+                "mailid1",
+            )
+            .unwrap();
+        let gw2 = crate::proto::IdentityKeys::generate();
+        let body = json!({
+            "from": from, "to": "op@example.com", "subject": "hi", "body": "body",
+            "mail_id": "mailid1",
+        });
+        let (h, b) = signed(&gw2, "G4TWO", &body);
+        let (code, v) = json_of(post_send(State(st.clone()), h, b).await.into_response()).await;
+        assert_eq!(code, StatusCode::OK, "{v}");
+        assert_eq!(v["id"], "re_first");
+        assert_eq!(v["duplicate"], true);
+    }
+
+    /// A gateway ask is coordinated only when the asking station signed it.
+    #[tokio::test]
+    async fn the_hub_gives_a_slot_only_for_a_signed_ask() {
+        let st = crate::net::hub_server::test_hub_state();
+        let asker = crate::proto::IdentityKeys::generate();
+        let gw = crate::proto::IdentityKeys::generate();
+        let ts = chrono::Utc::now().timestamp();
+        let sig = hex::encode(asker.sign_bytes(&crate::mail::pick::ask_token("M7ASK", ts, "abcd")));
+        let mut ask = json!({
+            "for": "M7ASK", "n": "abcd", "ts": ts, "pk": asker.public_hex(), "sig": sig,
+            "g": "IO91WM", "snr": 4.5, "grid": "IO91VL", "preset": "vhf-fm",
+        });
+        let (h, b) = signed(&gw, "G4GW", &ask);
+        let (code, v) = json_of(
+            post_gateway_ask(State(st.clone()), h, b)
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{v}");
+        assert_eq!(v["slot"]["idx"], 0);
+        assert_eq!(v["slot"]["gateway"], "G4GW");
+        // Someone else's nonce under the same signature is refused.
+        ask["n"] = json!("ffff");
+        let (h, b) = signed(&gw, "G4GW", &ask);
+        let (code, _) = json_of(
+            post_gateway_ask(State(st.clone()), h, b)
+                .await
+                .into_response(),
+        )
+        .await;
+        assert_eq!(code, StatusCode::UNAUTHORIZED);
     }
 
     #[test]

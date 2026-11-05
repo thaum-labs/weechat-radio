@@ -4,6 +4,7 @@
 use super::gateway::{self, SendPath};
 use super::hub;
 use super::lease::{self, RadioPorts};
+use super::pick::{self, Candidate, PickState};
 use super::proto::{self, Incoming, MailMeta, MailOp, MailWire};
 use super::store::{GetProgress, MailRow, MailStore, WaitHeader};
 use super::MailCmd;
@@ -175,6 +176,18 @@ struct TxCtx {
     gets: Mutex<u64>,
     /// Mail id → when it first held for another station's mail.
     holds: Mutex<HashMap<String, std::time::Instant>>,
+    /// Mail gateway Auto: the current ask's generation and nonce, the
+    /// replies heard so far, and what waits for the ask to finish.
+    asks: Mutex<u64>,
+    ask_nonce: Mutex<String>,
+    heard_gw: Mutex<Vec<Candidate>>,
+    after_ask: Mutex<Vec<MailCmd>>,
+    /// Unix seconds of the last ask that tried to key.
+    ask_tried: Mutex<i64>,
+    /// Mail id → gateways it has already failed on.
+    tried: Mutex<HashMap<String, Vec<String>>>,
+    /// Mail ids that already started a new ask after running out of gateways.
+    reasked: Mutex<std::collections::HashSet<String>>,
 }
 
 struct Assembler {
@@ -195,6 +208,9 @@ struct Assembler {
     /// When the last mail frame arrived, and the spacing before it.
     last_rx: Option<std::time::Instant>,
     rx_spacing: f64,
+    /// Weakest SNR of the frames since the last finished message. A gateway
+    /// ask can span several frames on a slow preset.
+    run_snr: Option<f32>,
 }
 
 impl Assembler {
@@ -210,6 +226,7 @@ impl Assembler {
             reack: HashMap::new(),
             last_rx: None,
             rx_spacing: 0.0,
+            run_snr: None,
         }
     }
 
@@ -276,6 +293,13 @@ pub(super) fn spawn(
         quiet: Mutex::new(0),
         gets: Mutex::new(0),
         holds: Mutex::new(HashMap::new()),
+        asks: Mutex::new(0),
+        ask_nonce: Mutex::new(String::new()),
+        heard_gw: Mutex::new(Vec::new()),
+        after_ask: Mutex::new(Vec::new()),
+        ask_tried: Mutex::new(0),
+        tried: Mutex::new(HashMap::new()),
+        reasked: Mutex::new(std::collections::HashSet::new()),
     };
     tokio::spawn(run(rx, ctx));
 }
@@ -310,6 +334,9 @@ async fn dispatch(ctx: &TxCtx, asm: &mut Assembler, cmd: MailCmd) {
                 *n = n.wrapping_add(1);
                 *n
             };
+            if !route_or_defer(ctx, MailCmd::CheckList) {
+                return;
+            }
             tracing::info!("mail check asked");
             // QA v0.1.113: the wait starts once the request is on air, not
             // when asked, so the start-up hold does not eat into it.
@@ -331,10 +358,14 @@ async fn dispatch(ctx: &TxCtx, asm: &mut Assembler, cmd: MailCmd) {
             if ctx.store.notice().is_empty() {
                 ctx.store.set_notice("No reply from the gateway.");
                 tracing::info!("mail check: no reply from the gateway");
+                note_gateway_silent(ctx);
             }
         }
         MailCmd::CheckGet { ids } => {
             let rf = ctx.cfg.lock().mode == Mode::RadioPlus;
+            if rf && !route_or_defer(ctx, MailCmd::CheckGet { ids: ids.clone() }) {
+                return;
+            }
             if rf {
                 let subject = ids
                     .first()
@@ -365,13 +396,23 @@ async fn dispatch(ctx: &TxCtx, asm: &mut Assembler, cmd: MailCmd) {
                 return;
             }
             fail_get(ctx, "No reply from the gateway.");
+            note_gateway_silent(ctx);
         }
         MailCmd::Inbound {
             incoming,
             during_burst,
-        } => on_incoming(ctx, asm, incoming, during_burst).await,
+            snr,
+        } => on_incoming(ctx, asm, incoming, during_burst, snr).await,
         MailCmd::SyncHub => {
+            auto_tick(ctx).await;
             let _ = sync_hub(ctx).await;
+        }
+        MailCmd::Ask => start_ask(ctx).await,
+        MailCmd::AskDone { gen } => finish_ask(ctx, gen),
+        MailCmd::GwReplyDue { to, nonce, snr } => {
+            if let Err(e) = send_gw_reply(ctx, &to, &nonce, snr).await {
+                tracing::warn!("mail gateway reply to {to}: {e}");
+            }
         }
         MailCmd::AckWait { id, gen } => {
             if let Err(e) = on_ack_wait(ctx, &id, gen).await {
@@ -419,7 +460,33 @@ async fn send_one(ctx: &TxCtx, id: &str) -> Result<()> {
             "Email needs an internet hop. Radio-only cannot reach the mail gateway.",
         )),
         SendPath::Hub => hub_send(ctx, &row).await,
-        SendPath::Rf => rf_send(ctx, &row).await,
+        SendPath::Rf => {
+            if gateway::is_finished(&row.state) {
+                return Ok(());
+            }
+            match route(ctx) {
+                Route::Gateway(gw) => {
+                    let gw = untried_gateway(ctx, id, gw);
+                    match gw {
+                        Some(gw) => rf_send(ctx, &row, &gw).await,
+                        None => {
+                            let text = out_of_gateways_text(ctx, id);
+                            fail_mail(ctx, id, &text);
+                            Ok(())
+                        }
+                    }
+                }
+                Route::Locate => {
+                    let _ = ctx.store.set_state(id, "outbox", "locating");
+                    defer_to_ask(ctx, MailCmd::Send { id: id.to_string() });
+                    Ok(())
+                }
+                Route::Missing(why) => {
+                    fail_mail(ctx, id, why);
+                    Err(Error::config(why))
+                }
+            }
+        }
     }
 }
 
@@ -493,11 +560,11 @@ async fn hub_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
     }
 }
 
-async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
+async fn rf_send(ctx: &TxCtx, row: &MailRow, gateway_cs: &str) -> Result<()> {
     let cfg = ctx.cfg.lock().clone();
-    let gateway_cs = cfg.mail.gateway.trim().to_ascii_uppercase();
+    let gateway_cs = gateway_cs.trim().to_ascii_uppercase();
     if gateway_cs.is_empty() {
-        return Err(Error::config("Set a mail gateway callsign in setup."));
+        return Err(Error::config(gateway::NO_GATEWAY_SET));
     }
     let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor);
     let vox = cfg.modem.is_vox();
@@ -612,7 +679,7 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
                 .bump_retry(&row.id)
                 .unwrap_or(row.retries.saturating_add(1));
             if n >= cap {
-                fail_mail(ctx, &row.id, gateway::NO_GATEWAY_ACK);
+                give_up(ctx, &row.id, gateway::NO_GATEWAY_ACK);
             } else {
                 silence_wait(ctx, &row.id);
                 let tx = ctx.cmd_tx.clone();
@@ -648,6 +715,8 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow) -> Result<()> {
         return Ok(());
     }
     note_mail(ctx, &cfg.callsign, &gateway_cs);
+    // The outbox row and the timeline name the gateway actually keyed to.
+    let _ = ctx.store.note_via(&row.id, &gateway_cs);
     // The burst has drained: the Email tab says Waiting for gateway.
     let _ = ctx.store.note_keyed(&row.id);
     if probe {
@@ -763,6 +832,8 @@ fn fail_mail(ctx: &TxCtx, id: &str, error: &str) {
 
 fn accept_mail(ctx: &TxCtx, id: &str) {
     silence_wait(ctx, id);
+    ctx.tried.lock().remove(id);
+    ctx.store.with_pick(|p| p.note_ok());
     let _ = ctx.store.set_outcome(id, "sent", "sent", "");
     tracing::info!("mail accepted {id}");
 }
@@ -778,7 +849,7 @@ async fn on_ack_wait(ctx: &TxCtx, id: &str, gen: u64) -> Result<()> {
     match gateway::on_ack_timeout(&row.state, row.retries, cap) {
         None => Ok(()),
         Some(gateway::AckTimeout::GiveUp { error }) => {
-            fail_mail(ctx, id, error);
+            give_up(ctx, id, error);
             Ok(())
         }
         Some(gateway::AckTimeout::Retry) => {
@@ -790,7 +861,18 @@ async fn on_ack_wait(ctx: &TxCtx, id: &str, gen: u64) -> Result<()> {
             let Some(row) = ctx.store.get(id)? else {
                 return Ok(());
             };
-            rf_send(ctx, &row).await
+            // A retry keys to the gateway the last try used.
+            let used = ctx.store.via(id)?.pop().map(|v| v.gateway);
+            match used.or_else(|| match route(ctx) {
+                Route::Gateway(g) => Some(g),
+                _ => None,
+            }) {
+                Some(gw) => rf_send(ctx, &row, &gw).await,
+                None => {
+                    give_up(ctx, id, gateway::NO_GATEWAY_ACK);
+                    Ok(())
+                }
+            }
         }
     }
 }
@@ -800,10 +882,11 @@ async fn send_control(ctx: &TxCtx, op: MailOp, mut meta: MailMeta, payload: &str
     if cfg.mode != Mode::RadioPlus {
         return sync_hub(ctx).await;
     }
-    let gateway_cs = cfg.mail.gateway.trim().to_ascii_uppercase();
-    if gateway_cs.is_empty() {
-        return Err(Error::config("Set a mail gateway callsign in setup."));
-    }
+    let gateway_cs = match route(ctx) {
+        Route::Gateway(g) => g,
+        Route::Locate => return Err(Error::config(pick::NO_GATEWAY_HEARD)),
+        Route::Missing(why) => return Err(Error::config(why)),
+    };
     meta.dest = gateway_cs.clone();
     meta.via = gateway_cs;
     meta.from = cfg.callsign.clone();
@@ -993,8 +1076,17 @@ async fn burst(
     result.map(|()| keyed)
 }
 
-async fn on_incoming(ctx: &TxCtx, asm: &mut Assembler, incoming: Incoming, during_burst: bool) {
+async fn on_incoming(
+    ctx: &TxCtx,
+    asm: &mut Assembler,
+    incoming: Incoming,
+    during_burst: bool,
+    snr: Option<f32>,
+) {
     let gateway = ctx.cfg.lock().mode == Mode::InternetRadio;
+    if let Some(s) = snr {
+        asm.run_snr = Some(asm.run_snr.map_or(s, |r| r.min(s)));
+    }
     if gateway {
         asm.note_frame(std::time::Instant::now());
     }
@@ -1075,10 +1167,11 @@ async fn on_incoming(ctx: &TxCtx, asm: &mut Assembler, incoming: Incoming, durin
             }
         }
         Absorb::Ready(meta, body, op) => {
+            let snr = asm.run_snr.take();
             if gateway_reply {
                 push_ready(asm, (meta, body, op));
                 arm_quiet(ctx, asm);
-            } else if let Err(e) = apply_mail(ctx, meta, body, op, during_burst).await {
+            } else if let Err(e) = apply_mail(ctx, meta, body, op, during_burst, snr).await {
                 tracing::warn!("mail inbound: {e}");
             }
         }
@@ -1191,7 +1284,7 @@ async fn on_quiet(ctx: &TxCtx, asm: &mut Assembler, gen: u64) {
         if let Some(id) = meta.ids.first() {
             completed.insert(id.clone());
         }
-        if let Err(e) = apply_mail(ctx, meta, body, op, false).await {
+        if let Err(e) = apply_mail(ctx, meta, body, op, false, None).await {
             tracing::warn!("mail inbound: {e}");
         }
     }
@@ -1358,6 +1451,7 @@ async fn apply_mail(
     body: String,
     op: MailOp,
     during_burst: bool,
+    snr: Option<f32>,
 ) -> Result<()> {
     let cfg = ctx.cfg.lock().clone();
     let us = cfg.callsign.to_ascii_uppercase();
@@ -1435,6 +1529,7 @@ async fn apply_mail(
                 let mut n = ctx.checks.lock();
                 *n = n.wrapping_add(1);
             }
+            ctx.store.with_pick(|p| p.note_ok());
             let notice = gateway::check_notice(rows.len());
             ctx.store.set_notice(notice);
             if notice.is_empty() {
@@ -1446,6 +1541,14 @@ async fn apply_mail(
         }
         MailOp::ListReq if cfg.mode == Mode::InternetRadio => answer_list(ctx, &meta, &body).await,
         MailOp::GetReq if cfg.mode == Mode::InternetRadio => answer_get(ctx, &meta, &body).await,
+        MailOp::GwAsk if cfg.mode == Mode::InternetRadio => {
+            heard_gw_ask(ctx, &meta, &body, snr);
+            Ok(())
+        }
+        MailOp::GwReply => {
+            heard_gw_reply(ctx, &meta, &body, snr);
+            Ok(())
+        }
         MailOp::Data | MailOp::VoxData => deliver(ctx, meta, body, op).await,
         _ => Ok(()),
     }
@@ -1847,6 +1950,487 @@ async fn reply_chunks(
     )
     .await
     .map(|_| ())
+}
+
+/// Where Radio+ mail and Check mail go.
+enum Route {
+    /// A pinned gateway, or Auto's current pick.
+    Gateway(String),
+    /// Auto has no usable pick: ask first.
+    Locate,
+    /// Neither Auto nor a callsign: the reason to show.
+    Missing(&'static str),
+}
+
+/// The dial and preset a pick is tied to.
+fn band_now(ctx: &TxCtx) -> (String, u32) {
+    let preset = ctx.cfg.lock().modem.preset.clone();
+    let khz = ctx.snap.lock().freq_khz;
+    (preset, khz)
+}
+
+fn route(ctx: &TxCtx) -> Route {
+    let (pinned, auto) = {
+        let cfg = ctx.cfg.lock();
+        (cfg.mail.pinned(), cfg.mail.auto())
+    };
+    if !pinned.is_empty() {
+        return Route::Gateway(pinned);
+    }
+    if !auto {
+        return Route::Missing(gateway::NO_GATEWAY_SET);
+    }
+    let (preset, khz) = band_now(ctx);
+    let now = chrono::Utc::now().timestamp();
+    let p = ctx.store.pick();
+    match (p.stale(now, &preset, khz), p.current_call()) {
+        (None, Some(call)) => Route::Gateway(call.to_string()),
+        _ => Route::Locate,
+    }
+}
+
+/// True when `cmd` can go now. Otherwise it waits for an ask (started here
+/// when none is running), or the reason is shown and false returned.
+fn route_or_defer(ctx: &TxCtx, cmd: MailCmd) -> bool {
+    if ctx.cfg.lock().mode != Mode::RadioPlus {
+        return true;
+    }
+    match route(ctx) {
+        Route::Gateway(_) => true,
+        Route::Locate => {
+            if matches!(cmd, MailCmd::CheckGet { .. }) {
+                let mut p = ctx.store.get_progress();
+                p.state = "asking".into();
+                p.detail = "Finding a mail gateway first…".into();
+                ctx.store.set_get_progress(p);
+            }
+            defer_to_ask(ctx, cmd);
+            false
+        }
+        Route::Missing(why) => {
+            match cmd {
+                MailCmd::CheckGet { .. } => fail_get(ctx, why),
+                _ => ctx.store.set_notice(why),
+            }
+            false
+        }
+    }
+}
+
+/// Hold `cmd` until the gateway ask has finished. Starts one if none runs.
+fn defer_to_ask(ctx: &TxCtx, cmd: MailCmd) {
+    ctx.after_ask.lock().push(cmd);
+    if ctx.store.pick().state != PickState::Asking {
+        let tx = ctx.cmd_tx.clone();
+        tokio::spawn(async move {
+            let _ = tx.send(MailCmd::Ask).await;
+        });
+    }
+}
+
+/// Every 30 s, and once at start: Auto asks by itself when it has not asked
+/// in this run, or the band or preset changed. An hour-old pick is asked
+/// again before the next mail instead, so a quiet station does not key.
+async fn auto_tick(ctx: &TxCtx) {
+    show_pick(ctx);
+    let (radio_plus, auto, pinned) = {
+        let cfg = ctx.cfg.lock();
+        (
+            cfg.mode == Mode::RadioPlus,
+            cfg.mail.auto(),
+            cfg.mail.pinned(),
+        )
+    };
+    if !radio_plus || !auto || !pinned.is_empty() {
+        return;
+    }
+    let now = chrono::Utc::now().timestamp();
+    if now - *ctx.ask_tried.lock() < pick::ASK_RETRY_SECS {
+        return;
+    }
+    let (preset, khz) = band_now(ctx);
+    let why = ctx.store.pick().stale(now, &preset, khz);
+    if matches!(
+        why,
+        Some("not asked yet") | Some("the preset changed") | Some("the band changed")
+    ) {
+        tracing::info!("mail gateway auto: asking, {}", why.unwrap_or(""));
+        start_ask(ctx).await;
+    }
+}
+
+fn my_grid(ctx: &TxCtx) -> String {
+    let live = ctx.snap.lock().grid.clone();
+    if live.trim().is_empty() {
+        ctx.cfg.lock().grid.clone()
+    } else {
+        live
+    }
+}
+
+fn show_pick(ctx: &TxCtx) {
+    let cfg = ctx.cfg.lock().clone();
+    let line = super::gateway_line(&cfg, &ctx.store.pick());
+    ctx.snap.lock().mail_gateway = line;
+}
+
+/// Key a signed gateway ask and listen for the replies.
+async fn start_ask(ctx: &TxCtx) {
+    if ctx.store.pick().state == PickState::Asking {
+        return;
+    }
+    *ctx.ask_tried.lock() = chrono::Utc::now().timestamp();
+    let cfg = ctx.cfg.lock().clone();
+    let gen = {
+        let mut n = ctx.asks.lock();
+        *n = n.wrapping_add(1);
+        *n
+    };
+    let nonce = format!("{:016x}", rand::random::<u64>());
+    *ctx.ask_nonce.lock() = nonce.clone();
+    ctx.heard_gw.lock().clear();
+    let prev = ctx.store.with_pick(|p| {
+        let prev = p.state;
+        p.state = PickState::Asking;
+        prev
+    });
+    show_pick(ctx);
+    let ts = chrono::Utc::now().timestamp();
+    let call = cfg.callsign.to_ascii_uppercase();
+    let payload = pick::AskPayload {
+        ts,
+        pk: ctx.keys.public_hex(),
+        sig: hex::encode(ctx.keys.sign_bytes(&pick::ask_token(&call, ts, &nonce))),
+        g: crate::grid::position(&my_grid(ctx)).unwrap_or_default(),
+    };
+    let body = serde_json::to_string(&payload).unwrap_or_default();
+    let meta = MailMeta {
+        from: call,
+        ..MailMeta::default()
+    };
+    let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor);
+    let rung = mail_rung(preset, 0);
+    let mtu = rung.payload_bytes() as usize;
+    let mut frames = Vec::new();
+    for mut w in proto::chunk_to_limit(&nonce, &meta, &body, mtu.min(crate::proto::MAX_BODY)) {
+        w.op = MailOp::GwAsk;
+        match proto::frames_for_mtu(&proto::encode_chunk(&w), mtu) {
+            Ok(f) => frames.extend(f),
+            Err(e) => tracing::warn!("mail gateway ask: {e}"),
+        }
+    }
+    let keyed = burst(
+        ctx,
+        &KeyPlan::fixed(frames),
+        preset,
+        rung,
+        cfg.modem.is_vox(),
+        cfg.modem.vox_lead_ms,
+        cfg.modem.vox_tail_ms,
+    )
+    .await;
+    if let Err(e) = keyed {
+        tracing::info!("mail gateway ask not keyed: {e}");
+        ctx.store.with_pick(|p| {
+            p.state = if prev == PickState::Asking {
+                PickState::Idle
+            } else {
+                prev
+            }
+        });
+        show_pick(ctx);
+        let why = e.to_string();
+        for cmd in std::mem::take(&mut *ctx.after_ask.lock()) {
+            refuse_after_ask(ctx, cmd, &why);
+        }
+        return;
+    }
+    let listen = pick::listen_secs(preset);
+    tracing::info!(
+        "mail gateway ask {nonce} keyed on {}, listening {listen:.0} s",
+        preset.as_str()
+    );
+    let tx = ctx.cmd_tx.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs_f64(listen)).await;
+        let _ = tx.send(MailCmd::AskDone { gen }).await;
+    });
+}
+
+/// The listening time is over: rank what was heard and let waiting mail go.
+fn finish_ask(ctx: &TxCtx, gen: u64) {
+    if *ctx.asks.lock() != gen {
+        return;
+    }
+    let heard = std::mem::take(&mut *ctx.heard_gw.lock());
+    let list = pick::rank(heard, &my_grid(ctx));
+    let (preset, khz) = band_now(ctx);
+    let now = chrono::Utc::now().timestamp();
+    for (i, c) in list.iter().enumerate() {
+        tracing::info!(
+            "mail gateway heard #{} {} up {} down {} link {} {}",
+            i + 1,
+            c.call,
+            snr_text(c.up),
+            snr_text(c.down),
+            snr_text(c.link()),
+            c.km.map(|k| format!("{k:.0} km")).unwrap_or_default()
+        );
+    }
+    ctx.store.with_pick(|p| p.settle(list, now, &preset, khz));
+    show_pick(ctx);
+    let found = ctx.store.pick().current_call().map(str::to_string);
+    tracing::info!(
+        "mail gateway auto: {}",
+        found.as_deref().unwrap_or(pick::NO_GATEWAY_HEARD)
+    );
+    let waiting = std::mem::take(&mut *ctx.after_ask.lock());
+    if found.is_some() {
+        let tx = ctx.cmd_tx.clone();
+        tokio::spawn(async move {
+            for cmd in waiting {
+                let _ = tx.send(cmd).await;
+            }
+        });
+    } else {
+        for cmd in waiting {
+            refuse_after_ask(ctx, cmd, gateway::NONE_HEARD_TEXT);
+        }
+    }
+}
+
+fn snr_text(v: Option<f32>) -> String {
+    v.map(|x| format!("{x:.1} dB"))
+        .unwrap_or_else(|| "?".into())
+}
+
+/// A command that waited for an ask that found nobody (or never keyed).
+fn refuse_after_ask(ctx: &TxCtx, cmd: MailCmd, why: &str) {
+    match cmd {
+        MailCmd::Send { id } => fail_mail(ctx, &id, why),
+        MailCmd::CheckGet { .. } => fail_get(ctx, why),
+        MailCmd::CheckList => ctx.store.set_notice(why),
+        _ => {}
+    }
+}
+
+/// Check mail heard nothing back. Twice in a row moves Auto to the next
+/// gateway, or asks again before the next use when the list is used up.
+fn note_gateway_silent(ctx: &TxCtx) {
+    if !ctx.cfg.lock().mail.pinned().is_empty() {
+        return;
+    }
+    ctx.store.with_pick(|p| {
+        if p.state == PickState::Picked && p.note_fail() && p.next_after(&[]).is_none() {
+            p.asked_at = 0;
+        }
+    });
+    show_pick(ctx);
+}
+
+/// The gateway Auto would key this mail to, skipping ones it already
+/// failed on. `None` when every gateway heard has been tried.
+fn untried_gateway(ctx: &TxCtx, id: &str, gw: String) -> Option<String> {
+    let tried = ctx.tried.lock().get(id).cloned().unwrap_or_default();
+    if !tried.iter().any(|t| t.eq_ignore_ascii_case(&gw)) {
+        return Some(gw);
+    }
+    if !ctx.cfg.lock().mail.pinned().is_empty() {
+        return Some(gw);
+    }
+    let next = ctx.store.with_pick(|p| p.next_after(&tried));
+    show_pick(ctx);
+    next
+}
+
+fn out_of_gateways_text(ctx: &TxCtx, id: &str) -> String {
+    let tried = ctx.tried.lock().get(id).cloned().unwrap_or_default();
+    format!(
+        "{} Tried {}; no other mail gateway heard.",
+        gateway::NO_GATEWAY_ACK,
+        tried.join(", ")
+    )
+}
+
+/// The mail ran out of tries on its gateway. With Auto, move it to the next
+/// gateway heard, or ask again once. Otherwise it stays Failed.
+fn give_up(ctx: &TxCtx, id: &str, error: &str) {
+    fail_mail(ctx, id, error);
+    let (radio_plus, pinned, auto) = {
+        let cfg = ctx.cfg.lock();
+        (
+            cfg.mode == Mode::RadioPlus,
+            cfg.mail.pinned(),
+            cfg.mail.auto(),
+        )
+    };
+    if error != gateway::NO_GATEWAY_ACK || !radio_plus || !pinned.is_empty() || !auto {
+        return;
+    }
+    let Some(used) = ctx.store.via(id).ok().and_then(|mut v| v.pop()) else {
+        return;
+    };
+    let tried = {
+        let mut t = ctx.tried.lock();
+        let list = t.entry(id.to_string()).or_default();
+        if !list.contains(&used.gateway) {
+            list.push(used.gateway.clone());
+        }
+        list.clone()
+    };
+    let next = ctx.store.with_pick(|p| {
+        let _ = p.note_fail();
+        p.next_after(&tried)
+    });
+    show_pick(ctx);
+    let again = |ctx: &TxCtx| -> bool { ctx.store.reset_for_gateway(id).unwrap_or(false) };
+    if let Some(next) = next {
+        if again(ctx) {
+            tracing::info!(
+                "mail {id}: {} did not answer, trying {next} next",
+                used.gateway
+            );
+            let tx = ctx.cmd_tx.clone();
+            let id = id.to_string();
+            tokio::spawn(async move {
+                let _ = tx.send(MailCmd::Send { id }).await;
+            });
+        }
+        return;
+    }
+    if ctx.reasked.lock().insert(id.to_string()) && again(ctx) {
+        tracing::info!("mail {id}: no other gateway on the list, asking which gateways hear us");
+        ctx.store.with_pick(|p| p.asked_at = 0);
+        let _ = ctx.store.set_state(id, "outbox", "locating");
+        defer_to_ask(ctx, MailCmd::Send { id: id.to_string() });
+        return;
+    }
+    let text = out_of_gateways_text(ctx, id);
+    let _ = ctx.store.set_outcome(id, "outbox", "failed", &text);
+}
+
+/// A gateway heard a Radio+ station's ask: report it to the hub with the SNR
+/// heard, and key a reply in the slot the hub gives back.
+fn heard_gw_ask(ctx: &TxCtx, meta: &MailMeta, body: &str, snr: Option<f32>) {
+    let Some(nonce) = meta.ids.first().cloned() else {
+        return;
+    };
+    let asker = meta.from.trim().to_ascii_uppercase();
+    if !crate::proto::is_plausible_callsign(&asker) {
+        return;
+    }
+    let Ok(ask) = serde_json::from_str::<pick::AskPayload>(body) else {
+        tracing::info!("mail gateway ask from {asker} does not parse");
+        return;
+    };
+    let cfg = ctx.cfg.lock().clone();
+    let base = hub::http_base_from_hub(&cfg.hub.url);
+    if base.is_empty() {
+        return;
+    }
+    let report = serde_json::json!({
+        "for": asker,
+        "n": nonce,
+        "ts": ask.ts,
+        "pk": ask.pk,
+        "sig": ask.sig,
+        "g": ask.g,
+        "snr": snr,
+        "grid": crate::grid::position(&my_grid(ctx)).unwrap_or_default(),
+        "preset": cfg.modem.preset,
+    });
+    tracing::info!(
+        "mail gateway ask {nonce} heard from {asker} at {}",
+        snr_text(snr)
+    );
+    let keys = ctx.keys.clone();
+    let call = cfg.callsign.clone();
+    let tx = ctx.cmd_tx.clone();
+    tokio::spawn(async move {
+        let v = match hub::signed_post(&base, hub::GATEWAY_ASK_PATH, &keys, &call, &report).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::info!("mail gateway ask {nonce}: hub said {e}");
+                return;
+            }
+        };
+        let Some(slot) = v.get("slot").filter(|s| !s.is_null()) else {
+            tracing::info!("mail gateway ask {nonce}: no reply slot for this gateway");
+            return;
+        };
+        let idx = slot.get("idx").and_then(|x| x.as_u64()).unwrap_or(0);
+        let delay = slot
+            .get("delay_secs")
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0)
+            .clamp(0.0, 600.0);
+        tracing::info!(
+            "mail gateway ask {nonce}: reply slot {} in {delay:.1} s",
+            idx + 1
+        );
+        tokio::time::sleep(Duration::from_secs_f64(delay)).await;
+        let _ = tx
+            .send(MailCmd::GwReplyDue {
+                to: asker,
+                nonce,
+                snr,
+            })
+            .await;
+    });
+}
+
+async fn send_gw_reply(ctx: &TxCtx, to: &str, nonce: &str, snr: Option<f32>) -> Result<()> {
+    let cfg = ctx.cfg.lock().clone();
+    let meta = MailMeta {
+        from: cfg.callsign.to_ascii_uppercase(),
+        dest: to.to_string(),
+        ..MailMeta::default()
+    };
+    let payload = pick::reply_payload(
+        snr,
+        &crate::grid::position(&my_grid(ctx)).unwrap_or_default(),
+    );
+    let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor);
+    let frames = pick::reply_frames(nonce, &meta, &payload, preset);
+    burst(
+        ctx,
+        &KeyPlan::fixed(frames),
+        preset,
+        mail_rung(preset, 0),
+        cfg.modem.is_vox(),
+        cfg.modem.vox_lead_ms,
+        cfg.modem.vox_tail_ms,
+    )
+    .await?;
+    tracing::info!("mail gateway reply keyed to {to} ({payload})");
+    Ok(())
+}
+
+/// A gateway answered our ask. Kept with the SNR we heard it at.
+fn heard_gw_reply(ctx: &TxCtx, meta: &MailMeta, body: &str, snr: Option<f32>) {
+    let Some(nonce) = meta.ids.first() else {
+        return;
+    };
+    if *nonce != *ctx.ask_nonce.lock() || ctx.store.pick().state != PickState::Asking {
+        return;
+    }
+    let call = meta.from.trim().to_ascii_uppercase();
+    if !crate::proto::is_plausible_callsign(&call) {
+        return;
+    }
+    let (up, grid) = pick::parse_reply(body);
+    tracing::info!(
+        "mail gateway reply from {call}: it heard us at {}, we hear it at {}",
+        snr_text(up),
+        snr_text(snr)
+    );
+    ctx.heard_gw.lock().push(Candidate {
+        call,
+        up,
+        down: snr,
+        grid,
+        km: None,
+    });
 }
 
 #[cfg(test)]

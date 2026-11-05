@@ -173,6 +173,13 @@ pub fn send_step(v: &SendView<'_>) -> SendStep {
             false,
         ),
         _ if !v.rf => step(0.3, "Handing it to the hub…".into(), false, false),
+        // Auto (#275): not sent yet, a gateway is being found first.
+        "locating" => step(
+            0.01,
+            "Finding a mail gateway: asking which stations hear you. Not sent yet…".into(),
+            false,
+            false,
+        ),
         "tx" | "queued" => {
             let have = got_count(v.got);
             if v.chunks > 0 && have > 0 {
@@ -253,6 +260,7 @@ mod tests {
     #[test]
     fn radio_plus_progress_moves_forward_through_the_real_stages() {
         let order = [
+            send_step(&view("locating", "", "")),
             send_step(&view("queued", "", "")),
             send_step(&view("tx", "", "")),
             send_step(&view("tx", "0,1", "")),
@@ -263,10 +271,12 @@ mod tests {
         for pair in order.windows(2) {
             assert!(pair[0].fraction < pair[1].fraction, "{pair:?}");
         }
-        assert_eq!(order[2].label, "The gateway has 2 of 4 chunks…");
-        assert!(order[5].done && order[5].ok);
-        assert_eq!(order[5].label, "Success: delivered.");
-        assert!(!order[4].done);
+        assert!(order[0].label.starts_with("Finding a mail gateway"));
+        assert!(!order[0].done);
+        assert_eq!(order[3].label, "The gateway has 2 of 4 chunks…");
+        assert!(order[6].done && order[6].ok);
+        assert_eq!(order[6].label, "Success: delivered.");
+        assert!(!order[5].done);
     }
 
     #[test]

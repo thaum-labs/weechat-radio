@@ -1291,7 +1291,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                             .push(crate::traffic::mail_row(&incoming, "heard", snr));
                         note_exchange(&rt, None, Some(&incoming));
                         hold_air_for_heard_mail(&rt, &incoming);
-                        crate::mail::on_rf(&rt.mail, incoming).await;
+                        crate::mail::on_rf(&rt.mail, incoming, snr).await;
                     } else if crate::mail::looks_like_mail(&payload) {
                         tracing::info!(
                             "mail frame dropped: {} bytes that do not decode",
