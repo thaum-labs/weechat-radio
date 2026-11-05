@@ -199,6 +199,35 @@ pub fn pull_token(callsign: &str, ts: i64, ids: &[String]) -> Vec<u8> {
     .into_bytes()
 }
 
+/// What a gateway posts to the hub's inbox or fetch for a Radio+ station:
+/// `for`, `ids` and the station's signed `auth` (from [`pull_auth`]) as heard.
+pub fn gateway_pull_body(who: &str, ids: &[String], auth: &str) -> serde_json::Value {
+    let mut body = serde_json::json!({ "for": who, "ids": ids });
+    if let Ok(extra) = serde_json::from_str::<serde_json::Value>(auth) {
+        if let (Some(obj), Some(more)) = (body.as_object_mut(), extra.as_object()) {
+            for (k, v) in more {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    body
+}
+
+/// The signed part of a Radio+ station's Check mail or Get: the gateway adds
+/// `for` and `ids` and posts it to the hub.
+pub fn pull_auth(
+    keys: &crate::proto::IdentityKeys,
+    callsign: &str,
+    ts: i64,
+    ids: &[String],
+) -> serde_json::Value {
+    serde_json::json!({
+        "pk": keys.public_hex(),
+        "sig": hex::encode(keys.sign_bytes(&pull_token(callsign, ts, ids))),
+        "ts": ts,
+    })
+}
+
 fn wire_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {

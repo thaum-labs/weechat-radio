@@ -1712,16 +1712,7 @@ async fn answer_get(ctx: &TxCtx, req: &MailMeta, auth: &str) -> Result<()> {
     let cfg = ctx.cfg.lock().clone();
     let base = hub::http_base_from_hub(&cfg.hub.url);
     let who = requester(req);
-    let mut body = serde_json::json!({ "ids": req.ids, "for": who });
-    if let Ok(extra) = serde_json::from_str::<serde_json::Value>(auth) {
-        if let Some(obj) = body.as_object_mut() {
-            if let Some(more) = extra.as_object() {
-                for (k, v) in more {
-                    obj.insert(k.clone(), v.clone());
-                }
-            }
-        }
-    }
+    let body = proto::gateway_pull_body(&who, &req.ids, auth);
     let v = hub::signed_post(&base, "/api/v1/mail/fetch", &ctx.keys, &cfg.callsign, &body).await?;
     let messages = v
         .get("messages")
@@ -1789,26 +1780,13 @@ fn requester(req: &MailMeta) -> String {
 fn pull_auth(ctx: &TxCtx, ids: &[String]) -> String {
     let call = ctx.cfg.lock().callsign.clone();
     let ts = chrono::Utc::now().timestamp();
-    let sig = hex::encode(ctx.keys.sign_bytes(&proto::pull_token(&call, ts, ids)));
-    serde_json::json!({
-        "pk": ctx.keys.public_hex(),
-        "sig": sig,
-        "ts": ts,
-    })
-    .to_string()
+    proto::pull_auth(&ctx.keys, &call, ts, ids).to_string()
 }
 
 async fn fetch_for(ctx: &TxCtx, who: &str, auth: &str, ids: &[String]) -> Result<Vec<WaitHeader>> {
     let cfg = ctx.cfg.lock().clone();
     let base = hub::http_base_from_hub(&cfg.hub.url);
-    let mut body = serde_json::json!({ "for": who, "ids": ids });
-    if let Ok(extra) = serde_json::from_str::<serde_json::Value>(auth) {
-        if let (Some(obj), Some(more)) = (body.as_object_mut(), extra.as_object()) {
-            for (k, v) in more {
-                obj.insert(k.clone(), v.clone());
-            }
-        }
-    }
+    let body = proto::gateway_pull_body(who, ids, auth);
     let v = hub::signed_post(&base, "/api/v1/mail/inbox", &ctx.keys, &cfg.callsign, &body).await?;
     let rows = v
         .get("headers")
@@ -2101,12 +2079,8 @@ async fn start_ask(ctx: &TxCtx) {
     show_pick(ctx);
     let ts = chrono::Utc::now().timestamp();
     let call = cfg.callsign.to_ascii_uppercase();
-    let payload = pick::AskPayload {
-        ts,
-        pk: ctx.keys.public_hex(),
-        sig: hex::encode(ctx.keys.sign_bytes(&pick::ask_token(&call, ts, &nonce))),
-        g: crate::grid::position(&my_grid(ctx)).unwrap_or_default(),
-    };
+    let grid = crate::grid::position(&my_grid(ctx)).unwrap_or_default();
+    let payload = pick::signed_ask(&ctx.keys, &call, ts, &nonce, &grid);
     let body = serde_json::to_string(&payload).unwrap_or_default();
     let meta = MailMeta {
         from: call,
@@ -2332,17 +2306,8 @@ fn heard_gw_ask(ctx: &TxCtx, meta: &MailMeta, body: &str, snr: Option<f32>) {
     if base.is_empty() {
         return;
     }
-    let report = serde_json::json!({
-        "for": asker,
-        "n": nonce,
-        "ts": ask.ts,
-        "pk": ask.pk,
-        "sig": ask.sig,
-        "g": ask.g,
-        "snr": snr,
-        "grid": crate::grid::position(&my_grid(ctx)).unwrap_or_default(),
-        "preset": cfg.modem.preset,
-    });
+    let my = crate::grid::position(&my_grid(ctx)).unwrap_or_default();
+    let report = pick::ask_report(&asker, &nonce, &ask, snr, &my, &cfg.modem.preset);
     tracing::info!(
         "mail gateway ask {nonce} heard from {asker} at {}",
         snr_text(snr)
