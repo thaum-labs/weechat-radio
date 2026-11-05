@@ -109,6 +109,45 @@ pub fn ask_token(callsign: &str, ts: i64, nonce: &str) -> Vec<u8> {
     .into_bytes()
 }
 
+/// The ask a Radio+ station keys: its own signature over [`ask_token`].
+pub fn signed_ask(
+    keys: &crate::proto::IdentityKeys,
+    callsign: &str,
+    ts: i64,
+    nonce: &str,
+    grid: &str,
+) -> AskPayload {
+    AskPayload {
+        ts,
+        pk: keys.public_hex(),
+        sig: hex::encode(keys.sign_bytes(&ask_token(callsign, ts, nonce))),
+        g: grid.to_string(),
+    }
+}
+
+/// What a gateway that heard `ask` posts to the hub. The station's signature
+/// is passed on untouched; the gateway signs the whole post with its own key.
+pub fn ask_report(
+    asker: &str,
+    nonce: &str,
+    ask: &AskPayload,
+    snr: Option<f32>,
+    gateway_grid: &str,
+    preset: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "for": asker,
+        "n": nonce,
+        "ts": ask.ts,
+        "pk": ask.pk,
+        "sig": ask.sig,
+        "g": ask.g,
+        "snr": snr,
+        "grid": gateway_grid,
+        "preset": preset,
+    })
+}
+
 /// The ask's payload on the air. Its wire id is the nonce.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AskPayload {
