@@ -920,11 +920,14 @@ async fn send_control(ctx: &TxCtx, op: MailOp, mut meta: MailMeta, payload: &str
     .map(|_| ())
 }
 
-struct ClearKeying(Arc<AtomicBool>);
+/// Clears the lease flags when a burst ends, however it ends. The status
+/// copy lets a restart wait for the lease (#280).
+struct ClearKeying(Arc<AtomicBool>, Arc<SharedStatus>);
 
 impl Drop for ClearKeying {
     fn drop(&mut self) {
         self.0.store(false, Ordering::Release);
+        self.1.lock().mail_lease = false;
     }
 }
 
@@ -961,7 +964,8 @@ async fn burst(
     tail_ms: u32,
 ) -> Result<KeyPlan> {
     ctx.keying.store(true, Ordering::Release);
-    let _clear = ClearKeying(Arc::clone(&ctx.keying));
+    ctx.snap.lock().mail_lease = true;
+    let _clear = ClearKeying(Arc::clone(&ctx.keying), Arc::clone(&ctx.snap));
     let ports = (ctx.ports)();
     let Some(kiss) = ports.kiss.clone() else {
         return Err(Error::Modem("Radio is not running.".into()));

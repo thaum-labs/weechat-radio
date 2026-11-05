@@ -56,6 +56,7 @@ fn exit_with(e: wcr::Error) -> ! {
 }
 
 async fn real_main(cli: Cli) -> Result<()> {
+    wcr::restart::remember_install_exe();
     let cfg_path = cli.config.clone().unwrap_or_else(Config::default_path);
     // Commands that change a setting save it to this file, not the default.
     Config::set_active_path(&cfg_path);
@@ -123,18 +124,20 @@ async fn real_main(cli: Cli) -> Result<()> {
                 ServiceAction::Status => println!("{}", wcr::service::status()?),
             }
         }
-        Command::Update { rc } => {
+        Command::Update { rc, test_rollback } => {
             wcr::ui_style::panel("WEECHAT RADIO", "UPDATE");
-            let applied = wcr::update::apply(rc).await?;
-            println!("{}", applied.message);
-            if !applied.restarted {
-                let bind = load_cfg(&cfg_path)
-                    .map(|cfg| cfg.status.bind)
-                    .unwrap_or_else(|_| wcr::config::StatusConfig::default().bind);
-                for note in wcr::update::running_station_notes(&bind, &applied.version).await {
-                    println!("{note}");
-                }
-            }
+            println!(
+                "{}",
+                wcr::update_cli::update(&cfg_path, rc, test_rollback).await?
+            );
+        }
+        Command::Status => {
+            wcr::ui_style::panel("WEECHAT RADIO", "STATUS");
+            println!("{}", wcr::update_cli::status(&cfg_path).await?);
+        }
+        Command::Restart => {
+            wcr::ui_style::panel("WEECHAT RADIO", "RESTART");
+            println!("{}", wcr::update_cli::restart(&cfg_path).await?);
         }
         Command::Help { topic } => {
             print!("{}", wcr::help::render(topic.as_deref()));

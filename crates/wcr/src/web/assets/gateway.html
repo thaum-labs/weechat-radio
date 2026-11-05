@@ -55,6 +55,23 @@
     </details>
   </section>
 
+  <!-- Software: updates and restarts, no terminal (#280) -->
+  <section class="card" id="sw-card" aria-labelledby="h-sw">
+    <div class="card-head">
+      <h2 id="h-sw">Software</h2>
+      <span id="sw-version" class="meta mono"></span>
+    </div>
+    <p id="sw-line" class="lead" aria-live="polite">Checking for updates…</p>
+    <p id="sw-phase" class="sw-phase" role="status" hidden></p>
+    <p id="sw-error" class="note" role="alert"></p>
+    <div class="row" id="sw-actions">
+      <button id="sw-update" type="button" class="primary" hidden>Update</button>
+      <button id="sw-restart" type="button" class="primary" hidden>Restart to finish</button>
+      <button id="sw-check" type="button" class="quiet">Check now</button>
+    </div>
+    <p id="sw-note" class="meta"></p>
+  </section>
+
   <!-- 2. Levels -->
   <section class="card" id="radio-card" aria-labelledby="h-radio" hidden>
     <div class="card-head">

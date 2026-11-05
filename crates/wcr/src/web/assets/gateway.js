@@ -727,6 +727,119 @@ for (const id of ["log-box", "health-more", "settings-box", "level-help", "wf-ke
   });
 }
 
+
+// Software card (#280): see and install updates, restart on the installed
+// version. Release candidates are command-line only (wcr update --rc). While an update restarts the page's own
+// process, the page waits for it to answer again and reloads.
+const SW_MS = 15000;
+let sw = null;
+let swWaiting = false;
+
+function swDraw(d) {
+  sw = d;
+  $("sw-version").textContent = `running ${d.running}`;
+  const line = $("sw-line");
+  const phase = d.phase || "";
+  let text = "Up to date.";
+  let cls = "up";
+  if (d.restart_needed) {
+    text = `Installed ${d.installed} / Running ${d.running}. Restart to finish the update.`;
+    cls = "amber";
+  } else if (d.available) {
+    text = `Update available (${d.available}).`;
+    cls = "amber";
+  } else if (d.building) {
+    text = `${d.building} is still being built. It will be offered when it is ready.`;
+    cls = "";
+  } else if (d.check_error) {
+    text = `Could not check for updates: ${d.check_error}`;
+    cls = "down";
+  } else if (d.checked === null || d.checked === undefined) {
+    text = "Checking for updates…";
+    cls = "";
+  }
+  line.textContent = text;
+  line.className = `lead ${cls}`;
+  $("sw-phase").hidden = !phase;
+  $("sw-phase").textContent = phase;
+  $("sw-error").textContent = d.error || "";
+  const busy = !!phase;
+  $("sw-update").hidden = !d.available || d.restart_needed;
+  $("sw-update").textContent = d.available ? `Update to ${d.available}` : "Update";
+  $("sw-restart").hidden = !d.restart_needed;
+  for (const id of ["sw-update", "sw-restart", "sw-check"]) $(id).disabled = busy;
+  $("sw-note").textContent = d.note || "";
+  $("sw-note").className = /^Rolled back|^Could not roll back/.test(d.note || "") ? "note" : "meta";
+  if (phase === "Restarting") swAwaitRestart(d.running);
+}
+
+async function swFetch(path, body) {
+  const r = await fetch(path, body === undefined
+    ? { cache: "no-store" }
+    : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  if (r.status === 401) { location.href = "/login"; return null; }
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { $("sw-error").textContent = d.error || `HTTP ${r.status}`; return null; }
+  return d;
+}
+
+let swTimer = null;
+async function swTick() {
+  if (swWaiting) return;
+  try {
+    const d = await swFetch("/api/update");
+    // A restart came and went between two polls: load the new page.
+    if (d && sw && d.running !== sw.running) { location.reload(); return; }
+    if (d) swDraw(d);
+  } catch (e) { /* the main poll reports a lost connection */ }
+  clearTimeout(swTimer);
+  swTimer = setTimeout(swTick, sw && sw.phase ? 1000 : SW_MS);
+}
+
+// The page's process is being replaced: wait for it to answer with a new
+// start, then reload so the page itself is the new version's.
+async function swAwaitRestart(was) {
+  if (swWaiting) return;
+  swWaiting = true;
+  $("sw-phase").hidden = false;
+  $("sw-phase").textContent = "Restarting: the page reloads by itself when the station is back.";
+  const began = Date.now();
+  let gone = false;
+  while (Date.now() - began < 20 * 60 * 1000) {
+    await new Promise((res) => setTimeout(res, 2000));
+    try {
+      const r = await fetch("/api/update", { cache: "no-store" });
+      if (r.status === 401) { location.href = "/login"; return; }
+      const d = await r.json();
+      if (gone || d.running !== was || !d.phase) { location.reload(); return; }
+    } catch (e) {
+      gone = true;
+    }
+  }
+  swWaiting = false;
+  swTick();
+}
+
+async function swApply() {
+  if (!sw || !sw.available) return;
+  const ask = `Update to ${sw.available}? The station restarts once the radio is quiet (nothing is cut off) and comes back as it is now (${$("start").hidden ? "running" : "stopped"}). If the new version does not start, this one comes back by itself.`;
+  if (!confirm(ask)) return;
+  const d = await swFetch("/api/update/apply", {});
+  if (d) swTick();
+}
+
+$("sw-update").addEventListener("click", swApply);
+$("sw-restart").addEventListener("click", async () => {
+  if (!confirm("Restart on the installed version? It waits for the radio to be quiet, then the station comes back as it is now.")) return;
+  if (await swFetch("/api/update/restart", {})) swTick();
+});
+$("sw-check").addEventListener("click", async () => {
+  $("sw-line").textContent = "Checking for updates…";
+  const d = await swFetch("/api/update/check", {});
+  if (d) swDraw(d);
+});
+swTick();
+
 $("start").addEventListener("click", () => act("start"));
 $("stop").addEventListener("click", () => act("stop"));
 poll();

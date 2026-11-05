@@ -485,15 +485,15 @@
           </div>
           <div>
             <dt>Audio in says “not measured”</dt>
-            <dd><p>The modem73 next to <code>wcr</code> is an older one. Update (below).</p></dd>
+            <dd><p>The modem73 next to <code>wcr</code> is an older one. Update from the Software card (below).</p></dd>
           </div>
         </dl>
       </section>
 
       <section class="article-section" aria-labelledby="updH">
         <h2 id="updH">Updating</h2>
-        <pre>wcr update
-sudo systemctl restart wcr-web</pre>
+        <p>Open the web page’s <strong>Software</strong> card and press <strong>Update</strong> when it says <strong>Update available</strong>. No SSH, no password. It checks the download’s SHA-256, waits until the radio is quiet (nothing sending, no mail burst), restarts on the new version, and the page reloads showing it within a minute. If the new version does not start, the previous one comes back and the card says <strong>Rolled back</strong>.</p>
+        <p>Coming from v1.0.16-rc2 or older, do that one update over SSH: <code>wcr update --rc</code>, then <code>sudo systemctl restart wcr-web</code>. After that, the page does it. In a terminal, <code>wcr update</code>, <code>wcr status</code> and <code>wcr restart</code> need no sudo.</p>
         <p>The station comes back on the air only if it was running before. Make sure your licence allows unattended or remote operation on that band, and that you can always stop it: the Stop button, <code>sudo systemctl stop wcr-web</code>, or the radio’s power switch.</p>
       </section>
 

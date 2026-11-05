@@ -61,6 +61,10 @@ pub struct StatusSnapshot {
     /// Frames waiting in the RF air queue.
     #[serde(default)]
     pub queue_air: usize,
+    /// True while this station's own mail burst holds the radio (a mail
+    /// lease). A restart after an update waits for it to end (#280).
+    #[serde(default)]
+    pub mail_lease: bool,
     /// True while the air-queue pacer is waiting for a clear channel.
     #[serde(default)]
     pub deferred: bool,
@@ -548,6 +552,7 @@ impl Default for StatusSnapshot {
             retries: 0,
             occupancy_pct: 0,
             queue_air: 0,
+            mail_lease: false,
             deferred: false,
             tnc: String::new(),
             tnc_ok: false,

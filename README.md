@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.89-DEA584?logo=rust&logoColor=white" alt="Rust 1.89" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="Apache-2.0" /></a>
-  <a href="https://github.com/thaum-labs/weechat-radio/releases"><img src="https://img.shields.io/badge/version-1.0.16--rc2-7d9bff" alt="Version 1.0.16-rc2" /></a>
+  <a href="https://github.com/thaum-labs/weechat-radio/releases"><img src="https://img.shields.io/badge/version-1.0.16--rc3-7d9bff" alt="Version 1.0.16-rc3" /></a>
   <a href="https://github.com/thaum-labs/weechat-radio/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/thaum-labs/weechat-radio/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
   <a href="https://github.com/thaum-labs/weechat-radio/releases/latest"><img src="https://img.shields.io/github/v/release/thaum-labs/weechat-radio?label=stable&color=39ff14" alt="Latest stable release" /></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6" alt="Windows, macOS and Linux" />
@@ -60,7 +60,7 @@ Leave the window open; WeeChat installs through Cygwin after the program and can
 
 You are set up when the status bar shows your callsign. Send a line in `#bulletin`: `[tx]` means sent, `[ok]` means delivered, `[no]` means it never got through.
 
-`wcr update` installs a newer release and checks its SHA256. Release candidates are skipped unless you run `wcr update --rc`. Trouble? See the [troubleshooting page](https://weechatradio.com/guides/troubleshooting.html).
+**Updating needs no terminal.** In the desktop app, click the version at the bottom left; on a Pi, open the web page's **Software** card. Press **Update**: it checks the SHA-256, installs, waits for the radio to go quiet, restarts on the new version and shows it. The station comes back as you left it. If the new version does not start, the previous one comes back and the app says so. Release candidates are for the terminal only: `wcr update --rc`. In a terminal, `wcr update` does the same and ends with one line (`Updated to 1.0.16, running, radio idle.`); `wcr status` and `wcr restart` need no sudo. Trouble? See the [troubleshooting page](https://weechatradio.com/guides/troubleshooting.html).
 
 ---
 

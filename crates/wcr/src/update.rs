@@ -23,25 +23,27 @@ struct Asset {
     browser_download_url: String,
 }
 
+/// Test hooks for the update-and-restart harness (tests/update_restart.rs):
+/// a version this build reports instead of its own, and a release list to
+/// read instead of GitHub's. Never set in normal use.
+pub const TEST_VERSION_ENV: &str = "WCR_TEST_FAKE_VERSION";
+pub const TEST_RELEASES_ENV: &str = "WCR_TEST_RELEASES_URL";
+
 pub fn current_version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
+    static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    VERSION
+        .get_or_init(|| {
+            std::env::var(TEST_VERSION_ENV)
+                .ok()
+                .filter(|v| parse_version(v).is_some())
+                .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
+        })
+        .as_str()
 }
 
-pub async fn latest() -> Result<Option<ReleaseInfo>> {
-    let client = github_client()?;
-    let releases = fetch_releases(&client).await?;
-    let current = current_version();
-    Ok(best_downloadable(
-        &releases,
-        current,
-        takes_rc(false, current),
-    ))
-}
-
-/// Release candidates (`v1.0.0-rc1`) are offered only with `wcr update --rc`
-/// or to a station that already runs one.
-fn takes_rc(asked: bool, current: &str) -> bool {
-    asked || is_rc(current)
+fn releases_url() -> String {
+    std::env::var(TEST_RELEASES_ENV)
+        .unwrap_or_else(|_| format!("https://api.github.com/repos/{REPO}/releases?per_page=30"))
 }
 
 fn is_rc(tag: &str) -> bool {
@@ -49,9 +51,8 @@ fn is_rc(tag: &str) -> bool {
 }
 
 async fn fetch_releases(client: &reqwest::Client) -> Result<Vec<Release>> {
-    let url = format!("https://api.github.com/repos/{REPO}/releases?per_page=30");
     let res = client
-        .get(url)
+        .get(releases_url())
         .send()
         .await
         .map_err(|e| Error::Net(e.to_string()))?;
@@ -67,6 +68,9 @@ struct Tag {
 }
 
 async fn fetch_tag_names(client: &reqwest::Client) -> Result<Vec<String>> {
+    if std::env::var_os(TEST_RELEASES_ENV).is_some() {
+        return Ok(Vec::new());
+    }
     let url = format!("https://api.github.com/repos/{REPO}/tags?per_page=10");
     let res = client
         .get(url)
@@ -232,53 +236,80 @@ pub struct ReleaseInfo {
     pub sums_url: Option<String>,
 }
 
-/// What `wcr update` did: its message, the version now installed, and
-/// whether it restarted the station's service.
-pub struct Applied {
-    pub message: String,
-    pub version: String,
-    pub restarted: bool,
+/// What the update panel and `wcr status` show.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct Check {
+    pub running: String,
+    /// Newer release offered, without the `v`.
+    pub available: Option<String>,
+    /// A newer tag still building (no assets yet).
+    pub building: Option<String>,
 }
 
-/// `rc`: the user asked for release candidates too (`wcr update --rc`).
-pub async fn apply(rc: bool) -> Result<Applied> {
+/// Release candidates (`v1.0.0-rc1`) are offered only with `wcr update --rc`
+/// or to a station that already runs one. The app has no switch for them
+/// (Tobias, #280): test versions are a command-line choice.
+pub fn takes_rc(asked: bool, current: &str) -> bool {
+    asked || is_rc(current)
+}
+
+/// Look for updates. `rc`: `wcr update --rc` asked for release candidates.
+pub async fn check(rc: bool) -> Result<Check> {
+    let client = github_client()?;
+    let releases = fetch_releases(&client).await?;
+    let current = current_version();
+    let rc = takes_rc(rc, current);
+    let available = best_downloadable(&releases, current, rc).map(|i| i.version);
+    let building = if available.is_none() {
+        highest_newer_tag(&releases, current, rc)
+    } else {
+        None
+    };
+    Ok(Check {
+        running: current.to_string(),
+        available,
+        building,
+    })
+}
+
+/// What an install did.
+pub struct Installed {
+    pub from: String,
+    pub to: String,
+    /// The files replaced (each has its `.bak`).
+    pub files: Vec<PathBuf>,
+    pub message: String,
+}
+
+pub enum Outcome {
+    /// Nothing to install; the message says why.
+    UpToDate(String),
+    Installed(Installed),
+}
+
+/// Download, check the SHA-256, back up the config, install, test that the
+/// new binary starts, and leave the update note for the restart
+/// ([`crate::restart`]). Does not restart anything.
+/// `rc`: `wcr update --rc`. `simulate_failure`: `wcr update --test-rollback`.
+pub async fn install(
+    rc: bool,
+    cfg_path: Option<&Path>,
+    simulate_failure: bool,
+    progress: impl Fn(&str),
+) -> Result<Outcome> {
+    progress("Checking for updates");
     let client = github_client()?;
     let releases = fetch_releases(&client).await?;
     let current = current_version();
     let rc = takes_rc(rc, current);
     let Some(info) = best_downloadable(&releases, current, rc) else {
-        if highest_newer_tag(&releases, current, rc).is_some() {
-            return Err(Error::Msg(format!(
-                "a newer release is still publishing for this platform — try again in a few minutes, or install manually from https://github.com/{REPO}/releases"
-            )));
-        }
-        // The release page only appears once every platform is built (up to
-        // an hour after the tag), so say so instead of a flat "up to date".
-        let building = fetch_tag_names(&client)
-            .await
-            .ok()
-            .and_then(|tags| highest_newer_name(&tags, current, rc));
-        let message = match building {
-            Some(tag) => format!(
-                "already up to date ({current}). v{tag} is still being built; try again later (it can take up to an hour)"
-            ),
-            None => match highest_newer_tag(&releases, current, true) {
-                Some(tag) if !rc => format!(
-                    "already up to date ({current}). Release candidate v{tag} is out: run wcr update --rc to try it"
-                ),
-                _ => format!("already up to date ({current})"),
-            },
-        };
-        return Ok(Applied {
-            message,
-            version: current.to_string(),
-            restarted: false,
-        });
+        return up_to_date(&client, &releases, current, rc).await;
     };
     let url = info
         .url
         .as_ref()
         .ok_or_else(|| unsupported_platform_msg(&info.version))?;
+    progress(&format!("Downloading {}", info.version));
     let bytes = client
         .get(url)
         .send()
@@ -298,60 +329,154 @@ pub async fn apply(rc: bool) -> Result<Applied> {
         }
     }
 
+    progress(&format!("Installing {}", info.version));
+    if let Some(cfg) = cfg_path {
+        backup_config(cfg)?;
+    }
     let exe = running_exe()?;
     let extracted = extract_payload(&bytes, info.name.as_deref())?;
-    install_binary(&exe, &extracted)?;
-    let mut replaced = vec![exe.clone()];
-    if let Some(dir) = extracted.parent() {
-        if let Some(parent) = exe.parent() {
-            let gui_name = if cfg!(windows) {
-                "wcr-gui.exe"
-            } else {
-                "wcr-gui"
-            };
-            if let Some(gui_src) = find_named(dir, gui_name) {
-                let gui = parent.join(gui_name);
-                if install_binary(&gui, &gui_src).is_ok() {
-                    replaced.push(gui);
-                }
-            }
-            let modem_name = if cfg!(windows) {
-                "modem73.exe"
-            } else {
-                "modem73"
-            };
-            if let Some(modem_src) = find_named(dir, modem_name) {
-                let modem = parent.join(modem_name);
-                if install_binary(&modem, &modem_src).is_ok() {
-                    replaced.push(modem);
-                }
-            }
-            if let Some(libs_src) = find_dir_named(dir, "libs") {
-                let _ = replace_dir(&libs_src, &parent.join("libs"));
-            }
-        }
-    }
+    let replaced = install_files(&exe, &extracted)?;
     // QA v0.1.113: a build that cannot start on this machine (newer glibc)
     // must not be left in place, or `wcr update` can never run again.
     if let Err(why) = new_binary_starts(&exe) {
         return Err(Error::Msg(rollback_message(
             &info.version,
             &why,
-            &restore_backups(&replaced),
+            &restore_files(&replaced),
         )));
     }
     let removed_mintty = remove_stray_minttyrc(&exe);
-    let restarted = crate::service::restart_if_installed();
-    Ok(Applied {
-        message: update_success_message(&info.version, &exe, &replaced, restarted, removed_mintty),
-        version: info.version.clone(),
-        restarted,
-    })
+    let mut note = crate::restart::Marker {
+        from: current.to_string(),
+        to: info.version.clone(),
+        files: replaced.clone(),
+        simulate_failure,
+        ..Default::default()
+    };
+    if let Some(dir) = exe.parent() {
+        note.save(dir).map_err(|e| {
+            Error::Msg(format!(
+                "could not write the update note in {}: {e}",
+                dir.display()
+            ))
+        })?;
+    }
+    Ok(Outcome::Installed(Installed {
+        from: current.to_string(),
+        to: info.version.clone(),
+        message: update_success_message(&info.version, &exe, &replaced, false, removed_mintty),
+        files: replaced,
+    }))
+}
+
+async fn up_to_date(
+    client: &reqwest::Client,
+    releases: &[Release],
+    current: &str,
+    rc: bool,
+) -> Result<Outcome> {
+    if highest_newer_tag(releases, current, rc).is_some() {
+        return Err(Error::Msg(format!(
+            "a newer release is still publishing for this platform. Try again in a few minutes, or install it from https://github.com/{REPO}/releases"
+        )));
+    }
+    // The release page only appears once every platform is built (up to
+    // an hour after the tag), so say so instead of a flat "up to date".
+    let building = fetch_tag_names(client)
+        .await
+        .ok()
+        .and_then(|tags| highest_newer_name(&tags, current, rc));
+    Ok(Outcome::UpToDate(match building {
+        Some(tag) => format!(
+            "Already up to date ({current}). {tag} is still being built; try again later (it can take up to an hour)."
+        ),
+        None => match highest_newer_tag(releases, current, true) {
+            Some(tag) if !rc => format!(
+                "Already up to date ({current}). Test version {tag} is out: run wcr update --rc to try it."
+            ),
+            _ => format!("Already up to date ({current})."),
+        },
+    }))
+}
+
+/// Keep a copy of the config as it was before this update
+/// (`wcr.toml.before-update`).
+pub fn backup_config(cfg: &Path) -> Result<Option<PathBuf>> {
+    if !cfg.is_file() {
+        return Ok(None);
+    }
+    let mut name = cfg.as_os_str().to_owned();
+    name.push(".before-update");
+    let to = PathBuf::from(name);
+    fs::copy(cfg, &to).map_err(|e| {
+        Error::Msg(format!(
+            "could not back up {} before the update: {e}",
+            cfg.display()
+        ))
+    })?;
+    Ok(Some(to))
+}
+
+/// Put the new `wcr` (and `wcr-gui`, `modem73`, `libs/` when the package
+/// has them) in place. Returns the files replaced.
+fn install_files(exe: &Path, extracted: &Path) -> Result<Vec<PathBuf>> {
+    install_binary(exe, extracted)?;
+    let mut replaced = vec![exe.to_path_buf()];
+    let (Some(dir), Some(parent)) = (extracted.parent(), exe.parent()) else {
+        return Ok(replaced);
+    };
+    for name in ["wcr-gui", "modem73"] {
+        let name = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+        if let Some(src) = find_named(dir, &name) {
+            let dest = parent.join(&name);
+            if install_binary(&dest, &src).is_ok() {
+                replaced.push(dest);
+            }
+        }
+    }
+    if let Some(libs_src) = find_dir_named(dir, "libs") {
+        let _ = replace_dir(&libs_src, &parent.join("libs"));
+    }
+    Ok(replaced)
+}
+
+/// The version of the `wcr` installed beside this program (what a restart
+/// would run), from `wcr --version`. `None` if it does not answer.
+pub fn installed_version() -> Option<String> {
+    let out = quiet_command(&crate::restart::wcr_exe())
+        .arg("--version")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_version_line(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// A command that opens no console window on Windows (the desktop app asks
+/// `wcr --version` every few seconds).
+fn quiet_command(exe: &Path) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(exe);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd.stdin(std::process::Stdio::null());
+    cmd
+}
+
+/// `wcr 1.0.16-rc3` → `1.0.16-rc3`.
+fn parse_version_line(line: &str) -> Option<String> {
+    let v = line.split_whitespace().nth(1)?.trim_start_matches('v');
+    parse_version(v).map(|_| v.to_string())
 }
 
 /// Run the freshly installed `wcr --version`; Err holds why it did not start.
 fn new_binary_starts(exe: &Path) -> std::result::Result<(), String> {
-    match Command::new(exe).arg("--version").output() {
+    match quiet_command(exe).arg("--version").output() {
         Ok(out) if out.status.success() => Ok(()),
         Ok(out) => {
             let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
@@ -375,17 +500,35 @@ fn backup_path(dest: &Path) -> PathBuf {
 }
 
 /// Put each replaced file's backup back in place. Returns the files that
-/// could not be restored. On Windows `wcr.exe.bak` is this running process,
-/// so it restores nothing there.
-fn restore_backups(replaced: &[PathBuf]) -> Vec<String> {
+/// could not be restored. The new file is first moved aside as `.failed`:
+/// on Windows a running .exe cannot be deleted, but it can be renamed.
+pub fn restore_files(replaced: &[PathBuf]) -> Vec<String> {
     replaced
         .iter()
-        .filter(|dest| {
-            let backup = backup_path(dest);
-            cfg!(windows) || (backup.is_file() && fs::rename(backup, dest).is_err())
-        })
+        .filter(|dest| !restore_one(dest))
         .map(|dest| dest.display().to_string())
         .collect()
+}
+
+fn restore_one(dest: &Path) -> bool {
+    let backup = backup_path(dest);
+    if !backup.is_file() {
+        // Nothing was there before this update: nothing to put back.
+        return true;
+    }
+    let mut failed = dest.as_os_str().to_owned();
+    failed.push(".failed");
+    let failed = PathBuf::from(failed);
+    let _ = fs::remove_file(&failed);
+    if dest.exists() && fs::rename(dest, &failed).is_err() {
+        return false;
+    }
+    if fs::rename(&backup, dest).is_ok() {
+        return true;
+    }
+    // Put the new file back rather than leave nothing in place.
+    let _ = fs::rename(&failed, dest);
+    false
 }
 
 fn rollback_message(version: &str, why: &str, not_restored: &[String]) -> String {
@@ -549,9 +692,10 @@ fn remove_stray_minttyrc(exe: &Path) -> bool {
     }
 }
 
+/// Where this binary is installed. Taken once at start, since on Linux the
+/// running file's path becomes `wcr.bak` after an update renames it.
 fn running_exe() -> Result<PathBuf> {
-    let exe = std::env::current_exe()?;
-    Ok(fs::canonicalize(&exe).map(without_verbatim).unwrap_or(exe))
+    Ok(without_verbatim(crate::restart::wcr_exe()))
 }
 
 /// On Windows `canonicalize` returns `\\?\C:\...`. Drop that prefix so
@@ -786,13 +930,6 @@ fn replace_windows_exe(dest: &Path, src: &Path) -> Result<()> {
     Ok(())
 }
 
-pub async fn check_background() -> Option<String> {
-    match latest().await {
-        Ok(Some(i)) => Some(i.version),
-        _ => None,
-    }
-}
-
 fn unsupported_platform_msg(version: &str) -> Error {
     Error::Msg(format!(
         "update {version} is available but no binary for this OS ({}/{}). See https://github.com/{REPO}/releases",
@@ -820,7 +957,7 @@ mod tests {
 
         let why = new_binary_starts(&exe).unwrap_err();
         assert!(why.contains("GLIBC_2.43"), "{why}");
-        assert!(restore_backups(&[exe.clone(), gui.clone()]).is_empty());
+        assert!(restore_files(&[exe.clone(), gui.clone()]).is_empty());
         assert_eq!(fs::read_to_string(&exe).unwrap(), "old");
         assert!(!dir.path().join("wcr.bak").exists());
         assert!(gui.exists());

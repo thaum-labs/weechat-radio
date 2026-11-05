@@ -297,6 +297,35 @@ if [ -f "$PREFIX/minttyrc" ]; then
 fi
 
 ensure_user_path "$PREFIX"
+
+# ssh pi@host 'wcr status' runs a non-interactive shell, which never reads
+# the PATH line above. /usr/local/bin is on every shell's PATH, so link wcr
+# there once (#280). A link follows wcr updates; a real file is left alone.
+LINK_NOTE=""
+link_into_usr_local() {
+  [ "$OS" = "linux" ] || return 0
+  [ "${WCR_SKIP_LINK:-}" = "1" ] && return 0
+  [ -d /usr/local/bin ] || return 0
+  target="$PREFIX/wcr"
+  if [ -L /usr/local/bin/wcr ] && [ "$(readlink /usr/local/bin/wcr)" = "$target" ]; then
+    return 0
+  fi
+  if [ -e /usr/local/bin/wcr ] && [ ! -L /usr/local/bin/wcr ]; then
+    LINK_NOTE="Left /usr/local/bin/wcr alone (it is not a link). ssh commands may run that copy."
+    return 0
+  fi
+  if [ -w /usr/local/bin ]; then
+    ln -sf "$target" /usr/local/bin/wcr && LINK_NOTE="Linked /usr/local/bin/wcr to $target (for ssh commands)."
+  elif command -v sudo >/dev/null 2>&1; then
+    echo "Linking wcr into /usr/local/bin so ssh commands find it. sudo may ask for your password (only this once)."
+    if sudo ln -sf "$target" /usr/local/bin/wcr; then
+      LINK_NOTE="Linked /usr/local/bin/wcr to $target (for ssh commands)."
+    else
+      LINK_NOTE="Could not link /usr/local/bin/wcr. ssh commands need the full path: $target"
+    fi
+  fi
+}
+link_into_usr_local
 echo ""
 echo "Installed $PREFIX/wcr"
 if [ -n "$WEECHAT_NOTE" ]; then
@@ -307,6 +336,9 @@ if [ -n "$WEECHAT_CFG" ]; then
 fi
 if [ -n "$PATH_NOTE" ]; then
   echo "$PATH_NOTE"
+fi
+if [ -n "$LINK_NOTE" ]; then
+  echo "$LINK_NOTE"
 fi
 if [ "$OS" = "linux" ]; then
   echo "Linux GUI (wcr gui): needs libxkbcommon-x11 and libayatana-appindicator3 (Debian: libxkbcommon-x11-0 libayatana-appindicator3-1)."

@@ -143,6 +143,20 @@ pub fn status() -> Result<String> {
     Ok("unknown".into())
 }
 
+/// True when `wcr service install` set up a background station here.
+pub fn installed() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        return plist_path().is_file();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        return unit_path().is_file();
+    }
+    #[allow(unreachable_code)]
+    false
+}
+
 /// Bounce a previously installed background node so `wcr update` does not leave
 /// the old binary running (which drops Mac speaker audio).
 pub fn restart_if_installed() -> bool {

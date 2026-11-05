@@ -125,7 +125,7 @@ irm https://weechatradio.com/install.ps1 | iex</pre>
           <div id="update">
             <dt>An update changed nothing</dt>
             <dd>
-              <p><code>wcr update</code> replaces the program on disk. The station that is already running keeps the old code until you stop it and start it again. On Windows that includes a service from <code>wcr service install</code>. On Linux and macOS that service restarts itself. A station you started by hand does not.</p>
+              <p>If the app or the web page’s Software card shows <strong>Installed x / Running y</strong>, the new version is on disk but the old one still runs: press <strong>Restart to finish</strong> (or run <code>wcr restart</code>). It waits for the radio to go quiet first. <code>wcr status</code> shows both versions. On Windows, a service from <code>wcr service install</code> needs stopping and starting by hand.</p>
             </dd>
           </div>
         </dl>

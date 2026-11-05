@@ -37,7 +37,7 @@ On the web: https://weechatradio.com/guides/windows.html
    wcr service install
    ```
 
-   `wcr update` replaces the binary. Stop the station and start it again, including this service, so the new code is the one running. A station you started by hand keeps the old code until you do.
+   To update, press **Update** in the desktop app (click the version at the bottom left). It waits for the radio to go quiet, restarts the app and station on the new version, and rolls back if the new version does not start. `wcr update` in a terminal installs the same release; then press **Restart to finish** in the app. A service from `wcr service install` keeps the old code until you stop it and start it again.
 
 5. WeeChat is still installed. Use **Open WeeChat** in the GUI, or `wcr weechat`. Native IRC clients can use `127.0.0.1:6667`.
 

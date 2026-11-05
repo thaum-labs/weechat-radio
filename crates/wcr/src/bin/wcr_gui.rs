@@ -4,6 +4,8 @@
 #![windows_subsystem = "windows"]
 
 fn main() {
+    // Before an update can rename this file (see wcr::restart).
+    wcr::restart::remember_install_exe();
     // `wcr-gui -c FILE` (also what headless `wcr -c FILE gui` runs): load,
     // save and start the station on FILE instead of the default wcr.toml.
     if let Some(path) = config_arg(std::env::args_os().skip(1)) {

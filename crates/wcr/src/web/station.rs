@@ -119,6 +119,11 @@ impl Station {
         }
     }
 
+    /// True while the operator wants the station on the air.
+    pub async fn wanted(&self) -> bool {
+        self.inner.lock().await.want
+    }
+
     /// The running station's process id, for its memory on the health card.
     pub async fn pid(&self) -> Option<u32> {
         self.inner.lock().await.child.as_ref()?.id()
@@ -214,8 +219,9 @@ impl Station {
     }
 
     fn spawn(&self, inner: &mut Inner) {
-        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("wcr"));
-        let mut cmd = Command::new(exe);
+        // The installed wcr: after an update renames the running file to
+        // wcr.bak, current_exe would name the backup.
+        let mut cmd = Command::new(crate::restart::wcr_exe());
         cmd.arg("-c")
             .arg(&self.cfg_path)
             .arg("node")
