@@ -345,7 +345,7 @@ struct PullAuth {
 }
 
 /// A station reads its own inbox. A gateway reads another station's inbox only
-/// when that station signed the request (see [`owner_claim`]).
+/// when that station signed the request with its bound key (see [`owner_check`]).
 fn authorize_pull(
     st: &HubState,
     signer: &str,
@@ -358,15 +358,10 @@ fn authorize_pull(
     }
     let now = chrono::Utc::now().timestamp();
     let token = pull_token(&wanted, auth.ts, ids);
-    if let Err(why) = owner_claim(st, &wanted, &auth.pk, &auth.sig, &token, auth.ts, now) {
-        tracing::warn!(
-            "mail pull for {wanted} via {signer} refused: {}",
-            why.as_str()
-        );
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            format!("mail pull: {}", why.as_str()),
-        ));
+    if let Err(why) = owner_check(st, &wanted, &auth.pk, &auth.sig, &token, auth.ts, now) {
+        let why = why.text();
+        tracing::warn!("mail pull for {wanted} via {signer} refused: {why}");
+        return Err((StatusCode::UNAUTHORIZED, format!("mail pull: {why}")));
     }
     Ok(wanted)
 }
@@ -397,22 +392,26 @@ struct GatewayAskReq {
 }
 
 /// Why the hub refused a request a Radio+ station signed and a gateway forwarded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OwnerFail {
     /// The station's clock and the hub's differ by more than ten minutes.
     StaleTime,
     /// The key or signature does not decode, or does not sign this request.
     BadSignature,
-    /// Another station using this callsign is on the hub now with its own key.
-    CallsignInUse,
+    /// The callsign is registered to another key. Holds the callsign and the
+    /// first 8 hex digits of the key that signed (public, never the seed).
+    WrongKey { call: String, key: String },
 }
 
 impl OwnerFail {
-    pub fn as_str(self) -> &'static str {
+    pub fn text(&self) -> String {
         match self {
-            Self::StaleTime => "clock more than 10 minutes out",
-            Self::BadSignature => "bad signature",
-            Self::CallsignInUse => "callsign in use by another key",
+            Self::StaleTime => "clock more than 10 minutes out".into(),
+            Self::BadSignature => "bad signature".into(),
+            Self::WrongKey { call, key } => format!(
+                "{call} is registered to a different key on the hub (this station's key {key}…). \
+                 Use the original identity.key or re-register."
+            ),
         }
     }
 }
@@ -444,13 +443,10 @@ pub fn owner_sig_ok(
     Ok(pk_arr)
 }
 
-/// A Radio+ station only reaches the hub through gateways, so its signed
-/// request is also how it claims its callsign. Same rule as a hub login and a
-/// telemetry report (#278): a new callsign is bound to the key, and a new key
-/// replaces the old one unless a station with that callsign is on the hub now.
-/// Before #278 the first key ever seen stayed forever, so a station whose key
-/// changed (new install, new data folder) got 401 on every ask and pull.
-fn owner_claim(
+/// A request a Radio+ station signed and a gateway forwarded. The signature
+/// must be good and the key must be the one already bound to the callsign;
+/// a callsign the hub has never seen is bound to this key.
+fn owner_check(
     st: &HubState,
     call: &str,
     pk_hex: &str,
@@ -461,19 +457,17 @@ fn owner_claim(
 ) -> std::result::Result<(), OwnerFail> {
     let pk = owner_sig_ok(pk_hex, sig_hex, msg, ts, now)?;
     let call = call.trim().to_ascii_uppercase();
-    let live = st.sessions.lock().contains_key(&call);
-    match crate::telemetry::callsign_claim(st.telemetry.get_pubkey(&call).as_ref(), &pk, live) {
-        crate::telemetry::CallsignClaim::Keep => {}
-        crate::telemetry::CallsignClaim::Bind => {
+    match st.telemetry.get_pubkey(&call) {
+        Some(bound) if bound != pk => Err(OwnerFail::WrongKey {
+            call,
+            key: hex::encode_upper(&pk[..4]),
+        }),
+        Some(_) => Ok(()),
+        None => {
             let _ = st.telemetry.bind_callsign(&call, &pk);
+            Ok(())
         }
-        crate::telemetry::CallsignClaim::Replace => {
-            tracing::info!("{call} signed with a new key; the hub now uses it");
-            let _ = st.telemetry.replace_callsign(&call, &pk);
-        }
-        crate::telemetry::CallsignClaim::Refuse => return Err(OwnerFail::CallsignInUse),
     }
-    Ok(())
 }
 
 /// Mail gateway Auto (#275). A gateway reports a Radio+ station's ask that it
@@ -500,12 +494,10 @@ pub async fn post_gateway_ask(
     }
     let now = chrono::Utc::now().timestamp();
     let token = crate::mail::pick::ask_token(&asker, req.ts, nonce);
-    if let Err(why) = owner_claim(&st, &asker, &req.pk, &req.sig, &token, req.ts, now) {
-        tracing::warn!(
-            "gateway ask from {asker} via {gateway} refused: {}",
-            why.as_str()
-        );
-        let msg = format!("gateway ask: {}", why.as_str());
+    if let Err(why) = owner_check(&st, &asker, &req.pk, &req.sig, &token, req.ts, now) {
+        let why = why.text();
+        tracing::warn!("gateway ask from {asker} via {gateway} refused: {why}");
+        let msg = format!("gateway ask: {why}");
         return bad(StatusCode::UNAUTHORIZED, &msg).into_response();
     }
     let preset =
@@ -1250,24 +1242,59 @@ mod tests {
         assert_eq!(v["messages"][0]["body"], "hello", "{v}");
     }
 
-    /// The QA failure: the hub had bound the callsign to an older key, and a
-    /// Radio+ station has no other way to tell the hub its key changed.
+    /// The #278 on-air case: M7TJF/M is bound to the Mac's key, and a
+    /// scratch home signed with a new key. The bound key works for the ask
+    /// and the pull; the other key is refused on both and binds nothing.
     #[tokio::test]
-    async fn a_radio_plus_station_with_a_new_key_is_not_locked_out() {
+    async fn only_the_bound_key_may_ask_or_pull_for_a_portable_callsign() {
         let st = crate::net::hub_server::test_hub_state();
-        let old = crate::proto::IdentityKeys::generate();
-        st.telemetry.bind_callsign(RP, &old.public_bytes()).unwrap();
-        let station = crate::proto::IdentityKeys::generate();
-        let (code, v) = ask_as(&st, &station, RP, RP, "44ede7de00000002").await;
-        assert_eq!(code, StatusCode::OK, "{v}");
-        assert_eq!(st.telemetry.get_pubkey(RP), Some(station.public_bytes()));
-
+        let bound = crate::proto::IdentityKeys::generate();
         st.telemetry
-            .replace_callsign(RP, &old.public_bytes())
+            .bind_callsign(RP, &bound.public_bytes())
             .unwrap();
-        let (code, v) = pull_as(&st, &crate::mail::pull_auth(&station, RP, now(), &[]), &[]).await;
+        let id = st
+            .mail
+            .insert_in(RP, "op@example.com", &wcr_address(RP), "hi", "hello", None)
+            .unwrap();
+
+        let (code, v) = ask_as(&st, &bound, RP, RP, "44ede7de00000002").await;
         assert_eq!(code, StatusCode::OK, "{v}");
-        assert_eq!(st.telemetry.get_pubkey(RP), Some(station.public_bytes()));
+        let (code, v) = pull_as(&st, &crate::mail::pull_auth(&bound, RP, now(), &[]), &[]).await;
+        assert_eq!(code, StatusCode::OK, "{v}");
+        assert_eq!(v["headers"][0]["id"], id.as_str(), "{v}");
+
+        let scratch = crate::proto::IdentityKeys::generate();
+        let fp = hex::encode_upper(&scratch.public_bytes()[..4]);
+        let (code, v) = ask_as(&st, &scratch, RP, RP, "44ede7de00000005").await;
+        assert_eq!(code, StatusCode::UNAUTHORIZED, "{v}");
+        let msg = v["error"].as_str().unwrap();
+        assert!(
+            msg.starts_with("gateway ask: M7TJF/M is registered to a different key on the hub"),
+            "{msg}"
+        );
+        assert!(msg.contains(&fp), "{msg}");
+        assert!(
+            msg.contains("Use the original identity.key or re-register."),
+            "{msg}"
+        );
+
+        let (code, v) = pull_as(&st, &crate::mail::pull_auth(&scratch, RP, now(), &[]), &[]).await;
+        assert_eq!(code, StatusCode::UNAUTHORIZED, "{v}");
+        let msg = v["error"].as_str().unwrap();
+        assert!(
+            msg.starts_with("mail pull: M7TJF/M is registered to a different key"),
+            "{msg}"
+        );
+        let ids = vec![id.clone()];
+        let (code, _) = pull_as(
+            &st,
+            &crate::mail::pull_auth(&scratch, RP, now(), &ids),
+            &ids,
+        )
+        .await;
+        assert_eq!(code, StatusCode::UNAUTHORIZED);
+
+        assert_eq!(st.telemetry.get_pubkey(RP), Some(bound.public_bytes()));
     }
 
     #[tokio::test]
@@ -1314,25 +1341,6 @@ mod tests {
         )
         .await;
         assert_eq!(code, StatusCode::UNAUTHORIZED);
-
-        // A forger's own valid signature is still a new key, so it may not
-        // take the callsign while the real station is on the hub.
-        let (tx, _rx) = tokio::sync::mpsc::channel(1);
-        st.sessions.lock().insert(
-            RP.into(),
-            crate::net::hub_server::Session {
-                callsign: RP.into(),
-                pubkey: station.public_bytes(),
-                serves: Default::default(),
-                tx,
-                connected_at: std::time::Instant::now(),
-                freq_khz: 0,
-                conn_id: 1,
-            },
-        );
-        let (code, v) = pull_as(&st, &crate::mail::pull_auth(&forger, RP, now(), &[]), &[]).await;
-        assert_eq!(code, StatusCode::UNAUTHORIZED, "{v}");
-        assert_eq!(v["error"], "mail pull: callsign in use by another key");
 
         // A stale timestamp.
         let (code, v) = pull_as(

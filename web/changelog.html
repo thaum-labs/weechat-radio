@@ -55,7 +55,7 @@
           <p>v1.0.16-rc2</p>
           <p>Thu, 5 Nov 2026</p>
         </h3>
-        <pre>Release candidate (wcr update --rc) that fixes mail gateway Auto and Check mail for Radio+ stations whose key the hub had on file from before, for example after a new install. The hub turned away their signed requests, so Auto said "No mail gateway heard" and mail waiting for them could not be fetched. The hub now takes the station's current key, the same way it already does when a station logs in or reports in, and still turns away anything not signed by that station. Hub only, no change on the air.</pre>
+        <pre>Release candidate (wcr update --rc). When the hub turns away a Radio+ station's mail gateway ask or Check mail because the station signed with a key the hub doesn't have for that callsign (for example a fresh install or a copied setup), the gateway's log now says so in plain words: "M7TJF/M is registered to a different key on the hub (this station's key 08821326…). Use the original identity.key or re-register." Before, it only said 401. The check itself is unchanged.</pre>
       </article>
       <article class="release">
         <h3 class="title">
