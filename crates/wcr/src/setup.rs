@@ -377,14 +377,17 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
         println!("  {}", ui_style::dim().apply_to(skipped_radio_step_note()));
     }
 
-    if Confirm::with_theme(&confirm_theme)
-        .with_prompt(ui_style::step(
-            total_steps,
-            total_steps,
-            "Install as a background service so relays keep running?",
-        ))
-        .default(false)
-        .interact()?
+    // A headless Pi runs as the wcr-web system service, set up at the end;
+    // the per-user node service would fight it for the radio.
+    if !headless()
+        && Confirm::with_theme(&confirm_theme)
+            .with_prompt(ui_style::step(
+                total_steps,
+                total_steps,
+                "Install as a background service so relays keep running?",
+            ))
+            .default(false)
+            .interact()?
     {
         match crate::service::install() {
             Ok(msg) => println!("  {msg}"),
@@ -419,8 +422,9 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
         }
     }
     if headless() {
-        // A Pi gateway over SSH: the browser page is the way in.
-        println!("  Next (headless gateway):  wcr web password   then   sudo ~/.local/bin/wcr web install");
+        // A Pi gateway over SSH: the browser page is the way in. Finish the
+        // first install here so it starts at boot with no extra commands.
+        finish_headless(cfg_path, &cfg, &confirm_theme);
         println!(
             "  Guide: https://github.com/thaum-labs/weechat-radio/blob/main/docs/PI-GATEWAY.md"
         );
@@ -433,6 +437,69 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
     ui_style::rule();
     let _ = std::io::stdout().flush();
     Ok(cfg)
+}
+
+/// What a headless first install still needs after setup has saved.
+#[derive(Debug, PartialEq, Eq)]
+struct HeadlessSteps {
+    password: bool,
+    boot_service: bool,
+}
+
+/// Only what is missing: a working gateway (password set, service in
+/// place) is left exactly as it is.
+fn headless_steps(password_set: bool, service_installed: bool) -> HeadlessSteps {
+    HeadlessSteps {
+        password: !password_set,
+        boot_service: !service_installed,
+    }
+}
+
+/// Pi over SSH: set the web page password and start the station at boot
+/// (`sudo wcr web install`), each only if it is not done yet (#280).
+fn finish_headless(cfg_path: &Path, cfg: &Config, theme: &dyn dialoguer::theme::Theme) {
+    let service_installed = Path::new(crate::web::UNIT_PATH).exists();
+    let steps = headless_steps(!cfg.web.password_hash.is_empty(), service_installed);
+    if steps.password {
+        println!("  Choose a password for the station's web page.");
+        if let Err(e) = crate::web::set_password(cfg_path) {
+            println!("  Password not set: {e}");
+            println!("  Next:  wcr web password   then   sudo ~/.local/bin/wcr web install");
+            return;
+        }
+    }
+    if !steps.boot_service {
+        return;
+    }
+    let yes = Confirm::with_theme(theme)
+        .with_prompt("Start the station now and at every boot? (sudo asks for your password once)")
+        .default(true)
+        .interact()
+        .unwrap_or(false);
+    let manual = "  Later:  sudo ~/.local/bin/wcr web install";
+    if !yes {
+        println!("{manual}");
+        return;
+    }
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => {
+            println!("  Could not find wcr: {e}");
+            println!("{manual}");
+            return;
+        }
+    };
+    let ok = std::process::Command::new("sudo")
+        .arg(&exe)
+        .arg("-c")
+        .arg(cfg_path)
+        .args(["web", "install"])
+        .status()
+        .is_ok_and(|s| s.success());
+    if !ok {
+        println!("  The boot service was not installed.");
+        println!("{manual}");
+    }
 }
 
 /// Linux with no desktop session (an SSH login on a Pi, for example).
@@ -823,6 +890,33 @@ pub fn grid_from_setup(accepted_detected: bool, detected: &str, typed: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #280: a first Pi install is finished by setup; a working gateway
+    /// (password set, boot service in place) gets no new questions.
+    #[test]
+    fn headless_setup_only_offers_what_is_missing() {
+        assert_eq!(
+            headless_steps(false, false),
+            HeadlessSteps {
+                password: true,
+                boot_service: true
+            }
+        );
+        assert_eq!(
+            headless_steps(true, false),
+            HeadlessSteps {
+                password: false,
+                boot_service: true
+            }
+        );
+        assert_eq!(
+            headless_steps(true, true),
+            HeadlessSteps {
+                password: false,
+                boot_service: false
+            }
+        );
+    }
 
     /// /proc/asound/cards on the QA Pi 3 with a Digirig.
     const PI_CARDS: &str = " 0 [Headphones     ]: bcm2835_headpho - bcm2835 Headphones\n                      bcm2835 Headphones\n 2 [Device         ]: USB-Audio - USB PnP Sound Device\n                      C-Media Electronics Inc. USB PnP Sound Device at usb-3f980000.usb-1.3, full speed\n";

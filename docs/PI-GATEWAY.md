@@ -43,23 +43,15 @@ On the Pi, logged in as your own user (not root):
    wcr setup
    ```
 
-   Choose the preset for the band, the Digirig or sound card, the PTT, and the dial frequency the radio stays on. With "Handheld + Digirig", setup starts the serial and audio pickers on the Digirig (`plughw:CARD=Device,DEV=0` for audio), so Enter is right; the Pi's own `Headphones` card cannot hear the radio. Setup puts a station with both a radio and the internet in `internet-radio` mode by itself; that is the mode a gateway needs. Without a desktop it ends by pointing you at the next two steps.
+   Choose the preset for the band, the Digirig or sound card, the PTT, and the dial frequency the radio stays on. With "Handheld + Digirig", setup starts the serial and audio pickers on the Digirig (`plughw:CARD=Device,DEV=0` for audio), so Enter is right; the Pi's own `Headphones` card cannot hear the radio. Setup puts a station with both a radio and the internet in `internet-radio` mode by itself; that is the mode a gateway needs.
 
    Running `wcr setup` again on a working gateway is safe: it keeps the web page password and the settings it does not ask about, and starts each picker on the current value. While the station runs, it holds the Digirig, so setup lists it as "in use"; stop the station first (`sudo systemctl stop wcr-web`) if you want to test the card. To try setup without touching the live file, give it another one: `wcr setup -c /tmp/test/wcr.toml`.
 
-4. Choose a password for the web page (at least 8 characters):
+   At the end, setup asks for a password for the web page (at least 8 characters), then "Start the station now and at every boot?". Say yes: sudo asks for your password once, and setup runs `sudo ~/.local/bin/wcr web install` for you. On a gateway that already has a password and the service, setup asks neither.
 
-   ```
-   wcr web password
-   ```
+   If you said no, or want to do these by hand: `wcr web password`, then `sudo ~/.local/bin/wcr web install`.
 
-5. Start it at boot as a service. It restarts by itself after a crash:
-
-   ```
-   sudo ~/.local/bin/wcr web install
-   ```
-
-   This writes `/etc/systemd/system/wcr-web.service`, which runs as your user, and starts it. Check it with `systemctl status wcr-web` and read its log with `journalctl -u wcr-web -f`. The journal has the station's own log too, including modem73 problems (modem73's full log is `~/.local/share/wcr/modem73.log`).
+   The service is `/etc/systemd/system/wcr-web.service`; it runs as your user, starts at boot and restarts by itself after a crash. Check it with `systemctl status wcr-web` and read its log with `journalctl -u wcr-web -f`. The journal has the station's own log too, including modem73 problems (modem73's full log is `~/.local/share/wcr/modem73.log`).
 
    The page's Start and Stop are remembered (in `web-station.state` next to `wcr.toml`). After a reboot, an update, or a restart from the page or `wcr restart`, the station goes back on the air only if you left it running; a station you stopped stays stopped and the log says `station not started`.
 
@@ -74,7 +66,7 @@ Right after the first boot, `raspberrypi.local` may not resolve yet. Use the Pi'
 On the Pi itself, `wcr webui` prints the page's addresses, whether the `wcr-web` service runs (and how to start it), and a QR code a phone can scan.
 
 - **HTTPS only.** On first start the Pi makes its own certificate. Browsers do not know it, so they warn once: check that the address is your Pi's, then continue. To use your own certificate, set `cert` and `key` (PEM file paths) in `[web]` in `wcr.toml`.
-- **Password.** Log in with the password from `wcr web password`. A login lasts 12 hours of use.
+- **Password.** Log in with the password you chose in setup (change it with `wcr web password`). A login lasts 12 hours of use.
 - **Local network only.** The page answers only addresses on your own network (192.168.x.x, 10.x.x.x, 172.16–31.x.x, and IPv6 local addresses). Do not forward port 8443 on your router. If you really want it reachable from elsewhere, set `allow_public = true` in `[web]` and protect it yourself. That is your decision as the control operator.
 
 The **gateway view** shows:
