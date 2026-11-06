@@ -1913,7 +1913,7 @@ impl eframe::App for GuiApp {
                             if s.shows_level_sliders() {
                                 if let Some(g) = &s.rx_gain {
                                     let tip = if g.kind == "bluetooth" {
-                                        "RX gain: wcr's gain on the radio's Bluetooth audio (the radio's volume knob does not change it). Set it so the IN meter sits in the green band."
+                                        "RX gain: wcr's gain on the radio's Bluetooth audio (the radio's volume knob does not change it). Leave it at 0 dB unless IN says too quiet. At squelch 0 the hiss reads loud; that is normal."
                                     } else {
                                         "RX gain: the sound card's capture gain (automatic gain off). Set it so the IN meter sits in the green band. If it is at its lowest and still clipping, turn the radio's volume down."
                                     };
@@ -2834,27 +2834,75 @@ fn level_slider_row(
     let mut send = None;
     ui.horizontal(|ui| {
         station_key(ui, k);
-        let mut v = match *held {
+        let v = match *held {
             Some((v, at)) if at.elapsed() < Duration::from_secs(4) => v,
             _ => now_db,
         };
-        ui.spacing_mut().slider_width = (ui.available_width() - 80.0).max(60.0);
-        // The theme's rail is near black: give it the meters' colour.
-        ui.visuals_mut().widgets.inactive.bg_fill = LINE;
-        let resp = ui.add(
-            egui::Slider::new(&mut v, range)
-                .trailing_fill(true)
-                .step_by(step)
-                .fixed_decimals(if step < 1.0 { 1 } else { 0 })
-                .suffix(" dB"),
+        // Same rail as the IN and OUT meters (length, height, dB column), so
+        // the rows line up; the value shows on the rail only while dragged
+        // (Tobias 2026-11-06).
+        let h = ui.spacing().interact_size.y;
+        let db_w = 36.0;
+        let gap = ui.spacing().item_spacing.x;
+        let bar_w = (ui.available_width() - gap - db_w).max(28.0);
+        let (rect, resp) =
+            ui.allocate_exact_size(egui::vec2(bar_w, h), egui::Sense::click_and_drag());
+        let bar = egui::Rect::from_center_size(
+            rect.center(),
+            egui::vec2(rect.width(), (h - 8.0).clamp(6.0, 10.0)),
         );
-        if resp.changed() || resp.dragged() {
+        let (lo, hi) = (*range.start(), *range.end());
+        let frac_of = |v: f32| ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
+        let mut v = v.clamp(lo, hi);
+        if let Some(pos) = resp.interact_pointer_pos() {
+            let f = ((pos.x - bar.left()) / bar.width()).clamp(0.0, 1.0);
+            let raw = lo + f * (hi - lo);
+            v = ((raw as f64 / step).round() * step) as f32;
+            v = v.clamp(lo, hi);
             *held = Some((v, Instant::now()));
         }
-        if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
+        if resp.drag_stopped() || resp.clicked() {
             send = Some(v);
         }
-        hover_tip(&resp, tip);
+        let painter = ui.painter();
+        painter.rect_filled(bar, 0.0, LINE);
+        let x = bar.left() + bar.width() * frac_of(v);
+        let fill = egui::Rect::from_min_max(
+            egui::pos2(bar.left(), bar.top() + 2.0),
+            egui::pos2(x, bar.bottom() - 2.0),
+        );
+        if fill.width() > 0.5 {
+            painter.rect_filled(fill, 0.0, ACCENT);
+        }
+        let active = resp.dragged() || resp.is_pointer_button_down_on();
+        painter.line_segment(
+            [
+                egui::pos2(x, rect.top() + 2.0),
+                egui::pos2(x, rect.bottom() - 2.0),
+            ],
+            egui::Stroke::new(if active { 3.0 } else { 2.0 }, FG),
+        );
+        ui.add_space(db_w);
+        if active {
+            egui::Area::new(resp.id.with("wcr_slider_value"))
+                .kind(egui::UiKind::Tooltip)
+                .order(egui::Order::Tooltip)
+                .interactable(false)
+                .constrain(true)
+                .pivot(egui::Align2::CENTER_BOTTOM)
+                .fixed_pos(egui::pos2(x, rect.top() - 2.0))
+                .show(&resp.ctx, |ui| {
+                    egui::Frame::none()
+                        .fill(Color32::from_rgb(22, 22, 34))
+                        .stroke(hairline(ACCENT))
+                        .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(format!("{v:.1} dB")).color(FG).monospace());
+                        });
+                });
+        } else {
+            hover_tip(&resp, format!("{k} {now_db:.1} dB. {tip}"));
+        }
     });
     send
 }

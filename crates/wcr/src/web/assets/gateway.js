@@ -192,7 +192,7 @@ function drawSliders(s) {
     if (Date.now() > held.rx) rx.value = String(g.db);
     $("rx-out").textContent = `${(+rx.value).toFixed(1)} dB`;
     $("rx-note").textContent = g.kind === "bluetooth"
-      ? "RX gain is wcr's gain on the radio's Bluetooth audio; the radio's volume knob does not change this audio. Clipping inside the radio is counted before this gain, so lowering it does not hide it."
+      ? "RX gain is wcr's gain on the radio's Bluetooth audio; the radio's volume knob does not change this audio. Leave it at 0 dB unless IN says too quiet. At squelch 0 the hiss reads loud; that is normal."
       : `RX gain is the sound card's ${g.control || "capture"} gain${g.agc === true ? " (automatic gain is on: moving the slider turns it off)" : ""}. If it is at its lowest and still clipping, turn the radio's volume down.`;
   } else {
     $("rx-note").textContent = s.rx_gain_note ? `RX gain: ${s.rx_gain_note}.` : "RX gain: use the radio's volume.";
@@ -200,7 +200,7 @@ function drawSliders(s) {
   const tx = $("tx-level");
   if (typeof s.tx_level_min_db === "number") tx.min = String(s.tx_level_min_db);
   if (Date.now() > held.tx) tx.value = String(typeof s.tx_level_db === "number" ? s.tx_level_db : 0);
-  $("tx-out").textContent = `${(+tx.value).toFixed(0)} dB`;
+  $("tx-out").textContent = `${(+tx.value).toFixed(1)} dB`;
 }
 
 async function sendLevel(what, input, knob) {
@@ -220,7 +220,7 @@ async function sendLevel(what, input, knob) {
 }
 
 $("rx-gain").addEventListener("input", (e) => { held.rx = Date.now() + 5000; $("rx-out").textContent = `${(+e.target.value).toFixed(1)} dB`; });
-$("tx-level").addEventListener("input", (e) => { held.tx = Date.now() + 5000; $("tx-out").textContent = `${(+e.target.value).toFixed(0)} dB`; });
+$("tx-level").addEventListener("input", (e) => { held.tx = Date.now() + 5000; $("tx-out").textContent = `${(+e.target.value).toFixed(1)} dB`; });
 $("rx-gain").addEventListener("change", (e) => sendLevel("rx_gain", e.target, "rx"));
 $("tx-level").addEventListener("change", (e) => sendLevel("tx_level", e.target, "tx"));
 

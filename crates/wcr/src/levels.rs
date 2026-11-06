@@ -72,7 +72,12 @@ pub enum RxControl {
     /// already at its lowest setting.
     Mixer { at_min: bool, at_max: bool },
     /// wcr's own gain on Bluetooth audio, which the radio sets.
-    Bluetooth { at_min: bool, at_max: bool },
+    /// `boosted`: wcr's gain is above 0 dB.
+    Bluetooth {
+        at_min: bool,
+        at_max: bool,
+        boosted: bool,
+    },
 }
 
 /// The receive level as measured now.
@@ -100,18 +105,33 @@ pub fn judge(input: Input, busy: Busy, control: RxControl) -> (Word, String) {
         || input.peak_db.is_some_and(|p| p >= PEAK_HIGH_DB)
         || input.clip_pct.is_some_and(|c| c > 0.0);
     let down = turn_down(control);
-    if clipping {
-        let pct = input.clip_pct.unwrap_or(0.0);
-        // On Bluetooth the clip count is taken before wcr's RX gain: the
-        // radio's own audio is clipping, and RX gain cannot undo it (#247).
-        if matches!(control, RxControl::Bluetooth { .. }) {
+    // Bluetooth radios set their own audio level: the volume knob does not
+    // change it (VR-N76, Tobias 2026-11-06), and at squelch 0 FM hiss reads
+    // near full scale, louder than the frames themselves. Loud idle input is
+    // normal there; only wcr's own boost above 0 dB is worth undoing.
+    if let RxControl::Bluetooth { boosted, .. } = control {
+        if clipping || high {
+            if boosted {
+                return (
+                    Word::High,
+                    "Loud, and RX gain is above 0 dB: lower RX gain to 0 dB.".into(),
+                );
+            }
+            let pct = input
+                .clip_pct
+                .filter(|c| *c > 0.0)
+                .map(|c| format!(" ({c:.1}% of samples at full scale)"))
+                .unwrap_or_default();
             return (
-                Word::Clipping,
+                Word::Good,
                 format!(
-                    "Clipping in the radio ({pct:.1}% of samples at full scale, before RX gain). Turn the radio's volume down until the meter is green; RX gain cannot fix this."
+                    "Loud open-squelch hiss from the radio{pct}. Normal for FM over Bluetooth at squelch 0: messages arrive quieter than the hiss. Nothing to change; the radio's volume does not change its Bluetooth audio."
                 ),
             );
         }
+    }
+    if clipping {
+        let pct = input.clip_pct.unwrap_or(0.0);
         return (
             Word::Clipping,
             format!(
@@ -525,26 +545,32 @@ mod tests {
             },
         );
         assert!(h.contains("radio's own audio is too loud"), "{h}");
-        // Bluetooth clipping happens in the radio, before RX gain (#247).
+        // Bluetooth: the radio sets its own level (its volume knob does not
+        // change it), and squelch-0 hiss reads near full scale. Loud idle
+        // input is normal; nothing asks for a change the radio cannot make.
         let bt = RxControl::Bluetooth {
             at_min: false,
             at_max: false,
+            boosted: false,
         };
-        let (_, h) = judge(hot, FM, bt);
-        assert!(h.contains("radio's volume down"), "{h}");
-        assert!(!h.contains("Lower RX gain"), "{h}");
-        // Hot but not clipping: RX gain still helps.
-        let (_, h) = judge(input(-6.0, -1.0, 0.0), FM, bt);
-        assert!(h.contains("Lower RX gain"), "{h}");
+        let (w, h) = judge(input(-4.0, 0.0, 11.1), FM, bt);
+        assert_eq!(w, Word::Good, "{h}");
+        assert!(h.contains("11.1%"), "{h}");
+        assert!(h.contains("Nothing to change"), "{h}");
+        assert!(!h.contains("volume down"), "{h}");
+        let (w, h) = judge(input(-6.0, -1.0, 0.0), FM, bt);
+        assert_eq!(w, Word::Good, "{h}");
+        // Only wcr's own boost above 0 dB is worth undoing.
+        let boosted = RxControl::Bluetooth {
+            at_min: false,
+            at_max: false,
+            boosted: true,
+        };
+        let (w, h) = judge(hot, FM, boosted);
+        assert_eq!(w, Word::High);
+        assert!(h.contains("lower RX gain to 0 dB"), "{h}");
         let quiet = input(-55.0, -44.0, 0.0);
-        let (_, h) = judge(
-            quiet,
-            FM,
-            RxControl::Bluetooth {
-                at_min: false,
-                at_max: false,
-            },
-        );
+        let (_, h) = judge(quiet, FM, bt);
         assert!(h.contains("Raise RX gain"), "{h}");
     }
 
