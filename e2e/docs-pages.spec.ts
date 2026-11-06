@@ -165,13 +165,13 @@ test("article pages show the breadcrumb and next / previous from the shared list
   await page.goto("/guides/antennas-hf.html");
   await expect(page.locator(".crumb")).toHaveText("guides › Antennas › HF antennas");
   await expect(page.locator(".crumb a").nth(1)).toHaveAttribute("href", "/guides.html#antennas");
-  await expect(page.locator(".article-next")).toHaveText(/Next in Antennas: VHF and UHF antennas →/);
+  await expect(page.locator(".article-next")).toHaveText(/Next in Antennas: VHF and UHF antennas\s→/);
   await page.locator(".article-next a").click();
   await expect(page).toHaveURL(/antennas-vhf(\.html)?$/);
   await expect(page.locator(".article-next")).toHaveText(/← Previous: HF antennas/);
   await page.goto("/why.html");
   await expect(page.locator(".crumb")).toHaveText("docs › How it works › Why WeeChat Radio");
-  await expect(page.locator(".article-next")).toHaveText(/Next in How it works: Common setups →/);
+  await expect(page.locator(".article-next")).toHaveText(/Next in How it works: Common setups\s→/);
 });
 
 test("the filter finds both antenna guides, shows docs matches, and Escape clears it", async ({ page }) => {
