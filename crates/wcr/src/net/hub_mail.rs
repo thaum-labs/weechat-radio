@@ -7,6 +7,7 @@ use crate::mail::{
     validate_internet_addr, wcr_address, MAIL_DOMAIN, WCR_COPY_HEADER,
 };
 use crate::net::hub_server::HubState;
+use crate::rate_limit::{self, KeyedLimiter};
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -21,6 +22,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::Sha256;
 use std::path::Path;
+use std::sync::Arc;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS hub_mail (
@@ -300,7 +302,142 @@ impl MailHubDb {
     }
 }
 
-fn verify(headers: &HeaderMap, body: &[u8]) -> std::result::Result<String, (StatusCode, String)> {
+/// How much mail the hub sends through Resend. Real stations stay far below
+/// these; they stop a stolen key or a script from burning the Resend quota
+/// and the mail domain's reputation.
+pub struct MailLimits {
+    /// Per signing station (a gateway posts for every Radio+ station it serves).
+    by_signer_hour: Arc<KeyedLimiter>,
+    by_signer_day: Arc<KeyedLimiter>,
+    /// Per author: the callsign in From.
+    by_author_hour: Arc<KeyedLimiter>,
+    by_author_day: Arc<KeyedLimiter>,
+    by_ip_hour: Arc<KeyedLimiter>,
+    /// Copy-to code emails per station and per address. A Radio+ station can
+    /// ask for one before the hub knows its callsign, so these stay low.
+    copy_code_hour: Arc<KeyedLimiter>,
+    copy_code_by_ip_hour: Arc<KeyedLimiter>,
+    /// Everything the hub sends in a day, copies included.
+    hub_day: Arc<KeyedLimiter>,
+}
+
+/// `WCR_MAIL_DAILY_CAP` sets the hub-wide cap. Keep it below the Resend plan's
+/// daily quota so the hub stops before Resend does.
+pub const HUB_DAILY_CAP_DEFAULT: u32 = 1000;
+/// The longest subject the hub sends.
+pub const SUBJECT_MAX_CHARS: usize = 200;
+const LIMIT_TEXT: &str = "Mail limit reached on the hub. Try again later.";
+
+impl MailLimits {
+    pub fn new() -> Self {
+        let cap = std::env::var("WCR_MAIL_DAILY_CAP")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(HUB_DAILY_CAP_DEFAULT);
+        Self::with_daily_cap(cap)
+    }
+
+    pub fn with_daily_cap(cap: u32) -> Self {
+        Self {
+            by_signer_hour: rate_limit::per_hour(60),
+            by_signer_day: rate_limit::per_day(300),
+            by_author_hour: rate_limit::per_hour(20),
+            by_author_day: rate_limit::per_day(100),
+            by_ip_hour: rate_limit::per_hour(120),
+            copy_code_hour: rate_limit::per_hour(3),
+            copy_code_by_ip_hour: rate_limit::per_hour(10),
+            hub_day: rate_limit::per_day(cap),
+        }
+    }
+
+    /// One outbound mail from `signer`, written by `author`, from `ip`.
+    fn allow_send(&self, signer: &str, author: &str, ip: &str) -> bool {
+        rate_limit::allow(&self.by_author_hour, author)
+            && rate_limit::allow(&self.by_author_day, author)
+            && rate_limit::allow(&self.by_signer_hour, signer)
+            && rate_limit::allow(&self.by_signer_day, signer)
+            && rate_limit::allow(&self.by_ip_hour, ip)
+            && self.allow_hub()
+    }
+
+    fn allow_copy_code(&self, signer: &str, ip: &str) -> bool {
+        rate_limit::allow(&self.copy_code_hour, signer)
+            && rate_limit::allow(&self.copy_code_by_ip_hour, ip)
+            && self.allow_hub()
+    }
+
+    fn allow_hub(&self) -> bool {
+        rate_limit::allow(&self.hub_day, "hub")
+    }
+}
+
+impl Default for MailLimits {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The caller's address as Caddy passes it on. A hub run without a proxy in
+/// front puts every caller in one bucket.
+fn caller_ip(h: &HeaderMap) -> String {
+    header(h, "x-forwarded-for")
+        .or_else(|| header(h, "x-real-ip"))
+        .map(|ip| ip.split(',').next().unwrap_or(ip).trim().to_string())
+        .unwrap_or_else(|| "direct".into())
+}
+
+/// A signed request from a station the hub knows: the signature is good AND
+/// the key is the one the hub has bound to that callsign (bound when the
+/// station first connects). Without the bound-key check any freshly made key
+/// passed, which made the hub an open mail relay.
+///
+/// `Unbound::Bind` is for the calls a Radio+ station makes itself (copy-to and
+/// delivery status): it never says hello to the hub, so a callsign the hub has
+/// never seen is bound to this key, the same rule as [`owner_check`].
+fn verify_station(
+    st: &HubState,
+    headers: &HeaderMap,
+    body: &[u8],
+    unbound: Unbound,
+) -> std::result::Result<String, (StatusCode, String)> {
+    let (call, pk) = verify(headers, body)?;
+    if st.telemetry.is_blocked(&pk) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "this station is blocked on the hub".into(),
+        ));
+    }
+    match st.telemetry.get_pubkey(&call) {
+        Some(bound) if bound == pk => Ok(call),
+        Some(_) => Err((
+            StatusCode::UNAUTHORIZED,
+            OwnerFail::WrongKey {
+                call: call.clone(),
+                key: hex::encode_upper(&pk[..4]),
+            }
+            .text(),
+        )),
+        None if unbound == Unbound::Bind => {
+            let _ = st.telemetry.bind_callsign(&call, &pk);
+            Ok(call)
+        }
+        None => Err((
+            StatusCode::UNAUTHORIZED,
+            format!("{call} has not connected to the hub yet. Connect to the hub first, then try again."),
+        )),
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Unbound {
+    Refuse,
+    Bind,
+}
+
+fn verify(
+    headers: &HeaderMap,
+    body: &[u8],
+) -> std::result::Result<(String, [u8; 32]), (StatusCode, String)> {
     let call = header(headers, "x-wcr-callsign")
         .ok_or((StatusCode::UNAUTHORIZED, "missing callsign".into()))?;
     let pk = header(headers, "x-wcr-pubkey")
@@ -321,7 +458,7 @@ fn verify(headers: &HeaderMap, body: &[u8]) -> std::result::Result<String, (Stat
         .map_err(|_| (StatusCode::UNAUTHORIZED, "bad pubkey".into()))?;
     key.verify(body, &Signature::from_bytes(&sig_arr))
         .map_err(|_| (StatusCode::UNAUTHORIZED, "bad signature".into()))?;
-    Ok(call.to_ascii_uppercase())
+    Ok((call.to_ascii_uppercase(), pk_arr))
 }
 
 fn header<'a>(h: &'a HeaderMap, name: &str) -> Option<&'a str> {
@@ -479,7 +616,7 @@ pub async fn post_gateway_ask(
     headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
-    let gateway = match verify(&headers, &body) {
+    let gateway = match verify_station(&st, &headers, &body, Unbound::Refuse) {
         Ok(c) => c,
         Err((s, m)) => return bad(s, &m).into_response(),
     };
@@ -548,7 +685,7 @@ pub async fn post_send(
     headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
-    let call = match verify(&headers, &body) {
+    let call = match verify_station(&st, &headers, &body, Unbound::Refuse) {
         Ok(c) => c,
         Err((s, m)) => return bad(s, &m).into_response(),
     };
@@ -559,6 +696,14 @@ pub async fn post_send(
     if validate_internet_addr(&req.to).is_err() {
         return bad(StatusCode::BAD_REQUEST, "To must be an internet address").into_response();
     }
+    if req.subject.chars().count() > SUBJECT_MAX_CHARS {
+        let msg = format!("Subject is longer than {SUBJECT_MAX_CHARS} characters.");
+        return bad(StatusCode::BAD_REQUEST, &msg).into_response();
+    }
+    let text = match trim_body(&req.body) {
+        Ok(t) => t,
+        Err(e) => return bad(StatusCode::BAD_REQUEST, &e.plain()).into_response(),
+    };
     let from = if req.from.contains('@') {
         req.from
     } else {
@@ -582,12 +727,20 @@ pub async fn post_send(
                 .into_response();
         }
     }
+    let author = callsign_from_wcr(&from).unwrap_or_else(|| call.clone());
+    if !st
+        .mail_limits
+        .allow_send(&call, &author, &caller_ip(&headers))
+    {
+        tracing::warn!("mail send by {call} for {author} refused: limit");
+        return bad(StatusCode::TOO_MANY_REQUESTS, LIMIT_TEXT).into_response();
+    }
     let bcc = author_bcc(&call, &from, req.bcc, |a| st.mail.copy_to(a));
     match resend_send(
         &from,
         &req.to,
         &req.subject,
-        &req.body,
+        &text,
         bcc.as_deref(),
         bcc.is_some(),
     )
@@ -599,7 +752,7 @@ pub async fn post_send(
                 &from,
                 &req.to,
                 &req.subject,
-                &req.body,
+                &text,
                 &resend_id,
                 req.mail_id.trim(),
             );
@@ -628,7 +781,7 @@ pub async fn post_status(
     headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
-    let call = match verify(&headers, &body) {
+    let call = match verify_station(&st, &headers, &body, Unbound::Bind) {
         Ok(c) => c,
         Err((s, m)) => return bad(s, &m).into_response(),
     };
@@ -663,7 +816,7 @@ pub async fn post_inbox(
     headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
-    let call = match verify(&headers, &body) {
+    let call = match verify_station(&st, &headers, &body, Unbound::Refuse) {
         Ok(c) => c,
         Err((s, m)) => return bad(s, &m).into_response(),
     };
@@ -688,7 +841,7 @@ pub async fn post_fetch(
     headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
-    let call = match verify(&headers, &body) {
+    let call = match verify_station(&st, &headers, &body, Unbound::Refuse) {
         Ok(c) => c,
         Err((s, m)) => return bad(s, &m).into_response(),
     };
@@ -712,7 +865,7 @@ pub async fn post_copy(
     headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
-    let call = match verify(&headers, &body) {
+    let call = match verify_station(&st, &headers, &body, Unbound::Bind) {
         Ok(c) => c,
         Err((s, m)) => return bad(s, &m).into_response(),
     };
@@ -732,6 +885,9 @@ pub async fn post_copy(
     let code = copy_code_digits(&req.code);
     if code.is_empty() {
         return bad(StatusCode::BAD_REQUEST, "missing code").into_response();
+    }
+    if !st.mail_limits.allow_copy_code(&call, &caller_ip(&headers)) {
+        return bad(StatusCode::TOO_MANY_REQUESTS, LIMIT_TEXT).into_response();
     }
     if st
         .mail
@@ -772,7 +928,7 @@ pub async fn post_copy_confirm(
     headers: HeaderMap,
     body: Bytes,
 ) -> impl IntoResponse {
-    let call = match verify(&headers, &body) {
+    let call = match verify_station(&st, &headers, &body, Unbound::Bind) {
         Ok(c) => c,
         Err((s, m)) => return bad(s, &m).into_response(),
     };
@@ -935,7 +1091,11 @@ pub async fn resend_webhook(
         {
             stored = true;
             if !copy_header {
-                if let Some(copy) = st.mail.copy_to(&call) {
+                let copy = st
+                    .mail
+                    .copy_to(&call)
+                    .filter(|_| st.mail_limits.allow_hub());
+                if let Some(copy) = copy {
                     let _ = resend_send(
                         &wcr_address(&call),
                         &copy,
@@ -1123,6 +1283,9 @@ mod tests {
             "from": from, "to": "op@example.com", "subject": "hi", "body": "body",
             "mail_id": "mailid1",
         });
+        st.telemetry
+            .bind_callsign("G4TWO", &gw2.public_bytes())
+            .unwrap();
         let (h, b) = signed(&gw2, "G4TWO", &body);
         let (code, v) = json_of(post_send(State(st.clone()), h, b).await.into_response()).await;
         assert_eq!(code, StatusCode::OK, "{v}");
@@ -1136,6 +1299,9 @@ mod tests {
         let st = crate::net::hub_server::test_hub_state();
         let asker = crate::proto::IdentityKeys::generate();
         let gw = crate::proto::IdentityKeys::generate();
+        st.telemetry
+            .bind_callsign("G4GW", &gw.public_bytes())
+            .unwrap();
         let ts = chrono::Utc::now().timestamp();
         let sig = hex::encode(asker.sign_bytes(&crate::mail::pick::ask_token("M7ASK", ts, "abcd")));
         let mut ask = json!({
@@ -1171,6 +1337,13 @@ mod tests {
     const RP: &str = "M7TJF/M";
     const GW: &str = "M7TJF";
 
+    /// The gateway M7TJF, registered on the hub as a connected station is.
+    fn gw_keys(st: &HubState) -> crate::proto::IdentityKeys {
+        let gw = crate::proto::IdentityKeys::from_bytes(&[7u8; 32]);
+        st.telemetry.bind_callsign(GW, &gw.public_bytes()).unwrap();
+        gw
+    }
+
     async fn ask_as(
         st: &HubState,
         station: &crate::proto::IdentityKeys,
@@ -1182,7 +1355,7 @@ mod tests {
         let ask = crate::mail::pick::signed_ask(station, signed_as, ts, nonce, "IO91WM");
         let report =
             crate::mail::pick::ask_report(reported_as, nonce, &ask, Some(7.9), "IO91VL", "vhf-fm");
-        let gw = crate::proto::IdentityKeys::generate();
+        let gw = gw_keys(st);
         let (h, b) = signed(&gw, GW, &report);
         json_of(
             post_gateway_ask(State(st.clone()), h, b)
@@ -1195,7 +1368,7 @@ mod tests {
     /// Check mail (`ids` empty) or Get, as the gateway posts it for `RP`.
     async fn pull_as(st: &HubState, auth: &Value, ids: &[String]) -> (StatusCode, Value) {
         let body = crate::mail::gateway_pull_body(RP, ids, &auth.to_string());
-        let gw = crate::proto::IdentityKeys::generate();
+        let gw = gw_keys(st);
         let (h, b) = signed(&gw, GW, &body);
         let r = if ids.is_empty() {
             post_inbox(State(st.clone()), h, b).await.into_response()
@@ -1474,5 +1647,144 @@ mod tests {
             body,
             &format!("v1,{sig}")
         ));
+    }
+
+    async fn send_as(
+        st: &HubState,
+        keys: &crate::proto::IdentityKeys,
+        call: &str,
+        body: &Value,
+    ) -> (StatusCode, Value) {
+        let (h, b) = signed(keys, call, body);
+        json_of(post_send(State(st.clone()), h, b).await.into_response()).await
+    }
+
+    /// The open-relay hole: a key the hub has never seen, for a callsign the
+    /// hub has never seen, used to pass and reach Resend. Now it is refused,
+    /// and so is a key that is not the callsign's registered one. A subject
+    /// over the cap shows the registered key got past the check (and keeps
+    /// the test away from Resend).
+    #[tokio::test]
+    async fn only_a_registered_key_may_send_mail() {
+        let st = crate::net::hub_server::test_hub_state();
+        let long = json!({
+            "from": wcr_address("M7SND"), "to": "op@example.com",
+            "subject": "x".repeat(SUBJECT_MAX_CHARS + 1), "body": "hi",
+        });
+        let stranger = crate::proto::IdentityKeys::generate();
+        let (code, v) = send_as(&st, &stranger, "NOTREAL", &long).await;
+        assert_eq!(code, StatusCode::UNAUTHORIZED, "{v}");
+        assert!(
+            v["error"]
+                .as_str()
+                .unwrap()
+                .contains("has not connected to the hub yet"),
+            "{v}"
+        );
+        assert_eq!(
+            st.telemetry.get_pubkey("NOTREAL"),
+            None,
+            "a send binds nothing"
+        );
+
+        let owner = crate::proto::IdentityKeys::generate();
+        st.telemetry
+            .bind_callsign("M7SND", &owner.public_bytes())
+            .unwrap();
+        let (code, v) = send_as(&st, &stranger, "M7SND", &long).await;
+        assert_eq!(code, StatusCode::UNAUTHORIZED, "{v}");
+        assert!(
+            v["error"]
+                .as_str()
+                .unwrap()
+                .contains("registered to a different key"),
+            "{v}"
+        );
+
+        let (code, v) = send_as(&st, &owner, "M7SND", &long).await;
+        assert_eq!(code, StatusCode::BAD_REQUEST, "{v}");
+        assert!(
+            v["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("Subject is longer"),
+            "{v}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_hub_refuses_a_body_over_the_mail_limit() {
+        let st = crate::net::hub_server::test_hub_state();
+        let owner = crate::proto::IdentityKeys::generate();
+        st.telemetry
+            .bind_callsign("M7SND", &owner.public_bytes())
+            .unwrap();
+        let big = json!({
+            "from": wcr_address("M7SND"), "to": "op@example.com",
+            "subject": "hi", "body": "x".repeat(4096 + 1),
+        });
+        let (code, v) = send_as(&st, &owner, "M7SND", &big).await;
+        assert_eq!(code, StatusCode::BAD_REQUEST, "{v}");
+    }
+
+    #[tokio::test]
+    async fn a_fresh_key_cannot_take_over_copy_to_or_read_an_inbox() {
+        let st = crate::net::hub_server::test_hub_state();
+        let stranger = crate::proto::IdentityKeys::generate();
+        let owner = crate::proto::IdentityKeys::generate();
+        st.telemetry
+            .bind_callsign("NOTREAL2", &owner.public_bytes())
+            .unwrap();
+        let (h, b) = signed(
+            &stranger,
+            "NOTREAL2",
+            &json!({"address": "victim@example.com", "code": "123456"}),
+        );
+        let (code, _) = json_of(post_copy(State(st.clone()), h, b).await.into_response()).await;
+        assert_eq!(code, StatusCode::UNAUTHORIZED);
+        st.mail
+            .insert_in(
+                "M7SND",
+                "op@example.com",
+                &wcr_address("M7SND"),
+                "hi",
+                "private",
+                None,
+            )
+            .unwrap();
+        let (h, b) = signed(&stranger, "M7SND", &json!({}));
+        let (code, _) = json_of(post_inbox(State(st.clone()), h, b).await.into_response()).await;
+        assert_eq!(code, StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn mail_limits_stop_one_author_and_the_whole_hub() {
+        let lim = MailLimits::with_daily_cap(1000);
+        for _ in 0..20 {
+            assert!(lim.allow_send("G4GW", "M7SND", "1.2.3.4"));
+        }
+        assert!(
+            !lim.allow_send("G4GW", "M7SND", "1.2.3.4"),
+            "21st in an hour"
+        );
+        assert!(
+            lim.allow_send("G4GW", "M7OTH", "1.2.3.4"),
+            "another author still sends"
+        );
+
+        let lim = MailLimits::with_daily_cap(2);
+        assert!(lim.allow_send("A", "A", "1"));
+        assert!(lim.allow_send("B", "B", "2"));
+        assert!(!lim.allow_send("C", "C", "3"), "hub-wide daily cap");
+
+        let lim = MailLimits::with_daily_cap(1000);
+        for _ in 0..3 {
+            assert!(lim.allow_copy_code("M7SND", "1"));
+        }
+        assert!(!lim.allow_copy_code("M7SND", "1"));
+        for i in 0..7 {
+            assert!(lim.allow_copy_code(&format!("M7N{i}"), "1"));
+        }
+        assert!(!lim.allow_copy_code("M7NEW", "1"), "10 an hour per address");
     }
 }

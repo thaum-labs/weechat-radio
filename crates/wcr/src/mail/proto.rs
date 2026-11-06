@@ -138,7 +138,10 @@ fn validate_addr_in(addr: &str, field: &str) -> Result<()> {
             "Enter an internet address in {field}."
         )));
     }
-    if s.contains(char::is_whitespace) {
+    if s.contains(char::is_whitespace)
+        || s.matches('@').count() != 1
+        || s.contains([',', ';', '<', '>', '"'])
+    {
         return Err(Error::config(format!(
             "{field} must be a single email address."
         )));
@@ -627,6 +630,22 @@ pub fn frames_for_mtu(wire: &[u8], mtu: usize) -> Result<Vec<Vec<u8>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One address only: a comma, semicolon or a second @ could smuggle in
+    /// more recipients.
+    #[test]
+    fn to_is_exactly_one_address() {
+        assert!(validate_internet_addr("op@example.com").is_ok());
+        for bad in [
+            "a@b.com,c@d.com",
+            "a@b.com;c@d.com",
+            "a@b@c.com",
+            "Op <op@example.com>",
+            "\"a\"@b.com",
+        ] {
+            assert!(validate_internet_addr(bad).is_err(), "{bad}");
+        }
+    }
 
     fn wire(idx: u16, count: u16, payload: &str) -> MailWire {
         MailWire {

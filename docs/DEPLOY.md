@@ -24,7 +24,7 @@ Create A records, all pointing at the droplet IP:
 
 2. Copy `deploy/` to the droplet (or clone this repo).
 
-3. Copy `deploy/.env.example` to `/opt/wcr/.env` and set `WCR_DOMAIN=weechatradio.com`. The hub also reads `RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET` from that file. The deploy workflow writes those two from GitHub Actions secrets when they are set.
+3. Copy `deploy/.env.example` to `/opt/wcr/.env` and set `WCR_DOMAIN=weechatradio.com`. The hub also reads `RESEND_API_KEY` and `RESEND_WEBHOOK_SECRET` from that file. The deploy workflow writes those two from GitHub Actions secrets when they are set. `WCR_MAIL_DAILY_CAP` (optional, default 1000) caps how much mail the hub sends in a day; keep it below the Resend plan's daily quota. Each station is also limited (20 mails an hour and 100 a day per author, 60 an hour and 300 a day per posting station, 120 an hour per IP; copy-to code emails 3 an hour per station and 10 an hour per IP).
 
 4. Point cloud-init at `deploy/cloud-init.yaml` on first boot, **or** run:
 
