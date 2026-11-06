@@ -89,7 +89,7 @@
     nav.className = "article-next";
     nav.setAttribute("aria-label", `More in ${cat.title}`);
     nav.innerHTML = `${prev ? `<a class="article-prev" href="${prev.href}">← Previous: ${escapeHtml(prev.title)}</a>` : "<span></span>"}${
-      next ? `<a class="article-nextlink" href="${next.href}">Next in ${escapeHtml(cat.title)}: ${escapeHtml(next.title)} →</a>` : ""
+      next ? `<a class="article-nextlink" href="${next.href}">Next in ${escapeHtml(cat.title)}: ${escapeHtml(next.title)}&nbsp;→</a>` : ""
     }`;
     main.appendChild(nav);
   }
