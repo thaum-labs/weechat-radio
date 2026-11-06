@@ -298,6 +298,15 @@ async fn safe_restart(web: &Web) {
         "restarting on the installed version ({}); radio idle",
         update::installed_version().unwrap_or_else(|| "unknown".into())
     ));
+    // A restart the operator asked for keeps a version still on probation
+    // (QA #284): it was up, so this stop is not a failed start.
+    if let Some(note) = restart::confirm_before_deliberate_restart(
+        &restart::install_dir(),
+        update::current_version(),
+    ) {
+        web.station.note(&note);
+        web.update.inner.lock().note = note;
+    }
     web.station.shutdown().await;
     save_sessions(web);
     let err = restart::relaunch();

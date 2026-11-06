@@ -524,4 +524,23 @@ async fn the_cli_updates_restarts_and_says_so_in_one_line() {
     let run = rig.run_file();
     assert_eq!(run["pid"].as_u64().unwrap(), pid);
     assert!(run["started"].as_u64().unwrap() >= started);
+
+    // QA #284: restarts right after an update (well inside the 60 s
+    // probation) are the operator's, not crashes: no rollback.
+    let out = cli(&["restart"]).output().await.unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(out.status.success(), "{text}\n{}", rig.log());
+    assert_eq!(
+        text.lines().last().unwrap_or(""),
+        format!("Restarted on {NEW}, running, radio idle."),
+        "{text}"
+    );
+    let after = rig.get("/api/update").await.unwrap();
+    assert_eq!(after["running"], NEW, "{after}");
+    assert_eq!(
+        after["note"],
+        format!("Updated from {} to {NEW}", old()),
+        "{after}"
+    );
+    assert!(!rig.log().contains("Rolled back"), "{}", rig.log());
 }

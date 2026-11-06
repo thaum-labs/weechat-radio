@@ -808,6 +808,27 @@ impl GuiApp {
         Config::active_path().is_file() && Callsign::parse(&self.callsign).is_ok()
     }
 
+    /// Leaving the setup page (a nav link, Back) saves it first, so a change
+    /// made without pressing Save and start is not lost (Tobias, #284).
+    /// Stays on the page, with the reason, when the form cannot be saved.
+    fn leave_setup(&mut self) {
+        if !self.show_setup || !self.configured() {
+            self.show_setup = false;
+            return;
+        }
+        let path = Config::active_path();
+        let before = std::fs::read_to_string(&path).unwrap_or_default();
+        self.save_setup();
+        if !self.error.is_empty() {
+            return;
+        }
+        self.show_setup = false;
+        let changed = std::fs::read_to_string(&path).unwrap_or_default() != before;
+        if changed && self.status.is_some() {
+            self.error = "Setup saved. Stop and start the station to use the new settings.".into();
+        }
+    }
+
     fn save_setup(&mut self) {
         self.error.clear();
         if let Err(e) = Callsign::parse(&self.callsign) {
@@ -924,6 +945,11 @@ impl GuiApp {
         if matches!(self.path, 1 | 2 | 3 | SUPPORTED_CAT) {
             cfg.modem.audio_input = self.audio_input.trim().to_string();
             cfg.modem.audio_output = self.audio_output.trim().to_string();
+        } else if self.path == BT_AUDIO {
+            // The sound goes over wcr's Bluetooth link, never a sound card
+            // (QA #284: the Mac's built-in devices were left in the file).
+            cfg.modem.audio_input.clear();
+            cfg.modem.audio_output.clear();
         }
         // A radio setup saved again keeps Radio or Radio+: setup picks how the
         // station reaches the air, the main page picks the mode.
@@ -1650,23 +1676,19 @@ impl eframe::App for GuiApp {
                         .map(|s| mode_color(s.mode))
                         .unwrap_or(ACCENT);
                     if prompt_mark(ui, wave).clicked() && self.configured() {
-                        self.show_setup = false;
                         self.error.clear();
+                        self.leave_setup();
                     }
                     ui.add_space(14.0);
                     if nav_link(ui, "live chat").clicked() {
                         self.center = CenterView::Chat;
-                        if self.configured() {
-                            self.show_setup = false;
-                        }
+                        self.leave_setup();
                     }
                     self.paint_email_nav(ui);
                     if nav_link(ui, "on air").clicked() {
                         self.center = CenterView::Traffic;
                         self.last_traffic_poll = Instant::now() - Duration::from_secs(5);
-                        if self.configured() {
-                            self.show_setup = false;
-                        }
+                        self.leave_setup();
                     }
                     let running = self.status.is_some();
                     if running {
@@ -1685,12 +1707,14 @@ impl eframe::App for GuiApp {
                         let _ = open::that(crate::config::PUBLIC_MAP);
                     }
                     if self.configured() && nav_link(ui, "setup").clicked() {
-                        self.show_setup = !self.show_setup;
+                        self.error.clear();
                         if self.show_setup {
+                            self.leave_setup();
+                        } else {
+                            self.show_setup = true;
                             self.hw = None;
                             self.hw_rx = None;
                         }
-                        self.error.clear();
                     }
                     if nav_link(ui, "quit").clicked() {
                         self.quit_app(ctx);
@@ -1755,8 +1779,8 @@ impl eframe::App for GuiApp {
                                 )
                                 .clicked()
                         {
-                            self.show_setup = false;
                             self.error.clear();
+                            self.leave_setup();
                         }
                     });
                     if !self.error.is_empty() {
@@ -1868,7 +1892,7 @@ impl eframe::App for GuiApp {
                                     preset_cmd = Some(format!("/preset {next}"));
                                 }
                             }
-                            if s.tnc.is_empty() && !s.modem73.is_empty() {
+                            if !s.builtin_tnc() && !s.modem73.is_empty() {
                                 kv(ui, "MODEM", &format!("modem73 v{}", s.modem73), DIM);
                             }
                             input_meter_row(ui, s);
@@ -1886,7 +1910,7 @@ impl eframe::App for GuiApp {
                                 crate::presets::audio_meter_live(&s.audio_label),
                                 "Transmit audio to the radio (sound card playback). Fills while PTT is keyed.",
                             );
-                            if s.tnc.is_empty() && !s.modem73.is_empty() && s.mode != Mode::Internet {
+                            if s.shows_level_sliders() {
                                 if let Some(g) = &s.rx_gain {
                                     let tip = if g.kind == "bluetooth" {
                                         "RX gain: wcr's gain on the radio's Bluetooth audio (the radio's volume knob does not change it). Set it so the IN meter sits in the green band."
@@ -3878,9 +3902,7 @@ impl GuiApp {
             hover_tip(&resp, reason);
         } else if nav_link(ui, &label).clicked() {
             self.center = CenterView::Email;
-            if self.configured() {
-                self.show_setup = false;
-            }
+            self.leave_setup();
         }
     }
 
@@ -5592,6 +5614,19 @@ impl GuiApp {
         }
         if matches!(self.path, 4 | BT_AUDIO) {
             self.bluetooth_setup_ui(ui);
+        }
+        if self.path == BT_AUDIO {
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(crate::setup::bt_audio_sound_note())
+                            .color(DIM)
+                            .font(FontId::monospace(11.0)),
+                    )
+                    .wrap(),
+                );
+            });
         }
         if self.path == 5 {
             ui.horizontal(|ui| {

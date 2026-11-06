@@ -224,6 +224,19 @@ pub fn wcr_exe() -> PathBuf {
     }
 }
 
+/// A restart the operator asked for (`wcr restart`, Restart to finish,
+/// an Update) while the running version is still on probation keeps it:
+/// it was up, and the stop is not a crash. Without this, a `wcr restart`
+/// within [`PROBATION`] of an update counted as a failed start and rolled
+/// the update back (QA #284). Returns the note when it confirmed.
+pub fn confirm_before_deliberate_restart(dir: &Path, running: &str) -> Option<String> {
+    let m = Marker::load(dir)?;
+    if m.phase != Phase::Pending || !same_version(&m.to, running) || m.simulate_failure {
+        return None;
+    }
+    confirm(dir)
+}
+
 /// Replace this process with the installed binary, same arguments. On Unix
 /// the PID stays (systemd, launchd and the terminal see no change). On
 /// Windows a new process starts and this one ends. Returns only on error.
@@ -488,6 +501,56 @@ mod tests {
             OnStart::RollBack { reason } => assert!(reason.contains("stopped 2 times"), "{reason}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    /// QA #284: `wcr restart` 10 s after an update is not a crash.
+    #[test]
+    fn a_deliberate_restart_on_probation_keeps_the_new_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut m = Marker {
+            from: "1.0.16-rc3".into(),
+            to: "1.0.16-rc4".into(),
+            ..Marker::default()
+        };
+        m.save(dir.path()).unwrap();
+        assert_eq!(on_start(dir.path(), "1.0.16-rc4"), OnStart::Probation);
+        // The old version (not restarted yet) or a test build changes nothing.
+        assert_eq!(
+            confirm_before_deliberate_restart(dir.path(), "1.0.16-rc3"),
+            None
+        );
+        assert_eq!(
+            confirm_before_deliberate_restart(dir.path(), "1.0.16-rc4").as_deref(),
+            Some("Updated from 1.0.16-rc3 to 1.0.16-rc4")
+        );
+        // Restart after restart: each is a normal start, never a rollback.
+        for _ in 0..3 {
+            assert!(matches!(
+                on_start(dir.path(), "1.0.16-rc4"),
+                OnStart::Normal { .. }
+            ));
+        }
+        // Already confirmed: nothing more to say.
+        assert_eq!(
+            confirm_before_deliberate_restart(dir.path(), "1.0.16-rc4"),
+            None
+        );
+        // A forced bad build still rolls back on its deliberate restart.
+        let mut m = Marker {
+            from: "1.0.16-rc4".into(),
+            to: "1.0.16-rc5".into(),
+            simulate_failure: true,
+            ..Marker::default()
+        };
+        m.save(dir.path()).unwrap();
+        assert_eq!(
+            confirm_before_deliberate_restart(dir.path(), "1.0.16-rc5"),
+            None
+        );
+        assert!(matches!(
+            on_start(dir.path(), "1.0.16-rc5"),
+            OnStart::RollBack { .. }
+        ));
     }
 
     #[test]
