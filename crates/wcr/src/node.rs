@@ -155,6 +155,21 @@ impl Runtime {
     fn hub(&self) -> Option<HubClient> {
         self.txp.lock().hub.clone()
     }
+    /// A mail-only internet-radio gateway keys no chat for other stations:
+    /// no relays, no receipts, no hub chat onto RF (#272). Its own lines,
+    /// beacons and mail are not affected.
+    fn chat_for_others_silenced(&self) -> bool {
+        let cfg = self.cfg.lock();
+        !relay::keys_chat_for_others(cfg.mode.is_gateway(), cfg.gateway.mail_only())
+    }
+    /// `/status` word for the gateway mode: empty off internet-radio.
+    fn gateway_mode_word(cfg: &Config) -> String {
+        if cfg.mode.is_gateway() {
+            cfg.gateway.mode_name().into()
+        } else {
+            String::new()
+        }
+    }
     fn kiss(&self) -> Option<KissClient> {
         self.txp.lock().kiss.clone()
     }
@@ -363,6 +378,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         s.show_snr = cfg.ui.show_snr;
         s.version = crate::update::current_version().into();
         s.tower = cfg.gateway.show_tower(cfg.mode);
+        s.gateway_mode = Runtime::gateway_mode_word(&cfg);
     }
 
     // Bind chat and status before opening the store. A locked SQLite (old
@@ -591,6 +607,15 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         // false for them; clearing the hold here cancels the
                         // retry and the queued copy. Leave them for the ARQ loop.
                         if relay::is_own_origin(&our, &m.env) {
+                            continue;
+                        }
+                        // A mail-only gateway hears the line but never
+                        // carries it on (#272).
+                        if rt_h.chat_for_others_silenced() {
+                            let _ = rt_h.store.set_hold(&m.env.msg_id, 0, 0);
+                            if let Some(air) = rt_h.air() {
+                                air.cancel(m.env.msg_id);
+                            }
                             continue;
                         }
                         let max_age = rt_h.cfg.lock().rf.outbound_max_age_secs;
@@ -2832,6 +2857,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                         && !env.flags.group()
                         && env.dest.as_str() == rt.engine.our_call
                         && crate::signal_report::is_request(&text)
+                        && !rt.chat_for_others_silenced()
                     {
                         answer_report_request(rt, env.origin.as_str(), medium, snr);
                     }
@@ -2845,6 +2871,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                     && env.flags.req_ack()
                     && (env.dest.as_str() == rt.engine.our_call || env.flags.group())
                     && relay::acks_line(&env)
+                    && !rt.chat_for_others_silenced()
                 {
                     let _ = acknowledge(rt, &env, snr).await;
                 }
@@ -2972,12 +2999,15 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                 rt.snap.lock().tx_rung = Rung::from_index(next).as_str().into();
             }
         }
-        MsgType::Have => {
+        // Group history sync keys other stations' lines: not from a
+        // mail-only gateway (#272).
+        MsgType::Have if !rt.chat_for_others_silenced() => {
             handle_have(rt, &env).await?;
         }
-        MsgType::Want => {
+        MsgType::Want if !rt.chat_for_others_silenced() => {
             handle_want(rt, &env).await?;
         }
+        MsgType::Have | MsgType::Want => {}
         MsgType::Beacon => {}
         MsgType::Ping | MsgType::File => {}
         MsgType::Frag => {}
@@ -3134,6 +3164,11 @@ async fn acknowledge(rt: &Runtime, env: &Envelope, snr: Option<f32>) -> Result<(
 /// is clearly still waiting, and relay it again when we are the middle hop
 /// and the receipt has not landed.
 async fn maybe_answer_retry(rt: &Runtime, env: &Envelope, medium: &str, snr: Option<f32>) {
+    // A mail-only gateway never answered or relayed the first copy, so a
+    // retry gets nothing from it either (#272).
+    if rt.chat_for_others_silenced() {
+        return;
+    }
     if env.kind == MsgType::Ack || relay::is_channel_meta(env) {
         relay_heard_retry(rt, env).await;
         return;
@@ -3374,7 +3409,8 @@ async fn forward_gateway(rt: &Runtime, env: &Envelope, medium: &str) -> Result<(
             relay::rf_egress_heard(is_group, is_bulletin, dest_heard, member_heard, any_on_dial);
         if relay::may_rf_egress(
             cfg_g.mode.is_gateway(),
-            cfg_g.gateway.rf_egress,
+            // Mail only keeps hub chat off the air as well (#272).
+            cfg_g.gateway.rf_egress && !cfg_g.gateway.mail_only(),
             heard,
             env.flags.third_party(),
             cfg_g.gateway.third_party_allow(),
@@ -4137,10 +4173,12 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                         let old = cfg.lock().mode;
                         cfg.lock().mode = mode;
                         let show_tower = cfg.lock().gateway.show_tower(mode);
+                        let gateway_mode = Runtime::gateway_mode_word(&cfg.lock());
                         {
                             let mut s = snap.lock();
                             s.mode = mode;
                             s.tower = show_tower;
+                            s.gateway_mode = gateway_mode;
                         }
                         persist_cfg(&cfg.lock());
                         apply_mode_change(rt, old, mode).await
@@ -4188,8 +4226,14 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                 String::new()
             };
             let now = crate::status::unix_now_f64();
+            // #272: a gateway says what it keys for others.
+            let gateway = if s.gateway_mode.is_empty() {
+                String::new()
+            } else {
+                format!(" | gateway {}", s.gateway_mode)
+            };
             format!(
-                "{} | {} | {} {} | {} | SNR {:.1} | tx {} | retry {} | audio {} | q {}/{} | occ {}% air {} | beacon {} | hold {} | relayed {} unique {} | groups {} | hub {}{}",
+                "{} | {} | {} {} | {} | SNR {:.1} | tx {} | retry {} | audio {} | q {}/{} | occ {}% air {} | beacon {} | hold {} | relayed {} unique {} | groups {} | hub {}{}{}",
                 s.mode.display_name(),
                 if s.deferred { "wait" } else { &s.channel },
                 if s.frequency.is_empty() { "—" } else { s.frequency.trim_end_matches(" MHz") },
@@ -4209,7 +4253,8 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                 s.relayed_unique,
                 crate::status::group_prio_summary(&s.group_prios),
                 if s.hub_ok { "up" } else { "down" },
-                tnc
+                tnc,
+                gateway
             )
         }
         "group" => {
@@ -4435,6 +4480,30 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             persist_cfg(&cfg.lock());
             format!("tower {}", if on { "on" } else { "off" })
         }
+        "gateway" => {
+            // #272: what this gateway keys for other stations.
+            let mode = cfg.lock().mode;
+            if !mode.is_gateway() {
+                return "gateway mode is only available in internet-radio".into();
+            }
+            match sp.next() {
+                None => {}
+                Some(v) => {
+                    if let Err(e) = cfg.lock().gateway.set_mode(v) {
+                        return e;
+                    }
+                    let word = Runtime::gateway_mode_word(&cfg.lock());
+                    snap.lock().gateway_mode = word;
+                    persist_cfg(&cfg.lock());
+                }
+            }
+            let g = cfg.lock().gateway.clone();
+            if g.mail_only() {
+                "gateway mail-only: chat is heard and shown but not relayed, answered or carried from the hub onto the air; mail and your own lines still go out".into()
+            } else {
+                "gateway chat-and-mail: chat and mail are relayed over the air".into()
+            }
+        }
         "ptt" => {
             if let Some(p) = sp.next() {
                 cfg.lock().modem.ptt = p.to_string();
@@ -4648,7 +4717,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             said.unwrap_or_else(|e| e)
         }
         "" | "help" => {
-            "RADIO commands: mode preset level traffic tower status form group queue flush trace history freq qsy prio ptt checkin net mute theme activity snr update report wx. /report CALL asks a station how well it hears you (signal report); /wx shows the weather for your grid and /wx CALL sends it to that station. Both answers are private lines in the CALL tab. Channels: /join #name (closed, +i)  /invite CALL (over-air notice from you)  /part /prio. /radio status shows relayed (every forwarded frame), unique (distinct messages), and groups (group_prios). /radio flush marks unacked outbound [no]."
+            "RADIO commands: mode preset level traffic tower gateway status form group queue flush trace history freq qsy prio ptt checkin net mute theme activity snr update report wx. /report CALL asks a station how well it hears you (signal report); /wx shows the weather for your grid and /wx CALL sends it to that station. Both answers are private lines in the CALL tab. Channels: /join #name (closed, +i)  /invite CALL (over-air notice from you)  /part /prio. /radio status shows relayed (every forwarded frame), unique (distinct messages), and groups (group_prios). /radio flush marks unacked outbound [no]."
                 .into()
         }
         other => format!("unknown RADIO subcommand '{other}'. Try /radio help"),

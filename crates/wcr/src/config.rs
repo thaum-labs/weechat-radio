@@ -403,6 +403,12 @@ pub struct GatewayConfig {
     /// Internet-radio only: public map draws a tower and the dial frequency.
     /// On by default: a gateway shows as a tower (Tobias, #220).
     pub tower: bool,
+    /// What an internet-radio gateway keys on the air for other stations
+    /// (#272): `chat-and-mail` (the default) relays chat lines, answers them
+    /// with receipts and carries hub chat onto RF; `mail-only` keeps the
+    /// radio quiet for chat (it still hears and shows it) and only keys
+    /// mail. The operator's own lines go out either way.
+    pub mode: String,
 }
 
 impl Default for GatewayConfig {
@@ -411,13 +417,50 @@ impl Default for GatewayConfig {
             rf_egress: true,
             third_party: "deny".into(),
             tower: true,
+            mode: GATEWAY_CHAT_AND_MAIL.into(),
         }
     }
 }
 
+/// `[gateway] mode` values.
+pub const GATEWAY_CHAT_AND_MAIL: &str = "chat-and-mail";
+pub const GATEWAY_MAIL_ONLY: &str = "mail-only";
+
 impl GatewayConfig {
     pub fn third_party_allow(&self) -> bool {
         self.third_party.eq_ignore_ascii_case("allow")
+    }
+
+    /// `[gateway] mode = "mail-only"` (#272). Anything else, including a
+    /// typo, is the default chat-and-mail.
+    pub fn mail_only(&self) -> bool {
+        self.mode.trim().eq_ignore_ascii_case(GATEWAY_MAIL_ONLY)
+    }
+
+    /// The gateway mode as it is shown and saved.
+    pub fn mode_name(&self) -> &'static str {
+        if self.mail_only() {
+            GATEWAY_MAIL_ONLY
+        } else {
+            GATEWAY_CHAT_AND_MAIL
+        }
+    }
+
+    /// Set the gateway mode from a typed value; accepts the two names,
+    /// with `mail` and `chat` as short forms.
+    pub fn set_mode(&mut self, value: &str) -> std::result::Result<(), String> {
+        let v = value.trim().to_ascii_lowercase();
+        self.mode = match v.as_str() {
+            GATEWAY_MAIL_ONLY | "mail" | "mail_only" => GATEWAY_MAIL_ONLY,
+            GATEWAY_CHAT_AND_MAIL | "chat" | "chat_and_mail" | "both" => GATEWAY_CHAT_AND_MAIL,
+            _ => {
+                return Err(format!(
+                    "usage: /gateway {GATEWAY_CHAT_AND_MAIL}|{GATEWAY_MAIL_ONLY}"
+                ))
+            }
+        }
+        .into();
+        Ok(())
     }
 
     /// Tower pin only while this node is an internet-radio gateway. A
@@ -1197,6 +1240,25 @@ mod tests {
         word.normalize();
         assert!(word.mail.auto());
         assert_eq!(word.mail.gateway, "");
+    }
+
+    #[test]
+    fn gateway_mode_defaults_to_chat_and_mail() {
+        let fresh: Config = toml::from_str("callsign = \"G4ABC\"\n").unwrap();
+        assert!(!fresh.gateway.mail_only());
+        assert_eq!(fresh.gateway.mode_name(), "chat-and-mail");
+        let quiet: Config =
+            toml::from_str("callsign = \"G4ABC\"\n[gateway]\nmode = \"mail-only\"\n").unwrap();
+        assert!(quiet.gateway.mail_only());
+        let mut g = GatewayConfig::default();
+        g.set_mode("mail").unwrap();
+        assert!(g.mail_only());
+        g.set_mode("Chat-and-Mail").unwrap();
+        assert!(!g.mail_only());
+        assert!(g.set_mode("sometimes").is_err());
+        let s = toml::to_string(&quiet).unwrap();
+        let back: Config = toml::from_str(&s).unwrap();
+        assert!(back.gateway.mail_only(), "saved and loaded again: {s}");
     }
 
     #[test]

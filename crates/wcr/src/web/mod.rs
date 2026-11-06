@@ -412,6 +412,9 @@ async fn setting(State(web): State<Web>, Json(b): Json<SettingBody>) -> Response
     if b.what == "mail_gateway" {
         return set_mail_gateway(&web, &b.value).await;
     }
+    if b.what == "gateway_mode" {
+        return set_gateway_mode(&web, &b.value);
+    }
     // The node refuses some presets on this link and only says so in chat;
     // give the page the same answer instead of ok (#235).
     if b.what == "preset" {
@@ -477,6 +480,29 @@ async fn set_mail_gateway(web: &Web, value: &str) -> Response {
         "mail gateway set to {} on the web page",
         if auto { "Auto" } else { v.as_str() }
     ));
+    Json(json!({ "ok": true })).into_response()
+}
+
+/// Save the gateway mode (chat and mail, or mail only, #272) in wcr.toml
+/// and, when the station runs, use it now. Saved while stopped too, so the
+/// next Start picks it up.
+fn set_gateway_mode(web: &Web, value: &str) -> Response {
+    let bad = |e: String| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response();
+    let mut cfg = match Config::load(&web.cfg_path) {
+        Ok(c) => c,
+        Err(e) => return bad(e.to_string()),
+    };
+    if let Err(e) = cfg.gateway.set_mode(value) {
+        return bad(e);
+    }
+    if let Err(e) = cfg.save(&web.cfg_path) {
+        return bad(e.to_string());
+    }
+    let name = cfg.gateway.mode_name();
+    // Not an error while stopped: the saved value is used at the next Start.
+    let _ = web.chat.radio_setting("gateway_mode", name);
+    web.station
+        .note(&format!("gateway mode set to {name} on the web page"));
     Json(json!({ "ok": true })).into_response()
 }
 
@@ -556,9 +582,12 @@ async fn gateway(State(web): State<Web>) -> Json<Value> {
             "mode": c.mode.as_str(),
         })
     });
+    // The gateway mode (#272), from wcr.toml so it shows while stopped.
+    let gateway_mode = cfg.as_ref().map(|c| c.gateway.mode_name());
     Json(json!({
         "frequency": frequency,
         "mail_gateway": mail_gateway,
+        "gateway_mode": gateway_mode,
         "choices": choices(cfg.as_ref()),
         "station": state,
         "answering": !status.is_null(),
@@ -854,10 +883,13 @@ async fn spectrum(State(web): State<Web>) -> Json<Value> {
     }
     let mut slot = web.modem.lock().await;
     if slot.is_none() {
-        match crate::modem::control::ControlClient::connect(&web.modem_addr).await {
+        // Bounded like the ask below: a connect that hangs would hold the
+        // page's spectrum requests, and the page, until a reload (#271).
+        let connect = crate::modem::control::ControlClient::connect(&web.modem_addr);
+        match tokio::time::timeout(Duration::from_secs(2), connect).await {
             // Frame events are not needed here; dropping their receiver is fine.
-            Ok((client, _events)) => *slot = Some(client),
-            Err(_) => return empty("no modem"),
+            Ok(Ok((client, _events))) => *slot = Some(client),
+            _ => return empty("no modem"),
         }
     }
     let Some(client) = slot.as_ref() else {

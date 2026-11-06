@@ -135,6 +135,10 @@ pub struct StatusSnapshot {
     /// Public map draws a tower. True only in internet-radio while the switch is on.
     #[serde(default)]
     pub tower: bool,
+    /// What an internet-radio gateway keys for other stations (#272):
+    /// `chat-and-mail` or `mail-only`. Empty off internet-radio.
+    #[serde(default)]
+    pub gateway_mode: String,
     /// Frames this process has relayed for another station (not our own sends).
     /// Repeats of the same message each count.
     #[serde(default)]
@@ -588,6 +592,7 @@ impl Default for StatusSnapshot {
             hold_span: 0,
             hold_kind: String::new(),
             tower: false,
+            gateway_mode: String::new(),
             relayed: 0,
             relayed_unique: 0,
             pid: std::process::id(),

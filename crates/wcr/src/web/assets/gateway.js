@@ -101,6 +101,8 @@ function drawStatus(d) {
     const modem = s.tnc || (s.modem73 ? `modem73 ${s.modem73}` : "");
     if (modem) facts.push(["modem", modem]);
     if (s.relayed) facts.push(["relayed on air", `${s.relayed} frames, ${s.relayed_unique} messages`]);
+    // #272: a mail-only gateway says so where the operator looks first.
+    if (s.gateway_mode === "mail-only") facts.push(["gateway", "mail only: chat is heard, not relayed"]);
   }
   if (d.station.restarts) facts.push(["restarts", String(d.station.restarts)]);
   if (d.station.last_exit) facts.push(["last stop", d.station.last_exit]);
@@ -296,11 +298,16 @@ function wfRow(bins, hzPerBin, tx) {
   g.putImageData(row, 0, 0);
 }
 
+// A request that never answers would leave wfBusy set and the waterfall
+// empty until a reload (#271, about 1 login in 60): give up after 2 s and
+// let the next tick ask again.
+const WF_TIMEOUT_MS = 2000;
+
 async function wfTick() {
   if (!wfOn || wfBusy || document.hidden) return;
   wfBusy = true;
   try {
-    const r = await fetch("/api/spectrum", { cache: "no-store" });
+    const r = await fetch("/api/spectrum", { cache: "no-store", signal: AbortSignal.timeout(WF_TIMEOUT_MS) });
     if (r.status === 401) { location.href = "/login"; return; }
     const d = await r.json();
     const note = $("wf-note");
@@ -313,7 +320,9 @@ async function wfTick() {
       const hz = d.hz_per_bin || WF_MAX_HZ / d.bins.length;
       // A held row is the last good reading again, shown through a short
       // audio gap (#264): paint it, but do not count it into the floor twice.
-      if (!d.held) wfTrack(d.bins, hz);
+      // A page that opens on a held row still needs a floor, or every row
+      // paints black until a fresh one comes (#271).
+      if (!d.held || wfFloor === null) wfTrack(d.bins, hz);
       wfRow(d.bins, hz, false);
       note.textContent = `noise floor ${Math.round(wfFloor)} dB`;
     } else if (d.why === "no audio") {
@@ -478,6 +487,7 @@ function draw(d) {
   drawStatus(d);
   drawPickers(d.choices || {}, running, s);
   drawMailGateway(d.mail_gateway, s);
+  drawGatewayMode(d.gateway_mode, d.mail_gateway, s);
   drawRadio(running, s);
   drawLists(d);
   drawDiagnostics(d);
@@ -617,6 +627,51 @@ async function saveMailGateway() {
     setTimeout(poll, 500);
   }
 }
+
+// Gateway mode (#272): chat and mail (the default) or mail only. Shown in
+// internet-radio only; saved in wcr.toml, so it works while stopped too.
+let gwmodeEdited = false;
+
+function drawGatewayMode(saved, g, s) {
+  const box = $("gwmode-box");
+  const mode = s.mode || (g && g.mode) || "";
+  box.hidden = !saved || mode !== "internet-radio";
+  if (box.hidden) return;
+  // The running station's word wins; the saved one shows while stopped.
+  const now = s.gateway_mode || saved;
+  if (!gwmodeEdited) {
+    $("gwmode-mail").checked = now === "mail-only";
+    $("gwmode-chat").checked = now !== "mail-only";
+  }
+  $("gwmode-how").textContent = $("gwmode-mail").checked
+    ? "Mail only: this station hears and shows chat but does not relay it, answer it or carry hub chat onto the air. Mail, and lines you type here, still go out."
+    : "Chat and mail: this station relays chat lines and receipts over the air, and carries hub chat to stations it has heard.";
+}
+
+for (const id of ["gwmode-chat", "gwmode-mail"]) {
+  $(id).addEventListener("change", () => {
+    gwmodeEdited = true;
+    drawGatewayMode("chat-and-mail", null, { mode: "internet-radio" });
+  });
+}
+$("gwmode-save").addEventListener("click", async () => {
+  const value = $("gwmode-mail").checked ? "mail-only" : "chat-and-mail";
+  $("action").textContent = "Saving the gateway mode…";
+  try {
+    const r = await fetch("/api/station/setting", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ what: "gateway_mode", value }),
+    });
+    const d = await r.json().catch(() => ({}));
+    $("action").textContent = r.ok
+      ? `Gateway mode saved: ${value === "mail-only" ? "mail only" : "chat and mail"}.`
+      : d.error || "could not save the gateway mode";
+    if (r.ok) gwmodeEdited = false;
+  } finally {
+    setTimeout(poll, 500);
+  }
+});
 
 let shown = {};
 $("mode-pick").addEventListener("change", (e) => pick("mode", e.target, shown.mode));

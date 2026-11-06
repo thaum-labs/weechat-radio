@@ -154,7 +154,19 @@ impl Chat {
                 let knob = if what == "rx_gain" { "rx" } else { "tx" };
                 format!("/level {knob} {db:.1}")
             }
-            _ => return Err("only mode, preset and the levels can be changed here".into()),
+            // The gateway's chat-and-mail / mail-only switch (#272). The
+            // page saves it in wcr.toml first; this tells the running
+            // station to use it now.
+            "gateway_mode" => {
+                let mut g = crate::config::GatewayConfig::default();
+                g.set_mode(value)?;
+                format!("/gateway {}", g.mode_name())
+            }
+            _ => {
+                return Err(
+                    "only mode, preset, the levels and the gateway mode can be changed here".into(),
+                )
+            }
         };
         if !self.state.lock().up {
             return Err("the station is not running".into());

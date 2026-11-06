@@ -110,6 +110,7 @@ details.more > :not(summary) { margin-top: 8px; }
 .pickers label.inline { flex-direction: row; align-items: center; gap: 6px; min-height: 40px; color: var(--fg, inherit); }
 .mailgw input#mailgw-call { min-height: 40px; width: 9em; max-width: 100%; text-transform: uppercase; }
 .mailgw button { min-height: 40px; }
+.mailgw label.inline { white-space: nowrap; }
 
 /* Lists */
 .list { list-style: none; margin: 0; padding: 0; }

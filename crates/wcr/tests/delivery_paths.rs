@@ -1199,6 +1199,123 @@ async fn radio_plus_bulletin_reaches_internet_via_gateway() {
     }
 }
 
+/// #272: a mail-only gateway hears a DM and shows it, but keys no receipt
+/// for it; switched back to chat and mail at runtime it answers again.
+#[tokio::test]
+async fn a_mail_only_gateway_shows_chat_but_keys_no_receipt() {
+    let _suite = suite_lock().lock().await;
+    let hub_port = start_hub().await;
+    let hub_ws = format!("ws://127.0.0.1:{hub_port}/ws");
+    let air = wcr::sim::SharedAir::new(0.0);
+    let home_a = scratch("mo-radio");
+    let (kiss_a, ctrl_a) = wcr::sim::mock_modem73_free(air.clone()).await.unwrap();
+    let home_b = scratch("mo-gw");
+    let (kiss_b, ctrl_b) = wcr::sim::mock_modem73_free(air).await.unwrap();
+    let ports = reserve_ports(4).await;
+    let (irc_a, status_a, irc_b, status_b) = (ports[0], ports[1], ports[2], ports[3]);
+    let cfg_a = radio_cfg("G4AAA", &home_a, kiss_a, ctrl_a, irc_a, status_a);
+    let mut cfg_b = gateway_cfg("M0BBB", &home_b, kiss_b, ctrl_b, irc_b, status_b, &hub_ws);
+    cfg_b.gateway.set_mode("mail-only").unwrap();
+    let node_a = tokio::spawn(async move { wcr::node::run_node(cfg_a, false).await });
+    let node_b = tokio::spawn(async move { wcr::node::run_node(cfg_b, false).await });
+    wait_tcp(irc_a, 20).await;
+    wait_tcp(irc_b, 20).await;
+    wait_radio(&[status_a, status_b]).await;
+    wait_hub_ok(&[status_b]).await;
+    let word = status_json(status_b).await.and_then(|v| {
+        v.get("gateway_mode")
+            .and_then(|x| x.as_str())
+            .map(str::to_string)
+    });
+    assert_eq!(
+        word.as_deref(),
+        Some("mail-only"),
+        "/status does not say mail-only"
+    );
+
+    let mut sender = TcpStream::connect(format!("127.0.0.1:{irc_a}"))
+        .await
+        .unwrap();
+    irc_register(&mut sender, "G4AAA").await;
+    let mut gateway = TcpStream::connect(format!("127.0.0.1:{irc_b}"))
+        .await
+        .unwrap();
+    irc_register(&mut gateway, "M0BBB").await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let body = "quiet-gateway-dm";
+    sender
+        .write_all(format!("PRIVMSG M0BBB :{body}\r\n").as_bytes())
+        .await
+        .unwrap();
+    let mut gw_reader = tokio::io::BufReader::new(&mut gateway);
+    let shown = read_lines_until(&mut gw_reader, 20, |lines| {
+        lines
+            .iter()
+            .any(|l| privmsg(l).is_some_and(|p| p.2 == body))
+    })
+    .await;
+    assert!(
+        shown
+            .iter()
+            .any(|l| privmsg(l).is_some_and(|p| p.2 == body)),
+        "the mail-only gateway did not show the DM: {shown:?}"
+    );
+    // No receipt: the sender never reaches [ok] in a window that is well
+    // past the receipt it would get on chat and mail (a few seconds).
+    let mut send_reader = tokio::io::BufReader::new(&mut sender);
+    let sent = read_lines_until(&mut send_reader, 12, |lines| {
+        lines
+            .iter()
+            .any(|l| l.contains("+radio/delivery=delivered"))
+    })
+    .await;
+    assert!(
+        !sent.iter().any(|l| l.contains("+radio/delivery=delivered")),
+        "the mail-only gateway answered the DM: {sent:?}"
+    );
+    let relayed = status_json(status_b)
+        .await
+        .and_then(|v| v.get("relayed").and_then(|x| x.as_u64()))
+        .unwrap_or(99);
+    assert_eq!(relayed, 0, "the mail-only gateway relayed a frame");
+
+    // Back to chat and mail at runtime: the next DM is answered.
+    gateway
+        .write_all(b"RADIO gateway chat-and-mail\r\n")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let word = status_json(status_b).await.and_then(|v| {
+        v.get("gateway_mode")
+            .and_then(|x| x.as_str())
+            .map(str::to_string)
+    });
+    assert_eq!(
+        word.as_deref(),
+        Some("chat-and-mail"),
+        "/status did not follow the switch"
+    );
+    let second = "answered-again";
+    send_reader
+        .get_mut()
+        .write_all(format!("PRIVMSG M0BBB :{second}\r\n").as_bytes())
+        .await
+        .unwrap();
+    let sent = read_lines_until(&mut send_reader, 30, |lines| {
+        lines
+            .iter()
+            .any(|l| l.contains("+radio/delivery=delivered"))
+    })
+    .await;
+    assert!(
+        sent.iter().any(|l| l.contains("+radio/delivery=delivered")),
+        "the gateway on chat and mail never answered: {sent:?}"
+    );
+    node_a.abort();
+    node_b.abort();
+}
+
 /// Closed group: one member on the hub must not cancel the RF relay or the retries.
 #[tokio::test]
 async fn radio_plus_closed_group_reaches_rf_member_and_all() {
