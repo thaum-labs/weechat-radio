@@ -12,7 +12,7 @@
   --accent: #7d9bff;
   --orange: #ff7a3d;
   --purple: #c4b5fd;
-  --dim: #7a7388;
+  --dim: #857e93;
   --line: rgba(125, 155, 255, 0.22);
   --warn: #ff7a3d;
   --emergency: #ff3b6b;
@@ -698,6 +698,8 @@ h3.title p:last-child { color: var(--orange); text-align: right; }
   margin: 16px 0 8px;
 }
 .page-panel p, .page-panel li { font-size: 14px; color: var(--fg); }
+/* Keep a gap between back-to-back paragraphs on plain pages (hub and downloads pages). */
+.page-panel > p:not([class]) + p:not([class]) { margin-top: 12px; }
 .page-panel.story p {
   margin: 0 0 1.35em;
   line-height: 1.65;
@@ -2029,6 +2031,8 @@ p.band-works { border: 0; }
   .prompt { font-size: 15px; }
   .page-panel p, .page-panel li { font-size: 16px; line-height: 1.55; }
   .page-panel code { white-space: pre-wrap; word-break: break-word; }
+  /* Short preset names in table cells (hf-poor, vhf-fm) stay on one line; the table scrolls if it must. */
+  .page-panel td code { white-space: nowrap; }
   .page-panel pre, .pre-wrap pre {
     font-size: 13px;
     padding-right: 14px;
