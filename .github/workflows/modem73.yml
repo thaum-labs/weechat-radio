@@ -139,13 +139,15 @@ jobs:
           repository: RFnexus/modem73-win
           ref: ${{ env.MODEM73_WIN_TAG }}
           path: m73
-      # The Ubuntu apt mirror sometimes stalls for over an hour (rc5, rc6,
-      # rc7): give each try 5 minutes and try again instead of waiting.
+      # The Ubuntu apt mirror is sometimes very slow (rc5 to rc9). Only the
+      # 64-bit posix MinGW toolchain is used, so fetch just that: about
+      # 80 MB instead of the 277 MB "mingw-w64" (which adds 32-bit and win32
+      # threads). Each try gets 5 minutes, then it tries again.
       - name: build deps
         timeout-minutes: 20
         run: |
           for i in 1 2 3; do
-            timeout 300 sh -c 'sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 make' && exit 0
+            timeout 300 sh -c 'sudo apt-get update && sudo apt-get install -y --no-install-recommends g++-mingw-w64-x86-64-posix gcc-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev make' && exit 0
             echo "::warning::apt try $i stalled or failed; trying again"
             sleep 10
           done
