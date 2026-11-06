@@ -71,6 +71,9 @@ input { font: inherit; width: 100%; color: var(--fg); background: #0e0e15; borde
 textarea, select { font: inherit; color: var(--fg); background: #0e0e15; border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; }
 textarea { width: 100%; resize: vertical; margin: 6px 0 12px; }
 label { display: block; }
+/* Radios and checkboxes are not text boxes: the input rule above made them
+   100% wide, which squeezed their labels into each other (Gateway mode). */
+input[type="radio"], input[type="checkbox"] { width: auto; padding: 0; margin: 0; flex: none; }
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
 
 /* Chips: one style for lights, statuses and kinds. */
@@ -110,7 +113,7 @@ details.more > :not(summary) { margin-top: 8px; }
 .pickers label.inline { flex-direction: row; align-items: center; gap: 6px; min-height: 40px; color: var(--fg, inherit); }
 .mailgw input#mailgw-call { min-height: 40px; width: 9em; max-width: 100%; text-transform: uppercase; }
 .mailgw button { min-height: 40px; }
-.mailgw label.inline { white-space: nowrap; }
+.mailgw label.inline { white-space: nowrap; flex: none; }
 
 /* Lists */
 .list { list-style: none; margin: 0; padding: 0; }
