@@ -48,7 +48,7 @@
     { href: "/docs/modes.html", cat: "how-it-works", title: "Modes", desc: "What each mode is for: internet, radio, radio-plus and the rest.", keywords: "internet radio radio-plus gateway map" },
     { href: "/docs/bridging.html", cat: "how-it-works", title: "Cross-frequency chat", desc: "Same dial on RF. Different bands via a gateway and the hub.", keywords: "bridging gateway hub band" },
     { href: "/docs/hops.html", cat: "how-it-works", title: "Hops", desc: "One dial, a group that is not all in range: stations relay for each other.", keywords: "relay repeat range mesh" },
-    { href: "/docs/email.html", cat: "how-it-works", title: "Email", desc: "Internet mail beside Live Chat. Radio-plus goes through a gateway.", keywords: "mail inbox gateway radio-plus" },
+    { href: "/docs/email.html", cat: "how-it-works", title: "Email", desc: "Internet mail beside Live Chat. Radio-plus goes through a gateway.", keywords: "mail inbox gateway radio-plus auto mail-gw finding" },
     // docs: Signals and modes
     { href: "/docs/weak.html", cat: "signals-and-modes", title: "Weak signals", desc: "Retries, slower presets, and what TX / RETRY mean on the bar.", keywords: "faint fading retry preset snr" },
     { href: "/docs/compare.html", cat: "signals-and-modes", title: "Compare modes", desc: "WeeChat Radio HF vs JS8, FT8, Olivia, PSK31, APRS. Sortable scores.", keywords: "js8 ft8 olivia psk31 aprs digital modes" },
