@@ -71,7 +71,7 @@ Switch with `/radio mode <name>` or `F2` in the TUI.
 | Mode | What it does |
 |------|--------------|
 | `internet` | Chat with no radio. This computer talks to the hub. |
-| `internet-radio` | Radio plus internet. This computer is a gateway: it keys the radio, talks to the hub, and carries other stations' radio-plus traffic onward. |
+| `internet-radio` | Radio plus internet. This computer is a gateway: it keys the radio, talks to the hub, and carries other stations' radio-plus traffic onward. A gateway set to mail only (`/gateway mail-only`, or on its web page) still hears and shows chat but keys only mail. |
 | `radio` | Radio only. A gateway that hears you leaves the message on the air. |
 | `radio-plus` | Radio only from this computer, but a gateway that hears you may carry the message and email onto the internet. Mail finds a gateway by itself (Auto), or goes to one you name. |
 

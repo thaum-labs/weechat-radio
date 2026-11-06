@@ -667,6 +667,7 @@ fn keep_unasked(cfg: &mut Config, prev: &Config) {
     cfg.gps = prev.gps.clone();
     cfg.gateway.rf_egress = prev.gateway.rf_egress;
     cfg.gateway.third_party = prev.gateway.third_party.clone();
+    cfg.gateway.mode = prev.gateway.mode.clone();
 }
 
 /// ALSA lists every alias of every card (hw, plughw, default, sysdefault,

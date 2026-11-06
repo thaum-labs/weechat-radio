@@ -937,6 +937,14 @@ pub fn may_rf_egress(
     dest_recently_heard
 }
 
+/// Does this node key chat for other stations (relays, receipts, hub chat
+/// onto RF)? An internet-radio gateway set to mail only does not (#272);
+/// every other station, and a gateway on chat and mail, does. The
+/// operator's own lines are not covered: they go out either way.
+pub fn keys_chat_for_others(mode_is_gateway: bool, mail_only: bool) -> bool {
+    !(mode_is_gateway && mail_only)
+}
+
 /// Should this node forward an RF frame to the internet?
 /// `mode_is_gateway` is the live mode's [`Mode::is_gateway`] — leftover radio
 /// after switching to `internet` must not upload overheard RF.
@@ -1755,6 +1763,15 @@ mod tests {
             false
         ));
         assert!(needs_inet_gap(Mode::InternetRadio, true, true, true, true));
+    }
+
+    #[test]
+    fn a_mail_only_gateway_keys_no_chat_for_others() {
+        assert!(!keys_chat_for_others(true, true));
+        assert!(keys_chat_for_others(true, false));
+        // Mail only means nothing off internet-radio.
+        assert!(keys_chat_for_others(false, true));
+        assert!(keys_chat_for_others(false, false));
     }
 
     #[test]

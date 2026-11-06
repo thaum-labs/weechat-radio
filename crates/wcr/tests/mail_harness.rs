@@ -80,6 +80,40 @@ async fn wait_listening(
     Err(format!("timed out after {secs} s waiting for {addr}"))
 }
 
+/// Every station answers `/mail/tab` and its modem reports an audio level,
+/// so the KISS link is open before the first compose. Waiting for mail
+/// alone once let macOS CI compose into "Radio is not running." (#271).
+async fn wait_mail_and_radio(status: &[u16]) {
+    // Room for a slow runner: msrv CI once gave up at 30 s (#170).
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while Instant::now() < deadline {
+        let mut ok = true;
+        for p in status {
+            let r = reqwest::get(format!("http://127.0.0.1:{p}/mail/tab")).await;
+            ok &= r.is_ok_and(|r| r.status().is_success());
+            let label = match reqwest::get(format!("http://127.0.0.1:{p}/status")).await {
+                Ok(r) => r
+                    .json::<serde_json::Value>()
+                    .await
+                    .ok()
+                    .and_then(|v| {
+                        v.get("audio_label")
+                            .and_then(|x| x.as_str())
+                            .map(str::to_string)
+                    })
+                    .unwrap_or_default(),
+                Err(_) => String::new(),
+            };
+            ok &= matches!(label.as_str(), "low" | "good" | "hot");
+        }
+        if ok {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    panic!("mail or radio never started");
+}
+
 #[allow(clippy::too_many_arguments)]
 fn station_cfg(
     callsign: &str,
@@ -291,20 +325,7 @@ impl Pair {
     }
 
     async fn wait_mail(&self) {
-        // Room for a slow runner: msrv CI once gave up at 30 s (#170).
-        let deadline = Instant::now() + Duration::from_secs(120);
-        while Instant::now() < deadline {
-            let mut ok = true;
-            for p in self.status {
-                let r = reqwest::get(format!("http://127.0.0.1:{p}/mail/tab")).await;
-                ok &= r.is_ok_and(|r| r.status().is_success());
-            }
-            if ok {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-        panic!("mail never started");
+        wait_mail_and_radio(&self.status).await;
     }
 
     async fn compose(&self, body: &str) -> String {
@@ -1365,19 +1386,7 @@ impl Trio {
     }
 
     async fn wait_mail(&self) {
-        let deadline = Instant::now() + Duration::from_secs(120);
-        while Instant::now() < deadline {
-            let mut ok = true;
-            for p in self.status {
-                let r = reqwest::get(format!("http://127.0.0.1:{p}/mail/tab")).await;
-                ok &= r.is_ok_and(|r| r.status().is_success());
-            }
-            if ok {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-        panic!("mail never started");
+        wait_mail_and_radio(&self.status).await;
     }
 
     /// `i` is 0 for station 1 and 2 for station 3.
@@ -1679,19 +1688,7 @@ impl AutoGroup {
     }
 
     async fn wait_mail(&self) {
-        let deadline = Instant::now() + Duration::from_secs(120);
-        while Instant::now() < deadline {
-            let mut ok = true;
-            for p in self.status {
-                let r = reqwest::get(format!("http://127.0.0.1:{p}/mail/tab")).await;
-                ok &= r.is_ok_and(|r| r.status().is_success());
-            }
-            if ok {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-        panic!("mail never started");
+        wait_mail_and_radio(&self.status).await;
     }
 
     async fn tab(&self) -> serde_json::Value {

@@ -193,6 +193,22 @@ const COMMANDS: &[Cmd] = &[
         send_bare: false,
     },
     Cmd {
+        name: "gateway",
+        usage: "/gateway chat-and-mail|mail-only",
+        summary: "What this gateway keys for other stations (internet-radio)",
+        args: &[
+            Arg {
+                value: "chat-and-mail",
+                hint: "Relay chat and mail over the air",
+            },
+            Arg {
+                value: "mail-only",
+                hint: "Hear and show chat, key only mail",
+            },
+        ],
+        send_bare: true,
+    },
+    Cmd {
         name: "preset",
         usage: "/preset vhf-fm|hf-good|hf-poor|hf-weak|hf-deep|vox-safe|afsk-1200",
         summary: "Modem waveform",
