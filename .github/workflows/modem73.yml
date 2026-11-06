@@ -42,8 +42,17 @@ jobs:
           repository: RFnexus/modem73
           ref: ${{ env.MODEM73_TAG }}
           path: m73
+      # The Ubuntu apt mirror sometimes stalls for over an hour (rc5, rc6,
+      # rc7): give each try 5 minutes and try again instead of waiting.
       - name: build deps
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential pkg-config libncurses-dev libhidapi-dev libhamlib-dev
+        timeout-minutes: 20
+        run: |
+          for i in 1 2 3; do
+            timeout 300 sh -c 'sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential pkg-config libncurses-dev libhidapi-dev libhamlib-dev' && exit 0
+            echo "::warning::apt try $i stalled or failed; trying again"
+            sleep 10
+          done
+          exit 1
       - name: patch and build
         working-directory: m73
         run: |
@@ -130,8 +139,17 @@ jobs:
           repository: RFnexus/modem73-win
           ref: ${{ env.MODEM73_WIN_TAG }}
           path: m73
+      # The Ubuntu apt mirror sometimes stalls for over an hour (rc5, rc6,
+      # rc7): give each try 5 minutes and try again instead of waiting.
       - name: build deps
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 make
+        timeout-minutes: 20
+        run: |
+          for i in 1 2 3; do
+            timeout 300 sh -c 'sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 make' && exit 0
+            echo "::warning::apt try $i stalled or failed; trying again"
+            sleep 10
+          done
+          exit 1
       - name: cache hamlib
         id: hamlib
         uses: actions/cache@v4

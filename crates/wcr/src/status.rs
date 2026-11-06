@@ -249,7 +249,11 @@ impl RxGain {
         let at_min = self.db <= self.min_db + 0.5;
         let at_max = self.db >= self.max_db - 0.5;
         if self.kind == "bluetooth" {
-            crate::levels::RxControl::Bluetooth { at_min, at_max }
+            crate::levels::RxControl::Bluetooth {
+                at_min,
+                at_max,
+                boosted: self.db > 0.0,
+            }
         } else {
             crate::levels::RxControl::Mixer { at_min, at_max }
         }

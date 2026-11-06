@@ -631,6 +631,9 @@ struct GuiApp {
     /// RX gain / TX level slider values the operator just set, shown until
     /// /status catches up (#241).
     rx_held: Option<(f32, Instant)>,
+    /// The keys and commands help: collapsed by default; open, it takes the
+    /// whole left column (Tobias 2026-11-06).
+    help_open: bool,
     tx_held: Option<(f32, Instant)>,
     /// Channels already JOINed on the current IRC connection (avoid duplicate history).
     irc_joined: Vec<String>,
@@ -761,6 +764,7 @@ impl GuiApp {
             freq_pending: None,
             freq_pick_last: None,
             rx_held: None,
+            help_open: false,
             tx_held: None,
             irc_joined: Vec::new(),
             irc_connected_at: None,
@@ -1831,6 +1835,19 @@ impl eframe::App for GuiApp {
             .exact_width(280.0)
             .frame(chrome(TOPBAR))
             .show(ctx, |ui| {
+                if self.help_open {
+                    if help_toggle(ui, true) {
+                        self.help_open = false;
+                    }
+                    ui.add_space(6.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt("cheat_sheet")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            cheat_sheet(ui);
+                        });
+                    return;
+                }
                 ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                         module_title(ui, "STATION", "");
@@ -1911,35 +1928,42 @@ impl eframe::App for GuiApp {
                                 "Transmit audio to the radio (sound card playback). Fills while PTT is keyed.",
                             );
                             if s.shows_level_sliders() {
-                                if let Some(g) = &s.rx_gain {
-                                    let tip = if g.kind == "bluetooth" {
-                                        "RX gain: wcr's gain on the radio's Bluetooth audio (the radio's volume knob does not change it). Set it so the IN meter sits in the green band."
-                                    } else {
-                                        "RX gain: the sound card's capture gain (automatic gain off). Set it so the IN meter sits in the green band. If it is at its lowest and still clipping, turn the radio's volume down."
-                                    };
-                                    if let Some(db) = level_slider_row(
-                                        ui,
-                                        "RX GAIN",
-                                        &mut self.rx_held,
-                                        g.db,
-                                        g.min_db..=g.max_db,
-                                        0.5,
-                                        tip,
-                                    ) {
-                                        level_cmd = Some(format!("/level rx {db:.1}"));
+                                // RX GAIN and TX LVL as two radio-style knobs
+                                // side by side (Tobias 2026-11-06).
+                                let tx_tip = "TX level: only turns down, the modem already sends at full scale. Set the deviation with the radio's own mic gain (the Bluetooth mic gain on a VR-N76), then lower TX level until the far end's SNR stops getting better.";
+                                ui.horizontal(|ui| {
+                                    station_key(ui, "LEVELS");
+                                    if let Some(g) = &s.rx_gain {
+                                        let tip = if g.kind == "bluetooth" {
+                                            "RX gain: wcr's gain on the radio's Bluetooth audio (the radio's volume knob does not change it). Leave it at 0 dB unless IN says too quiet. At squelch 0 the hiss reads loud; that is normal."
+                                        } else {
+                                            "RX gain: the sound card's capture gain (automatic gain off). Set it so the IN meter sits in the green band. If it is at its lowest and still clipping, turn the radio's volume down."
+                                        };
+                                        if let Some(db) = level_knob(
+                                            ui,
+                                            "RX GAIN",
+                                            &mut self.rx_held,
+                                            g.db,
+                                            g.min_db..=g.max_db,
+                                            0.5,
+                                            tip,
+                                        ) {
+                                            level_cmd = Some(format!("/level rx {db:.1}"));
+                                        }
                                     }
-                                }
-                                if let Some(db) = level_slider_row(
-                                    ui,
-                                    "TX LVL",
-                                    &mut self.tx_held,
-                                    s.tx_level_db,
-                                    crate::levels::TX_LEVEL_MIN_DB..=crate::levels::TX_LEVEL_MAX_DB,
-                                    1.0,
-                                    "TX level: only turns down, the modem already sends at full scale. Set the deviation with the radio's own mic gain (the Bluetooth mic gain on a VR-N76), then lower TX level until the far end's SNR stops getting better.",
-                                ) {
-                                    level_cmd = Some(format!("/level tx {db:.0}"));
-                                }
+                                    if let Some(db) = level_knob(
+                                        ui,
+                                        "TX LVL",
+                                        &mut self.tx_held,
+                                        s.tx_level_db,
+                                        crate::levels::TX_LEVEL_MIN_DB
+                                            ..=crate::levels::TX_LEVEL_MAX_DB,
+                                        1.0,
+                                        tx_tip,
+                                    ) {
+                                        level_cmd = Some(format!("/level tx {db:.0}"));
+                                    }
+                                });
                             }
                             kv(ui, "SNR", &format!("{:.0}", s.snr), PURPLE);
                             kv(
@@ -2009,19 +2033,7 @@ impl eframe::App for GuiApp {
                             let (hub_text, hub_color) = hub_row(s.mode, s.hub_ok);
                             kv(ui, "HUB", hub_text, hub_color);
                             if s.mode == Mode::RadioPlus && !s.mail_gateway.is_empty() {
-                                let color = if s.mail_gateway.starts_with("No ")
-                                    || s.mail_gateway.starts_with("Radio+")
-                                {
-                                    ORANGE
-                                } else {
-                                    DIM
-                                };
-                                ui.label(
-                                    RichText::new(format!("MAIL GW {}", s.mail_gateway))
-                                        .color(color)
-                                        .small()
-                                        .monospace(),
-                                );
+                                mail_gw_row(ui, &s.mail_gateway);
                             }
                             if s.mode.uses_internet() && !s.hub_ok && !s.hub_banner.is_empty() {
                                 ui.label(
@@ -2090,12 +2102,9 @@ impl eframe::App for GuiApp {
                                 self.software.open = true;
                             }
                             ui.add_space(6.0);
-                            egui::ScrollArea::vertical()
-                                .id_salt("cheat_sheet")
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    cheat_sheet(ui);
-                                });
+                            if help_toggle(ui, false) {
+                                self.help_open = true;
+                            }
                         },
                     );
                 });
@@ -2820,9 +2829,11 @@ fn input_meter_row(ui: &mut egui::Ui, s: &StatusSnapshot) {
     hover_tip(&resp, tip);
 }
 
-/// A level slider (#241). Returns the value to send once the operator lets
-/// go of it (or sets it with a click or the keys).
-fn level_slider_row(
+/// A level knob (#241; a knob since 2026-11-06, Tobias): drag up or right
+/// to turn it up, scroll to step it, double-click for 0 dB. The value sits
+/// in the middle of the dial. Returns the value to send once the operator
+/// lets go of it.
+fn level_knob(
     ui: &mut egui::Ui,
     k: &str,
     held: &mut Option<(f32, Instant)>,
@@ -2831,32 +2842,157 @@ fn level_slider_row(
     step: f64,
     tip: &str,
 ) -> Option<f32> {
+    use std::f32::consts::PI;
+    let (lo, hi) = (*range.start(), *range.end());
+    let snap = |v: f32| (((v as f64 / step).round() * step) as f32).clamp(lo, hi);
+    let mut v = match *held {
+        Some((v, at)) if at.elapsed() < Duration::from_secs(4) => v,
+        _ => now_db,
+    }
+    .clamp(lo, hi);
     let mut send = None;
-    ui.horizontal(|ui| {
-        station_key(ui, k);
-        let mut v = match *held {
-            Some((v, at)) if at.elapsed() < Duration::from_secs(4) => v,
-            _ => now_db,
-        };
-        ui.spacing_mut().slider_width = (ui.available_width() - 80.0).max(60.0);
-        // The theme's rail is near black: give it the meters' colour.
-        ui.visuals_mut().widgets.inactive.bg_fill = LINE;
-        let resp = ui.add(
-            egui::Slider::new(&mut v, range)
-                .trailing_fill(true)
-                .step_by(step)
-                .fixed_decimals(if step < 1.0 { 1 } else { 0 })
-                .suffix(" dB"),
+    let r = 21.0;
+    let inner = ui.vertical(|ui| {
+        ui.set_width(2.0 * r + 30.0);
+        let (rect, resp) = ui.allocate_exact_size(
+            egui::vec2(2.0 * r + 30.0, 2.0 * r + 10.0),
+            egui::Sense::click_and_drag(),
         );
-        if resp.changed() || resp.dragged() {
+        // A full turn of the dial is about 160 px of drag.
+        if resp.dragged() {
+            let d = resp.drag_delta();
+            v = (v + (d.x - d.y) * (hi - lo) / 160.0).clamp(lo, hi);
             *held = Some((v, Instant::now()));
         }
-        if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
+        if resp.drag_stopped() {
+            v = snap(v);
+            *held = Some((v, Instant::now()));
             send = Some(v);
         }
-        hover_tip(&resp, tip);
+        if resp.hovered() {
+            let scroll = ui.input(|i| i.raw_scroll_delta.y);
+            if scroll != 0.0 {
+                v = snap(v + scroll.signum() * step as f32);
+                *held = Some((v, Instant::now()));
+                send = Some(v);
+            }
+        }
+        if resp.double_clicked() {
+            v = 0.0f32.clamp(lo, hi);
+            *held = Some((v, Instant::now()));
+            send = Some(v);
+        }
+        let c = rect.center();
+        let frac = ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
+        // 0 sits at 7 o'clock, full at 5 o'clock, like a radio's knob.
+        let at = |f: f32, rad: f32| {
+            let a = (225.0 - 270.0 * f) * PI / 180.0;
+            c + egui::vec2(a.cos(), -a.sin()) * rad
+        };
+        let arc = |from: f32, to: f32| -> Vec<egui::Pos2> {
+            let n = 48;
+            (0..=n)
+                .map(|i| at(from + (to - from) * i as f32 / n as f32, r + 3.0))
+                .collect()
+        };
+        let active = resp.dragged() || resp.hovered();
+        let painter = ui.painter();
+        painter.add(egui::Shape::line(
+            arc(0.0, 1.0),
+            egui::Stroke::new(3.0_f32, LINE),
+        ));
+        if frac > 0.0 {
+            painter.add(egui::Shape::line(
+                arc(0.0, frac),
+                egui::Stroke::new(3.0_f32, ACCENT),
+            ));
+        }
+        painter.circle(
+            c,
+            r - 2.0,
+            Color32::from_rgb(22, 22, 34),
+            egui::Stroke::new(1.0_f32, if active { ACCENT } else { LINE }),
+        );
+        painter.line_segment(
+            [at(frac, r - 12.0), at(frac, r - 3.0)],
+            egui::Stroke::new(2.5_f32, FG),
+        );
+        painter.text(
+            c,
+            egui::Align2::CENTER_CENTER,
+            format!("{v:.1}"),
+            egui::FontId::monospace(10.0),
+            if resp.dragged() { FG } else { PURPLE },
+        );
+        ui.vertical_centered(|ui| {
+            ui.label(RichText::new(k).color(DIM).monospace().size(10.0));
+        });
+        resp
     });
+    hover_tip(
+        &inner.inner,
+        format!("{k} {v:.1} dB. Drag up or right to raise, scroll to step, double-click for 0 dB. {tip}"),
+    );
     send
+}
+
+/// How far the mail gateway search has got, for the MAIL GW bar: lit
+/// segments (of [`MAIL_GW_STEPS`]) and their colour. Read from the status
+/// line, so the line itself can go in the hover tip.
+fn mail_gw_stage(line: &str) -> (usize, Color32) {
+    if line.starts_with("Auto: not asked") {
+        (0, DIM)
+    } else if line.starts_with("Auto: asking") {
+        (1, PURPLE)
+    } else if line.starts_with(crate::mail::pick::NO_GATEWAY_HEARD) || line.starts_with("Radio+") {
+        (MAIL_GW_STEPS, ORANGE)
+    } else {
+        // Auto picked a gateway, or one is typed in setup.
+        (MAIL_GW_STEPS, GREEN)
+    }
+}
+
+/// Ask, heard, ready.
+const MAIL_GW_STEPS: usize = 3;
+
+/// MAIL GW as a segmented bar the length of the meters (Tobias 2026-11-06):
+/// grey = not asked yet, one purple = asking, all green = gateway ready,
+/// all orange = no gateway. The words are in the hover tip.
+fn mail_gw_row(ui: &mut egui::Ui, line: &str) {
+    let inner = ui.horizontal(|ui| {
+        station_key(ui, "MAIL GW");
+        let h = ui.spacing().interact_size.y;
+        let db_w = 36.0;
+        let gap = ui.spacing().item_spacing.x;
+        let bar_w = (ui.available_width() - gap - db_w).max(28.0);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(bar_w, h), egui::Sense::hover());
+        let bar = egui::Rect::from_center_size(
+            rect.center(),
+            egui::vec2(rect.width(), (h - 8.0).clamp(6.0, 10.0)),
+        );
+        let (lit, color) = mail_gw_stage(line);
+        let seg_gap = 3.0;
+        let seg_w = (bar.width() - seg_gap * (MAIL_GW_STEPS as f32 - 1.0)) / MAIL_GW_STEPS as f32;
+        let painter = ui.painter();
+        for i in 0..MAIL_GW_STEPS {
+            let x0 = bar.left() + i as f32 * (seg_w + seg_gap);
+            let seg = egui::Rect::from_min_max(
+                egui::pos2(x0, bar.top()),
+                egui::pos2(x0 + seg_w, bar.bottom()),
+            );
+            painter.rect_filled(seg, 0.0, if i < lit { color } else { LINE });
+        }
+        ui.add_space(db_w);
+    });
+    let resp = ui.interact(
+        inner.response.rect,
+        ui.id().with("mail_gw_bar"),
+        egui::Sense::hover(),
+    );
+    hover_tip(
+        &resp,
+        format!("Mail gateway: {}. Grey: not asked yet; one purple segment: asking; all green: gateway ready; all orange: no gateway.", line.trim_end_matches(['…', '.'])),
+    );
 }
 
 fn audio_meter_row(ui: &mut egui::Ui, k: &str, db: f32, live: bool, tip: &str) {
@@ -2986,6 +3122,30 @@ fn audio_device_row(
     });
 }
 
+/// The HELP header: click to open or close the keys and commands list.
+/// Returns true when clicked.
+fn help_toggle(ui: &mut egui::Ui, open: bool) -> bool {
+    let text = if open {
+        "▾ HELP · keys and commands"
+    } else {
+        "▸ HELP · keys and commands"
+    };
+    ui.add(
+        egui::Label::new(
+            RichText::new(text)
+                .color(PURPLE)
+                .font(FontId::monospace(11.0)),
+        )
+        .sense(egui::Sense::click()),
+    )
+    .on_hover_text(if open {
+        "Close help and show the station"
+    } else {
+        "Open the keys and commands list"
+    })
+    .clicked()
+}
+
 fn cheat_line(ui: &mut egui::Ui, key: &str, tip: &str) {
     ui.horizontal(|ui| {
         ui.label(
@@ -2993,7 +3153,9 @@ fn cheat_line(ui: &mut egui::Ui, key: &str, tip: &str) {
                 .color(PURPLE)
                 .font(FontId::monospace(10.0)),
         );
-        ui.label(RichText::new(tip).color(DIM).font(FontId::monospace(10.0)));
+        ui.add(
+            egui::Label::new(RichText::new(tip).color(DIM).font(FontId::monospace(10.0))).wrap(),
+        );
     });
 }
 
