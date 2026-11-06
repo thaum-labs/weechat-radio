@@ -562,3 +562,28 @@ fn a_silent_link_is_reopened_after_five_seconds() {
     assert!(no_audio_since_linked(Duration::from_secs(5), 0));
     assert!(!no_audio_since_linked(Duration::from_secs(60), 1));
 }
+
+#[test]
+fn meter_reports_the_bridge_audio_in_and_out() {
+    let t0 = Instant::now();
+    let mut m = Meter::default();
+    // Not clocking yet: nothing to report, sound card meters stay in charge.
+    assert!(m.take(t0).is_none());
+    // A whistle from the radio at half scale: about -9 dBFS RMS.
+    m.add_in(&tone(1000.0, 48_000.0, 960, 0.5), t0);
+    let (input, output) = m.take(t0).unwrap();
+    assert!((input.unwrap() + 9.0).abs() < 0.5, "{input:?}");
+    assert_eq!(output, crate::presets::AUDIO_FLOOR_DB);
+    // Radio quiet (pure silence): no IN level, like modem73's own meter.
+    m.add_in(&[0.0; 960], t0);
+    assert_eq!(m.take(t0).unwrap().0, None);
+    // Sending: OUT follows what goes to the radio.
+    m.add_in(&[0.0; 960], t0);
+    m.add_out(&tone(1000.0, 48_000.0, 960, 1.0));
+    let (_, output) = m.take(t0).unwrap();
+    assert!((output + 3.0).abs() < 0.5, "{output}");
+    // Bridge stopped: the levels go stale and are not reported.
+    assert!(m
+        .take(t0 + METER_FRESH + Duration::from_millis(10))
+        .is_none());
+}

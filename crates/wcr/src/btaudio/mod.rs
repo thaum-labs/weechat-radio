@@ -107,6 +107,87 @@ impl Shared {
     }
 }
 
+/// The IN and OUT levels of the audio this bridge passes (all platforms).
+/// On Bluetooth there is no sound card to meter: the PC's default input and
+/// output are its own mic and speakers, so music showed on OUT and IN never
+/// moved on a whistle (Windows only moves IN on a decode).
+#[derive(Default)]
+struct Meter {
+    in_sum: f64,
+    in_count: u64,
+    out_sum: f64,
+    out_count: u64,
+    last_tick: Option<Instant>,
+}
+
+/// The bridge counts as clocking when its last tick is this recent.
+const METER_FRESH: Duration = Duration::from_secs(1);
+
+impl Meter {
+    /// Audio handed to modem73 (what it hears from the radio).
+    fn add_in(&mut self, samples: &[f32], now: Instant) {
+        self.in_sum += samples
+            .iter()
+            .map(|&v| (v as f64) * (v as f64))
+            .sum::<f64>();
+        self.in_count += samples.len() as u64;
+        self.last_tick = Some(now);
+    }
+
+    /// Audio sent to the radio while PTT is held.
+    fn add_out(&mut self, samples: &[f32]) {
+        self.out_sum += samples
+            .iter()
+            .map(|&v| (v as f64) * (v as f64))
+            .sum::<f64>();
+        self.out_count += samples.len() as u64;
+    }
+
+    /// `(IN, OUT)` in dBFS RMS since the last call, then starts over. `None`
+    /// while the bridge is not clocking. IN is `None` for pure silence (the
+    /// radio sent nothing), like modem73's own level; OUT is the floor when
+    /// nothing was sent.
+    fn take(&mut self, now: Instant) -> Option<(Option<f32>, f32)> {
+        let fresh = self
+            .last_tick
+            .is_some_and(|t| now.saturating_duration_since(t) <= METER_FRESH);
+        let rms_db = |sum: f64, n: u64| {
+            let db = 10.0 * (sum / n as f64).log10();
+            (db as f32).max(crate::presets::AUDIO_FLOOR_DB)
+        };
+        let input = (self.in_sum > 0.0).then(|| rms_db(self.in_sum, self.in_count));
+        let output = if self.out_sum > 0.0 {
+            rms_db(self.out_sum, self.out_count)
+        } else {
+            crate::presets::AUDIO_FLOOR_DB
+        };
+        let last_tick = self.last_tick;
+        *self = Self {
+            last_tick,
+            ..Self::default()
+        };
+        fresh.then_some((input, output))
+    }
+}
+
+static METER: Mutex<Meter> = Mutex::new(Meter {
+    in_sum: 0.0,
+    in_count: 0,
+    out_sum: 0.0,
+    out_count: 0,
+    last_tick: None,
+});
+
+/// Puts the bridge's IN and OUT levels into modem73's status, so the meters
+/// and level words show the radio's audio. Leaves it alone while the bridge
+/// is not running.
+pub fn fill_levels(st: &mut crate::modem::control::ModemStatus) {
+    if let Some((input, output)) = METER.lock().take(Instant::now()) {
+        st.audio_in_db = input;
+        st.audio_out_db = Some(output);
+    }
+}
+
 static RUNNING: OnceLock<Ports> = OnceLock::new();
 /// Gain on the radio's received audio (`[tnc] bt_rx_level_db`, #241), as
 /// f32 bits. Read for every block, so the RX slider takes effect at once.
@@ -598,10 +679,14 @@ fn run_clock(mut conn: TcpStream, sh: &Shared) -> io::Result<()> {
     let result = loop {
         {
             let mut q = sh.rx.lock();
-            for i in 0..TICK_SAMPLES {
-                let v = to_i16(q.pop_front().unwrap_or(0.0));
-                out[2 * i..2 * i + 2].copy_from_slice(&v.to_le_bytes());
+            let heard: Vec<f32> = (0..TICK_SAMPLES)
+                .map(|_| q.pop_front().unwrap_or(0.0))
+                .collect();
+            drop(q);
+            for (i, &v) in heard.iter().enumerate() {
+                out[2 * i..2 * i + 2].copy_from_slice(&to_i16(v).to_le_bytes());
             }
+            METER.lock().add_in(&heard, Instant::now());
         }
         if let Err(e) = conn
             .write_all(&out)
@@ -610,6 +695,13 @@ fn run_clock(mut conn: TcpStream, sh: &Shared) -> io::Result<()> {
             break Err(e);
         }
         let keyed = sh.ptt.load(Ordering::SeqCst);
+        if keyed {
+            let sent: Vec<f32> = samples(&back)
+                .iter()
+                .map(|v| (v * sh.tx_gain).clamp(-1.0, 1.0))
+                .collect();
+            METER.lock().add_out(&sent);
+        }
         match (&mut tx, keyed) {
             (None, true) => {
                 let mut t = Transmit::new();
