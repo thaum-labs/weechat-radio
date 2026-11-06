@@ -3990,7 +3990,7 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
                             // not the frame (QA #243). With a live level the
                             // meter and the word go by that; only Windows, which
                             // has no live level, moves IN on a decode.
-                            if cfg!(windows) {
+                            if cfg!(windows) && !s.bt_meters {
                                 s.audio_db = frame.level_db;
                                 s.audio_in_db = frame.level_db;
                                 s.audio_label = presets::audio_level_label(frame.level_db).into();
@@ -4002,11 +4002,16 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
             });
             control = Some(c);
         }
-        crate::audio_meter::spawn_input_meter(
-            cfg.modem.audio_input.clone(),
-            rt.snap.clone(),
-            cancel.clone(),
-        );
+        // Bluetooth audio: the bridge meters the radio's own audio. A sound
+        // card meter would read the PC's mic or speakers instead.
+        rt.snap.lock().bt_meters = cfg.modem.is_bt_audio();
+        if !cfg.modem.is_bt_audio() {
+            crate::audio_meter::spawn_input_meter(
+                cfg.modem.audio_input.clone(),
+                rt.snap.clone(),
+                cancel.clone(),
+            );
+        }
         {
             let mut s = rt.snap.lock();
             if matches!(s.audio_label.as_str(), "no modem" | "no audio") {

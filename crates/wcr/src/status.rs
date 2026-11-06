@@ -38,6 +38,10 @@ pub struct StatusSnapshot {
     /// false and the level has to come from modem73 (QA #220).
     #[serde(skip)]
     pub local_in_meter: bool,
+    /// The radio is on Bluetooth audio: IN and OUT come from the audio wcr's
+    /// bridge passes between the radio and modem73, not from a sound card.
+    #[serde(skip)]
+    pub bt_meters: bool,
     pub queue_out: u64,
     pub queue_hold: u64,
     pub hub_ok: bool,
@@ -335,6 +339,15 @@ impl StatusSnapshot {
     }
 
     pub fn apply_modem_audio(&mut self, st: &crate::modem::control::ModemStatus) {
+        let with_bt;
+        let st = if self.bt_meters {
+            let mut copy = st.clone();
+            crate::btaudio::fill_levels(&mut copy);
+            with_bt = copy;
+            &with_bt
+        } else {
+            st
+        };
         if !st.audio_connected {
             self.audio_in_db = crate::presets::AUDIO_FLOOR_DB;
             self.audio_out_db = crate::presets::AUDIO_FLOOR_DB;
@@ -557,6 +570,7 @@ impl Default for StatusSnapshot {
             audio_in_db: crate::presets::AUDIO_FLOOR_DB,
             audio_out_db: crate::presets::AUDIO_FLOOR_DB,
             local_in_meter: false,
+            bt_meters: false,
             queue_out: 0,
             queue_hold: 0,
             hub_ok: false,
