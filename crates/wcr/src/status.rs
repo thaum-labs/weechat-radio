@@ -302,6 +302,19 @@ impl HeardBrief {
 }
 
 impl StatusSnapshot {
+    /// True when the radio's own KISS TNC does the modem work (no modem73).
+    /// `tnc` alone does not say so: with Bluetooth audio it names the radio
+    /// link while modem73 is the modem (QA #284).
+    pub fn builtin_tnc(&self) -> bool {
+        self.ptt.eq_ignore_ascii_case("tnc")
+    }
+
+    /// The RX GAIN and TX LVL sliders apply: a radio station whose modem
+    /// is modem73 (sound card or Bluetooth audio).
+    pub fn shows_level_sliders(&self) -> bool {
+        self.mode != Mode::Internet && !self.builtin_tnc() && !self.modem73.is_empty()
+    }
+
     pub fn set_freq(&mut self, khz: u32, source: &str) {
         self.freq_khz = khz;
         self.band = crate::band::band_for_khz(khz).unwrap_or("").into();
@@ -703,6 +716,48 @@ mod tests {
     use super::*;
     use crate::modem::control::ModemStatus;
     use crate::presets::{AUDIO_FLOOR_DB, AUDIO_TX_NOMINAL_DB};
+
+    /// QA #284: the Mac's live /status in VR-N76 Bluetooth audio mode. `tnc`
+    /// names the Bluetooth link, but modem73 is the modem, so the sliders show.
+    #[test]
+    fn bluetooth_audio_shows_the_level_sliders() {
+        let mut v = serde_json::to_value(StatusSnapshot::default()).unwrap();
+        let live: serde_json::Value = serde_json::from_str(
+            r#"{"mode":"internet-radio","ptt":"bluetooth","tnc":"VR-N76 linked","tnc_ok":true,
+                "modem73":"2.4.8-wcr","tx_level_db":0.0,"audio_label":"hot",
+                "rx_gain":{"kind":"bluetooth","db":0.0,"min_db":-30.0,"max_db":12.0}}"#,
+        )
+        .unwrap();
+        for (k, x) in live.as_object().unwrap() {
+            v[k] = x.clone();
+        }
+        let s: StatusSnapshot = serde_json::from_value(v).unwrap();
+        assert!(!s.builtin_tnc());
+        assert!(s.shows_level_sliders());
+        // The radio's own KISS TNC: no modem73, no sliders.
+        let tnc = StatusSnapshot {
+            mode: Mode::InternetRadio,
+            ptt: "tnc".into(),
+            tnc: "VR-N76 linked".into(),
+            modem73: "2.4.8".into(),
+            ..StatusSnapshot::default()
+        };
+        assert!(tnc.builtin_tnc());
+        assert!(!tnc.shows_level_sliders());
+        // A Digirig sound card station.
+        let digirig = StatusSnapshot {
+            mode: Mode::InternetRadio,
+            ptt: "digirig".into(),
+            modem73: "2.4.8".into(),
+            ..StatusSnapshot::default()
+        };
+        assert!(digirig.shows_level_sliders());
+        let internet = StatusSnapshot {
+            mode: Mode::Internet,
+            ..digirig.clone()
+        };
+        assert!(!internet.shows_level_sliders());
+    }
 
     #[test]
     fn modem_audio_ptt_fills_out() {

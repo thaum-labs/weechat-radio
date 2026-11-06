@@ -59,6 +59,13 @@
       </article>
       <article class="release">
         <h3 class="title">
+          <p>v1.0.16-rc5</p>
+          <p>Fri, 6 Nov 2026</p>
+        </h3>
+        <pre>Release candidate (wcr update --rc, or press Update on an rc3/rc4 station). Fixes from the rc4 QA round. A restart you ask for (wcr restart, Restart to finish, Update) soon after an update no longer counts as a failed start, so the update is kept; a build that really fails still rolls back. Running wcr setup again on a working station keeps everything it does not ask about (TX level, RX gain, busy test, mail, web page) and offers the saved callsign, grid, radio, port and preset as the Enter default; the grid guessed from your internet address is only shown. The desktop app now shows the RX GAIN and TX LVL sliders for a VR-N76 on Bluetooth audio, like the web page. Bluetooth audio setup saves no sound card and says so: the sound goes over wcr's own Bluetooth link to the radio, never the Mac's speaker. The desktop setup page saves itself when you move to another page, and the Pi page's mail gateway saves as soon as you pick it. The Software card says Running.</pre>
+      </article>
+      <article class="release">
+        <h3 class="title">
           <p>v1.0.16-rc4</p>
           <p>Thu, 5 Nov 2026</p>
         </h3>

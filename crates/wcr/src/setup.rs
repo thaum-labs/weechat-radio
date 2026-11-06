@@ -57,6 +57,11 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
         let _ = grid_tx.send(crate::grid::detect_from_ip());
     });
 
+    // Setup run again: every Enter keeps what the file says (QA #284).
+    let saved_call = previous
+        .as_ref()
+        .map(|p| p.callsign.clone())
+        .unwrap_or_default();
     let call = read_callsign_uppercase(
         &theme,
         ui_style::step(
@@ -64,10 +69,15 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
             total_steps,
             "Callsign (guests: ~NICK, max 8 chars including ~)",
         ),
+        &saved_call,
     )?;
 
     let guessed = grid_rx.recv().ok().flatten();
     let confirm_theme = ui_style::bracket_confirm_theme();
+    let saved_grid = previous
+        .as_ref()
+        .map(|p| p.grid.trim().to_ascii_uppercase())
+        .filter(|g| !g.is_empty());
     let mut grid_prompt = Input::with_theme(&theme)
         .with_prompt(ui_style::step(
             2,
@@ -76,7 +86,27 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
         ))
         .allow_empty(true);
     let mut accepted_detected = false;
-    if let Some(hit) = &guessed {
+    if let Some(saved) = &saved_grid {
+        // A saved square is the default; the guess is only shown (QA #284).
+        if let Some(hit) = guessed
+            .as_ref()
+            .filter(|h| h.grid.to_ascii_uppercase() != *saved)
+        {
+            println!(
+                "  {}",
+                ui_style::dim().apply_to(format!(
+                    "Saved {saved}. Your internet address suggests {}{}; type it to change.",
+                    hit.grid,
+                    if hit.label.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", hit.label)
+                    }
+                ))
+            );
+        }
+        grid_prompt = grid_prompt.default(saved.clone());
+    } else if let Some(hit) = &guessed {
         let label = if hit.label.is_empty() {
             hit.grid.clone()
         } else {
@@ -108,8 +138,10 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
     let grid = loop {
         let typed: String = grid_prompt.clone().interact_text()?;
         let grid = match &guessed {
-            Some(hit) => grid_from_setup(accepted_detected, &hit.grid, &typed),
-            None => typed.trim().to_ascii_uppercase(),
+            Some(hit) if saved_grid.is_none() => {
+                grid_from_setup(accepted_detected, &hit.grid, &typed)
+            }
+            _ => typed.trim().to_ascii_uppercase(),
         };
         match crate::grid::normalize(&grid) {
             Err(e) if !grid.is_empty() => println!("  {}", ui_style::dim().apply_to(e)),
@@ -129,6 +161,7 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
     let mut paths: Vec<String> = vec!["Internet only (no radio yet)".into()];
     paths.extend(RADIOS.iter().map(|r| r.name.to_string()));
     paths.push("Other setup (Digirig, VOX cable, any CAT rig, KISS TNC)".into());
+    let saved = previous.as_ref().map(saved_path);
     let picked = Select::with_theme(&theme)
         .with_prompt(ui_style::step(
             3,
@@ -136,7 +169,11 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
             "Which radio? (pick Other for VOX, Digirig and the rest)",
         ))
         .items(&paths)
-        .default(0)
+        .default(match saved {
+            Some((0, _)) | None => 0,
+            Some((_, Some(i))) => i + 1,
+            Some((_, None)) => paths.len() - 1,
+        })
         .interact()?;
     let radio = picked.checked_sub(1).and_then(|i| RADIOS.get(i));
     let path = match radio {
@@ -156,13 +193,25 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
             let i = Select::with_theme(&theme)
                 .with_prompt("How will you get on the air?")
                 .items(&labels)
-                .default(0)
+                .default(
+                    saved
+                        .and_then(|(p, _)| others.iter().position(|(o, _)| *o == p))
+                        .unwrap_or(0),
+                )
                 .interact()?;
             others[i].0
         }
     };
 
-    let mut cfg = Config::default();
+    // The same radio as before keeps every modem setting setup never asks
+    // about (TX level, RX gain, busy test…); a new radio starts fresh.
+    let same_radio = saved
+        == Some((
+            path,
+            radio.map(|r| RADIOS.iter().position(|x| x == r).unwrap_or(0)),
+        ));
+    let mut cfg = start_from(previous.as_ref(), same_radio);
+    let kept = previous.as_ref().filter(|_| same_radio);
     cfg.callsign = call.trim().to_ascii_uppercase();
     cfg.grid = grid.trim().to_ascii_uppercase();
 
@@ -171,17 +220,21 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
             cfg.mode = Mode::Internet;
             cfg.modem.manage = false;
             cfg.modem.ptt = "none".into();
+            let default_hub = config::HubConfig::default().url;
             let public_hub = Confirm::with_theme(&confirm_theme)
                 .with_prompt(ui_style::step(
                     4,
                     total_steps,
                     "Use the public hub (wss://hub.weechatradio.com)?",
                 ))
-                .default(true)
+                .default(previous.as_ref().is_none_or(|p| p.hub.url == default_hub))
                 .interact()?;
-            if !public_hub {
+            if public_hub {
+                cfg.hub.url = default_hub;
+            } else {
                 let url: String = Input::with_theme(&theme)
                     .with_prompt("Hub WebSocket URL (wss://host/ws)")
+                    .default(cfg.hub.url.clone())
                     .interact_text()?;
                 cfg.hub.url = url;
             }
@@ -191,10 +244,16 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
                     total_steps,
                     "Share callsign and grid on the public map? (never message text)",
                 ))
-                .default(false)
+                .default(
+                    previous
+                        .as_ref()
+                        .is_some_and(|p| !p.telemetry.url.is_empty()),
+                )
                 .interact()?;
             if !share_map {
                 cfg.telemetry.url.clear();
+            } else if cfg.telemetry.url.is_empty() {
+                cfg.telemetry.url = config::TelemetryConfig::default().url;
             }
         }
         1 => {
@@ -202,7 +261,10 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
             cfg.modem.ptt = "digirig".into();
             cfg.modem.preset = Preset::VhfFm.as_str().into();
             let ports = crate::discover::serial_ports();
-            let digirig = crate::discover::find_digirig(&ports);
+            let digirig = kept
+                .map(|p| p.modem.com_port.clone())
+                .filter(|c| !c.is_empty())
+                .or_else(|| crate::discover::find_digirig(&ports));
             cfg.modem.com_port = pick_serial_port(&theme, "Digirig serial port", digirig)?;
             cfg.modem.com_line = "rts".into();
             println!("  Digirig: PTT on RTS. Plug the audio jacks into the radio as in the guide.");
@@ -220,7 +282,7 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
             cfg.mode = Mode::InternetRadio;
             cfg.modem.ptt = "rigctl".into();
             cfg.modem.preset = Preset::HfGood.as_str().into();
-            cfg.modem.rigctl = pick_rigctld(&theme)?;
+            cfg.modem.rigctl = pick_rigctld(&theme, kept.map(|p| p.modem.rigctl.as_str()))?;
             cfg.rig.enabled = true;
             println!("  Start rigctld for your radio before `wcr node`.");
             println!("  If that fails, you can switch PTT to VOX later with /radio ptt vox");
@@ -247,7 +309,10 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
             }
             println!("  wcr keys the radio and reads the dial over CAT. Nothing else to install.");
             let ports = crate::discover::serial_ports();
-            let guess = radio.pick_port(&ports);
+            let guess = kept
+                .map(|p| p.modem.hamlib_device.clone())
+                .filter(|c| !c.is_empty())
+                .or_else(|| radio.pick_port(&ports));
             cfg.modem.hamlib_device = pick_serial_port(&theme, "Radio CAT port", guess)?;
         }
         5 => {
@@ -256,7 +321,11 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
             cfg.modem.manage = false;
             cfg.modem.ptt = "tnc".into();
             cfg.modem.preset = Preset::Afsk1200.as_str().into();
-            cfg.tnc.serial = pick_serial_port(&theme, "TNC serial port", None)?;
+            cfg.tnc.serial = pick_serial_port(
+                &theme,
+                "TNC serial port",
+                kept.map(|p| p.tnc.serial.clone()).filter(|c| !c.is_empty()),
+            )?;
         }
         _ => {}
     }
@@ -284,6 +353,10 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
             ))
             .items(&presets)
             .default(match path {
+                _ if kept.is_some() => preset_index(
+                    &offered,
+                    kept.map(|p| p.modem.preset.as_str()).unwrap_or(""),
+                ),
                 _ if radio.is_some() => preset_index(&offered, &cfg.modem.preset),
                 1 => 0,
                 2 => 4,
@@ -329,7 +402,13 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
                 ))
             );
         }
-        if !cfg.modem.is_bt_audio() {
+        if cfg.modem.is_bt_audio() {
+            // The sound travels over wcr's own Bluetooth link to the radio;
+            // no sound card is used, so none is saved (QA #284).
+            cfg.modem.audio_input.clear();
+            cfg.modem.audio_output.clear();
+            println!("  {}", ui_style::dim().apply_to(bt_audio_sound_note()));
+        } else {
             cfg.modem.audio_input = pick_audio_device(
                 &theme,
                 5,
@@ -509,11 +588,17 @@ fn headless() -> bool {
         && std::env::var_os("WAYLAND_DISPLAY").is_none()
 }
 
-fn read_callsign_uppercase(theme: &dyn dialoguer::theme::Theme, prompt: String) -> Result<String> {
+fn read_callsign_uppercase(
+    theme: &dyn dialoguer::theme::Theme,
+    prompt: String,
+    saved: &str,
+) -> Result<String> {
     loop {
-        let raw: String = Input::with_theme(theme)
-            .with_prompt(prompt.clone())
-            .interact_text()?;
+        let mut input = Input::with_theme(theme).with_prompt(prompt.clone());
+        if !saved.is_empty() {
+            input = input.default(saved.to_string());
+        }
+        let raw: String = input.interact_text()?;
         let call = raw.trim().to_ascii_uppercase();
         match Callsign::parse(&call) {
             Ok(_) => return Ok(call),
@@ -651,6 +736,53 @@ fn pick_audio_device(
     }
 }
 
+/// The setup path and supported-radio index a saved config was made with
+/// (the wizard's step 3), so setup run again starts on the same choice.
+fn saved_path(cfg: &Config) -> (usize, Option<usize>) {
+    let radio = crate::radios::from_config(cfg).and_then(|r| RADIOS.iter().position(|x| x == r));
+    let path = if cfg.mode == Mode::Internet {
+        0
+    } else if let Some(i) = radio {
+        RADIOS[i].setup_path()
+    } else if cfg.modem.is_bluetooth() {
+        4
+    } else if cfg.modem.is_bt_audio() {
+        BT_AUDIO
+    } else if cfg.modem.uses_tnc() {
+        5
+    } else {
+        match cfg.modem.ptt.as_str() {
+            "digirig" => 1,
+            "vox" => 2,
+            "rigctl" => 3,
+            _ => 0,
+        }
+    };
+    (path, radio)
+}
+
+/// Setup run again starts from the saved file, so every value it does not
+/// ask about (TX level, RX gain, busy test, the web page, mail…) stays as
+/// it is (QA #284). A different radio than before gets fresh modem settings:
+/// a TX level tuned for a Digirig is wrong for a Bluetooth radio.
+fn start_from(previous: Option<&Config>, same_radio: bool) -> Config {
+    let Some(prev) = previous else {
+        return Config::default();
+    };
+    let mut cfg = prev.clone();
+    if !same_radio {
+        cfg.modem = config::ModemConfig::default();
+        cfg.rig = config::RigConfig::default();
+    }
+    cfg
+}
+
+/// Bluetooth audio radios: the wizard and the app say why no sound card is
+/// picked (QA #284: a Mac kept "Built-in Microphone" in the file).
+pub fn bt_audio_sound_note() -> &'static str {
+    "Sound goes over wcr's own Bluetooth link to the radio, not a sound card: no sound device is saved, and the Mac's speaker and microphone stay out of it."
+}
+
 /// Copy the settings the wizard never asks about from the file it replaces,
 /// so running setup again on a gateway keeps the web page password, mail,
 /// store and the rest (QA #222).
@@ -755,7 +887,11 @@ fn missing_cards(
         .collect()
 }
 
-fn pick_rigctld(theme: &dyn dialoguer::theme::Theme) -> Result<String> {
+fn pick_rigctld(theme: &dyn dialoguer::theme::Theme, saved: Option<&str>) -> Result<String> {
+    let typed_default = saved
+        .filter(|s| !s.is_empty())
+        .unwrap_or("127.0.0.1:4532")
+        .to_string();
     let live = crate::discover::probe_rigctld_hosts();
     if live.is_empty() {
         println!(
@@ -764,7 +900,7 @@ fn pick_rigctld(theme: &dyn dialoguer::theme::Theme) -> Result<String> {
         );
         return Input::with_theme(theme)
             .with_prompt("rigctld address")
-            .default("127.0.0.1:4532".into())
+            .default(typed_default)
             .interact_text()
             .map_err(Into::into);
     }
@@ -777,12 +913,12 @@ fn pick_rigctld(theme: &dyn dialoguer::theme::Theme) -> Result<String> {
     let idx = Select::with_theme(theme)
         .with_prompt("rigctld address")
         .items(&items)
-        .default(0)
+        .default(items.iter().position(|i| *i == typed_default).unwrap_or(0))
         .interact()?;
     if idx == items.len() - 1 {
         Input::with_theme(theme)
             .with_prompt("rigctld host:port")
-            .default("127.0.0.1:4532".into())
+            .default(typed_default)
             .interact_text()
             .map_err(Into::into)
     } else {
@@ -972,6 +1108,54 @@ mod tests {
         assert!(cfg.gateway.third_party_allow());
         // Asked again in the wizard, so not copied here.
         assert_eq!(cfg.modem.audio_input, "");
+    }
+
+    /// QA #284: setup run again on a working gateway, Enter through every
+    /// question, left tx_level_db = -36 and the saved grid alone.
+    #[test]
+    fn setup_again_on_the_same_radio_keeps_every_modem_setting() {
+        let mut prev = Config {
+            callsign: "M7TJF".into(),
+            grid: "IO81UF".into(),
+            ..Config::default()
+        };
+        prev.modem.ptt = "digirig".into();
+        prev.modem.com_port = "/dev/ttyUSB0".into();
+        prev.modem.tx_level_db = -36.0;
+        prev.modem.rx_gain_db = Some(-6.0);
+        prev.modem.csma_mode = "level".into();
+        prev.modem.audio_input = "plughw:CARD=Device,DEV=0".into();
+        prev.web.password_hash = "$argon2id$v=19$x".into();
+        assert_eq!(saved_path(&prev), (1, None));
+        let toml_of = |c: &Config| toml::to_string(c).unwrap();
+        let same = start_from(Some(&prev), true);
+        assert_eq!(toml_of(&same), toml_of(&prev));
+        // Another radio: the levels start over, the rest stays.
+        let other = start_from(Some(&prev), false);
+        assert_eq!(other.modem.tx_level_db, 0.0);
+        assert_eq!(other.modem.rx_gain_db, None);
+        assert_eq!(other.modem.com_port, "");
+        assert_eq!(other.web.password_hash, prev.web.password_hash);
+        assert_eq!(other.grid, "IO81UF");
+        assert_eq!(
+            toml_of(&start_from(None, false)),
+            toml_of(&Config::default())
+        );
+        // A supported radio comes back as its own list entry.
+        let mut bt = Config::default();
+        RADIOS
+            .iter()
+            .find(|r| r.name == "VR-N76 / UV-PRO / GA-5WB (Bluetooth audio, modem73)")
+            .unwrap()
+            .apply(&mut bt);
+        let (path, radio) = saved_path(&bt);
+        assert_eq!(path, BT_AUDIO);
+        assert_eq!(RADIOS[radio.unwrap()].name, bt.modem.radio);
+        let net = Config {
+            mode: Mode::Internet,
+            ..Config::default()
+        };
+        assert_eq!(saved_path(&net), (0, None));
     }
 
     #[test]

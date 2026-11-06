@@ -113,11 +113,12 @@ function drawStatus(d) {
 // ---------- 2. Levels ----------
 
 // Shown for a station with a sound-card or Bluetooth audio modem (not
-// internet-only, not a radio with its own TNC).
+// internet-only, not a radio with its own TNC). With Bluetooth audio `tnc`
+// names the radio link, so the test is the PTT, not `tnc` (QA #284).
 const METER_MIN = -60;
 const pctOf = (db) => Math.max(0, Math.min(100, ((db - METER_MIN) * 100) / -METER_MIN));
 function drawRadio(running, s) {
-  const want = !!(running && s.mode && s.mode !== "internet" && !s.tnc);
+  const want = !!(running && s.mode && s.mode !== "internet" && s.ptt !== "tnc");
   $("radio-card").hidden = !want;
   wfOn = want && !!s.modem73;
   $("wf-box").hidden = !wfOn;
@@ -587,14 +588,19 @@ function drawMailGateway(g, s) {
   $("mailgw-now").textContent = s.mail_gateway ? `Now: ${s.mail_gateway}` : "";
 }
 
+// Saved as soon as a choice is made (Auto, or a callsign once typing ends),
+// so leaving the page does not lose it (#284). Save stays for the habit.
 for (const id of ["mailgw-auto", "mailgw-pin"]) {
   $(id).addEventListener("change", () => {
     mailgwEdited = true;
     $("mailgw-call").disabled = $("mailgw-auto").checked;
+    if ($("mailgw-auto").checked || $("mailgw-call").value.trim()) saveMailGateway();
   });
 }
 $("mailgw-call").addEventListener("input", () => { mailgwEdited = true; });
-$("mailgw-save").addEventListener("click", async () => {
+$("mailgw-call").addEventListener("change", () => { if (mailgwEdited) saveMailGateway(); });
+$("mailgw-save").addEventListener("click", saveMailGateway);
+async function saveMailGateway() {
   const value = $("mailgw-auto").checked ? "auto" : $("mailgw-call").value.trim().toUpperCase();
   if (!value) { $("action").textContent = "Type the gateway's callsign, or pick Auto."; return; }
   $("action").textContent = "Saving the mail gateway…";
@@ -610,7 +616,7 @@ $("mailgw-save").addEventListener("click", async () => {
   } finally {
     setTimeout(poll, 500);
   }
-});
+}
 
 let shown = {};
 $("mode-pick").addEventListener("change", (e) => pick("mode", e.target, shown.mode));
@@ -737,7 +743,7 @@ let swWaiting = false;
 
 function swDraw(d) {
   sw = d;
-  $("sw-version").textContent = `running ${d.running}`;
+  $("sw-version").textContent = `Running ${d.running}`;
   const line = $("sw-line");
   const phase = d.phase || "";
   let text = "Up to date.";

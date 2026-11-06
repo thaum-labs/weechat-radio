@@ -356,6 +356,11 @@ fn runtime() -> crate::error::Result<tokio::runtime::Runtime> {
 /// Start the installed app with the station as it was, and end this one.
 pub fn relaunch(station_running: bool) -> std::io::Error {
     std::env::set_var(STATION_ENV, if station_running { "on" } else { "off" });
+    // Asked for by the operator: a version on probation is kept (QA #284).
+    let _ = restart::confirm_before_deliberate_restart(
+        &restart::install_dir(),
+        update::current_version(),
+    );
     restart::relaunch()
 }
 
