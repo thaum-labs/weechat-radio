@@ -40,6 +40,8 @@ pub struct HubState {
     pub mail: Arc<crate::net::hub_mail::MailHubDb>,
     /// Mail gateway Auto: reply slots for gateways that heard an ask (#275).
     pub gateway_asks: Arc<crate::mail::pick::AskBoard>,
+    /// How much mail the hub may send through Resend.
+    pub mail_limits: Arc<crate::net::hub_mail::MailLimits>,
     /// Public map id. The production hub sets this from `WCR_DOMAIN`. A private
     /// hub must not claim to be `hub.weechatradio.com`.
     pub id: String,
@@ -110,6 +112,7 @@ pub async fn run_hub(
             .unwrap_or_else(|_| crate::net::hub_mail::MailHubDb::open_memory().expect("mail db")),
         ),
         gateway_asks: crate::mail::pick::AskBoard::new(),
+        mail_limits: Arc::new(crate::net::hub_mail::MailLimits::new()),
         id: hub_report_id(bind, &std::env::var("WCR_DOMAIN").unwrap_or_default()),
         pending_dm: Arc::new(Mutex::new(Vec::new())),
     };
@@ -746,6 +749,7 @@ pub fn test_hub_state() -> HubState {
         hello_by_call: rate_limit::per_minute(30),
         mail: Arc::new(crate::net::hub_mail::MailHubDb::open_memory().unwrap()),
         gateway_asks: crate::mail::pick::AskBoard::new(),
+        mail_limits: Arc::new(crate::net::hub_mail::MailLimits::new()),
         id: hub_report_id("127.0.0.1:0", ""),
         pending_dm: Arc::new(Mutex::new(Vec::new())),
     }

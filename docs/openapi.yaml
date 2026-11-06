@@ -136,14 +136,21 @@ paths:
     post:
       summary: Send mail through Resend
       description: |
-        Signed by the station key. From is `{callsign}@mail.weechatradio.com`.
+        Signed by the station key, which must be the key the hub has
+        registered for that callsign (registered when the station first
+        connects). From is `{callsign}@mail.weechatradio.com`. To is one
+        address. Subject at most 200 characters, body at most 4096 bytes.
         The hub returns ok only after Resend accepts the message.
         `[gateway] third_party` does not apply.
       responses:
         "200":
           description: JSON `{ "ok": true, "id" }`
+        "400":
+          description: Bad To, subject or body
         "401":
-          description: Bad signature
+          description: Bad signature, a key that is not the callsign's registered key, or a callsign that has never connected
+        "429":
+          description: Mail limit reached (per station, per author, per address, or the hub's daily cap)
         "502":
           description: Resend did not accept the message
   /api/v1/mail/inbox:
