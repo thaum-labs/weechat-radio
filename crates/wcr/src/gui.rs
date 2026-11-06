@@ -1912,14 +1912,10 @@ impl eframe::App for GuiApp {
                             if !s.builtin_tnc() && !s.modem73.is_empty() {
                                 kv(ui, "MODEM", &format!("modem73 v{}", s.modem73), DIM);
                             }
+                            // The level hint lives in IN's hover tip: as a line
+                            // here its changing length moved every row below
+                            // (Tobias 2026-11-06). The meter's colour shows the word.
                             input_meter_row(ui, s);
-                            if !s.audio_in_hint.is_empty() {
-                                ui.label(
-                                    RichText::new(&s.audio_in_hint)
-                                        .color(hint_color(&s.audio_in_word))
-                                        .small(),
-                                );
-                            }
                             audio_meter_row(
                                 ui,
                                 "OUT",
@@ -2722,14 +2718,6 @@ fn word_color(word: &str) -> Color32 {
     }
 }
 
-/// The hint under the IN meter: quiet when the level is good.
-fn hint_color(word: &str) -> Color32 {
-    match word {
-        "good" | "low" | "" => DIM,
-        w => word_color(w),
-    }
-}
-
 /// The IN meter (#241): the level over its target zones in the colour of
 /// the station's word, with the last half second's peak as a tick. Without
 /// a live level (Windows, an older modem73) it is the plain meter.
@@ -2826,6 +2814,10 @@ fn input_meter_row(ui: &mut egui::Ui, s: &StatusSnapshot) {
         " ({}). The green band is the target ({low:.0} to {good:.0} dBFS); the white tick is the peak.",
         s.audio_in_word
     ));
+    if !s.audio_in_hint.is_empty() {
+        tip.push_str("\n\n");
+        tip.push_str(&s.audio_in_hint);
+    }
     hover_tip(&resp, tip);
 }
 
