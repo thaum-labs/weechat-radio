@@ -629,6 +629,36 @@ impl IrcServer {
         }
     }
 
+    /// File progress (`have` of `count` pieces) for the chat line `msgid`,
+    /// to every client that sees `target` from `from`. Only clients with
+    /// message-tags get it; others just see the finished line.
+    pub async fn tagmsg_file_progress(
+        &self,
+        msgid: &str,
+        target: &str,
+        from: &str,
+        have: u8,
+        count: u8,
+    ) {
+        let target = normalize_irc_channel(target);
+        let line = format!(
+            "@msgid={msgid};+radio/msgid={msgid};+radio/file={have}/{count} TAGMSG {target}"
+        );
+        let ids: Vec<u64> = {
+            let g = self.inner.lock();
+            g.clients
+                .values()
+                .filter(|c| {
+                    c.caps.contains("message-tags") && client_receives_target(c, &target, from)
+                })
+                .map(|c| c.id)
+                .collect()
+        };
+        for id in ids {
+            self.send_raw(id, &line).await;
+        }
+    }
+
     /// Tell every local IRC client they were invited (remote RF invite).
     pub async fn send_invite(&self, from: &str, channel: &str) {
         let clients: Vec<(u64, String)> = {

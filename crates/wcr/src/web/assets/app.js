@@ -162,12 +162,34 @@ function lineWhen(when) {
   return `${d.toLocaleDateString([], { day: "numeric", month: "short" })} ${t}`;
 }
 
+// "📎 name (size) saved to PATH": the path downloads the file from the station.
+function textNode(text) {
+  const span = el("span", "text", text);
+  const cut = text.startsWith("📎 ") ? text.lastIndexOf(" saved to ") : -1;
+  if (cut < 0) return span;
+  const path = text.slice(cut + " saved to ".length).trim();
+  if (!path) return span;
+  const a = document.createElement("a");
+  a.href = `/api/chat/received?path=${encodeURIComponent(path)}`;
+  a.textContent = path;
+  a.title = "Download this file from the station";
+  a.setAttribute("download", "");
+  span.replaceChildren(text.slice(0, cut + " saved to ".length), a);
+  return span;
+}
+
 function lineNode(l) {
   const li = el("li", l.sys ? "sys" : l.mine ? "mine" : "");
   li.dataset.seq = l.seq;
   li.append(el("span", "when", lineWhen(l.when)));
   if (!l.sys) li.append(el("span", "nick", l.nick));
-  li.append(el("span", "text", l.text));
+  li.append(textNode(l.text));
+  // File transfer: a DOS-style bar such as [████░░░░] 3/15.
+  if (l.progress) {
+    const bar = el("span", "bar", l.progress);
+    bar.title = l.mine ? "Pieces the far station has receipted" : "Pieces received so far";
+    li.append(bar);
+  }
   const marks = [];
   // [ok net] / [ok rf]: how the first receipt came back (#226).
   const route = l.via ? (l.via === "inet" ? "net" : l.via) : "";

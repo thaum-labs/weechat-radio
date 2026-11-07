@@ -73,6 +73,8 @@ struct Runtime {
     assembler: Arc<Mutex<FragAssembler>>,
     /// File pieces received so far (direct-message attachments).
     files: Arc<Mutex<crate::proto::file::Assembler>>,
+    /// Files we are sending: piece receipts for the progress bar.
+    file_sends: Arc<Mutex<crate::proto::file::Outgoing>>,
     last_rx_snr: Arc<Mutex<Option<f32>>>,
     radio_lock: Arc<tokio::sync::Mutex<()>>,
     /// One ACK key at a time. The air queue is paused while it runs.
@@ -512,6 +514,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         dest_rungs: Arc::new(Mutex::new(HashMap::new())),
         assembler: Arc::new(Mutex::new(FragAssembler::new())),
         files: Arc::new(Mutex::new(crate::proto::file::Assembler::new())),
+        file_sends: Arc::new(Mutex::new(crate::proto::file::Outgoing::new())),
         last_rx_snr,
         radio_lock: Arc::new(tokio::sync::Mutex::new(())),
         ack_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -1813,6 +1816,7 @@ async fn send_file(rt: &Runtime, target: &str, path: &str) -> Result<String> {
     let hops = Priority::Routine.default_ttl();
     let count = pieces.len();
     let mut last_id = None;
+    let mut piece_ids = Vec::with_capacity(count);
     for (i, piece) in pieces.into_iter().enumerate() {
         let seq = if i == 0 {
             first_seq
@@ -1831,6 +1835,11 @@ async fn send_file(rt: &Runtime, target: &str, path: &str) -> Result<String> {
         )?;
         env.kind = MsgType::File;
         rt.store.insert(&env, Delivery::Queued)?;
+        // Track before the frame goes out, so a fast receipt is counted.
+        piece_ids.push(env.msg_id.hex());
+        if i + 1 == count {
+            rt.file_sends.lock().start(dest.as_str(), &piece_ids);
+        }
         dispatch_rf_at(rt, &env, 0, Duration::ZERO, 0).await?;
         rt.store.set_delivery(&env.msg_id, Delivery::Sent)?;
         let hold = relay::next_retry_hold_jittered(
@@ -1856,6 +1865,9 @@ async fn send_file(rt: &Runtime, target: &str, path: &str) -> Result<String> {
         .await;
     let tries = rt.store.rf_tx_of(&last_id).ok().filter(|n| *n > 0);
     rt.irc.tagmsg_progress(&last_id.hex(), "sent", tries).await;
+    rt.irc
+        .tagmsg_file_progress(&last_id.hex(), target, origin.as_str(), 0, count as u8)
+        .await;
     Ok(format!(
         "sending {name} to {target}: {count} piece{}, about {} s on the air. [ok] on the file line means {target} has the whole file.",
         if count == 1 { "" } else { "s" },
@@ -1876,10 +1888,39 @@ async fn on_file_piece(rt: &Runtime, env: &Envelope, medium: &str, snr: Option<f
         return;
     };
     let from = env.origin.to_string();
+    let (file_id, count, total) = (piece.file_id, piece.count, piece.total);
+    // The "receiving" line's id: stable per sender and file.
+    let rx_line = format!("file-{}-{file_id:08x}", from.to_ascii_lowercase());
     let pushed = rt.files.lock().push(&from, env, piece);
     let answer = !rt.chat_for_others_silenced() && env.flags.req_ack();
     match pushed {
-        crate::proto::file::Push::Pending { answer: now } => {
+        crate::proto::file::Push::Pending {
+            answer: now,
+            progress,
+            first,
+        } => {
+            if first {
+                let text = format!(
+                    "📎 receiving a file from {from} ({}, {count} piece{})",
+                    crate::proto::file::human_size(total as usize),
+                    if count == 1 { "" } else { "s" }
+                );
+                rt.irc
+                    .broadcast_privmsg_snr(
+                        &from,
+                        &rt.engine.our_call,
+                        &text,
+                        Some(&rx_line),
+                        Some(medium),
+                        snr,
+                    )
+                    .await;
+            }
+            if let Some((have, count)) = progress {
+                rt.irc
+                    .tagmsg_file_progress(&rx_line, &rt.engine.our_call, &from, have, count)
+                    .await;
+            }
             if answer && now {
                 let _ = acknowledge(rt, env, snr).await;
             }
@@ -1890,7 +1931,7 @@ async fn on_file_piece(rt: &Runtime, env: &Envelope, medium: &str, snr: Option<f
             held_last,
         } => {
             let path = crate::proto::file::save_path(
-                &crate::proto::file::received_dir(&rt.cfg.lock().store.path),
+                &crate::proto::file::received_dir(&rt.cfg.lock().store),
                 &from,
                 &name,
             );
@@ -1907,6 +1948,11 @@ async fn on_file_piece(rt: &Runtime, env: &Envelope, medium: &str, snr: Option<f
                 ),
                 Err(e) => format!("📎 {name} arrived but could not be saved: {e}"),
             };
+            if count > 1 {
+                rt.irc
+                    .tagmsg_file_progress(&rx_line, &rt.engine.our_call, &from, count, count)
+                    .await;
+            }
             rt.irc
                 .broadcast_privmsg_snr(
                     &from,
@@ -3084,6 +3130,13 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
                 let now = rt.store.delivery_of(&id).ok().flatten();
                 if !already && matches!(now, Some(Delivery::Delivered | Delivery::All)) {
                     rt.irc.tagmsg_delivered_via(&id.hex(), medium).await;
+                }
+                // A receipt for a piece of a file we are sending.
+                let moved = rt.file_sends.lock().acked(&id.hex());
+                if let Some((line, dest, have, count)) = moved {
+                    rt.irc
+                        .tagmsg_file_progress(&line, &dest, &rt.engine.our_call, have, count)
+                        .await;
                 }
                 // A closed group is not done on the first ACK. Keep the retry
                 // and the gateway's RF relay until every stored member has
@@ -4721,7 +4774,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                 return format!(
                     "usage: /file CALL path (in a private tab: /file path). Sends a file of at most {} to one station, on vhf-fm or afsk-1200 only. Received files are saved in {}",
                     crate::proto::file::human_size(crate::proto::file::FILE_MAX_BYTES),
-                    crate::proto::file::received_dir(&cfg.lock().store.path).display()
+                    crate::proto::file::received_dir(&cfg.lock().store).display()
                 );
             }
             rt.irc.begin_origin(client_id, &call);

@@ -250,8 +250,14 @@ pub fn airtime_secs(preset: Preset, len: usize) -> f64 {
 #[derive(Debug)]
 pub enum Push {
     /// More pieces to come. `answer` is false for the last piece: its
-    /// receipt waits until the whole file is here.
-    Pending { answer: bool },
+    /// receipt waits until the whole file is here. `progress` is pieces held
+    /// out of the count when this piece was new (`None` for a repeat);
+    /// `first` is true for the first piece heard of a file.
+    Pending {
+        answer: bool,
+        progress: Option<(u8, u8)>,
+        first: bool,
+    },
     /// The file is whole. `held_last` is the last piece if its receipt was
     /// held back and must be sent now.
     Complete {
@@ -294,8 +300,13 @@ impl Assembler {
         self.sweep(now);
         let key = (origin.to_ascii_uppercase(), piece.file_id);
         if self.done.contains_key(&key) {
-            return Push::Pending { answer: true };
+            return Push::Pending {
+                answer: true,
+                progress: None,
+                first: false,
+            };
         }
+        let mut first = !self.partial.contains_key(&key);
         let p = self.partial.entry(key.clone()).or_insert_with(|| Partial {
             count: piece.count,
             total: piece.total,
@@ -314,18 +325,23 @@ impl Assembler {
                 held_last: None,
                 touched: now,
             };
+            first = true;
         }
         p.touched = now;
         if piece.name.is_some() {
             p.name = piece.name.clone();
         }
         let last = piece.is_last();
-        p.pieces.insert(piece.idx, piece.data);
+        let new = p.pieces.insert(piece.idx, piece.data).is_none();
         if p.pieces.len() < p.count as usize {
             if last {
                 p.held_last = Some(Box::new(env.clone()));
             }
-            return Push::Pending { answer: !last };
+            return Push::Pending {
+                answer: !last,
+                progress: new.then_some((p.pieces.len() as u8, p.count)),
+                first,
+            };
         }
         let p = self.partial.remove(&key).expect("present");
         let mut data = Vec::with_capacity(p.total as usize);
@@ -334,7 +350,11 @@ impl Assembler {
         }
         if data.len() != p.total as usize {
             // Corrupt set: forget it; the sender's retries start it again.
-            return Push::Pending { answer: !last };
+            return Push::Pending {
+                answer: !last,
+                progress: None,
+                first: false,
+            };
         }
         self.done.insert(key, now);
         let held_last = if last { None } else { p.held_last };
@@ -353,6 +373,93 @@ impl Assembler {
         }
         let key = (origin.to_ascii_uppercase(), piece.file_id);
         self.done.contains_key(&key) || !self.partial.contains_key(&key)
+    }
+}
+
+/// Width of the progress bar in cells.
+const BAR_CELLS: usize = 20;
+
+/// A DOS-style progress bar for `have` of `count` pieces, such as
+/// `[████████░░░░░░░░░░░░] 6/15`.
+pub fn progress_bar(have: u8, count: u8) -> String {
+    let count = count.max(1);
+    let have = have.min(count);
+    let full = (have as usize * BAR_CELLS) / count as usize;
+    format!(
+        "[{}{}] {have}/{count}",
+        "█".repeat(full),
+        "░".repeat(BAR_CELLS - full)
+    )
+}
+
+/// The `+radio/file` tag value (`have/count`) back to a bar.
+pub fn progress_bar_from_tag(tag: &str) -> Option<String> {
+    let (have, count) = tag.split_once('/')?;
+    Some(progress_bar(
+        have.trim().parse().ok()?,
+        count.trim().parse().ok()?,
+    ))
+}
+
+/// Files we are sending: which piece receipts have come back, so the file
+/// line can show how far along it is.
+#[derive(Default)]
+pub struct Outgoing {
+    /// Piece msgid -> file line id (the last piece's msgid).
+    pieces: HashMap<String, String>,
+    /// File line id -> (destination, piece count, pieces acknowledged).
+    files: HashMap<String, (String, u8, std::collections::HashSet<String>)>,
+    order: std::collections::VecDeque<String>,
+}
+
+/// Files kept in [`Outgoing`] before the oldest is forgotten.
+const OUTGOING_CAP: usize = 32;
+
+impl Outgoing {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Start tracking a file sent to `dest` as `pieces` (msgids, in order;
+    /// the last one is the file line id).
+    pub fn start(&mut self, dest: &str, pieces: &[String]) {
+        let Some(line) = pieces.last().cloned() else {
+            return;
+        };
+        for p in pieces {
+            self.pieces.insert(p.clone(), line.clone());
+        }
+        self.files.insert(
+            line.clone(),
+            (dest.to_string(), pieces.len() as u8, Default::default()),
+        );
+        self.order.push_back(line);
+        while self.order.len() > OUTGOING_CAP {
+            if let Some(old) = self.order.pop_front() {
+                self.forget(&old);
+            }
+        }
+    }
+
+    /// A receipt for `piece`. Returns (file line id, destination, pieces
+    /// acknowledged, piece count) when it moved a file along.
+    pub fn acked(&mut self, piece: &str) -> Option<(String, String, u8, u8)> {
+        let line = self.pieces.get(piece)?.clone();
+        let (dest, count, got) = self.files.get_mut(&line)?;
+        if !got.insert(piece.to_string()) {
+            return None;
+        }
+        let out = (line.clone(), dest.clone(), got.len() as u8, *count);
+        if out.2 >= out.3 {
+            self.forget(&line);
+        }
+        Some(out)
+    }
+
+    fn forget(&mut self, line: &str) {
+        self.files.remove(line);
+        self.pieces.retain(|_, l| l != line);
+        self.order.retain(|l| l != line);
     }
 }
 
@@ -375,14 +482,33 @@ pub fn save_path(dir: &Path, from: &str, name: &str) -> PathBuf {
     path
 }
 
-/// Folder received files are saved in: `files` beside the station's store
-/// (the data folder, unless the config moves the store).
-pub fn received_dir(store_path: &Path) -> PathBuf {
+/// Folder for the station's own file work (`files` beside the store):
+/// uploads waiting to be sent, and received files when there is no Desktop.
+pub fn data_files_dir(store_path: &Path) -> PathBuf {
     store_path
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(crate::config::default_data_dir)
         .join("files")
+}
+
+/// Folder received files are saved in: `[store] files_dir` when set, else
+/// "WeeChat Radio" on the Desktop (Mac, Windows, Linux with a desktop),
+/// else `files` beside the store (a headless Pi, for one).
+pub fn received_dir(store: &crate::config::StoreConfig) -> PathBuf {
+    if !store.files_dir.as_os_str().is_empty() {
+        return store.files_dir.clone();
+    }
+    desktop_dir()
+        .map(|d| d.join("WeeChat Radio"))
+        .unwrap_or_else(|| data_files_dir(&store.path))
+}
+
+/// The user's Desktop folder, when there is one on this machine.
+fn desktop_dir() -> Option<PathBuf> {
+    let dirs = directories::UserDirs::new()?;
+    let d = dirs.desktop_dir()?.to_path_buf();
+    d.is_dir().then_some(d)
 }
 
 #[cfg(test)]
@@ -446,7 +572,7 @@ mod tests {
             let back = Piece::decode(&p.encode()).unwrap();
             let env = env_for(&back, i as u32);
             match a.push("G4ABC", &env, back) {
-                Push::Pending { answer } => {
+                Push::Pending { answer, .. } => {
                     // The last piece came first: its receipt is held.
                     assert_eq!(answer, i != 0);
                 }
@@ -475,7 +601,7 @@ mod tests {
         let env = env_for(&last, 3);
         assert!(matches!(
             a.push("G4ABC", &env, last.clone()),
-            Push::Pending { answer: false }
+            Push::Pending { answer: false, .. }
         ));
         assert!(!a.may_answer("G4ABC", &last));
         let _ = a.push("G4ABC", &env_for(&pieces[0], 1), pieces[0].clone());
@@ -491,7 +617,56 @@ mod tests {
         // A late retry of a finished file is answered, not assembled again.
         assert!(matches!(
             a.push("G4ABC", &env, last),
-            Push::Pending { answer: true }
+            Push::Pending { answer: true, .. }
+        ));
+    }
+
+    #[test]
+    fn the_progress_bar_looks_like_dos() {
+        assert_eq!(progress_bar(0, 15), format!("[{}] 0/15", "░".repeat(20)));
+        assert_eq!(progress_bar(15, 15), format!("[{}] 15/15", "█".repeat(20)));
+        assert_eq!(
+            progress_bar(6, 15),
+            format!("[{}{}] 6/15", "█".repeat(8), "░".repeat(12))
+        );
+        assert_eq!(progress_bar_from_tag("1/2"), Some(progress_bar(1, 2)));
+        assert_eq!(progress_bar_from_tag("x"), None);
+    }
+
+    #[test]
+    fn outgoing_counts_each_receipt_once() {
+        let mut o = Outgoing::new();
+        let ids: Vec<String> = ["a", "b", "c"].iter().map(|s| s.to_string()).collect();
+        o.start("G4ABC", &ids);
+        assert_eq!(o.acked("a"), Some(("c".into(), "G4ABC".into(), 1, 3)));
+        assert_eq!(o.acked("a"), None);
+        assert_eq!(o.acked("b").map(|t| t.2), Some(2));
+        assert_eq!(o.acked("c").map(|t| t.2), Some(3));
+        // Finished files are forgotten.
+        assert_eq!(o.acked("zzz"), None);
+        assert!(o.files.is_empty() && o.pieces.is_empty());
+    }
+
+    #[test]
+    fn the_assembler_reports_progress_on_new_pieces() {
+        let pieces = split(9, "a.txt", &data(700), body_limit(Preset::VhfFm)).unwrap();
+        let mut a = Assembler::new();
+        let env0 = env_for(&pieces[0], 1);
+        assert!(matches!(
+            a.push("G4ABC", &env0, pieces[0].clone()),
+            Push::Pending {
+                progress: Some((1, 3)),
+                first: true,
+                ..
+            }
+        ));
+        assert!(matches!(
+            a.push("G4ABC", &env0, pieces[0].clone()),
+            Push::Pending {
+                progress: None,
+                first: false,
+                ..
+            }
         ));
     }
 

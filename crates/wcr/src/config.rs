@@ -488,6 +488,10 @@ pub struct StoreConfig {
     /// Override identity key path (for tests and multi-station e2e). Empty = default.
     #[serde(default)]
     pub identity_key: PathBuf,
+    /// Where received files are saved. Empty = a "WeeChat Radio" folder on
+    /// the Desktop, or `files` beside the store when there is no Desktop.
+    #[serde(default)]
+    pub files_dir: PathBuf,
     pub max_age_hours: u64,
     pub max_msgs: u64,
 }
@@ -497,6 +501,7 @@ impl Default for StoreConfig {
         Self {
             path: PathBuf::new(),
             identity_key: PathBuf::new(),
+            files_dir: PathBuf::new(),
             max_age_hours: 72,
             max_msgs: 10_000,
         }

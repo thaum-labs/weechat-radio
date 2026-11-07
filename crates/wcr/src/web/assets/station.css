@@ -223,6 +223,8 @@ main.wide { max-width: 1100px; }
 .lines .sys { color: var(--dim); font-style: italic; }
 .lines .marks { color: var(--purple); margin-left: 6px; font-size: 12px; white-space: nowrap; font-family: var(--mono); }
 .lines .marks.ok { color: var(--green); } .lines .marks.no { color: var(--red); }
+.lines .text a { color: var(--accent); word-break: break-all; }
+.lines .bar { color: var(--green); margin-left: 6px; font-size: 12px; white-space: nowrap; font-family: var(--mono); }
 .compose { display: flex; gap: 8px; align-items: flex-end; }
 .compose textarea { margin: 0; flex: 1; min-height: 44px; }
 .mail-bar select { min-height: 40px; }
