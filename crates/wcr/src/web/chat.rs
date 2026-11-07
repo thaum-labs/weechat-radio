@@ -356,7 +356,7 @@ impl Chat {
         } else if let Some(ch) = chat_line::parse_join(raw) {
             self.joined(&ch);
         } else if let Some(line) = chat_line::parse_privmsg(raw) {
-            let conv = match dm_target(raw) {
+            let conv = match chat_line::dm_target(raw) {
                 // A direct line: the conversation is the other station.
                 Some(to) if line.nick.eq_ignore_ascii_case(&me) => to,
                 Some(_) => line.nick.to_ascii_uppercase(),
@@ -431,19 +431,6 @@ impl Chat {
             }
         }
     }
-}
-
-/// The callsign a `PRIVMSG` is addressed to, when it is a direct line and
-/// not a channel. (The shared parser files both under a channel name.)
-fn dm_target(raw: &str) -> Option<String> {
-    let rest = raw.split_once(" PRIVMSG ")?.1;
-    let target = rest.split_whitespace().next()?;
-    if target.starts_with('#') || target.starts_with('&') {
-        return None;
-    }
-    crate::proto::Callsign::parse(target)
-        .ok()
-        .map(|_| target.to_ascii_uppercase())
 }
 
 /// What a mark can change on a line.
