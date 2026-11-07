@@ -268,10 +268,10 @@ const COMMANDS: &[Cmd] = &[
     },
     Cmd {
         name: "report",
-        usage: "/report CALL | /report auto on|off",
-        summary: "Signal report: how well CALL hears you (not weather)",
+        usage: "/report [CALL] | /report auto on|off",
+        summary: "Signal report: how well CALL (or this private tab) hears you (not weather)",
         args: &[],
-        send_bare: false,
+        send_bare: true,
     },
     Cmd {
         name: "wx",
@@ -735,6 +735,10 @@ pub fn to_wire(raw: &str, channel: &str) -> Vec<String> {
                 format!("INVITE {nick} {ch}"),
             ]
         }
+        // Bare `/report` in a private tab asks that station.
+        "report" if tail.is_empty() && !channel.is_empty() && !channel.starts_with(['#', '&']) => {
+            vec![format!("RADIO report {}", channel.to_ascii_uppercase())]
+        }
         "prio" | "priority" => {
             if channel.starts_with('#') || channel.starts_with('&') {
                 let ch = normalize_channel(channel);
@@ -848,6 +852,22 @@ mod tests {
         );
         assert_eq!(to_radio_args("/help").as_deref(), Some("help"));
         assert_eq!(to_radio_args("hello"), None);
+    }
+
+    #[test]
+    fn bare_report_asks_the_private_tab() {
+        assert_eq!(to_wire("/report", "g4abc"), vec!["RADIO report G4ABC"]);
+        assert_eq!(to_wire("/report", "#bulletin"), vec!["RADIO report"]);
+        assert_eq!(
+            to_wire("/report M0XYZ", "g4abc"),
+            vec!["RADIO report M0XYZ"]
+        );
+        assert_eq!(
+            to_wire("/report auto off", "g4abc"),
+            vec!["RADIO report auto off"]
+        );
+        let s = suggestions("/rep");
+        assert!(s.iter().any(|x| x.label == "/report" && x.send_now));
     }
 
     #[test]
