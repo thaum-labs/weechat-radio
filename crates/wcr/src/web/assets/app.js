@@ -124,6 +124,8 @@ function onEvent(ev) {
       drawConvs();
     }
     if (l.conv === chat.active) drawLine(l);
+  } else if (ev.type === "gone") {
+    forget(ev.conv);
   } else if (ev.type === "notice") {
     $("chat-note").textContent = ev.text;
   }
@@ -206,10 +208,52 @@ function drawLine(l) {
   if (stick || l.mine) ol.scrollTop = ol.scrollHeight;
 }
 
+// A group can be left (the others are told); a direct chat can be deleted.
+// Both take it off the list with its history. #bulletin stays.
+function isGroup(id) { return id.startsWith("#") || id.startsWith("&"); }
+
+function drawRemove() {
+  const b = $("conv-remove");
+  const id = chat.active;
+  b.hidden = id.toLowerCase() === "#bulletin";
+  b.textContent = isGroup(id) ? "Leave group" : "Delete chat";
+  b.title = isGroup(id)
+    ? "Leave this group: the other members are told, and it goes from this list with its history."
+    : "Delete this chat and its history from this station. A new message from them opens it again.";
+}
+
+$("conv-remove").onclick = async () => {
+  const id = chat.active;
+  const ask = isGroup(id)
+    ? `Leave ${id}? The other members are told you left, and the group and its messages go from this station. You can join again later.`
+    : `Delete the chat with ${id}? Its messages go from this station. They keep their copy.`;
+  if (!confirm(ask)) return;
+  try {
+    await post("/api/chat/remove", { conv: id });
+    forget(id);
+    $("chat-note").textContent = isGroup(id) ? `Left ${id}.` : `Deleted the chat with ${id}.`;
+  } catch (err) {
+    $("chat-note").textContent = err.message;
+  }
+};
+
+function forget(id) {
+  chat.convs.delete(id);
+  chat.order = chat.order.filter((c) => c !== id);
+  chat.unread.delete(id);
+  if (chat.active === id) {
+    openConv("#bulletin");
+    document.body.classList.remove("in-conv");
+  } else {
+    drawConvs();
+  }
+}
+
 function openConv(id) {
   chat.active = id;
   chat.unread.delete(id);
   $("conv-title").textContent = id;
+  drawRemove();
   document.body.classList.add("in-conv");
   $("chat-note").textContent = "";
   // Files go to one station only: the button shows in direct chats.
@@ -562,6 +606,7 @@ try {
   chat.active = localStorage.getItem("wcr-conv") || chat.active;
   $("conv-title").textContent = chat.active;
 } catch (_) { /* private mode */ }
+drawRemove();
 connect();
 loadStations();
 let first = "chat";
