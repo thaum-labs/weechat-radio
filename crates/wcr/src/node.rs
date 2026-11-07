@@ -4567,7 +4567,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             let call = arg.to_ascii_uppercase();
             if call.is_empty() || call.starts_with('#') {
                 return format!(
-                    "usage: /report CALL asks that station how well it hears you (a signal report, not weather); the answer comes back privately in the CALL tab. /report auto on|off turns your own automatic answers on or off (now {})",
+                    "usage: /report CALL asks that station how well it hears you (a signal report, not weather); the answer comes back privately in the CALL tab. In a private tab, /report alone asks that station. /report auto on|off turns your own automatic answers on or off (now {})",
                     if cfg.lock().rf.auto_report { "on" } else { "off" }
                 );
             }
