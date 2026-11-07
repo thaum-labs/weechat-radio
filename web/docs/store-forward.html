@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Store and forward — WeeChat Radio</title>
+  <meta name="description" content="Live messaging chat powered by radio. HF, VHF, UHF and handhelds via VOX. Non-ham operators can get involved with just an internet connection." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="WeeChat Radio" />
+  <meta property="og:title" content="Store and forward — WeeChat Radio" />
+  <meta property="og:description" content="Live messaging chat powered by radio. HF, VHF, UHF and handhelds via VOX. Non-ham operators can get involved with just an internet connection." />
+  <meta property="og:url" content="https://weechatradio.com/docs/store-forward.html" />
+  <meta property="og:image" content="https://weechatradio.com/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="WeeChat Radio. Live messaging chat powered by radio." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://weechatradio.com/og.png" />
+  <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=58" />
+  <link rel="stylesheet" href="/docs.css?v=5" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav aria-label="Main">
+      <a href="/why.html">why</a>
+      <a href="/guides.html">guides</a>
+      <a href="/guides/band.html">plan</a>
+      <a href="/map.html">map</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+      <a class="nav-github" href="https://github.com/thaum-labs/weechat-radio" aria-label="WeeChat Radio on GitHub"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-4 1.5-4-2-6-2.5M15 21v-3.5a3 3 0 0 0-.8-2.3c2.7-.3 5.6-1.3 5.6-6a4.7 4.7 0 0 0-1.3-3.2 4.4 4.4 0 0 0-.1-3.2s-1-.3-3.4 1.3a11.6 11.6 0 0 0-6 0C6.6 2.5 5.6 2.8 5.6 2.8a4.4 4.4 0 0 0-.1 3.2A4.7 4.7 0 0 0 4.2 9.2c0 4.6 2.9 5.7 5.6 6a3 3 0 0 0-.8 2.3V21"/></svg><span class="nav-github-text">github</span></a>
+      <a class="nav-cta" href="/downloads.html">download</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/docs.html">docs</a> › <a href="/docs.html#signals-and-modes">Signals and modes</a> › <span aria-current="page">Store and forward</span></p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> Store and forward</h1>
+      <p class="lead">A message does not need a live path from you to the other station. Each step keeps a copy and passes it on when the next step can take it: your own station, the stations in between, the hub, and for email the gateway and the hub mailbox.</p>
+
+      <p>This page says where a message waits and for how long. Chat is short-lived: it waits minutes, up to an hour, not overnight. Email waits on the hub until you collect it.</p>
+
+      <section class="article-section article-section--first" aria-labelledby="shortH">
+        <h2 id="shortH">The short version</h2>
+        <div class="table-wrap">
+          <table class="stack-table">
+            <thead>
+              <tr><th>Where it waits</th><th>What waits there</th><th>For how long</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Your station</strong></td><td>Every line you send, until a receipt (ACK) comes back</td><td>Retries for about 17 minutes, then <code>[no]</code>. Kept through a restart, given up at 1 hour</td></tr>
+              <tr><td><strong>Stations in between</strong></td><td>A copy of a line they heard, to send on (a hop)</td><td>Sent on within seconds, again when the sender retries. Not after 1 hour</td></tr>
+              <tr><td><strong>The hub</strong></td><td>A direct message for a station that is not connected</td><td>10 minutes, up to 32 per callsign</td></tr>
+              <tr><td><strong>Mail gateway</strong></td><td>The pieces of a Radio+ email that have arrived</td><td>Until the whole mail is in, then it goes to the hub</td></tr>
+              <tr><td><strong>Hub mailbox</strong></td><td>Email sent to your callsign</td><td>Until your station fetches it</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="article-section" aria-labelledby="ownH">
+        <h2 id="ownH">1. Your own station</h2>
+        <p class="section-lead">Every line is saved on your computer before it goes on the air, and stays there until someone answers it.</p>
+        <ol class="steps">
+          <li>You send a line. It is stored first, so closing the program does not lose it.</li>
+          <li>If the channel is busy, the line waits for a gap (<strong>PTT</strong> shows <code>wait</code>), then goes after 15 seconds at most. Lines you send in the first 2 minutes after start wait until another station has been heard.</li>
+          <li>If no receipt comes back, the line is sent again: after about 45 seconds, then 90, then 180. Each retry uses a slower, tougher waveform. See <a href="/docs/weak.html">weak signals</a>.</li>
+          <li>After the last copy it waits two more 6-minute gaps, about 17 minutes in all, then shows <code>[no]</code>. A receipt that arrives later still turns it to <code>[ok]</code>.</li>
+          <li>If the program restarts in that time, it picks the retries up where they stopped. A line older than one hour is not sent again.</li>
+        </ol>
+        <p>A <code>!</code> priority line retries faster (20 s, 40 s, 80 s) and a <code>!!</code> emergency line faster still (8 s, 16 s, 32 s). To stop every line still waiting, type <code>/radio flush</code>: they show <code>[no]</code> and are not sent again.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="hopH">
+        <h2 id="hopH">2. Stations in between</h2>
+        <p class="section-lead">Any station on your frequency that hears your line keeps a copy and sends it on, so the other station does not have to hear you directly.</p>
+        <ul>
+          <li>Each copy carries a hop count: 3 for a direct message, 4 for <code>!</code>, 5 for <code>!!</code>, 6 for <code>#bulletin</code> and groups. Each station takes one off, and at 0 it reads the line but does not send it on.</li>
+          <li>A station waits a short random moment before it sends. If it hears another station send the same line first, it drops its own copy, so the channel is not flooded.</li>
+          <li>When you retry, the stations in between send your line on again. The receipt comes back to you the same way, hop by hop.</li>
+          <li>A station does not carry a line once it is an hour old.</li>
+        </ul>
+        <p>Your line shows <code>[rl]</code> when you hear a station carry it on. While a relay is carrying it, the line stays <code>[rl]</code> instead of <code>[no]</code> until its receipt arrives or it is an hour old. Maps and examples: <a href="/docs/hops.html">hops</a>.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="hubH">
+        <h2 id="hubH">3. The hub</h2>
+        <p class="section-lead">The hub is the internet side. It keeps a direct message for a short time when the other station is not connected.</p>
+        <ul>
+          <li>A direct message for a station that is not connected is held for <strong>10 minutes</strong>, up to <strong>32</strong> per callsign (the oldest goes first when that fills). It is delivered as soon as that station connects.</li>
+          <li>Groups and <code>#bulletin</code> are not held. Someone has to be connected to get them.</li>
+          <li>An internet-radio gateway that hears a Radio+ line hands it to the hub. Your line shows <code>[gw]</code>. A line sent in <code>radio</code> mode stays off the internet.</li>
+          <li>The hub never keys a radio. A gateway puts a hub message on the air only when the station it is for was heard on that gateway's frequency in the last 10 minutes.</li>
+        </ul>
+        <p>More on gateways and other bands: <a href="/docs/bridging.html">cross-frequency chat</a>.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="mailH">
+        <h2 id="mailH">4. Email</h2>
+        <p class="section-lead">Email is the part that waits longest. Nothing has to be on the air at the same time as the person writing to you.</p>
+        <ul>
+          <li><strong>Sending from Radio+:</strong> the mail sits in your Outbox and goes to a mail gateway in pieces. The gateway keeps the pieces it has, so a retry sends only the missing ones. When it has them all it posts the mail through the hub. With Auto on, if that gateway does not answer, the mail moves to the next gateway heard.</li>
+          <li><strong>Receiving:</strong> mail to your callsign stays in your mailbox on the hub until your station fetches it. On Radio+, <strong>Check mail</strong> brings the list of waiting mail (subject and size) over the air, and <strong>Get</strong> brings one mail in. Nothing is sent over the air unless you ask for it.</li>
+        </ul>
+        <p>Every step and status: <a href="/docs/email.html">email</a>.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="marksH">
+        <h2 id="marksH">What the marks on your line mean</h2>
+        <dl class="mark-list">
+          <div><dt><code>[..]</code></dt><dd>Waiting to go out.</dd></div>
+          <div><dt><code>[tx]</code></dt><dd>Sent on the air or to the hub. Retries run until a receipt.</dd></div>
+          <div><dt><code>[rl]</code></dt><dd>You heard a station carry it on. Not a receipt.</dd></div>
+          <div><dt><code>[gw]</code></dt><dd>A gateway handed it to the hub. Not a receipt.</dd></div>
+          <div><dt><code>[ok]</code></dt><dd>Delivered: a receipt came back.</dd></div>
+          <div><dt><code>[all]</code></dt><dd>Every member of a closed group sent a receipt.</dd></div>
+          <div><dt><code>[no]</code></dt><dd>Nobody answered in time, or the send was refused.</dd></div>
+        </dl>
+      </section>
+
+      <section class="article-section" aria-labelledby="notH">
+        <h2 id="notH">What it does not do</h2>
+        <ul>
+          <li>It does not keep chat for a station that is off for the night. Over the air your station gives up after an hour; the hub keeps a direct message for 10 minutes.</li>
+          <li>It does not hold group or <code>#bulletin</code> lines on the hub for people who are not connected.</li>
+          <li>It does not change frequency or band to get a message through. Another band needs a gateway and the hub.</li>
+        </ul>
+        <p>For anything that must wait longer than that, send it as email.</p>
+      </section>
+
+      <p class="next">Relays on one frequency: <a href="/docs/hops.html">hops</a>. Retries on a hard band: <a href="/docs/weak.html">weak signals</a>. Mail in detail: <a href="/docs/email.html">email</a>.</p>
+    </main>
+  </div>
+  <script src="/copy.js?v=1"></script>
+  <script src="/shell.js?v=15"></script>
+  <script src="/articles.js?v=8"></script>
+</body>
+</html>
