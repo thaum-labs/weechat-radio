@@ -37,6 +37,7 @@ const PAGES: [string, string | null][] = [
   ["/docs/modes.html", "docs"],
   ["/docs/protocol.html", "docs"],
   ["/docs/scenarios.html", "docs"],
+  ["/docs/store-forward.html", "docs"],
   ["/docs/try.html", "guides"],
   ["/docs/weak.html", "docs"],
   // Docs pages that live in Guides › Plan a contact mark guides, like their breadcrumb.

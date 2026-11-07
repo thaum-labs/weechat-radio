@@ -51,6 +51,7 @@
     { href: "/docs/email.html", cat: "how-it-works", title: "Email", desc: "Internet mail beside Live Chat. Radio-plus goes through a gateway.", keywords: "mail inbox gateway radio-plus auto mail-gw finding" },
     // docs: Signals and modes
     { href: "/docs/weak.html", cat: "signals-and-modes", title: "Weak signals", desc: "Retries, slower presets, and what TX / RETRY mean on the bar.", keywords: "faint fading retry preset snr" },
+    { href: "/docs/store-forward.html", cat: "signals-and-modes", title: "Store and forward", desc: "Where a message waits when the other station is not there yet, and for how long.", keywords: "store-and-forward store forward offline queue outbox waiting held retry relay receipt ack delivery later missed asleep" },
     { href: "/docs/compare.html", cat: "signals-and-modes", title: "Compare modes", desc: "WeeChat Radio HF vs JS8, FT8, Olivia, PSK31, APRS. Sortable scores.", keywords: "js8 ft8 olivia psk31 aprs digital modes" },
     { href: "/docs/apps.html", cat: "signals-and-modes", title: "Compare apps", desc: "WeeChat Radio vs Winlink, JS8Call, VarAC, Fldigi, Meshtastic and more.", keywords: "winlink pat js8call varac fldigi freedata meshtastic" },
     // docs: For developers and hub operators
