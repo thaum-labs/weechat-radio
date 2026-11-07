@@ -244,6 +244,7 @@ fn router(web: Web) -> Router {
         .route("/api/events", get(events))
         .route("/api/chat/send", post(chat_send))
         .route("/api/chat/join", post(chat_join))
+        .route("/api/chat/remove", post(chat_remove))
         .route("/api/stations", get(stations))
         .route("/api/traffic", get(traffic))
         .route("/api/mail", get(mail_list))
@@ -685,6 +686,19 @@ struct JoinBody {
 async fn chat_join(State(web): State<Web>, Json(b): Json<JoinBody>) -> Response {
     match web.chat.join(&b.channel) {
         Ok(ch) => Json(json!({ "ok": true, "channel": ch })).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct RemoveBody {
+    conv: String,
+}
+
+/// Leave a group or delete a direct chat (see [`chat::Chat::remove`]).
+async fn chat_remove(State(web): State<Web>, Json(b): Json<RemoveBody>) -> Response {
+    match web.chat.remove(&b.conv) {
+        Ok(id) => Json(json!({ "ok": true, "conv": id })).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
     }
 }
