@@ -273,6 +273,43 @@ impl Chat {
         Ok(ch)
     }
 
+    /// Take a conversation off the list (the Pi's "Leave group" and
+    /// "Delete chat"). A group is left with the same PART the desktop app's
+    /// "leave room" sends: the station tells the other members and drops the
+    /// group's stored lines. A direct chat has nobody to tell, so its stored
+    /// lines are cleared with the desktop app's `/clear`. #bulletin is
+    /// public and stays.
+    pub fn remove(&self, conv: &str) -> Result<String, String> {
+        let id = conv_id(conv);
+        if id.is_empty() {
+            return Err("need a channel name or callsign".into());
+        }
+        if crate::slash::is_bulletin(&id) {
+            return Err("#bulletin is public, it cannot be left or deleted".into());
+        }
+        if !self.state.lock().up {
+            return Err("the station is not running".into());
+        }
+        let group = id.starts_with('#') || id.starts_with('&');
+        let wire = if group {
+            format!("PART {id}")
+        } else {
+            format!("RADIO clear {id}")
+        };
+        let _ = self.out.send(wire);
+        {
+            let mut st = self.state.lock();
+            st.convs.retain(|c| !c.id.eq_ignore_ascii_case(&id));
+            if group {
+                st.joined.retain(|c| !c.eq_ignore_ascii_case(&id));
+                save_joined(&self.joined_path, &st.joined);
+            }
+        }
+        // Every open page drops it, not only the one that asked.
+        let _ = self.events.send(json!({ "type": "gone", "conv": id }));
+        Ok(id)
+    }
+
     fn remember_join(&self, ch: &str) {
         let mut st = self.state.lock();
         if !st.joined.iter().any(|c| c.eq_ignore_ascii_case(ch)) {
@@ -644,6 +681,54 @@ mod tests {
         assert!(c.send("#bulletin", "/part").is_err());
         c.state.lock().up = false;
         assert!(c.send("#bulletin", "hi").is_err());
+    }
+
+    #[test]
+    fn a_group_is_left_and_a_direct_chat_is_deleted() {
+        let (out, mut rx) = mpsc::unbounded_channel();
+        let (events, _) = broadcast::channel(16);
+        let path = std::env::temp_dir().join(format!("wcr-web-remove-{}.json", std::process::id()));
+        let c = Chat {
+            state: Mutex::new(State {
+                me: "M7TJF".into(),
+                up: true,
+                next_seq: 1,
+                convs: Vec::new(),
+                joined: vec![BULLETIN.into()],
+            }),
+            events,
+            out,
+            joined_path: path.clone(),
+        };
+        let mut seen = c.subscribe();
+        c.join("#Ops").unwrap();
+        assert_eq!(rx.try_recv().unwrap(), "JOIN #ops");
+        c.handle("@msgid=g1 :G4ABC PRIVMSG M7TJF :hi");
+        assert!(c.remove("#bulletin").is_err());
+
+        assert_eq!(c.remove("#OPS").unwrap(), "#ops");
+        assert_eq!(rx.try_recv().unwrap(), "PART #ops");
+        assert!(!load_joined(&path).iter().any(|ch| ch == "#ops"));
+
+        assert_eq!(c.remove("g4abc").unwrap(), "G4ABC");
+        assert_eq!(rx.try_recv().unwrap(), "RADIO clear G4ABC");
+
+        let left: Vec<String> = c.snapshot()["convs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v["id"].as_str().unwrap().to_string())
+            .collect();
+        assert!(left.is_empty(), "{left:?}");
+        let gone: Vec<Value> = std::iter::from_fn(|| seen.try_recv().ok())
+            .filter(|e| e["type"] == "gone")
+            .collect();
+        assert_eq!(gone.len(), 2);
+
+        c.state.lock().up = false;
+        c.join("#net").unwrap();
+        assert!(c.remove("#net").is_err());
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
