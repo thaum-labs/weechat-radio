@@ -87,10 +87,10 @@
           <li><strong>Auto: not asked yet</strong>: The station has just started. It asks by itself once the radio is up.</li>
           <li><strong>Auto: asking which gateways hear you…</strong>: The ask is on the air and the station is listening for replies.</li>
           <li><strong>Auto: TF101, link 6 dB, 1 more heard</strong>: TF101 is picked. The link is its weaker direction. The others heard are kept as backups.</li>
-          <li><strong>No mail gateway heard</strong>: No gateway answered. Mail cannot go out yet; the station asks again before your next mail.</li>
+          <li><strong>No mail gateway heard</strong>: No gateway answered. Mail cannot go out yet. The station asks again by itself after 2 minutes, then less often (up to once an hour), once sooner when it hears a gateway's beacon, and before your next mail. If a gateway answers or acks your mail in the meantime, it is picked at once.</li>
           <li><strong>TF101 (typed in setup)</strong>: You typed a callsign, so Auto is off and that station is always used.</li>
         </ul>
-        <p>Your station asks when it starts, after a band or preset change, after about an hour, or after repeated failures, not for every mail. Mail and Check mail go to the one picked gateway, so a mail is posted once. If that gateway stops answering, the mail moves to the next one heard. While a gateway is being found, the send window says <em>Finding a mail gateway… Not sent yet</em>, then moves on to sending. The outbox and the mail's timeline name the gateway that was used. Timings follow your preset, so Auto works on VHF/UHF FM and on HF alike.</p>
+        <p>Your station asks when it starts, after a band or preset change, after an hour without mail through its gateway, or after repeated failures, not for every mail, so it adds little traffic to the channel. Any gateway that acks your mail or answers Check mail counts as heard, so MAIL GW follows what is really on the air. Mail and Check mail go to the one picked gateway, so a mail is posted once. If that gateway stops answering, the mail moves to the next one heard. While a gateway is being found, the send window says <em>Finding a mail gateway… Not sent yet</em>, then moves on to sending. The outbox and the mail's timeline name the gateway that was used. Timings follow your preset, so Auto works on VHF/UHF FM and on HF alike.</p>
       </section>
 
       <section class="article-section" aria-labelledby="pathH">

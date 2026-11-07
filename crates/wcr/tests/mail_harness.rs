@@ -1972,3 +1972,42 @@ async fn auto_with_no_gateway_heard_says_so() {
     );
     assert_eq!(posts, 0);
 }
+
+/// Nobody hears the first ask, then the gateways come in range. Auto asks
+/// again by itself (no restart, no mail sent) and MAIL GW turns to the
+/// gateway: before, "No mail gateway heard" stayed until the app restarted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn auto_asks_again_after_hearing_no_gateway() {
+    let _hang = watchdog(TEST_LIMIT);
+    let deaf = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let drop_rx: LinkDrop = {
+        let deaf = deaf.clone();
+        Arc::new(move |from, _, _| from == 1 && deaf.load(std::sync::atomic::Ordering::Relaxed))
+    };
+    let g = AutoGroup::start(auto_opts(), drop_rx, |_, _| {}).await;
+    let t0 = Instant::now();
+    let tab = g.wait_pick(180).await;
+    assert_eq!(tab["pick"]["state"], "none_heard", "{tab}\n{}", g.trace(t0));
+    deaf.store(false, std::sync::atomic::Ordering::Relaxed);
+    // The first re-ask is due 2 minutes after the miss (sooner when a
+    // gateway beacon is heard); allow the ask and its replies on top.
+    let deadline = Instant::now() + Duration::from_secs(300);
+    let mut tab = serde_json::Value::Null;
+    while Instant::now() < deadline {
+        tab = g.tab().await;
+        if tab["pick"]["state"] == "picked" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    let trace = g.trace(t0);
+    g.stop();
+    assert_eq!(tab["pick"]["state"], "picked", "{tab}\n{trace}");
+    assert!(
+        tab["gateway_line"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("Auto: "),
+        "{tab}"
+    );
+}

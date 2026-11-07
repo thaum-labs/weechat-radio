@@ -25,7 +25,8 @@ use std::time::{Duration, Instant};
 
 /// The hub gives reply slots to this many gateways at most.
 pub const MAX_REPLIES: usize = 3;
-/// A pick older than this is asked again before the next mail (HF drifts).
+/// A pick older than this is asked again (HF drifts), by itself and before
+/// the next mail.
 pub const ASK_EVERY_SECS: i64 = 3600;
 /// Mail or Check mail failing this many times in a row on the picked gateway
 /// moves to the next one on the list.
@@ -35,6 +36,12 @@ pub const TIE_DB: f32 = 0.5;
 /// After an ask that keyed nothing (radio not up yet), wait this long before
 /// the next try, so a station without a radio does not try every tick.
 pub const ASK_RETRY_SECS: i64 = 60;
+/// After an ask that heard no gateway, Auto asks again by itself after this
+/// long, doubling each time nobody answers, up to [`NONE_HEARD_MAX_SECS`]
+/// (hourly). A gateway may have been busy or switched off; a lone station
+/// must not key every minute either. A gateway beacon heard asks sooner.
+pub const NONE_HEARD_FIRST_SECS: i64 = 120;
+pub const NONE_HEARD_MAX_SECS: i64 = ASK_EVERY_SECS;
 
 /// Turnaround the hub allows per frame. It does not know each station's.
 const TURNAROUND_ALLOW_MS: u32 = 300;
@@ -414,6 +421,13 @@ pub struct GatewayPick {
     pub freq_khz: u32,
     /// Failures in a row on the current gateway.
     pub fails: u32,
+    /// Asks in a row that heard no gateway. Sets the wait before the next.
+    #[serde(default)]
+    pub misses: u32,
+    /// A gateway beacon already started an ask in this wait. One per wait,
+    /// so a gateway that cannot hear us does not draw an ask every beacon.
+    #[serde(default)]
+    pub beacon_spent: bool,
 }
 
 pub const NO_GATEWAY_HEARD: &str = "No mail gateway heard";
@@ -442,8 +456,11 @@ impl GatewayPick {
     /// Store the outcome of an ask: the ranked list, best first.
     pub fn settle(&mut self, list: Vec<Candidate>, now: i64, preset: &str, freq_khz: u32) {
         self.state = if list.is_empty() {
+            self.misses = self.misses.saturating_add(1);
             PickState::NoneHeard
         } else {
+            self.misses = 0;
+            self.beacon_spent = false;
             PickState::Picked
         };
         self.list = list;
@@ -478,6 +495,87 @@ impl GatewayPick {
 
     pub fn note_ok(&mut self) {
         self.fails = 0;
+    }
+
+    /// True when an ask that heard nobody should be tried again by itself:
+    /// [`NONE_HEARD_FIRST_SECS`] after the first miss, doubling per miss.
+    pub fn retry_due(&self, now: i64) -> bool {
+        if self.state != PickState::NoneHeard {
+            return false;
+        }
+        let shift = self.misses.saturating_sub(1).min(10);
+        let wait = (NONE_HEARD_FIRST_SECS << shift).min(NONE_HEARD_MAX_SECS);
+        now - self.asked_at >= wait
+    }
+
+    /// True when a gateway beacon may start an ask now: none picked, and no
+    /// beacon has started one since the last timed ask.
+    pub fn beacon_may_ask(&self) -> bool {
+        matches!(self.state, PickState::Idle | PickState::NoneHeard) && !self.beacon_spent
+    }
+
+    /// We heard `c` answer us outside an ask: a late ask reply, or a gateway
+    /// acking our mail or answering Check mail. Real traffic beats an old
+    /// "none heard". `proven` (it carried our mail) also makes it the one in
+    /// use; a late ask reply only joins the list when one is already picked.
+    /// Not for use while asking. True when the pick changed.
+    pub fn heard(
+        &mut self,
+        c: Candidate,
+        proven: bool,
+        now: i64,
+        preset: &str,
+        freq_khz: u32,
+    ) -> bool {
+        if self.state == PickState::Asking {
+            return false;
+        }
+        let at = self
+            .list
+            .iter()
+            .position(|x| x.call.eq_ignore_ascii_case(&c.call));
+        if self.state == PickState::Picked {
+            match at {
+                // Our gateway carried our mail: the pick is as good as a
+                // fresh ask, so the hourly ask is not needed (less chatter).
+                Some(i) if i == self.current => {
+                    self.fails = 0;
+                    if proven {
+                        self.asked_at = now;
+                    }
+                    return false;
+                }
+                Some(i) if proven => {
+                    self.current = i;
+                    self.fails = 0;
+                    self.asked_at = now;
+                    return true;
+                }
+                Some(_) => return false,
+                None if proven => {
+                    self.list.insert(0, c);
+                    self.current = 0;
+                    self.fails = 0;
+                    self.asked_at = now;
+                    return true;
+                }
+                None => {
+                    self.list.push(c);
+                    return true;
+                }
+            }
+        }
+        // Not asked yet, or asked and none heard: this gateway is the pick.
+        self.list = vec![c];
+        self.current = 0;
+        self.state = PickState::Picked;
+        self.asked_at = now;
+        self.preset = preset.to_string();
+        self.freq_khz = freq_khz;
+        self.fails = 0;
+        self.misses = 0;
+        self.beacon_spent = false;
+        true
     }
 
     /// One line for setup and status.
@@ -662,6 +760,70 @@ mod tests {
         assert_eq!(p.state, PickState::NoneHeard);
         assert_eq!(p.summary(), NO_GATEWAY_HEARD);
         assert!(p.stale(2_001, "hf-poor", 7074).is_some());
+    }
+
+    #[test]
+    fn none_heard_asks_again_later_and_less_often() {
+        let mut p = GatewayPick::default();
+        assert!(
+            !p.retry_due(1_000_000),
+            "never asked: the start-up ask covers it"
+        );
+        p.settle(Vec::new(), 1_000, "vhf-fm", 144_950);
+        assert!(!p.retry_due(1_000 + NONE_HEARD_FIRST_SECS - 1));
+        assert!(p.retry_due(1_000 + NONE_HEARD_FIRST_SECS));
+        p.settle(Vec::new(), 2_000, "vhf-fm", 144_950);
+        assert!(!p.retry_due(2_000 + NONE_HEARD_FIRST_SECS));
+        assert!(p.retry_due(2_000 + 2 * NONE_HEARD_FIRST_SECS));
+        for _ in 0..20 {
+            p.settle(Vec::new(), 3_000, "vhf-fm", 144_950);
+        }
+        assert!(p.retry_due(3_000 + NONE_HEARD_MAX_SECS), "capped");
+        p.settle(vec![cand("A1", 1.0, 1.0, "")], 4_000, "vhf-fm", 144_950);
+        assert_eq!(p.misses, 0);
+        assert!(!p.retry_due(1_000_000), "a pick is not re-asked by this");
+    }
+
+    #[test]
+    fn one_beacon_ask_per_wait() {
+        let mut p = GatewayPick::default();
+        assert!(p.beacon_may_ask());
+        p.beacon_spent = true;
+        p.settle(Vec::new(), 1_000, "vhf-fm", 144_950);
+        assert!(!p.beacon_may_ask(), "spent until the timed ask");
+        p.beacon_spent = false;
+        assert!(p.beacon_may_ask());
+        p.settle(vec![cand("A1", 1.0, 1.0, "")], 2_000, "vhf-fm", 144_950);
+        assert!(!p.beacon_may_ask(), "a gateway is picked");
+    }
+
+    #[test]
+    fn traffic_from_a_gateway_clears_none_heard() {
+        let mut p = GatewayPick::default();
+        p.settle(Vec::new(), 1_000, "vhf-fm", 144_950);
+        assert_eq!(p.summary(), NO_GATEWAY_HEARD);
+        // A late ask reply: the station hears the gateway after all.
+        assert!(p.heard(cand("G1", 3.0, 4.0, ""), false, 1_050, "vhf-fm", 144_950));
+        assert_eq!(p.current_call(), Some("G1"));
+        assert_eq!(p.stale(1_060, "vhf-fm", 144_950), None, "mail can go now");
+        assert_eq!(p.misses, 0);
+        // Another late reply joins the list but does not take over.
+        assert!(p.heard(cand("G2", 9.0, 9.0, ""), false, 1_070, "vhf-fm", 144_950));
+        assert_eq!(p.current_call(), Some("G1"));
+        assert!(p.summary().contains("1 more heard"));
+        // G2 carries our mail: it is the one in use now.
+        p.fails = 1;
+        assert!(p.heard(cand("G2", 0.0, 0.0, ""), true, 1_080, "vhf-fm", 144_950));
+        assert_eq!(p.current_call(), Some("G2"));
+        assert_eq!(p.fails, 0);
+        // The current one again: nothing to change, but the hourly ask
+        // counts from here.
+        assert!(!p.heard(cand("G2", 0.0, 0.0, ""), true, 1_090, "vhf-fm", 144_950));
+        assert_eq!(p.asked_at, 1_090);
+        assert_eq!(p.stale(1_090 + ASK_EVERY_SECS - 1, "vhf-fm", 144_950), None);
+        // Never while an ask runs: the ask settles the list.
+        p.state = PickState::Asking;
+        assert!(!p.heard(cand("G3", 0.0, 0.0, ""), true, 1_100, "vhf-fm", 144_950));
     }
 
     #[test]

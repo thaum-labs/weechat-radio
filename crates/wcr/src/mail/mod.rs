@@ -150,6 +150,10 @@ pub enum MailCmd {
     },
     /// Mail gateway Auto: key a gateway ask now.
     Ask,
+    /// A mail gateway (an internet-radio station) beaconed on our channel.
+    GatewayBeacon {
+        call: String,
+    },
     /// The ask's listening time is over: rank the replies.
     AskDone {
         gen: u64,
@@ -459,6 +463,14 @@ impl MailHandle {
         if ask {
             let _ = self.cmd.send(MailCmd::Ask).await;
         }
+    }
+
+    /// An internet-radio station's beacon was heard on the air. Auto with
+    /// no gateway asks again now instead of waiting. Never blocks.
+    pub fn heard_gateway_beacon(&self, call: &str) {
+        let _ = self.cmd.try_send(MailCmd::GatewayBeacon {
+            call: call.to_string(),
+        });
     }
 
     pub async fn check_list(&self) -> Result<()> {
