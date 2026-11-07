@@ -345,6 +345,35 @@ pub(crate) fn parse_privmsg(line: &str) -> Option<ChatLine> {
     })
 }
 
+/// The callsign a `PRIVMSG` is addressed to, when it is a direct line and
+/// not a channel. (The shared parser files both under a channel name.)
+pub(crate) fn dm_target(raw: &str) -> Option<String> {
+    let rest = raw.split_once(" PRIVMSG ")?.1;
+    let target = rest.split_whitespace().next()?;
+    if target.starts_with('#') || target.starts_with('&') {
+        return None;
+    }
+    crate::proto::Callsign::parse(target)
+        .ok()
+        .map(|_| target.to_ascii_uppercase())
+}
+
+/// The direct chat a line belongs to: the other station's callsign, or
+/// `None` for a channel line. `me` is our own callsign.
+pub(crate) fn dm_peer(raw: &str, nick: &str, me: &str) -> Option<String> {
+    let to = dm_target(raw)?;
+    Some(if nick.eq_ignore_ascii_case(me) {
+        to
+    } else {
+        nick.to_ascii_uppercase()
+    })
+}
+
+/// A conversation name that is a callsign, not a `#channel`.
+pub(crate) fn is_direct(conv: &str) -> bool {
+    !conv.is_empty() && !conv.starts_with('#') && !conv.starts_with('&')
+}
+
 pub(crate) fn parse_join(line: &str) -> Option<String> {
     let rest = irc_payload(line).strip_prefix(':')?;
     let (_, cmd) = rest.split_once(' ')?;

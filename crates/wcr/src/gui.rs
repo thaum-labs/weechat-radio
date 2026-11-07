@@ -438,6 +438,9 @@ struct GuiSession {
     joined: Vec<String>,
     #[serde(default)]
     members: HashMap<String, Vec<String>>,
+    /// Direct chats by the other station's callsign, newest first.
+    #[serde(default)]
+    direct: Vec<String>,
 }
 
 fn default_active_channel() -> String {
@@ -454,6 +457,7 @@ impl Default for GuiSession {
             active_channel: default_active_channel(),
             joined: default_joined(),
             members: HashMap::new(),
+            direct: Vec::new(),
         }
     }
 }
@@ -474,9 +478,21 @@ fn load_session() -> GuiSession {
     if !s.joined.iter().any(|c| c.eq_ignore_ascii_case("#bulletin")) {
         s.joined.insert(0, "#bulletin".into());
     }
-    s.active_channel = crate::slash::normalize_channel(&s.active_channel);
-    if s.active_channel.len() < 2 {
-        s.active_channel = "#bulletin".into();
+    s.direct = s
+        .direct
+        .into_iter()
+        .map(|c| c.trim().to_ascii_uppercase())
+        .filter(|c| Callsign::parse(c).is_ok())
+        .collect();
+    s.direct.dedup();
+    let active = s.active_channel.trim().to_ascii_uppercase();
+    if crate::chat_line::is_direct(&active) && s.direct.contains(&active) {
+        s.active_channel = active;
+    } else {
+        s.active_channel = crate::slash::normalize_channel(&s.active_channel);
+        if s.active_channel.len() < 2 {
+            s.active_channel = "#bulletin".into();
+        }
     }
     s.joined = s
         .joined
@@ -492,22 +508,29 @@ fn load_session() -> GuiSession {
         members.entry(key).or_insert_with(Vec::new).extend(v);
     }
     s.members = members;
-    if !s
-        .joined
-        .iter()
-        .any(|c| c.eq_ignore_ascii_case(&s.active_channel))
+    if !crate::chat_line::is_direct(&s.active_channel)
+        && !s
+            .joined
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case(&s.active_channel))
     {
         s.joined.push(s.active_channel.clone());
     }
     s
 }
 
-fn save_session(active: &str, joined: &[String], members: &HashMap<String, Vec<String>>) {
+fn save_session(
+    active: &str,
+    joined: &[String],
+    members: &HashMap<String, Vec<String>>,
+    direct: &[String],
+) {
     let _ = config::ensure_dirs();
     let s = GuiSession {
         active_channel: active.to_string(),
         joined: joined.to_vec(),
         members: members.clone(),
+        direct: direct.to_vec(),
     };
     if let Ok(raw) = serde_json::to_string_pretty(&s) {
         let _ = std::fs::write(session_path(), raw);
@@ -624,6 +647,11 @@ struct GuiApp {
     show_key: bool,
     invite_draft: String,
     members: HashMap<String, Vec<String>>,
+    /// Direct chats by callsign, newest first, and their unread counts.
+    direct: Vec<String>,
+    direct_unread: HashMap<String, u32>,
+    /// Callsign typed into the "direct" row.
+    direct_new: String,
     /// Optimistic dial frequency until /status catches up after /qsy.
     freq_pending: Option<u32>,
     /// Last FREQ-list row picked (keeps CB region/mode when several share a kHz).
@@ -761,6 +789,9 @@ impl GuiApp {
             show_key: false,
             invite_draft: String::new(),
             members: session.members,
+            direct: session.direct,
+            direct_unread: HashMap::new(),
+            direct_new: String::new(),
             freq_pending: None,
             freq_pick_last: None,
             rx_held: None,
@@ -805,7 +836,12 @@ impl GuiApp {
     }
 
     fn persist_session(&self) {
-        save_session(&self.active_channel, &self.joined, &self.members);
+        save_session(
+            &self.active_channel,
+            &self.joined,
+            &self.members,
+            &self.direct,
+        );
     }
 
     fn configured(&self) -> bool {
@@ -1397,26 +1433,39 @@ impl GuiApp {
                         .irc_connected_at
                         .map(|t| t.elapsed() < Duration::from_secs(3))
                         .unwrap_or(true);
-                    if !line.sys
-                        && !line.nick.is_empty()
-                        && !line.nick.eq_ignore_ascii_case(&me)
+                    let theirs =
+                        !line.sys && !line.nick.is_empty() && !line.nick.eq_ignore_ascii_case(&me);
+                    let direct = crate::chat_line::is_direct(&line.channel);
+                    if direct {
+                        self.note_direct(&line.channel);
+                    }
+                    if theirs && direct {
+                        // A direct message always pops up, unless its chat is
+                        // already open in front of the user.
+                        let reading = viewport_focused
+                            && self.center == CenterView::Chat
+                            && !self.show_setup
+                            && self.active_channel.eq_ignore_ascii_case(&line.channel);
+                        if !reading {
+                            *self.direct_unread.entry(line.channel.clone()).or_insert(0) += 1;
+                            crate::tui::notify(
+                                &format!("WeeChat Radio — direct message from {}", line.nick),
+                                &notify_body(&line.text),
+                            );
+                        }
+                    } else if theirs
                         && !replaying
                         && !viewport_focused
-                        && (line.text.starts_with("!!")
-                            || line.text.starts_with('!')
-                            || (!self.active_channel.starts_with('#')
-                                && line.nick.eq_ignore_ascii_case(&self.active_channel))
+                        && (line.text.starts_with('!')
                             || line
                                 .text
                                 .to_ascii_uppercase()
                                 .contains(&me.to_ascii_uppercase()))
                     {
-                        let body = if line.text.len() > 120 {
-                            format!("{}…", &line.text[..120])
-                        } else {
-                            line.text.clone()
-                        };
-                        crate::tui::notify(&format!("WeeChat Radio — {}", line.nick), &body);
+                        crate::tui::notify(
+                            &format!("WeeChat Radio — {}", line.nick),
+                            &notify_body(&line.text),
+                        );
                     }
                     self.chat.push(line);
                 }
@@ -1464,6 +1513,50 @@ impl GuiApp {
                 }
             }
         }
+    }
+
+    /// Keep a direct chat in the "direct" list, newest first.
+    fn note_direct(&mut self, peer: &str) {
+        let peer = peer.to_ascii_uppercase();
+        if self.direct.first() == Some(&peer) {
+            return;
+        }
+        self.direct.retain(|c| c != &peer);
+        self.direct.insert(0, peer);
+        self.direct.truncate(MAX_DIRECT);
+        self.persist_session();
+    }
+
+    /// Open the direct chat with `peer` (a callsign) and mark it read.
+    fn open_direct(&mut self, peer: &str) {
+        self.error.clear();
+        let peer = peer.trim().to_ascii_uppercase();
+        if Callsign::parse(&peer).is_err() {
+            self.error = "a direct chat needs a callsign, like M0ABC".into();
+            return;
+        }
+        if peer.eq_ignore_ascii_case(&self.callsign) {
+            self.error = "that is your own callsign".into();
+            return;
+        }
+        self.direct_unread.remove(&peer);
+        self.active_channel = peer.clone();
+        self.note_direct(&peer);
+        self.persist_session();
+    }
+
+    /// Take a direct chat off the list; its lines stay on the station.
+    fn close_direct(&mut self) {
+        let peer = self.active_channel.clone();
+        self.direct.retain(|c| !c.eq_ignore_ascii_case(&peer));
+        self.direct_unread.remove(&peer);
+        self.chat.retain(|l| !l.channel.eq_ignore_ascii_case(&peer));
+        self.active_channel = "#bulletin".into();
+        self.persist_session();
+    }
+
+    fn direct_unread_total(&self) -> u32 {
+        self.direct_unread.values().sum()
     }
 
     fn apply_delivery(&mut self, msgid: &str, state: &str, tries: u32) {
@@ -1684,7 +1777,13 @@ impl eframe::App for GuiApp {
                         self.leave_setup();
                     }
                     ui.add_space(14.0);
-                    if nav_link(ui, "live chat").clicked() {
+                    let unread = self.direct_unread_total();
+                    let chat_label = if unread > 0 {
+                        format!("live chat {unread}")
+                    } else {
+                        "live chat".into()
+                    };
+                    if nav_link(ui, &chat_label).clicked() {
                         self.center = CenterView::Chat;
                         self.leave_setup();
                     }
@@ -2178,14 +2277,26 @@ impl eframe::App for GuiApp {
                     self.paint_traffic(ui);
                     return;
                 }
-                module_title(ui, "LIVE CHAT", &self.active_channel);
+                let in_direct = crate::chat_line::is_direct(&self.active_channel);
+                if in_direct {
+                    self.direct_unread.remove(&self.active_channel);
+                    module_title(
+                        ui,
+                        "LIVE CHAT",
+                        &format!("direct · {}", self.active_channel),
+                    );
+                } else {
+                    module_title(ui, "LIVE CHAT", &self.active_channel);
+                }
                 ui.add_space(6.0);
                 let mut switch_to = None;
+                let mut open_direct = None;
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("channel").color(DIM).monospace());
                     let current = self.active_channel.clone();
+                    let shown = if in_direct { "—".to_string() } else { current.clone() };
                     egui::ComboBox::from_id_salt("chan_pick")
-                        .selected_text(RichText::new(&current).color(ACCENT).monospace())
+                        .selected_text(RichText::new(shown).color(ACCENT).monospace())
                         .width(140.0)
                         .show_ui(ui, |ui| {
                             for ch in &self.joined {
@@ -2242,7 +2353,22 @@ impl eframe::App for GuiApp {
                     if key.clicked() {
                         self.show_key = !self.show_key;
                     }
-                    if !crate::slash::is_bulletin(&self.active_channel) {
+                    if in_direct {
+                        let close = ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("close chat").color(ORANGE).monospace(),
+                                )
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(hairline(ORANGE)),
+                            )
+                            .on_hover_text(
+                                "Take this direct chat off the list. A new message from them opens it again.",
+                            );
+                        if close.clicked() {
+                            self.close_direct();
+                        }
+                    } else if !crate::slash::is_bulletin(&self.active_channel) {
                         let leave = ui
                             .add(
                                 egui::Button::new(
@@ -2259,9 +2385,80 @@ impl eframe::App for GuiApp {
                         }
                     }
                 });
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("direct ").color(DIM).monospace());
+                    let unread_total = self.direct_unread_total();
+                    let shown = if in_direct {
+                        self.active_channel.clone()
+                    } else if unread_total > 0 {
+                        format!("{unread_total} new")
+                    } else if self.direct.is_empty() {
+                        "none yet".to_string()
+                    } else {
+                        "pick".to_string()
+                    };
+                    egui::ComboBox::from_id_salt("direct_pick")
+                        .selected_text(
+                            RichText::new(shown)
+                                .color(if unread_total > 0 && !in_direct { ORANGE } else { ACCENT })
+                                .monospace(),
+                        )
+                        .width(140.0)
+                        .show_ui(ui, |ui| {
+                            for peer in &self.direct {
+                                let n = self.direct_unread.get(peer).copied().unwrap_or(0);
+                                let label = if n > 0 {
+                                    format!("{peer}  {n} new")
+                                } else {
+                                    peer.clone()
+                                };
+                                if ui
+                                    .selectable_label(
+                                        peer.eq_ignore_ascii_case(&self.active_channel),
+                                        RichText::new(label)
+                                            .color(if n > 0 { ORANGE } else { ACCENT })
+                                            .monospace(),
+                                    )
+                                    .clicked()
+                                {
+                                    open_direct = Some(peer.clone());
+                                }
+                            }
+                        })
+                        .response
+                        .on_hover_text("Private one-to-one chats with another station.");
+                    let typed = ui.add(
+                        egui::TextEdit::singleline(&mut self.direct_new)
+                            .desired_width(110.0)
+                            .hint_text("M0ABC")
+                            .font(FontId::monospace(13.0)),
+                    );
+                    let enter_typed =
+                        typed.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new("open").color(ORANGE).monospace())
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(hairline(ORANGE)),
+                        )
+                        .on_hover_text("Start a direct chat with this callsign.")
+                        .clicked()
+                        || enter_typed
+                    {
+                        let peer = self.direct_new.trim().to_string();
+                        if !peer.is_empty() {
+                            open_direct = Some(peer);
+                        }
+                    }
+                });
                 if let Some(ch) = switch_to {
                     self.switch_channel(ch);
                 }
+                if let Some(peer) = open_direct {
+                    self.direct_new.clear();
+                    self.open_direct(&peer);
+                }
+                let in_direct = crate::chat_line::is_direct(&self.active_channel);
                 let (access, crypto) = channel_security(
                     &self.active_channel,
                     self.status.as_ref().map(|s| s.mode),
@@ -2313,7 +2510,15 @@ impl eframe::App for GuiApp {
                     ui.add_space(4.0);
                     mark_key(ui);
                 }
-                if !crate::slash::is_bulletin(&self.active_channel) {
+                if in_direct {
+                    ui.label(
+                        RichText::new(
+                            "Direct chat: only this station is addressed. Lines here clear when the app restarts; the station keeps its copy.",
+                        )
+                        .color(DIM)
+                        .font(FontId::monospace(11.0)),
+                    );
+                } else if !crate::slash::is_bulletin(&self.active_channel) {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("invite").color(DIM).monospace());
@@ -2405,7 +2610,11 @@ impl eframe::App for GuiApp {
                         let resp = ui.add(
                             egui::TextEdit::singleline(&mut self.draft)
                                 .desired_width(ui.available_width() - 90.0)
-                                .hint_text("message in this channel, or /join /invite /part")
+                                .hint_text(if in_direct {
+                                    "direct message, or /commands"
+                                } else {
+                                    "message in this channel, or /join /invite /part"
+                                })
                                 .margin(INPUT_MARGIN)
                                 .font(FontId::monospace(14.0)),
                         );
@@ -4268,10 +4477,7 @@ impl GuiApp {
             self.mail_toast_warn = true;
         }
         if unread > self.mail_unread && self.center != CenterView::Email {
-            let _ = notify_rust::Notification::new()
-                .summary("WeeChat Radio")
-                .body("New mail")
-                .show();
+            crate::tui::notify("WeeChat Radio", "New mail");
             if let Some(tray) = &self.tray {
                 let _ = tray.set_tooltip(Some("WeeChat Radio — new mail"));
             }
@@ -6353,7 +6559,12 @@ fn irc_session(
                         let _ = events.send(IrcEvent::Parted { nick, channel: ch });
                     } else if let Some(ch) = parse_join(&line) {
                         let _ = events.send(IrcEvent::Joined(ch));
-                    } else if let Some(chat) = parse_privmsg(&line) {
+                    } else if let Some(mut chat) = parse_privmsg(&line) {
+                        // A direct line belongs to the other station's chat,
+                        // not to a "#callsign" channel nobody joined.
+                        if let Some(peer) = crate::chat_line::dm_peer(&line, &chat.nick, &nick) {
+                            chat.channel = peer;
+                        }
                         // Include our own lines so channel history replay is complete
                         // (live sends are added locally; the node does not echo without CAP).
                         let _ = events.send(IrcEvent::Line(chat));
@@ -6443,6 +6654,18 @@ fn via_color(via: &str) -> Color32 {
 }
 
 /// Mail tab notice after Check mail finds headers waiting at the gateway.
+/// How many direct chats the "direct" list keeps.
+const MAX_DIRECT: usize = 30;
+
+/// A chat line cut to fit a notification.
+fn notify_body(text: &str) -> String {
+    if text.chars().count() > 120 {
+        format!("{}…", text.chars().take(120).collect::<String>())
+    } else {
+        text.to_string()
+    }
+}
+
 fn waiting_notice(n: usize) -> String {
     let what = if n == 1 {
         "1 mail".to_string()
@@ -6478,6 +6701,8 @@ fn channel_security(
 ) -> (String, String) {
     let access = if crate::slash::is_bulletin(channel) {
         "PUBLIC".to_string()
+    } else if crate::chat_line::is_direct(channel) {
+        format!("DIRECT · {channel} only")
     } else {
         "CLOSED · invite only".to_string()
     };
@@ -6502,6 +6727,36 @@ fn channel_security(
 mod tests {
     use super::*;
     use crate::chat_line::*;
+
+    #[test]
+    fn a_direct_line_lands_in_the_other_stations_chat() {
+        let me = "M7TJF";
+        let raw = "@msgid=a1 :G4ABC PRIVMSG M7TJF :hello";
+        let line = parse_privmsg(raw).unwrap();
+        assert_eq!(
+            crate::chat_line::dm_peer(raw, &line.nick, me).as_deref(),
+            Some("G4ABC")
+        );
+        let sent = ":M7TJF PRIVMSG G4ABC :hi back";
+        assert_eq!(
+            crate::chat_line::dm_peer(sent, "M7TJF", me).as_deref(),
+            Some("G4ABC")
+        );
+        assert_eq!(
+            crate::chat_line::dm_peer(":G4ABC PRIVMSG #net :all", "G4ABC", me),
+            None
+        );
+        assert!(crate::chat_line::is_direct("G4ABC"));
+        assert!(!crate::chat_line::is_direct("#bulletin"));
+    }
+
+    #[test]
+    fn notify_body_cuts_long_lines_on_a_character() {
+        let long = "é".repeat(200);
+        let body = notify_body(&long);
+        assert_eq!(body.chars().count(), 121);
+        assert_eq!(notify_body("short"), "short");
+    }
 
     #[test]
     fn hub_row_is_off_for_modes_that_never_use_the_hub() {
