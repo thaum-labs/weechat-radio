@@ -20,6 +20,15 @@ function ago(secs) {
   return `${Math.floor(secs / 86400)}d ${Math.floor((secs % 86400) / 3600)}h`;
 }
 
+// "inet" is the wire word; people read "internet" everywhere else.
+function medium(m) {
+  return m === "inet" ? "internet" : m;
+}
+
+function plural(n, word) {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
 function clock(ts, secs) {
   if (!ts) return "";
   const d = new Date(ts * 1000);
@@ -100,7 +109,7 @@ function drawStatus(d) {
     if (s.preset) facts.push(["preset", `${s.preset}${s.tx_rung ? ` · now ${s.tx_rung}` : ""}`]);
     const modem = s.tnc || (s.modem73 ? `modem73 ${s.modem73}` : "");
     if (modem) facts.push(["modem", modem]);
-    if (s.relayed) facts.push(["relayed on air", `${s.relayed} frames, ${s.relayed_unique} messages`]);
+    if (s.relayed) facts.push(["relayed on air", `${plural(s.relayed, "frame")}, ${plural(s.relayed_unique, "message")}`]);
     // #272: a mail-only gateway says so where the operator looks first.
     if (s.gateway_mode === "mail-only") facts.push(["gateway", "mail only: chat is heard, not relayed"]);
   }
@@ -448,7 +457,7 @@ function drawLists(d) {
     const li = el("li");
     const age = h.last_heard ? ago(Math.max(0, d.now - h.last_heard)) : "";
     const what = el("span", "what");
-    what.append(el("span", "subject mono", `${h.callsign}${h.gateway ? " (gateway)" : ""}`), el("span", "who", [h.band || h.medium, h.grid].filter(Boolean).join(" · ")));
+    what.append(el("span", "subject mono", `${h.callsign}${h.gateway ? " (gateway)" : ""}`), el("span", "who", [h.band || medium(h.medium), h.grid].filter(Boolean).join(" · ")));
     li.append(el("span", "when", age), what);
     if (h.snr !== null && h.snr !== undefined) {
       // 10 dB or more with the radios in one room; under 6 dB, check levels.
@@ -813,13 +822,17 @@ function swDraw(d) {
     text = `${d.building} is still being built. It will be offered when it is ready.`;
     cls = "";
   } else if (d.check_error) {
-    text = `Could not check for updates: ${d.check_error}`;
+    // The raw error (a long URL) stays in the tooltip, not on the card.
+    text = /^network:/.test(d.check_error)
+      ? "Could not reach GitHub to check for updates. Is this station online?"
+      : `Could not check for updates: ${d.check_error}`;
     cls = "down";
   } else if (d.checked === null || d.checked === undefined) {
     text = "Checking for updates…";
     cls = "";
   }
   line.textContent = text;
+  line.title = d.check_error && !d.available && !d.restart_needed ? d.check_error : "";
   line.className = `lead ${cls}`;
   $("sw-phase").hidden = !phase;
   $("sw-phase").textContent = phase;
