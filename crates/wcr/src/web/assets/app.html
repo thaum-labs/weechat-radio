@@ -58,7 +58,7 @@
         <textarea id="text" rows="2" maxlength="1200" placeholder="Message" aria-label="Message"></textarea>
         <button type="button" id="attach" class="quiet" title="Send a small file (4 KB max, VHF/UHF only)" aria-label="Send a file" hidden>File</button>
         <input type="file" id="attach-file" hidden>
-        <button type="submit" id="send">Send</button>
+        <button type="submit" id="send" class="primary">Send</button>
       </form>
       <p id="chat-note" class="warn small note" role="status"></p>
     </div>
@@ -96,7 +96,7 @@
       <input id="m-subject" autocomplete="off">
       <label class="small dim" for="m-body">Message</label>
       <textarea id="m-body" rows="6"></textarea>
-      <div class="row"><button type="submit">Send</button><button type="button" id="m-cancel" class="quiet">Cancel</button></div>
+      <div class="row"><button type="submit" class="primary">Send</button><button type="button" id="m-cancel" class="quiet">Cancel</button></div>
       <p id="m-note" class="warn small note" role="status"></p>
     </form>
   </section>
