@@ -3274,6 +3274,9 @@ fn note_heard_grid(rt: &Runtime, env: &Envelope, medium: &str) {
     if medium != "rf" {
         return;
     }
+    if env.kind == MsgType::Beacon && heard_mode(env) == Mode::InternetRadio.as_str() {
+        rt.mail.heard_gateway_beacon(env.origin.as_str());
+    }
     let grid = match env.kind {
         MsgType::Beacon => crate::band::beacon_grid(&env.body),
         MsgType::Ack => env.acked_grid(),

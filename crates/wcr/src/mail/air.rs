@@ -188,6 +188,9 @@ struct TxCtx {
     tried: Mutex<HashMap<String, Vec<String>>>,
     /// Mail ids that already started a new ask after running out of gateways.
     reasked: Mutex<std::collections::HashSet<String>>,
+    /// The gateway the last Check mail or Get went to: its answer has no
+    /// sender callsign on it.
+    ctl_gw: Mutex<String>,
 }
 
 struct Assembler {
@@ -296,6 +299,7 @@ pub(super) fn spawn(
         asks: Mutex::new(0),
         ask_nonce: Mutex::new(String::new()),
         heard_gw: Mutex::new(Vec::new()),
+        ctl_gw: Mutex::new(String::new()),
         after_ask: Mutex::new(Vec::new()),
         ask_tried: Mutex::new(0),
         tried: Mutex::new(HashMap::new()),
@@ -408,6 +412,7 @@ async fn dispatch(ctx: &TxCtx, asm: &mut Assembler, cmd: MailCmd) {
             let _ = sync_hub(ctx).await;
         }
         MailCmd::Ask => start_ask(ctx).await,
+        MailCmd::GatewayBeacon { call } => on_gateway_beacon(ctx, &call).await,
         MailCmd::AskDone { gen } => finish_ask(ctx, gen),
         MailCmd::GwReplyDue { to, nonce, snr } => {
             if let Err(e) = send_gw_reply(ctx, &to, &nonce, snr).await {
@@ -888,6 +893,7 @@ async fn send_control(ctx: &TxCtx, op: MailOp, mut meta: MailMeta, payload: &str
         Route::Missing(why) => return Err(Error::config(why)),
     };
     meta.dest = gateway_cs.clone();
+    *ctx.ctl_gw.lock() = gateway_cs.clone();
     meta.via = gateway_cs;
     meta.from = cfg.callsign.clone();
     let payload = if matches!(op, MailOp::ListReq | MailOp::GetReq) {
@@ -1152,6 +1158,8 @@ async fn on_incoming(
         if ctx.store.note_get_chunks(got, chunk_total) {
             tracing::info!("mail get chunk {got}/{chunk_total}");
         }
+        let gw = ctx.ctl_gw.lock().clone();
+        gateway_spoke(ctx, &gw, None, snr, true);
         arm_get_quiet(ctx);
     }
     match absorbed {
@@ -1465,6 +1473,7 @@ async fn apply_mail(
     match op {
         MailOp::CompleteAck => {
             if let Some(id) = meta.ids.first() {
+                mail_gateway_spoke(ctx, id, snr);
                 if let Some(err) = gateway::failure_text(&body) {
                     fail_mail(ctx, id, &err);
                 } else {
@@ -1478,6 +1487,7 @@ async fn apply_mail(
             let Some(id) = meta.ids.first().cloned() else {
                 return Ok(());
             };
+            mail_gateway_spoke(ctx, &id, snr);
             let indexes = if let Some((count, bits)) = proto::parse_have_bitmap(&body) {
                 let Some(row) = ctx.store.get(&id)? else {
                     return Ok(());
@@ -1534,6 +1544,8 @@ async fn apply_mail(
                 *n = n.wrapping_add(1);
             }
             ctx.store.with_pick(|p| p.note_ok());
+            let gw = ctx.ctl_gw.lock().clone();
+            gateway_spoke(ctx, &gw, None, snr, true);
             let notice = gateway::check_notice(rows.len());
             ctx.store.set_notice(notice);
             if notice.is_empty() {
@@ -2011,8 +2023,9 @@ fn defer_to_ask(ctx: &TxCtx, cmd: MailCmd) {
 }
 
 /// Every 30 s, and once at start: Auto asks by itself when it has not asked
-/// in this run, or the band or preset changed. An hour-old pick is asked
-/// again before the next mail instead, so a quiet station does not key.
+/// in this run, the band or preset changed, the pick is an hour old
+/// (Tobias 2026-11-07: search hourly), or the last ask heard nobody and
+/// its back-off is over.
 async fn auto_tick(ctx: &TxCtx) {
     show_pick(ctx);
     let (radio_plus, auto, pinned) = {
@@ -2031,13 +2044,98 @@ async fn auto_tick(ctx: &TxCtx) {
         return;
     }
     let (preset, khz) = band_now(ctx);
-    let why = ctx.store.pick().stale(now, &preset, khz);
-    if matches!(
-        why,
-        Some("not asked yet") | Some("the preset changed") | Some("the band changed")
-    ) {
-        tracing::info!("mail gateway auto: asking, {}", why.unwrap_or(""));
+    let p = ctx.store.pick();
+    let why = match p.stale(now, &preset, khz) {
+        Some(
+            w @ ("not asked yet"
+            | "the preset changed"
+            | "the band changed"
+            | "the pick is an hour old"),
+        ) => Some(w),
+        _ if p.retry_due(now) => Some("no gateway was heard last time"),
+        _ => None,
+    };
+    if let Some(why) = why {
+        tracing::info!("mail gateway auto: asking, {why}");
+        // A timed ask: the next gateway beacon may start one again.
+        ctx.store.with_pick(|p| p.beacon_spent = false);
         start_ask(ctx).await;
+    }
+}
+
+/// A gateway's beacon proves one is on the channel, but only that we hear
+/// it. With no gateway picked, ask now: the ask measures both directions.
+async fn on_gateway_beacon(ctx: &TxCtx, call: &str) {
+    let (radio_plus, auto, pinned) = {
+        let cfg = ctx.cfg.lock();
+        (
+            cfg.mode == Mode::RadioPlus,
+            cfg.mail.auto(),
+            cfg.mail.pinned(),
+        )
+    };
+    if !radio_plus || !auto || !pinned.is_empty() {
+        return;
+    }
+    if !ctx.store.pick().beacon_may_ask() {
+        return;
+    }
+    let now = chrono::Utc::now().timestamp();
+    if now - *ctx.ask_tried.lock() < pick::ASK_RETRY_SECS {
+        return;
+    }
+    tracing::info!("mail gateway auto: asking, heard gateway {call} beacon");
+    ctx.store.with_pick(|p| p.beacon_spent = true);
+    start_ask(ctx).await;
+}
+
+/// A gateway acked our mail `id`: the gateway is the one that mail went to.
+fn mail_gateway_spoke(ctx: &TxCtx, id: &str, snr: Option<f32>) {
+    if let Some(v) = ctx.store.via(id).ok().and_then(|mut v| v.pop()) {
+        gateway_spoke(ctx, &v.gateway, None, snr, true);
+    }
+}
+
+/// Auto heard `call` answer us outside an ask. MAIL GW follows real traffic:
+/// it no longer says no gateway while one is acking our mail. `up` is the
+/// SNR the gateway heard us at, when the frame says; `down` is ours of it.
+fn gateway_spoke(ctx: &TxCtx, call: &str, up: Option<f32>, down: Option<f32>, proven: bool) {
+    let call = call.trim().to_ascii_uppercase();
+    if call.is_empty() {
+        return;
+    }
+    {
+        let cfg = ctx.cfg.lock();
+        if cfg.mode != Mode::RadioPlus || !cfg.mail.auto() || !cfg.mail.pinned().is_empty() {
+            return;
+        }
+    }
+    let c = Candidate {
+        call: call.clone(),
+        up,
+        down,
+        grid: String::new(),
+        km: None,
+    };
+    if ctx.store.pick().state == PickState::Asking {
+        // Counts as heard in the ask that is running.
+        let mut heard = ctx.heard_gw.lock();
+        if !heard.iter().any(|h| h.call.eq_ignore_ascii_case(&call)) {
+            heard.push(c);
+        }
+        return;
+    }
+    let (preset, khz) = band_now(ctx);
+    let now = chrono::Utc::now().timestamp();
+    if ctx
+        .store
+        .with_pick(|p| p.heard(c, proven, now, &preset, khz))
+    {
+        tracing::info!(
+            "mail gateway auto: heard {call} answer us, now {}",
+            ctx.store.pick().summary()
+        );
+        show_pick(ctx);
     }
 }
 
@@ -2380,7 +2478,7 @@ fn heard_gw_reply(ctx: &TxCtx, meta: &MailMeta, body: &str, snr: Option<f32>) {
     let Some(nonce) = meta.ids.first() else {
         return;
     };
-    if *nonce != *ctx.ask_nonce.lock() || ctx.store.pick().state != PickState::Asking {
+    if *nonce != *ctx.ask_nonce.lock() {
         return;
     }
     let call = meta.from.trim().to_ascii_uppercase();
@@ -2388,6 +2486,13 @@ fn heard_gw_reply(ctx: &TxCtx, meta: &MailMeta, body: &str, snr: Option<f32>) {
         return;
     }
     let (up, grid) = pick::parse_reply(body);
+    if ctx.store.pick().state != PickState::Asking {
+        // The reply came after we stopped listening (the gateway waited for
+        // a quiet channel). It still proves we hear each other.
+        tracing::info!("mail gateway reply from {call} came after the ask ended");
+        gateway_spoke(ctx, &call, up, snr, false);
+        return;
+    }
     tracing::info!(
         "mail gateway reply from {call}: it heard us at {}, we hear it at {}",
         snr_text(up),
