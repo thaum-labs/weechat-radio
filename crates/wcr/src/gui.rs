@@ -61,7 +61,9 @@ pub fn run() -> Result<()> {
             .with_inner_size(size)
             .with_min_inner_size([820.0, 520.0])
             .with_title(&app_window_title())
-            .with_icon(icon),
+            .with_icon(icon)
+            // Files dropped on the window go to the open direct chat.
+            .with_drag_and_drop(true),
         // Ignore previously saved huge sizes so the default above always applies.
         persist_window: false,
         ..Default::default()
@@ -1267,6 +1269,64 @@ impl GuiApp {
         self.send_line(cmd);
     }
 
+    /// A file dropped on the window goes to the open direct chat as `/file`
+    /// (4 KB max, vhf-fm or afsk-1200; the station checks and says why not).
+    fn take_dropped_files(&mut self, ctx: &egui::Context) {
+        let hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
+        let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+        let direct =
+            !self.active_channel.is_empty() && !self.active_channel.starts_with(['#', '&']);
+        if hovering {
+            let text = if direct {
+                format!(
+                    "drop to send to {} (up to {}, VHF/UHF only)",
+                    self.active_channel.to_ascii_uppercase(),
+                    crate::proto::file::human_size(crate::proto::file::FILE_MAX_BYTES)
+                )
+            } else {
+                "open a direct chat first: files go to one station".to_string()
+            };
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("file-drop"),
+            ));
+            let rect = ctx.screen_rect();
+            painter.rect_filled(rect, 0.0, Color32::from_black_alpha(170));
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                text,
+                egui::FontId::monospace(18.0),
+                if direct { ACCENT } else { ORANGE },
+            );
+        }
+        for path in dropped {
+            if !direct {
+                self.error =
+                    "Files go in a direct chat: open one, then drop the file there.".into();
+                continue;
+            }
+            self.send_line(&format!("/file {}", path.display()));
+        }
+    }
+
+    fn open_received_files(&mut self) {
+        let store = Config::load(&Config::active_path())
+            .map(|c| c.store.path)
+            .unwrap_or_else(|_| crate::config::default_data_dir().join("wcr.db"));
+        let dir = crate::proto::file::received_dir(&store);
+        let _ = std::fs::create_dir_all(&dir);
+        if let Err(e) = open::that(&dir) {
+            self.error = format!("Could not open {}: {e}", dir.display());
+        }
+    }
+
     fn send_line(&mut self, text: &str) {
         let text = text.trim();
         if text.is_empty() {
@@ -1687,6 +1747,7 @@ impl eframe::App for GuiApp {
                 self.poll_traffic();
             }
         }
+        self.take_dropped_files(ctx);
         let station_failed = self.configured()
             && self.auto_started
             && !self.user_stopped
@@ -2367,6 +2428,19 @@ impl eframe::App for GuiApp {
                             );
                         if close.clicked() {
                             self.close_direct();
+                        }
+                        let files = ui
+                            .add(
+                                egui::Button::new(RichText::new("files").color(ACCENT).monospace())
+                                    .fill(Color32::TRANSPARENT)
+                                    .stroke(hairline(ACCENT)),
+                            )
+                            .on_hover_text(format!(
+                                "To send a file, drag it onto this window (up to {}, vhf-fm or afsk-1200 only). Click to open the folder where received files are saved.",
+                                crate::proto::file::human_size(crate::proto::file::FILE_MAX_BYTES)
+                            ));
+                        if files.clicked() {
+                            self.open_received_files();
                         }
                     } else if !crate::slash::is_bulletin(&self.active_channel) {
                         let leave = ui

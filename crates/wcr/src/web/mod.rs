@@ -244,6 +244,7 @@ fn router(web: Web) -> Router {
         .route("/api/events", get(events))
         .route("/api/chat/send", post(chat_send))
         .route("/api/chat/join", post(chat_join))
+        .route("/api/chat/file", post(chat_file))
         .route("/api/stations", get(stations))
         .route("/api/traffic", get(traffic))
         .route("/api/mail", get(mail_list))
@@ -672,6 +673,34 @@ struct SendBody {
 
 async fn chat_send(State(web): State<Web>, Json(b): Json<SendBody>) -> Response {
     match web.chat.send(&b.to, &b.text) {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct FileBody {
+    to: String,
+    name: String,
+    /// The file, base64.
+    data: String,
+}
+
+/// A small file from the page for a direct chat (4 KB max, VHF/UHF only).
+async fn chat_file(State(web): State<Web>, Json(b): Json<FileBody>) -> Response {
+    use base64::Engine as _;
+    let Ok(data) = base64::engine::general_purpose::STANDARD.decode(b.data.trim()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "the upload was not readable" })),
+        )
+            .into_response();
+    };
+    let store = Config::load(&web.cfg_path)
+        .map(|c| c.store.path)
+        .unwrap_or_else(|_| crate::config::default_data_dir().join("wcr.db"));
+    let dir = crate::proto::file::received_dir(&store);
+    match web.chat.send_file(&b.to, &b.name, &data, &dir) {
         Ok(()) => Json(json!({ "ok": true })).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
     }

@@ -71,6 +71,8 @@ struct Runtime {
     tel: broadcast::Sender<TelemetryEvent>,
     dest_rungs: Arc<Mutex<HashMap<String, usize>>>,
     assembler: Arc<Mutex<FragAssembler>>,
+    /// File pieces received so far (direct-message attachments).
+    files: Arc<Mutex<crate::proto::file::Assembler>>,
     last_rx_snr: Arc<Mutex<Option<f32>>>,
     radio_lock: Arc<tokio::sync::Mutex<()>>,
     /// One ACK key at a time. The air queue is paused while it runs.
@@ -509,6 +511,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         tel: tel_tx,
         dest_rungs: Arc::new(Mutex::new(HashMap::new())),
         assembler: Arc::new(Mutex::new(FragAssembler::new())),
+        files: Arc::new(Mutex::new(crate::proto::file::Assembler::new())),
         last_rx_snr,
         radio_lock: Arc::new(tokio::sync::Mutex::new(())),
         ack_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -1773,6 +1776,167 @@ async fn send_chat_with(rt: &Runtime, target: &str, text: &str, rf_only: bool) -
     Ok(())
 }
 
+/// Send a small file (at most 4 KB) to one station, on VHF/UHF only. Each
+/// piece is a File frame that asks for a receipt and is retried like a chat
+/// line. The file line in the chat follows the LAST piece, whose receipt the
+/// far end sends only once it has saved the whole file.
+async fn send_file(rt: &Runtime, target: &str, path: &str) -> Result<String> {
+    let cfg_g = rt.cfg.lock().clone();
+    let preset = Preset::parse(&cfg_g.modem.preset).unwrap_or(Preset::VhfFm);
+    let target = target.trim();
+    let path = std::path::Path::new(path.trim());
+    let len = std::fs::metadata(path)
+        .map_err(|e| crate::error::Error::protocol(format!("cannot read {}: {e}", path.display())))?
+        .len() as usize;
+    if let Some(why) = crate::proto::file::refusal(preset, cfg_g.mode.uses_radio(), target, len) {
+        return Err(crate::error::Error::protocol(why));
+    }
+    let data = std::fs::read(path)?;
+    if let Some(why) =
+        crate::proto::file::refusal(preset, cfg_g.mode.uses_radio(), target, data.len())
+    {
+        return Err(crate::error::Error::protocol(why));
+    }
+    let origin = Callsign::parse(&cfg_g.callsign)?;
+    let dest = Callsign::parse(target)?;
+    let raw_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let name = crate::proto::file::clean_name(&raw_name);
+    let first_seq = rt.store.next_seq(origin.as_str())?;
+    let id = crate::proto::file::file_id(origin.as_str(), dest.as_str(), &name, &data, first_seq);
+    let pieces =
+        crate::proto::file::split(id, &name, &data, crate::proto::file::body_limit(preset))?;
+    let mut flags = Flags::new().with(FLAG_REQ_ACK);
+    apply_mode_flags(&mut flags, cfg_g.mode, origin.is_guest());
+    let hops = Priority::Routine.default_ttl();
+    let count = pieces.len();
+    let mut last_id = None;
+    for (i, piece) in pieces.into_iter().enumerate() {
+        let seq = if i == 0 {
+            first_seq
+        } else {
+            rt.store.next_seq(origin.as_str())?
+        };
+        // Not signed: files never reach the hub, and a signature would cost
+        // a third of every afsk-1200 piece.
+        let mut env = Envelope::new_msg(
+            origin.clone(),
+            dest.clone(),
+            seq,
+            piece.encode(),
+            hops,
+            flags,
+        )?;
+        env.kind = MsgType::File;
+        rt.store.insert(&env, Delivery::Queued)?;
+        dispatch_rf_at(rt, &env, 0, Duration::ZERO, 0).await?;
+        rt.store.set_delivery(&env.msg_id, Delivery::Sent)?;
+        let hold = relay::next_retry_hold_jittered(
+            0,
+            crate::proto::now_ts(),
+            Priority::Routine,
+            cfg_g.rf.retry_jitter,
+        );
+        let _ = rt.store.set_hold(&env.msg_id, hold, env.hops_left);
+        last_id = Some(env.msg_id);
+    }
+    let last_id = last_id.expect("a file has at least one piece");
+    let secs = crate::proto::file::airtime_secs(preset, data.len());
+    let line = format!(
+        "📎 {name} ({}), {count} piece{}, about {} s on {}",
+        crate::proto::file::human_size(data.len()),
+        if count == 1 { "" } else { "s" },
+        secs.round() as u64,
+        preset.as_str()
+    );
+    rt.irc
+        .broadcast_privmsg(origin.as_str(), target, &line, Some(&last_id.hex()), None)
+        .await;
+    let tries = rt.store.rf_tx_of(&last_id).ok().filter(|n| *n > 0);
+    rt.irc.tagmsg_progress(&last_id.hex(), "sent", tries).await;
+    Ok(format!(
+        "sending {name} to {target}: {count} piece{}, about {} s on the air. [ok] on the file line means {target} has the whole file.",
+        if count == 1 { "" } else { "s" },
+        secs.round() as u64
+    ))
+}
+
+/// One piece of a file sent to us. Its receipt goes now, except the last
+/// piece's, which waits until the file is whole and saved.
+async fn on_file_piece(rt: &Runtime, env: &Envelope, medium: &str, snr: Option<f32>) {
+    if medium != "rf"
+        || env.flags.group()
+        || !env.dest.as_str().eq_ignore_ascii_case(&rt.engine.our_call)
+    {
+        return;
+    }
+    let Ok(piece) = crate::proto::file::Piece::decode(&env.body) else {
+        return;
+    };
+    let from = env.origin.to_string();
+    let pushed = rt.files.lock().push(&from, env, piece);
+    let answer = !rt.chat_for_others_silenced() && env.flags.req_ack();
+    match pushed {
+        crate::proto::file::Push::Pending { answer: now } => {
+            if answer && now {
+                let _ = acknowledge(rt, env, snr).await;
+            }
+        }
+        crate::proto::file::Push::Complete {
+            name,
+            data,
+            held_last,
+        } => {
+            let path = crate::proto::file::save_path(
+                &crate::proto::file::received_dir(&rt.cfg.lock().store.path),
+                &from,
+                &name,
+            );
+            let saved = path
+                .parent()
+                .map(std::fs::create_dir_all)
+                .unwrap_or(Ok(()))
+                .and_then(|_| std::fs::write(&path, &data));
+            let text = match saved {
+                Ok(()) => format!(
+                    "📎 {name} ({}) saved to {}",
+                    crate::proto::file::human_size(data.len()),
+                    path.display()
+                ),
+                Err(e) => format!("📎 {name} arrived but could not be saved: {e}"),
+            };
+            rt.irc
+                .broadcast_privmsg_snr(
+                    &from,
+                    &rt.engine.our_call,
+                    &text,
+                    Some(&env.msg_id.hex()),
+                    Some(medium),
+                    snr,
+                )
+                .await;
+            if answer {
+                let _ = acknowledge(rt, env, snr).await;
+                if let Some(last) = held_last {
+                    let _ = acknowledge(rt, &last, snr).await;
+                }
+            }
+        }
+    }
+}
+
+/// A retry of a file piece we already have. The last piece of a file still
+/// missing pieces gets no receipt: that receipt tells the sender the whole
+/// file arrived.
+fn file_retry_answerable(rt: &Runtime, env: &Envelope) -> bool {
+    match crate::proto::file::Piece::decode(&env.body) {
+        Ok(piece) => rt.files.lock().may_answer(env.origin.as_str(), &piece),
+        Err(_) => false,
+    }
+}
+
 fn rf_copy(env: &Envelope, preset: Preset) -> Envelope {
     if preset.unsigned_on_rf() {
         env.without_signature()
@@ -2022,7 +2186,7 @@ fn restart_retry_timer(rt: &Runtime, env: &Envelope) {
 fn is_line(env: &Envelope) -> bool {
     matches!(
         env.kind,
-        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status
+        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status | MsgType::File
     )
 }
 
@@ -2597,6 +2761,11 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
     if env.kind == MsgType::Mail {
         return Ok(());
     }
+    // Files are radio-only (VHF/UHF direct messages). A copy from the hub or
+    // the LAN is not ours to take.
+    if env.kind == MsgType::File && medium != "rf" {
+        return Ok(());
+    }
     // A fragment is shown once it is whole (the reassembled line comes back
     // through here), not once per piece.
     if env.kind != MsgType::Frag {
@@ -2641,10 +2810,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
         }
         // Acoustic echo or a relay of our own frame. Control frames (ACK,
         // beacon, …) must not paint [rl] onto the last chat line.
-        if !matches!(
-            env.kind,
-            MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status
-        ) {
+        if !is_line(&env) {
             if let Some(air) = rt.air() {
                 air.cancel(env.msg_id);
             }
@@ -3009,7 +3175,8 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
         }
         MsgType::Have | MsgType::Want => {}
         MsgType::Beacon => {}
-        MsgType::Ping | MsgType::File => {}
+        MsgType::File => on_file_piece(rt, &env, medium, snr).await,
+        MsgType::Ping => {}
         MsgType::Frag => {}
         MsgType::Mail => {}
     }
@@ -3176,10 +3343,11 @@ async fn maybe_answer_retry(rt: &Runtime, env: &Envelope, medium: &str, snr: Opt
     if !env.flags.req_ack() {
         return;
     }
-    if !matches!(
-        env.kind,
-        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status
-    ) {
+    if !is_line(env) {
+        return;
+    }
+    // The last piece of a file is answered only once every piece is here.
+    if env.kind == MsgType::File && !file_retry_answerable(rt, env) {
         return;
     }
     if dest_is_bulletin(env.dest.as_str()) && !env.flags.group() {
@@ -3371,6 +3539,10 @@ fn relayed_next_to_origin(store: &Store, ack: &Envelope) -> bool {
 }
 
 async fn forward_gateway(rt: &Runtime, env: &Envelope, medium: &str) -> Result<()> {
+    // Files stay on the radio: never uploaded, never put on the air from the hub.
+    if env.kind == MsgType::File {
+        return Ok(());
+    }
     let cfg_g = rt.cfg.lock().clone();
     // A 1:1 frame addressed to this gateway has arrived; the hub has no one
     // else to hand it to (QA v0.1.109: TF101 stored Q0RFA/M -> Q0RFB).
@@ -4540,6 +4712,24 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             match sent {
                 Ok(id) => format!("form sent {id}"),
                 Err(e) => format!("form failed: {e}"),
+            }
+        }
+        "file" => {
+            let call = sp.next().unwrap_or("").to_ascii_uppercase();
+            let path = sp.collect::<Vec<_>>().join(" ");
+            if call.is_empty() || path.is_empty() {
+                return format!(
+                    "usage: /file CALL path (in a private tab: /file path). Sends a file of at most {} to one station, on vhf-fm or afsk-1200 only. Received files are saved in {}",
+                    crate::proto::file::human_size(crate::proto::file::FILE_MAX_BYTES),
+                    crate::proto::file::received_dir(&cfg.lock().store.path).display()
+                );
+            }
+            rt.irc.begin_origin(client_id, &call);
+            let sent = send_file(rt, &call, &path).await;
+            rt.irc.end_origin();
+            match sent {
+                Ok(msg) => msg,
+                Err(e) => format!("file not sent: {e}"),
             }
         }
         "report" => {
