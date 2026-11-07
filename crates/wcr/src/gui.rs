@@ -110,6 +110,12 @@ fn hairline(color: Color32) -> Stroke {
     Stroke::new(1.0_f32, color)
 }
 
+/// Grey hint text for an empty box. `override_text_color` would otherwise
+/// paint hints as bright as typed text, so "M0ABC" looked filled in.
+fn placeholder(text: &str) -> RichText {
+    RichText::new(text).color(DIM)
+}
+
 fn app_window_title() -> String {
     format!("WeeChat Radio v{}", crate::update::current_version())
 }
@@ -2386,7 +2392,7 @@ impl eframe::App for GuiApp {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.chan_new)
                             .desired_width(110.0)
-                            .hint_text("8 letters")
+                            .hint_text(placeholder("8 letters"))
                             .font(FontId::monospace(13.0)),
                     );
                     if ui
@@ -2515,7 +2521,7 @@ impl eframe::App for GuiApp {
                     let typed = ui.add(
                         egui::TextEdit::singleline(&mut self.direct_new)
                             .desired_width(110.0)
-                            .hint_text("M0ABC")
+                            .hint_text(placeholder("M0ABC"))
                             .font(FontId::monospace(13.0)),
                     );
                     let enter_typed =
@@ -2610,7 +2616,7 @@ impl eframe::App for GuiApp {
                         ui.add(
                             egui::TextEdit::singleline(&mut self.invite_draft)
                                 .desired_width(120.0)
-                                .hint_text("M0ABC")
+                                .hint_text(placeholder("M0ABC"))
                                 .font(FontId::monospace(13.0)),
                         );
                         if ui
@@ -2673,7 +2679,15 @@ impl eframe::App for GuiApp {
                         ui.label(RichText::new("stations").color(DIM).monospace());
                         for h in rows {
                             ui.label(
-                                RichText::new(format!("{} [{}]", h.callsign, h.band_tag()))
+                                // Same word as the line tags ([net] [rf] [lan]).
+                                RichText::new(format!(
+                                    "{} [{}]",
+                                    h.callsign,
+                                    match h.band_tag() {
+                                        "inet" => "net",
+                                        tag => tag,
+                                    }
+                                ))
                                     .color(ACCENT)
                                     .font(FontId::monospace(12.0)),
                             );
@@ -2695,11 +2709,11 @@ impl eframe::App for GuiApp {
                         let resp = ui.add(
                             egui::TextEdit::singleline(&mut self.draft)
                                 .desired_width(ui.available_width() - 90.0)
-                                .hint_text(if in_direct {
+                                .hint_text(placeholder(if in_direct {
                                     "direct message, or /commands"
                                 } else {
                                     "message in this channel, or /join /invite /part"
-                                })
+                                }))
                                 .margin(INPUT_MARGIN)
                                 .font(FontId::monospace(14.0)),
                         );
@@ -2952,14 +2966,24 @@ fn station_key(ui: &mut egui::Ui, k: &str) {
     );
 }
 
+/// A station value, left-aligned with the text in the MODE and PRESET pickers
+/// above and below it (centred values zig-zagged down the panel).
+fn station_value(ui: &mut egui::Ui, text: RichText) {
+    let size = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(
+        size,
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.add_space(6.0);
+            ui.add(egui::Label::new(text).truncate());
+        },
+    );
+}
+
 fn kv_tip(ui: &mut egui::Ui, k: &str, v: &str, color: Color32, tip: Option<&str>) {
     let inner = ui.horizontal(|ui| {
         station_key(ui, k);
-        let w = ui.available_width();
-        ui.add_sized(
-            [w, ui.spacing().interact_size.y],
-            egui::Label::new(RichText::new(v).color(color).monospace()).truncate(),
-        );
+        station_value(ui, RichText::new(v).color(color).monospace());
     });
     if let Some(tip) = tip {
         let resp = ui.interact(
@@ -2984,11 +3008,7 @@ fn schedule_row(
         let pie = 18.0;
         let (rect, _) = ui.allocate_exact_size(egui::vec2(pie, h), egui::Sense::hover());
         paint_due_ring(ui.painter(), rect.center(), 6.5, lane, color);
-        let w = ui.available_width();
-        ui.add_sized(
-            [w, h],
-            egui::Label::new(RichText::new(&lane.label).color(color).monospace()).truncate(),
-        );
+        station_value(ui, RichText::new(&lane.label).color(color).monospace());
     });
     let resp = ui.interact(
         inner.response.rect,
@@ -3446,7 +3466,7 @@ fn audio_device_row(
         ui.add(
             egui::TextEdit::singleline(value)
                 .desired_width(200.0)
-                .hint_text(hint),
+                .hint_text(placeholder(hint)),
         );
     });
 }
@@ -3497,9 +3517,9 @@ fn cheat_sheet(ui: &mut egui::Ui) {
     cheat_line(ui, "! / !!", "priority / emergency line");
     cheat_line(ui, "CALL", "1:1 — type their callsign");
     cheat_line(ui, "FREQ", "dial radio to match");
-    cheat_line(ui, "MODE", "inet / RF / both");
+    cheat_line(ui, "MODE", "internet / RF / both");
     cheat_line(ui, "TOWER", "map pin in internet-radio");
-    cheat_line(ui, "[tx] [ok]", "sent delivered");
+    cheat_line(ui, "[tx] [ok]", "sent / delivered");
     cheat_line(ui, "RF", "always plaintext");
     cheat_line(ui, "hub", "TLS to the map");
     cheat_line(ui, "close", "hides to the tray");
@@ -3667,7 +3687,7 @@ fn freq_pick(
                             ui.data_mut(|d| d.get_temp::<String>(filter_id).unwrap_or_default());
                         ui.add(
                             egui::TextEdit::singleline(&mut filter)
-                                .hint_text("filter band, USB, UK…")
+                                .hint_text(placeholder("filter band, USB, UK…"))
                                 .font(FontId::monospace(12.0))
                                 .desired_width(f32::INFINITY),
                         );
@@ -4486,8 +4506,8 @@ impl GuiApp {
         module_title(ui, "ON THE AIR", &format!("{} frames", self.traffic.len()));
         ui.label(
             RichText::new(
-                "Every frame this station heard or sent. Read only: to answer a station, \
-                 use the web App's Reply or /query CALL in WeeChat, which opens a separate direct chat.",
+                "Every frame this station heard or sent, newest first. Read only: to answer a \
+                 station, type its callsign in the direct box on live chat.",
             )
             .color(DIM)
             .size(12.0),
@@ -5070,7 +5090,7 @@ impl GuiApp {
         ui.add(
             egui::TextEdit::singleline(&mut self.mail_to)
                 .desired_width(f32::INFINITY)
-                .hint_text("")
+                .hint_text(placeholder("name@example.com"))
                 .font(FontId::monospace(13.0)),
         );
         ui.label(RichText::new("Subject").color(DIM).monospace());
@@ -5079,6 +5099,7 @@ impl GuiApp {
                 .desired_width(f32::INFINITY)
                 .font(FontId::monospace(13.0)),
         );
+        ui.label(RichText::new("Message").color(DIM).monospace());
         ui.add(
             egui::TextEdit::multiline(&mut self.mail_body)
                 .desired_width(f32::INFINITY)
@@ -5128,7 +5149,7 @@ impl GuiApp {
             ui.add(
                 egui::TextEdit::singleline(&mut self.copy_addr)
                     .desired_width(220.0)
-                    .hint_text("empty = off")
+                    .hint_text(placeholder("address, empty = off"))
                     .font(FontId::monospace(13.0)),
             );
             if ui.add(hair_btn("save", PURPLE)).clicked() && !busy {
@@ -5139,7 +5160,7 @@ impl GuiApp {
             ui.add(
                 egui::TextEdit::singleline(&mut self.copy_code)
                     .desired_width(80.0)
-                    .hint_text("code")
+                    .hint_text(placeholder("code"))
                     .font(FontId::monospace(13.0)),
             );
             if ui.add(hair_btn("confirm", ORANGE)).clicked() && !busy {
@@ -5804,7 +5825,7 @@ impl GuiApp {
             ui.label(RichText::new("Callsign").color(DIM));
             let edit = egui::TextEdit::singleline(&mut self.callsign)
                 .desired_width(160.0)
-                .hint_text("M7TJF or ~NICK");
+                .hint_text(placeholder("M7TJF or ~NICK"));
             if ui.add(edit).changed() {
                 self.callsign = self.callsign.to_ascii_uppercase();
             }
@@ -5818,7 +5839,7 @@ impl GuiApp {
             ui.add(
                 egui::TextEdit::singleline(&mut self.grid)
                     .desired_width(160.0)
-                    .hint_text("IO81UF"),
+                    .hint_text(placeholder("IO81UF")),
             );
             if ui
                 .add(
@@ -5852,7 +5873,7 @@ impl GuiApp {
             ui.add(
                 egui::TextEdit::singleline(&mut self.gps_port)
                     .desired_width(160.0)
-                    .hint_text("empty = no GPS"),
+                    .hint_text(placeholder("empty = no GPS")),
             );
         });
         ui.horizontal(|ui| {
@@ -5890,7 +5911,7 @@ impl GuiApp {
                 !self.mail_auto,
                 egui::TextEdit::singleline(&mut self.mail_gateway)
                     .desired_width(110.0)
-                    .hint_text("e.g. TF101"),
+                    .hint_text(placeholder("e.g. TF101")),
             );
             if edit.changed() {
                 self.mail_gateway = self.mail_gateway.to_ascii_uppercase();
@@ -6059,7 +6080,7 @@ impl GuiApp {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.cat_port)
                         .desired_width(120.0)
-                        .hint_text("COM5"),
+                        .hint_text(placeholder("COM5")),
                 );
             });
         }
@@ -6073,7 +6094,7 @@ impl GuiApp {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.com_port)
                         .desired_width(120.0)
-                        .hint_text("COM5"),
+                        .hint_text(placeholder("COM5")),
                 );
             });
         }
@@ -6096,7 +6117,7 @@ impl GuiApp {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.rigctl)
                         .desired_width(160.0)
-                        .hint_text("127.0.0.1:4532"),
+                        .hint_text(placeholder("127.0.0.1:4532")),
                 );
             });
         }
@@ -6126,7 +6147,7 @@ impl GuiApp {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.serial_path)
                         .desired_width(160.0)
-                        .hint_text("COM7 or /dev/rfcomm0"),
+                        .hint_text(placeholder("COM7 or /dev/rfcomm0")),
                 );
             });
             ui.horizontal(|ui| {
@@ -6318,7 +6339,7 @@ impl GuiApp {
             ui.add(
                 egui::TextEdit::singleline(&mut self.bt_name)
                     .desired_width(120.0)
-                    .hint_text("VR-N76"),
+                    .hint_text(placeholder("VR-N76")),
             );
             let busy = self.bt_rx.is_some();
             let label = if busy { "Searching…" } else { "Find radio" };

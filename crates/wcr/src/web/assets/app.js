@@ -87,6 +87,7 @@ function setLink(up) {
   const l = $("link");
   l.className = `light ${up ? "up" : "down"}`;
   l.textContent = up ? "station up" : "station down";
+  l.title = l.textContent;
   $("send").disabled = !up;
 }
 
@@ -534,7 +535,7 @@ async function loadStations() {
     const what = el("span", "what");
     what.append(
       el("span", "subject", `${h.callsign}${h.gateway ? " (gateway)" : ""}`),
-      el("span", "who", `${h.band || h.medium || ""}${snr}${h.grid ? ` · ${h.grid}` : ""}`),
+      el("span", "who", `${h.band || (h.medium === "inet" ? "internet" : h.medium) || ""}${snr}${h.grid ? ` · ${h.grid}` : ""}`),
     );
     const msg = el("button", "quiet", "Message");
     msg.type = "button";
