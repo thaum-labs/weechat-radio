@@ -17,6 +17,8 @@ pub(crate) struct ChatLine {
     pub(crate) when: String,
     /// SNR in dB a radio line was decoded at; `None` off the air.
     pub(crate) snr: Option<f32>,
+    /// File transfer bar, such as `[████░░░░] 3/15`; empty for other lines.
+    pub(crate) progress: String,
 }
 
 impl ChatLine {
@@ -32,6 +34,7 @@ impl ChatLine {
             tries: 0,
             when: String::new(),
             snr: None,
+            progress: String::new(),
         }
     }
 
@@ -51,6 +54,7 @@ impl ChatLine {
             tries: 0,
             when: crate::store::chat_stamp(None),
             snr: None,
+            progress: String::new(),
         }
     }
 }
@@ -242,6 +246,48 @@ pub(crate) fn parse_tries(raw: Option<&str>) -> u32 {
     raw.and_then(|s| s.parse().ok()).unwrap_or(0)
 }
 
+/// A "📎 name (size) saved to PATH" line: the text before the path, and
+/// the path, so a UI can make the path a link.
+pub(crate) fn saved_file(text: &str) -> Option<(&str, &str)> {
+    if !text.starts_with("📎 ") {
+        return None;
+    }
+    let i = text.rfind(" saved to ")?;
+    let path = text[i + " saved to ".len()..].trim();
+    (!path.is_empty()).then_some((&text[..i + " saved to ".len()], path))
+}
+
+/// A file progress TAGMSG (`+radio/file=have/count`): the chat line's id
+/// and the bar to show on it.
+pub(crate) fn parse_file_progress(line: &str) -> Option<(String, String)> {
+    if !line.contains(" TAGMSG ") {
+        return None;
+    }
+    let tags = irc_tags(line);
+    let bar = crate::proto::file::progress_bar_from_tag(tags.get("radio/file")?)?;
+    let msgid = tags
+        .get("radio/msgid")
+        .or_else(|| tags.get("msgid"))
+        .cloned()
+        .unwrap_or_default();
+    (!msgid.is_empty()).then_some((msgid, bar))
+}
+
+/// Put a file progress bar on the line with `msgid`. True when one changed.
+pub(crate) fn apply_file_progress(lines: &mut [ChatLine], msgid: &str, bar: &str) -> bool {
+    let mut changed = false;
+    for l in lines
+        .iter_mut()
+        .filter(|l| l.msgid.eq_ignore_ascii_case(msgid))
+    {
+        if l.progress != bar {
+            l.progress = bar.to_string();
+            changed = true;
+        }
+    }
+    changed
+}
+
 pub(crate) fn parse_delivery(line: &str) -> Option<(String, String, u32)> {
     let payload = irc_payload(line);
     let cmd = if let Some(rest) = payload.strip_prefix(':') {
@@ -342,6 +388,10 @@ pub(crate) fn parse_privmsg(line: &str) -> Option<ChatLine> {
         tries: parse_tries(tags.get("radio/tries").map(String::as_str)),
         when: crate::store::chat_stamp(tags.get("server-time").map(String::as_str)),
         snr: tags.get("radio/snr").and_then(|s| s.parse().ok()),
+        progress: tags
+            .get("radio/file")
+            .and_then(|t| crate::proto::file::progress_bar_from_tag(t))
+            .unwrap_or_default(),
     })
 }
 
@@ -392,4 +442,38 @@ pub(crate) fn parse_part(line: &str) -> Option<(String, String)> {
 
 pub(crate) fn parse_invite(line: &str) -> Option<(String, String)> {
     crate::slash::parse_irc_invite(line)
+}
+
+#[cfg(test)]
+mod file_tests {
+    use super::*;
+
+    #[test]
+    fn a_file_progress_tag_becomes_a_bar() {
+        let (id, bar) =
+            parse_file_progress("@msgid=ab12;+radio/msgid=ab12;+radio/file=3/15 TAGMSG G4ABC")
+                .unwrap();
+        assert_eq!(id, "ab12");
+        assert_eq!(bar, crate::proto::file::progress_bar(3, 15));
+        // A delivery mark is not file progress.
+        assert!(parse_file_progress("@+radio/delivery=sent;+radio/msgid=ab TAGMSG *").is_none());
+        let mut lines = vec![ChatLine::user("G4ABC", "📎 a", "G4ABC")];
+        lines[0].msgid = "AB12".into();
+        assert!(apply_file_progress(&mut lines, "ab12", &bar));
+        assert!(!apply_file_progress(&mut lines, "ab12", &bar));
+        assert_eq!(lines[0].progress, bar);
+    }
+
+    #[test]
+    fn the_saved_path_is_found() {
+        let t = "📎 map.gpx (1.2 KB) saved to /home/pi/files/G4ABC/map.gpx";
+        assert_eq!(
+            saved_file(t),
+            Some((
+                "📎 map.gpx (1.2 KB) saved to ",
+                "/home/pi/files/G4ABC/map.gpx"
+            ))
+        );
+        assert!(saved_file("hello saved to x").is_none());
+    }
 }

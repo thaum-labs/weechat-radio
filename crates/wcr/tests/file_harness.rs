@@ -87,6 +87,7 @@ fn radio_cfg(callsign: &str, home: &Path, kiss: u16, ctrl: u16, irc: u16, status
         store: wcr::config::StoreConfig {
             path: home.join("store.db"),
             identity_key: home.join("identity.key"),
+            files_dir: home.join("files"),
             ..Default::default()
         },
         ..Default::default()
@@ -330,6 +331,7 @@ async fn a_small_file_arrives_whole() {
     let saved = pair.homes[1].join("files").join(A).join("field_notes.bin");
     let trace = pair.trace();
     let a_lines = pair.clients[0].lines().join("\n");
+    let b_text = pair.clients[1].lines().join("\n");
     pair.stop();
     assert!(got, "B never saved the file{trace}");
     assert_eq!(
@@ -338,6 +340,36 @@ async fn a_small_file_arrives_whole() {
         "saved bytes differ{trace}"
     );
     assert!(ok, "A's file line never reached [ok]\n{a_lines}{trace}");
+    // Progress bars: the sender's line starts at 0 and climbs to n/n as
+    // receipts come back; the receiver gets a "receiving" line that fills.
+    let id = file_line_id(&a_lines.lines().map(str::to_string).collect::<Vec<_>>()).unwrap();
+    let a_steps = progress_steps(&a_lines, &id);
+    assert_eq!(a_steps.first().map(|s| s.0), Some(0), "{a_lines}");
+    let n = a_steps[0].1;
+    assert!(n > 1, "{a_lines}");
+    assert_eq!(a_steps.last().copied(), Some((n, n)), "{a_lines}");
+    let b_lines = b_text;
+    assert!(b_lines.contains("receiving a file from"), "{b_lines}");
+    let rx_id = format!("file-{}-", A.to_ascii_lowercase());
+    let b_steps = progress_steps(&b_lines, &rx_id);
+    assert_eq!(b_steps.first().copied(), Some((1, n)), "{b_lines}");
+    assert_eq!(b_steps.last().copied(), Some((n, n)), "{b_lines}");
+}
+
+/// `(have, count)` from each `+radio/file` TAGMSG for a line whose msgid
+/// starts with `id`.
+fn progress_steps(lines: &str, id: &str) -> Vec<(u32, u32)> {
+    lines
+        .lines()
+        .filter(|l| l.contains(" TAGMSG ") && l.contains(&format!("msgid={id}")))
+        .filter_map(|l| {
+            let tag = l
+                .split(';')
+                .find_map(|t| t.split(' ').next()?.strip_prefix("+radio/file="))?;
+            let (h, c) = tag.split_once('/')?;
+            Some((h.parse().ok()?, c.parse().ok()?))
+        })
+        .collect()
 }
 
 /// The first copy of a middle piece is lost. B must hold back the receipt

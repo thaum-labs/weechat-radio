@@ -421,6 +421,11 @@ enum IrcEvent {
         /// How the receipt behind an `[ok]` came back (`rf`, `inet`, `lan`).
         via: Option<String>,
     },
+    /// A file transfer moved along: the bar to show on line `msgid`.
+    FileProgress {
+        msgid: String,
+        bar: String,
+    },
     Joined(String),
     Invited {
         from: String,
@@ -1318,8 +1323,11 @@ impl GuiApp {
 
     fn open_received_files(&mut self) {
         let store = Config::load(&Config::active_path())
-            .map(|c| c.store.path)
-            .unwrap_or_else(|_| crate::config::default_data_dir().join("wcr.db"));
+            .map(|c| c.store)
+            .unwrap_or_else(|_| crate::config::StoreConfig {
+                path: crate::config::default_data_dir().join("wcr.db"),
+                ..Default::default()
+            });
         let dir = crate::proto::file::received_dir(&store);
         let _ = std::fs::create_dir_all(&dir);
         if let Err(e) = open::that(&dir) {
@@ -1539,6 +1547,9 @@ impl GuiApp {
                     if let Some(via) = via {
                         crate::chat_line::apply_receipt_via(&mut self.chat, &msgid, &via);
                     }
+                }
+                IrcEvent::FileProgress { msgid, bar } => {
+                    crate::chat_line::apply_file_progress(&mut self.chat, &msgid, &bar);
                 }
                 IrcEvent::Status(s) => {
                     if let Some((nick, ch)) = crate::slash::parse_peer_left_notice(&s) {
@@ -2719,6 +2730,7 @@ impl eframe::App for GuiApp {
                             .show(ui, |ui| {
                                 let show_snr =
                                     self.status.as_ref().map(|s| s.show_snr).unwrap_or(true);
+                                let mut open_folder_of: Option<String> = None;
                                 for line in &self.chat {
                                     if !line.channel.is_empty()
                                         && !line.channel.eq_ignore_ascii_case(&active)
@@ -2749,9 +2761,45 @@ impl eframe::App for GuiApp {
                                                     .color(if mine { ORANGE } else { ACCENT })
                                                     .monospace(),
                                             );
-                                            ui.label(
-                                                RichText::new(&line.text).color(FG).monospace(),
-                                            );
+                                            match crate::chat_line::saved_file(&line.text) {
+                                                // A received file: the path opens its folder
+                                                // (never the file itself, which could be a program).
+                                                Some((lead, path)) => {
+                                                    ui.label(
+                                                        RichText::new(lead.trim_end()).color(FG).monospace(),
+                                                    );
+                                                    let link = ui
+                                                        .link(
+                                                            RichText::new(path)
+                                                                .color(ACCENT)
+                                                                .monospace()
+                                                                .underline(),
+                                                        )
+                                                        .on_hover_text("open the folder it is in");
+                                                    if link.clicked() {
+                                                        open_folder_of = Some(path.to_string());
+                                                    }
+                                                }
+                                                None => {
+                                                    ui.label(
+                                                        RichText::new(&line.text)
+                                                            .color(FG)
+                                                            .monospace(),
+                                                    );
+                                                }
+                                            }
+                                            if !line.progress.is_empty() {
+                                                ui.label(
+                                                    RichText::new(&line.progress)
+                                                        .color(GREEN)
+                                                        .monospace(),
+                                                )
+                                                .on_hover_text(if mine {
+                                                    "pieces the far station has receipted"
+                                                } else {
+                                                    "pieces received so far"
+                                                });
+                                            }
                                             if !line.via.is_empty() {
                                                 ui.label(
                                                     RichText::new(crate::store::via_bracket(
@@ -2793,6 +2841,12 @@ impl eframe::App for GuiApp {
                                                 ));
                                             }
                                         });
+                                    }
+                                }
+                                if let Some(path) = open_folder_of {
+                                    let path = std::path::Path::new(&path);
+                                    if let Some(dir) = path.parent() {
+                                        let _ = open::that(dir);
                                     }
                                 }
                             });
@@ -6620,7 +6674,9 @@ fn irc_session(
                     if line.contains(" CAP ") {
                         continue;
                     }
-                    if let Some((msgid, state, tries)) = parse_delivery(&line) {
+                    if let Some((msgid, bar)) = crate::chat_line::parse_file_progress(&line) {
+                        let _ = events.send(IrcEvent::FileProgress { msgid, bar });
+                    } else if let Some((msgid, state, tries)) = parse_delivery(&line) {
                         let _ = events.send(IrcEvent::Delivery {
                             msgid,
                             state,
@@ -6880,6 +6936,7 @@ mod tests {
             tries: 0,
             when: String::new(),
             snr: None,
+            progress: String::new(),
         };
         apply_line_delivery(
             &mut line,

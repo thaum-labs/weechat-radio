@@ -246,6 +246,7 @@ fn router(web: Web) -> Router {
         .route("/api/chat/join", post(chat_join))
         .route("/api/chat/remove", post(chat_remove))
         .route("/api/chat/file", post(chat_file))
+        .route("/api/chat/received", get(chat_received))
         .route("/api/stations", get(stations))
         .route("/api/traffic", get(traffic))
         .route("/api/mail", get(mail_list))
@@ -687,6 +688,51 @@ struct FileBody {
     data: String,
 }
 
+#[derive(Deserialize)]
+struct ReceivedQuery {
+    path: String,
+}
+
+/// Download a file this station received (the "saved to" link on the page).
+/// Only files inside the received-files folder are served, always as a
+/// download so a received page or script never runs in the browser.
+async fn chat_received(State(web): State<Web>, Query(q): Query<ReceivedQuery>) -> Response {
+    let store = Config::load(&web.cfg_path)
+        .map(|c| c.store)
+        .unwrap_or_else(|_| crate::config::StoreConfig {
+            path: crate::config::default_data_dir().join("wcr.db"),
+            ..Default::default()
+        });
+    match received_file(
+        &crate::proto::file::received_dir(&store),
+        Path::new(&q.path),
+    ) {
+        Some((name, data)) => (
+            [
+                (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+                (
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"{}\"", name.replace('"', "")),
+                ),
+            ],
+            data,
+        )
+            .into_response(),
+        None => (StatusCode::NOT_FOUND, "no such received file").into_response(),
+    }
+}
+
+/// The file at `path` when it sits inside `dir`: its name and bytes.
+fn received_file(dir: &Path, path: &Path) -> Option<(String, Vec<u8>)> {
+    let dir = dir.canonicalize().ok()?;
+    let path = path.canonicalize().ok()?;
+    if !path.starts_with(&dir) || !path.is_file() {
+        return None;
+    }
+    let name = path.file_name()?.to_string_lossy().to_string();
+    Some((name, std::fs::read(&path).ok()?))
+}
+
 /// A small file from the page for a direct chat (4 KB max, VHF/UHF only).
 async fn chat_file(State(web): State<Web>, Json(b): Json<FileBody>) -> Response {
     use base64::Engine as _;
@@ -700,7 +746,7 @@ async fn chat_file(State(web): State<Web>, Json(b): Json<FileBody>) -> Response 
     let store = Config::load(&web.cfg_path)
         .map(|c| c.store.path)
         .unwrap_or_else(|_| crate::config::default_data_dir().join("wcr.db"));
-    let dir = crate::proto::file::received_dir(&store);
+    let dir = crate::proto::file::data_files_dir(&store);
     match web.chat.send_file(&b.to, &b.name, &data, &dir) {
         Ok(()) => Json(json!({ "ok": true })).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
@@ -1166,6 +1212,21 @@ pub fn install(_cfg_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The "saved to" download serves received files only.
+    #[test]
+    fn only_received_files_download() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("WeeChat Radio");
+        std::fs::create_dir_all(dir.join("G4ABC")).unwrap();
+        std::fs::write(dir.join("G4ABC/map.gpx"), b"gpx").unwrap();
+        std::fs::write(tmp.path().join("secret.txt"), b"no").unwrap();
+        let got = received_file(&dir, &dir.join("G4ABC/map.gpx")).unwrap();
+        assert_eq!(got, ("map.gpx".to_string(), b"gpx".to_vec()));
+        assert!(received_file(&dir, &tmp.path().join("secret.txt")).is_none());
+        assert!(received_file(&dir, &dir.join("G4ABC/../../secret.txt")).is_none());
+        assert!(received_file(&dir, &dir.join("G4ABC")).is_none());
+    }
 
     /// #257: the tab icon is the website's mark, every page names it, and a
     /// stopped station's traffic is an empty list (the page keeps its rows).

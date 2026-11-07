@@ -42,6 +42,8 @@ pub struct LineView {
     pub via: String,
     pub when: String,
     pub snr: Option<f32>,
+    /// File transfer bar, such as `[████░░░░] 3/15`; empty otherwise.
+    pub progress: String,
 }
 
 struct Conv {
@@ -366,6 +368,28 @@ impl Chat {
     }
 
     /// A delivery mark from the station, applied as the desktop app does.
+    /// Move the bar on the file line `msgid`, wherever it is.
+    fn file_progress(&self, msgid: &str, bar: &str) {
+        let changed: Vec<LineView> = {
+            let mut st = self.state.lock();
+            let me = st.me.clone();
+            let mut out = Vec::new();
+            for conv in st.convs.iter_mut() {
+                for j in 0..conv.lines.len() {
+                    let l = &mut conv.lines[j];
+                    if l.msgid.eq_ignore_ascii_case(msgid) && l.progress != bar {
+                        l.progress = bar.to_string();
+                        out.push(view(&me, &conv.id, conv.seqs[j], &conv.lines[j]));
+                    }
+                }
+            }
+            out
+        };
+        for v in changed {
+            let _ = self.events.send(json!({ "type": "line", "line": v }));
+        }
+    }
+
     fn mark(&self, msgid: &str, state: &str, tries: u32, via: Option<&str>) {
         let changed: Vec<LineView> = {
             let mut st = self.state.lock();
@@ -418,7 +442,9 @@ impl Chat {
 
     fn handle(&self, raw: &str) {
         let me = self.state.lock().me.clone();
-        if let Some((msgid, state, tries)) = chat_line::parse_delivery(raw) {
+        if let Some((msgid, bar)) = chat_line::parse_file_progress(raw) {
+            self.file_progress(&msgid, &bar);
+        } else if let Some((msgid, state, tries)) = chat_line::parse_delivery(raw) {
             let via = chat_line::delivery_via(raw);
             self.mark(&msgid, &state, tries, via.as_deref());
         } else if let Some((from, ch)) = chat_line::parse_invite(raw) {
@@ -533,6 +559,7 @@ fn view(me: &str, conv: &str, seq: u64, l: &ChatLine) -> LineView {
         via: l.via.clone(),
         when: l.when.clone(),
         snr: l.snr,
+        progress: l.progress.clone(),
     }
 }
 
@@ -639,6 +666,7 @@ mod tests {
                 via: v["via"].as_str().unwrap().into(),
                 when: v["when"].as_str().unwrap().into(),
                 snr: v["snr"].as_f64().map(|f| f as f32),
+                progress: v["progress"].as_str().unwrap_or("").into(),
             })
             .collect()
     }
