@@ -195,6 +195,7 @@
         <h2 id="reportsH">Signal reports and weather</h2>
         <ul>
           <li><code>/report CALL</code> asks that station for a signal report. A station on v0.1.109 or later answers on its own with the SNR it heard you at, at most once every 5 minutes per callsign. <code>/report auto off</code> stops yours answering. The request and the answer are private, so look in the CALL tab. <code>/report</code> is the radio signal; <code>/wx</code> is the weather.</li>
+          <li><code>/file CALL path</code> (or <code>/file path</code> in a private tab) sends a small file, up to 4 KB, to one station. Direct messages only, on <code>vhf-fm</code> or <code>afsk-1200</code>: about 30 s on <code>vhf-fm</code>, 1.5 min on <code>afsk-1200</code>. <code>[ok]</code> on the file line means the whole file arrived. In the desktop app, drag the file onto the window; on the Pi page, use the File button. Files are sent as they are, never encrypted. Both stations need v1.0.17 or later.</li>
           <li><code>/wx</code> shows the weather for your grid square. <code>/wx CALL</code> sends it to CALL. It comes from Open-Meteo, so your station needs internet. The station receiving it does not.</li>
         </ul>
       </section>

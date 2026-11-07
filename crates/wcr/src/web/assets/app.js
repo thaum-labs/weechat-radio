@@ -212,6 +212,8 @@ function openConv(id) {
   $("conv-title").textContent = id;
   document.body.classList.add("in-conv");
   $("chat-note").textContent = "";
+  // Files go to one station only: the button shows in direct chats.
+  $("attach").hidden = id.startsWith("#") || id.startsWith("&");
   drawConvs();
   drawLines(true);
   try { localStorage.setItem("wcr-conv", id); } catch (_) { /* private mode */ }
@@ -263,6 +265,29 @@ async function sendNow() {
 }
 
 $("compose").onsubmit = (e) => { e.preventDefault(); sendNow(); };
+
+// A small file for a direct chat. The station checks the preset (vhf-fm or
+// afsk-1200) and answers in the note line if it cannot send it.
+const FILE_MAX = 4096;
+$("attach").onclick = () => $("attach-file").click();
+$("attach-file").onchange = async () => {
+  const f = $("attach-file").files[0];
+  $("attach-file").value = "";
+  if (!f) return;
+  if (f.size > FILE_MAX) {
+    $("chat-note").textContent = `${f.name} is ${(f.size / 1024).toFixed(1)} KB; the limit is 4 KB.`;
+    return;
+  }
+  const buf = new Uint8Array(await f.arrayBuffer());
+  let bin = "";
+  for (const b of buf) bin += String.fromCharCode(b);
+  try {
+    await post("/api/chat/file", { to: chat.active, name: f.name, data: btoa(bin) });
+    $("chat-note").textContent = "";
+  } catch (err) {
+    $("chat-note").textContent = err.message;
+  }
+};
 $("text").addEventListener("keydown", (e) => {
   // Enter sends on a keyboard; Shift+Enter is a new line.
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendNow(); }

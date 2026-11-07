@@ -274,6 +274,13 @@ const COMMANDS: &[Cmd] = &[
         send_bare: true,
     },
     Cmd {
+        name: "file",
+        usage: "/file [CALL] path",
+        summary: "Send a small file (4 KB max) to one station, VHF/UHF only",
+        args: &[],
+        send_bare: false,
+    },
+    Cmd {
         name: "wx",
         usage: "/wx [CALL]",
         summary: "Weather for your grid (not a signal report); CALL gets it privately",
@@ -735,6 +742,25 @@ pub fn to_wire(raw: &str, channel: &str) -> Vec<String> {
                 format!("INVITE {nick} {ch}"),
             ]
         }
+        // `/file path` in a private tab sends to that station; elsewhere,
+        // or with a callsign first, `/file CALL path`.
+        "file" => {
+            let mut words = tail.split_whitespace();
+            let first = words.next().unwrap_or("");
+            let explicit = crate::proto::is_plausible_callsign(&first.to_ascii_uppercase())
+                && words.next().is_some();
+            let private = !channel.is_empty() && !channel.starts_with(['#', '&']);
+            if tail.is_empty() {
+                vec!["RADIO file".to_string()]
+            } else if explicit || !private {
+                vec![format!("RADIO file {tail}")]
+            } else {
+                vec![format!(
+                    "RADIO file {} {tail}",
+                    channel.to_ascii_uppercase()
+                )]
+            }
+        }
         // Bare `/report` in a private tab asks that station.
         "report" if tail.is_empty() && !channel.is_empty() && !channel.starts_with(['#', '&']) => {
             vec![format!("RADIO report {}", channel.to_ascii_uppercase())]
@@ -852,6 +878,23 @@ mod tests {
         );
         assert_eq!(to_radio_args("/help").as_deref(), Some("help"));
         assert_eq!(to_radio_args("hello"), None);
+    }
+
+    #[test]
+    fn file_goes_to_the_private_tab_or_the_named_station() {
+        assert_eq!(
+            to_wire("/file /tmp/notes.txt", "g4abc"),
+            vec!["RADIO file G4ABC /tmp/notes.txt"]
+        );
+        assert_eq!(
+            to_wire("/file M0XYZ /tmp/notes.txt", "g4abc"),
+            vec!["RADIO file M0XYZ /tmp/notes.txt"]
+        );
+        assert_eq!(
+            to_wire("/file M0XYZ /tmp/notes.txt", "#bulletin"),
+            vec!["RADIO file M0XYZ /tmp/notes.txt"]
+        );
+        assert_eq!(to_wire("/file", "g4abc"), vec!["RADIO file"]);
     }
 
     #[test]

@@ -4,6 +4,7 @@
 pub mod callsign;
 pub mod compress;
 pub mod envelope;
+pub mod file;
 pub mod flags;
 pub mod frag;
 pub mod ids;

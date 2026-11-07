@@ -19,6 +19,7 @@ Marks: [..] waiting  [tx] sent  [rl] heard again  [gw] gateway took it
 
 Signal report: /report CALL   (answered automatically, /report auto off)
 Weather:       /wx  or  /wx CALL   (your grid, needs internet)
+Small file:    /file CALL path   (4 KB max, direct only, vhf-fm or afsk-1200)
 
 Update: click the version in the app (Pi: web page, Software card) and
 press Update. It waits for a quiet radio, restarts and rolls back if the

@@ -321,7 +321,9 @@ pub fn heard_direct(env: &Envelope, line: Option<&Envelope>) -> bool {
             Some(l) => ack_hop_budget(l.flags.group() || is_group_invite(l), l.priority()),
             None => crate::emcomm::BULLETIN_TTL,
         },
-        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status => initial_hops(env),
+        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status | MsgType::File => {
+            initial_hops(env)
+        }
         _ => return false,
     };
     env.hops_left >= keyed
@@ -793,7 +795,7 @@ impl std::fmt::Display for ExchangeKey {
 pub fn exchange_step(env: &Envelope) -> Option<(ExchangeKey, bool)> {
     match env.kind {
         MsgType::Ack => env.acked_id().map(|id| (ExchangeKey::Line(id), true)),
-        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status
+        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status | MsgType::File
             if env.flags.req_ack() =>
         {
             Some((ExchangeKey::Line(env.msg_id), false))
