@@ -214,6 +214,51 @@ impl Chat {
         Ok(())
     }
 
+    /// Send a file the page uploaded to one station (`/file`). The bytes
+    /// are written beside the station's data first; the station reads them
+    /// from there, checks the preset and says why not if it cannot send.
+    pub fn send_file(
+        &self,
+        to: &str,
+        name: &str,
+        data: &[u8],
+        dir: &std::path::Path,
+    ) -> Result<(), String> {
+        let to = conv_id(to);
+        if to.is_empty() || to.starts_with(['#', '&']) {
+            return Err("files go in a direct chat, to one station".into());
+        }
+        if data.is_empty() {
+            return Err("the file is empty".into());
+        }
+        if data.len() > crate::proto::file::FILE_MAX_BYTES {
+            return Err(format!(
+                "the file is {}; the limit is {}",
+                crate::proto::file::human_size(data.len()),
+                crate::proto::file::human_size(crate::proto::file::FILE_MAX_BYTES)
+            ));
+        }
+        if !self.state.lock().up {
+            return Err("the station is not running".into());
+        }
+        // One folder per upload keeps the file's own name for the air.
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let folder = dir.join("outgoing").join(stamp.to_string());
+        let path = folder.join(crate::proto::file::clean_name(name));
+        std::fs::create_dir_all(&folder)
+            .and_then(|_| std::fs::write(&path, data))
+            .map_err(|e| format!("could not store the upload: {e}"))?;
+        let _ = self.out.send(format!(
+            "RADIO file {} {}",
+            to.to_ascii_uppercase(),
+            path.display()
+        ));
+        Ok(())
+    }
+
     /// Open a channel: join it on the station (its history follows).
     pub fn join(&self, channel: &str) -> Result<String, String> {
         let ch = crate::slash::normalize_channel(channel);

@@ -178,13 +178,15 @@ pub fn note_keyed(payload: &[u8]) {
             env.origin,
             env.hops_left
         ),
-        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status => tracing::info!(
-            "line to modem: {} from {} to {}, {} hops left",
-            env.msg_id.hex(),
-            env.origin,
-            env.dest,
-            env.hops_left
-        ),
+        MsgType::Msg | MsgType::Form | MsgType::Checkin | MsgType::Status | MsgType::File => {
+            tracing::info!(
+                "line to modem: {} from {} to {}, {} hops left",
+                env.msg_id.hex(),
+                env.origin,
+                env.dest,
+                env.hops_left
+            )
+        }
         _ => {}
     }
 }

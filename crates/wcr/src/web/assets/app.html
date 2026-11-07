@@ -56,6 +56,8 @@
       <ol id="lines" class="lines" aria-live="polite"></ol>
       <form id="compose" class="compose">
         <textarea id="text" rows="2" maxlength="1200" placeholder="Message" aria-label="Message"></textarea>
+        <button type="button" id="attach" class="quiet" title="Send a small file (4 KB max, VHF/UHF only)" aria-label="Send a file" hidden>File</button>
+        <input type="file" id="attach-file" hidden>
         <button type="submit" id="send">Send</button>
       </form>
       <p id="chat-note" class="warn small note" role="status"></p>
