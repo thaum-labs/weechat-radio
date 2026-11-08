@@ -7,18 +7,10 @@
 <p align="center"><strong>Chat that keeps working when the internet does not.</strong></p>
 
 <p align="center">
-  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.89-DEA584?logo=rust&logoColor=white" alt="Rust 1.89" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="Apache-2.0" /></a>
-  <a href="https://github.com/thaum-labs/weechat-radio/releases"><img src="https://img.shields.io/badge/version-1.0.17-7d9bff" alt="Version 1.0.17" /></a>
+  <a href="https://github.com/thaum-labs/weechat-radio/releases/latest"><img src="https://img.shields.io/github/v/release/thaum-labs/weechat-radio?label=release" alt="Latest release" /></a>
   <a href="https://github.com/thaum-labs/weechat-radio/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/thaum-labs/weechat-radio/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
-  <a href="https://github.com/thaum-labs/weechat-radio/releases/latest"><img src="https://img.shields.io/github/v/release/thaum-labs/weechat-radio?label=stable&color=39ff14" alt="Latest stable release" /></a>
-  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6" alt="Windows, macOS and Linux" />
-  <br/>
-  <a href="https://weechat.org/"><img src="https://img.shields.io/badge/WeeChat-IRC-00A7E0" alt="WeeChat" /></a>
-  <a href="https://github.com/RFnexus/modem73"><img src="https://img.shields.io/badge/modem73-KISS%20TNC-39ff14" alt="modem73" /></a>
-  <img src="https://img.shields.io/badge/desktop-GUI-7d9bff" alt="desktop GUI" />
-  <a href="https://weechatradio.com/guides/pi.html"><img src="https://img.shields.io/badge/Raspberry%20Pi-gateway-C51A4A?logo=raspberrypi&logoColor=white" alt="Raspberry Pi gateway" /></a>
-  <img src="https://img.shields.io/badge/SQLite-store--and--forward-003B57?logo=sqlite&logoColor=white" alt="SQLite" />
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Pi-informational" alt="Windows, macOS, Linux and Raspberry Pi" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-Apache%202.0-blue" alt="Apache-2.0" /></a>
   <a href="https://weechatradio.com"><img src="https://img.shields.io/website?url=https%3A%2F%2Fweechatradio.com&up_message=live&down_message=down&label=weechatradio.com" alt="weechatradio.com status" /></a>
 </p>
 
@@ -28,7 +20,8 @@
 
 - Chat from the desktop app (`wcr gui`), a terminal UI (`wcr tui`), or WeeChat
 - Run internet-only, radio-only, or both at once
-- Send email over the radio through a gateway station
+- Direct messages, with small file attachments on VHF/UHF
+- Send and receive email over the radio through a gateway station
 - Run an always-on gateway on a Raspberry Pi with a web portal for status, chat and mail
 - Appear on the public map: [weechatradio.com/map.html](https://weechatradio.com/map.html)
 
@@ -60,7 +53,7 @@ Leave the window open; WeeChat installs through Cygwin after the program and can
 
 You are set up when the status bar shows your callsign. Send a line in `#bulletin`: `[tx]` means sent, `[ok]` means delivered, `[no]` means it never got through.
 
-**Updating needs no terminal.** In the desktop app, click the version at the bottom left; on a Pi, open the web page's **Software** card. Press **Update**: it checks the SHA-256, installs, waits for the radio to go quiet, restarts on the new version and shows it. The station comes back as you left it. If the new version does not start, the previous one comes back and the app says so. Release candidates are for the terminal only: `wcr update --rc`. In a terminal, `wcr update` does the same and ends with one line (`Updated to 1.0.16, running, radio idle.`); `wcr status` and `wcr restart` need no sudo. Trouble? See the [troubleshooting page](https://weechatradio.com/guides/troubleshooting.html).
+**Updating needs no terminal.** In the desktop app, click the version at the bottom left; on a Pi, open the web page's **Software** card. Press **Update**: it checks the SHA-256, installs, waits for the radio to go quiet, restarts on the new version and shows it. The station comes back as you left it. If the new version does not start, the previous one comes back and the app says so. Release candidates are for the terminal only: `wcr update --rc`. In a terminal, `wcr update` does the same and ends with one line (`Updated to <version>, running, radio idle.`); `wcr status` and `wcr restart` need no sudo. Trouble? See the [troubleshooting page](https://weechatradio.com/guides/troubleshooting.html).
 
 ---
 
