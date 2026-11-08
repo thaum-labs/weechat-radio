@@ -7065,7 +7065,7 @@ mod tests {
     }
 
     #[test]
-        fn notify_body_cuts_long_lines_on_a_character() {
+    fn notify_body_cuts_long_lines_on_a_character() {
         let long = "é".repeat(200);
         let body = notify_body(&long);
         assert_eq!(body.chars().count(), 121);
