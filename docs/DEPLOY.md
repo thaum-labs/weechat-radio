@@ -43,7 +43,7 @@ The path helper (`services/path`, image `ghcr.io/thaum-labs/wcr-path`) answers `
 
 The website, hub image, and path image update on every push to `main`. That does not bump the app version and does not make `wcr update` download anything.
 
-Bump `Cargo.toml`, the README badge, OpenAPI `info.version`, the numbered changelog, and a `v*` tag **only** when `wcr` / `wcr-gui` behaviour (or the bits inside the binary) change. `wcr update` follows those tags.
+Bump `Cargo.toml`, OpenAPI `info.version`, the numbered changelog, and a `v*` tag **only** when `wcr` / `wcr-gui` behaviour (or the bits inside the binary) change. `wcr update` follows those tags.
 
 ## Backups
 
