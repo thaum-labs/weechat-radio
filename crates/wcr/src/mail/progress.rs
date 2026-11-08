@@ -93,6 +93,26 @@ pub struct SendStep {
     pub ok: bool,
 }
 
+/// Cells in a mail progress bar, the same width as the file bars.
+const BAR_CELLS: usize = 20;
+
+/// A DOS-style text bar for a 0..1 fraction, drawn like the file transfer
+/// bars: `[██████░░░░░░░░░░░░░░]  30%`.
+pub fn dos_bar(fraction: f32) -> String {
+    let f = if fraction.is_finite() {
+        fraction.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let full = ((f * BAR_CELLS as f32).floor() as usize).min(BAR_CELLS);
+    format!(
+        "[{}{}] {:>3}%",
+        "█".repeat(full),
+        "░".repeat(BAR_CELLS - full),
+        (f * 100.0).round() as u32
+    )
+}
+
 /// The Radio+ Get window: asking, chunks received H of T, fetched, or why
 /// it stopped. The caller keeps the bar from going back.
 pub fn get_step(p: &super::GetProgress) -> SendStep {
@@ -217,6 +237,19 @@ fn got_count(got: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_dos_bar_fills_with_the_fraction() {
+        assert_eq!(dos_bar(0.0), format!("[{}]   0%", "░".repeat(20)));
+        assert_eq!(
+            dos_bar(0.5),
+            format!("[{}{}]  50%", "█".repeat(10), "░".repeat(10))
+        );
+        assert_eq!(dos_bar(1.0), format!("[{}] 100%", "█".repeat(20)));
+        // Out of range and NaN stay inside the bar.
+        assert_eq!(dos_bar(1.7), dos_bar(1.0));
+        assert_eq!(dos_bar(f32::NAN), dos_bar(0.0));
+    }
 
     #[test]
     fn get_window_walks_asking_chunks_fetched() {

@@ -150,6 +150,9 @@ pub struct GetProgress {
     pub total: u16,
     /// Why it failed.
     pub detail: String,
+    /// The Inbox row of the fetched mail, so the Get window can open it.
+    #[serde(default)]
+    pub mail_id: String,
 }
 
 impl GetProgress {
@@ -560,6 +563,18 @@ impl MailStore {
         Ok(n == 1)
     }
 
+    /// The unread Inbox mail that arrived last, for the "new mail" alert
+    /// that opens it. Arrival order is the table's insert order, not `ts`
+    /// (an Inbox row keeps the time the sender sent it).
+    pub fn newest_unread(&self) -> Result<Option<MailRow>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {MAIL_COLS} FROM mail WHERE folder = 'inbox' AND unread = 1 ORDER BY rowid DESC LIMIT 1"
+        ))?;
+        let mut rows = stmt.query_map([], map_row)?;
+        Ok(rows.next().transpose()?)
+    }
+
     pub fn unread(&self) -> Result<u64> {
         let n: i64 = self.conn.lock().query_row(
             "SELECT COUNT(*) FROM mail WHERE folder = 'inbox' AND unread = 1",
@@ -732,6 +747,29 @@ mod tests {
         assert_eq!((p.state.as_str(), p.got, p.total), ("receiving", 2, 6));
         assert!(store.note_get_chunks(9, 6));
         assert_eq!(store.get_progress().got, 6);
+    }
+
+    #[test]
+    fn the_newest_unread_is_the_last_mail_in_not_the_newest_stamp() {
+        let store = MailStore::open_memory().unwrap();
+        assert!(store.newest_unread().unwrap().is_none());
+        let inbox = |id: &str, ts: i64| MailRow {
+            id: id.into(),
+            folder: "inbox".into(),
+            from_addr: "a@example.com".into(),
+            subject: id.into(),
+            ts,
+            unread: true,
+            ..MailRow::default()
+        };
+        store.insert(&inbox("first", 500)).unwrap();
+        // Arrives later, but was sent earlier.
+        store.insert(&inbox("second", 100)).unwrap();
+        assert_eq!(store.newest_unread().unwrap().unwrap().id, "second");
+        store.mark_read("second").unwrap();
+        assert_eq!(store.newest_unread().unwrap().unwrap().id, "first");
+        store.mark_read("first").unwrap();
+        assert!(store.newest_unread().unwrap().is_none());
     }
 
     fn out_row(id: &str) -> MailRow {

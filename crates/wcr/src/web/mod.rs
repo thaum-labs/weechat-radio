@@ -844,6 +844,11 @@ async fn mail_list(State(web): State<Web>, Query(q): Query<FolderQ>) -> Response
         let tab = serde_json::from_str::<Value>(&tab).unwrap_or(Value::Null);
         out["block"] = tab["block"].clone();
         out["gateway_line"] = tab["gateway_line"].clone();
+        // Radio+ Get progress and the last mail in, for the bars and the
+        // "new mail" line that opens it.
+        out["get"] = tab["get"].clone();
+        out["newest"] = tab["newest"].clone();
+        out["unread"] = tab["unread"].clone();
     }
     json_response(code, out.to_string())
 }
