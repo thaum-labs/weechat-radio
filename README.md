@@ -7,7 +7,7 @@
 <p align="center"><strong>Chat that keeps working when the internet does not.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/thaum-labs/weechat-radio/releases/latest"><img src="https://img.shields.io/github/v/release/thaum-labs/weechat-radio?label=release" alt="Latest release" /></a>
+  <a href="https://github.com/thaum-labs/weechat-radio/releases/latest"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.weechatradio.com%2Fversion&query=%24.version&label=release&prefix=v&color=blue" alt="Latest release" /></a>
   <a href="https://github.com/thaum-labs/weechat-radio/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/thaum-labs/weechat-radio/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Pi-informational" alt="Windows, macOS, Linux and Raspberry Pi" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-Apache%202.0-blue" alt="Apache-2.0" /></a>
