@@ -22,7 +22,7 @@ pub use air::{confirm_air_line, AirtimeMail};
 pub use gateway::{local_send_path as gateway_path, state_mark, SendPath};
 pub use hub::GATEWAY_ASK_PATH;
 pub use lease::RadioPorts;
-pub use progress::{delivery_word, get_step, send_step, SendStep, SendView};
+pub use progress::{delivery_word, dos_bar, get_step, send_step, SendStep, SendView};
 
 pub fn airtime_parts(mail: &AirtimeMail<'_>, preset: Preset, turnaround_ms: u32) -> (f64, usize) {
     air::mail_airtime_secs(preset, mail, turnaround_ms)
@@ -340,9 +340,17 @@ impl MailHandle {
         let snap = self.snap.lock().clone();
         let unread = self.store.unread().unwrap_or(0);
         let waiting = self.store.waiting().map(|w| w.len()).unwrap_or(0);
+        // The last mail in, so a "new mail" alert can open it.
+        let newest = self
+            .store
+            .newest_unread()
+            .ok()
+            .flatten()
+            .map(|r| json!({ "id": r.id, "from_addr": r.from_addr, "subject": r.subject }));
         json!({
             "address": proto::wcr_address(&cfg.callsign),
             "unread": unread,
+            "newest": newest,
             "waiting": waiting,
             "notice": self.store.notice(),
             "get": self.store.get_progress(),

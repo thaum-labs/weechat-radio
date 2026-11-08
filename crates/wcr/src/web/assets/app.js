@@ -387,6 +387,41 @@ function chip(st) {
   return c;
 }
 
+// DOS-style bar like the file bars (same as the desktop app's mail bars).
+function dosBar(fraction) {
+  const f = Math.min(1, Math.max(0, Number(fraction) || 0));
+  const full = Math.floor(f * 20);
+  return `[${"█".repeat(full)}${"░".repeat(20 - full)}] ${String(Math.round(f * 100)).padStart(3)}%`;
+}
+
+// How far an outgoing radio mail is: chunks the gateway has receipted.
+function sendBar(m) {
+  if (m.folder !== "outbox" || !(m.chunks > 0)) return "";
+  if (m.state === "gateway") return dosBar(1);
+  if (m.state !== "tx" && m.state !== "queued") return "";
+  const have = String(m.got || "").split(",").filter((x) => /^\d+$/.test(x.trim())).length;
+  return `${dosBar(have / m.chunks)} ${have}/${m.chunks}`;
+}
+
+// The Radio+ Get under way, or the mail it fetched (click to open).
+function drawGet(get, rows) {
+  const p = $("mail-get");
+  p.replaceChildren();
+  const g = get || {};
+  const subject = g.subject || "mail";
+  if (g.state === "asking" || g.state === "receiving") {
+    const part = g.state === "receiving" && g.total > 0 ? g.got / g.total : 0;
+    const words = g.state === "receiving" ? `chunks ${g.got} of ${g.total}` : "asking the gateway…";
+    p.append(`Getting ${subject} `, el("span", "bar", dosBar(0.1 + 0.85 * part)), ` ${words}`);
+  } else if (g.state === "fetched" && g.mail_id && rows.some((r) => r.id === g.mail_id && r.unread)) {
+    const a = el("button", "quiet", "Open");
+    a.type = "button";
+    a.onclick = () => showMail(g.mail_id);
+    p.append(`Fetched ${subject} `, el("span", "bar", dosBar(1)), " ", a);
+  }
+  p.hidden = !p.childNodes.length;
+}
+
 async function loadMail() {
   const folder = $("folder").value;
   $("check-mail").hidden = !(folder === "inbox" && mailMode === "radio-plus");
@@ -404,6 +439,7 @@ async function loadMail() {
   note.textContent = d.block || (d.gateway_line ? `Mail gateway: ${d.gateway_line}` : "");
   note.className = d.block ? "small warn" : "small dim";
   note.hidden = !note.textContent;
+  drawGet(folder === "inbox" ? d.get : null, mailRows);
   const ul = $("mail-list");
   ul.replaceChildren();
   for (const w of d.waiting || []) {
@@ -429,6 +465,8 @@ async function loadMail() {
     const via = (m.via || []).at(-1);
     const who = folder === "inbox" ? m.from_addr : `${m.to_addr}${via ? ` · via ${via.gateway}` : ""}`;
     what.append(el("span", "subject", m.subject || "(no subject)"), el("span", "who", who));
+    const bar = sendBar(m);
+    if (bar) what.append(el("span", "bar", bar));
     li.append(el("span", "when", clock(m.ts)), chip(m.status || {}), what);
     li.tabIndex = 0;
     li.onclick = () => showMail(m.id);
@@ -453,6 +491,8 @@ function drawMail(m) {
   const p = $("mv-status");
   p.replaceChildren(chip(st), document.createTextNode(` ${st.word || ""}`));
   if (st.reason) p.append(el("span", "dim small block", st.reason));
+  const bar = sendBar(m);
+  if (bar) p.append(el("span", "bar block", bar));
   const steps = (m.hops || []).map((h) => ({ ts: h.ts, text: STAGES[h.stage] || h.stage }))
     .concat((m.via || []).map((v) => ({ ts: v.ts, text: `via gateway ${v.gateway}` })))
     .sort((a, b) => a.ts - b.ts);

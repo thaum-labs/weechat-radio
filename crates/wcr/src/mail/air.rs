@@ -1686,6 +1686,7 @@ async fn deliver(ctx: &TxCtx, meta: MailMeta, body: String, op: MailOp) -> Resul
     if get.active() {
         get.state = "fetched".into();
         get.got = get.total;
+        get.mail_id = row.id.clone();
         tracing::info!(
             "mail fetched {} from {} (inbox row {})",
             get.asked,

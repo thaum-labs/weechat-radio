@@ -232,6 +232,10 @@ main.wide { max-width: 1100px; }
 .mail-list li { cursor: pointer; }
 .mail-list li.unread .subject { color: var(--fg); font-weight: 700; }
 .mail-list li.waiting { cursor: default; }
+.mail-list .bar, #mv-status .bar, .mail-get .bar { color: var(--green); font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+.list .what .bar { display: block; }
+.mail-get { margin: 6px 0 0; }
+.mail-get button { margin-left: 6px; }
 .mail-body { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; font-family: var(--sans); }
 .hops { margin: 6px 0; padding-left: 18px; }
 .block { display: block; margin-top: 4px; }

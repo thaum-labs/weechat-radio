@@ -584,6 +584,40 @@ struct MailGet {
     from: String,
     subject: String,
     step: crate::mail::SendStep,
+    /// The fetched mail's Inbox row, once it is in, for the Open button.
+    mail_id: String,
+}
+
+/// The last mail that came in, for the clickable "new mail" alert.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NewMail {
+    id: String,
+    from: String,
+    subject: String,
+}
+
+impl NewMail {
+    /// The `newest` object of `GET /mail/tab`.
+    fn from_tab(tab: &serde_json::Value) -> Option<Self> {
+        let n = tab.get("newest")?;
+        let text = |k: &str| n.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let id = text("id");
+        (!id.is_empty()).then(|| Self {
+            id,
+            from: text("from_addr"),
+            subject: text("subject"),
+        })
+    }
+
+    /// "New mail from A: subject", for the alert and the system notification.
+    fn line(&self) -> String {
+        let subject = if self.subject.trim().is_empty() {
+            "(no subject)"
+        } else {
+            self.subject.trim()
+        };
+        format!("New mail from {}: {subject}", self.from)
+    }
 }
 
 /// The station stopped answering about a send for this long.
@@ -697,6 +731,8 @@ struct GuiApp {
     mail_rows_folder: String,
     mail_waiting: Vec<crate::mail::WaitHeader>,
     mail_get: Option<MailGet>,
+    /// Mail that came in and is not read yet: the alert that opens it.
+    mail_new: Option<NewMail>,
     mail_confirm: Option<MailConfirm>,
     mail_unread: u64,
     mail_gateway: String,
@@ -827,6 +863,7 @@ impl GuiApp {
             mail_rows_folder: String::new(),
             mail_waiting: Vec::new(),
             mail_get: None,
+            mail_new: None,
             mail_confirm: None,
             mail_unread: 0,
             mail_gateway: form.mail_gateway,
@@ -2285,6 +2322,7 @@ impl eframe::App for GuiApp {
 
         self.paint_mail_send(ctx);
         self.paint_mail_get(ctx);
+        self.paint_mail_new(ctx);
         if self.confirm_radio {
             egui::Window::new("Switch to radio?")
                 .collapsible(false)
@@ -4616,6 +4654,9 @@ impl GuiApp {
                 let next = crate::mail::get_step(&p);
                 let fraction = next.fraction.max(get.step.fraction);
                 get.step = crate::mail::SendStep { fraction, ..next };
+                if !p.mail_id.is_empty() {
+                    get.mail_id = p.mail_id;
+                }
             }
         }
         let notice = tab.get("notice").and_then(|v| v.as_str()).unwrap_or("");
@@ -4624,11 +4665,26 @@ impl GuiApp {
             self.mail_toast = notice.to_string();
             self.mail_toast_warn = true;
         }
-        if unread > self.mail_unread && self.center != CenterView::Email {
-            crate::tui::notify("WeeChat Radio", "New mail");
-            if let Some(tray) = &self.tray {
-                let _ = tray.set_tooltip(Some("WeeChat Radio — new mail"));
+        if unread > self.mail_unread {
+            let newest = NewMail::from_tab(&tab);
+            if self.center != CenterView::Email {
+                let line = newest
+                    .as_ref()
+                    .map(NewMail::line)
+                    .unwrap_or_else(|| "New mail".into());
+                crate::tui::notify("WeeChat Radio", &line);
+                if let Some(tray) = &self.tray {
+                    let _ = tray.set_tooltip(Some("WeeChat Radio — new mail"));
+                }
             }
+            // The in-app alert opens the mail: system notifications cannot be
+            // clicked on every system, so this is the one that always works.
+            if newest.is_some() {
+                self.mail_new = newest;
+            }
+        }
+        if unread == 0 {
+            self.mail_new = None;
         }
         self.mail_unread = unread;
         if self.center != CenterView::Email {
@@ -4808,11 +4864,10 @@ impl GuiApp {
                 } else {
                     GREEN
                 };
-                ui.add(
-                    egui::ProgressBar::new(step.fraction)
-                        .desired_width(420.0)
-                        .fill(color)
-                        .show_percentage(),
+                ui.label(
+                    RichText::new(crate::mail::dos_bar(step.fraction))
+                        .color(color)
+                        .monospace(),
                 );
                 ui.add_space(4.0);
                 ui.label(RichText::new(&step.label).color(FG).monospace());
@@ -4863,7 +4918,9 @@ impl GuiApp {
             return;
         };
         let step = get.step.clone();
+        let fetched_id = get.mail_id.clone();
         let mut close = false;
+        let mut open_id: Option<String> = None;
         egui::Window::new(if step.done {
             if step.ok {
                 "Fetched"
@@ -4888,26 +4945,119 @@ impl GuiApp {
             );
             ui.add_space(6.0);
             let color = if step.done && !step.ok { ORANGE } else { GREEN };
-            ui.add(
-                egui::ProgressBar::new(step.fraction)
-                    .desired_width(420.0)
-                    .fill(color)
-                    .show_percentage(),
+            ui.label(
+                RichText::new(crate::mail::dos_bar(step.fraction))
+                    .color(color)
+                    .monospace(),
             );
             ui.add_space(4.0);
             ui.label(RichText::new(&step.label).color(FG).monospace());
             ui.add_space(8.0);
-            if ui
-                .add(hair_btn(if step.done { "OK" } else { "Hide" }, ORANGE))
-                .clicked()
-            {
-                close = true;
-            }
+            ui.horizontal(|ui| {
+                if step.done
+                    && step.ok
+                    && !fetched_id.is_empty()
+                    && ui.add(hair_btn("Open", ORANGE)).clicked()
+                {
+                    open_id = Some(fetched_id.clone());
+                }
+                if ui
+                    .add(hair_btn(if step.done { "OK" } else { "Hide" }, ORANGE))
+                    .clicked()
+                {
+                    close = true;
+                }
+            });
         });
-        if close {
+        if let Some(id) = open_id {
+            self.mail_get = None;
+            self.open_mail(&id);
+        } else if close {
             self.mail_get = None;
         } else {
             ctx.request_repaint_after(Duration::from_millis(250));
+        }
+    }
+
+    /// Shows mail `id` on the Email page: from the new-mail alert or the
+    /// Get window's Open button.
+    fn open_mail(&mut self, id: &str) {
+        self.leave_setup();
+        self.center = CenterView::Email;
+        self.mail_folder = "inbox".into();
+        if let Some(view) = mail_http(
+            "GET",
+            &format!(
+                "/mail/open?id={}",
+                url::form_urlencoded::byte_serialize(id.as_bytes()).collect::<String>()
+            ),
+            None,
+        )
+        .and_then(|v| serde_json::from_value::<crate::mail::MailView>(v).ok())
+        {
+            if let Some(r) = self.mail_rows.iter_mut().find(|r| r.row.id == id) {
+                r.row.unread = false;
+            }
+            self.mail_open = Some(view);
+        }
+        if self.mail_new.as_ref().is_some_and(|n| n.id == id) {
+            self.mail_new = None;
+        }
+        // Fetch the Inbox list on the next frame.
+        self.last_mail_poll = Instant::now() - Duration::from_secs(5);
+    }
+
+    /// The "new mail" alert at the top right: click it to read the mail.
+    fn paint_mail_new(&mut self, ctx: &egui::Context) {
+        let Some(new) = self.mail_new.clone() else {
+            return;
+        };
+        // Already open on the Email page: nothing to point at.
+        if self.center == CenterView::Email
+            && self.mail_open.as_ref().is_some_and(|m| m.row.id == new.id)
+        {
+            self.mail_new = None;
+            return;
+        }
+        let mut open = false;
+        let mut dismiss = false;
+        egui::Area::new(egui::Id::new("mail_new_alert"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::RIGHT_TOP, [-12.0, 44.0])
+            .show(ctx, |ui| {
+                chrome(TOPBAR).show(ui, |ui| {
+                    ui.set_max_width(420.0);
+                    ui.horizontal(|ui| {
+                        let text = ui
+                            .add(
+                                egui::Label::new(
+                                    RichText::new(new.line()).color(ORANGE).monospace(),
+                                )
+                                .truncate()
+                                .sense(egui::Sense::click()),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text("Open this mail");
+                        if text.clicked() {
+                            open = true;
+                        }
+                        if ui.add(hair_btn("Open", ORANGE)).clicked() {
+                            open = true;
+                        }
+                        if ui
+                            .add(hair_btn("x", DIM))
+                            .on_hover_text("Hide this alert")
+                            .clicked()
+                        {
+                            dismiss = true;
+                        }
+                    });
+                });
+            });
+        if open {
+            self.open_mail(&new.id);
+        } else if dismiss {
+            self.mail_new = None;
         }
     }
 
@@ -5409,6 +5559,7 @@ impl GuiApp {
                                     state: "asking".into(),
                                     ..Default::default()
                                 }),
+                                mail_id: String::new(),
                             });
                         }
                     } else {
@@ -6902,7 +7053,19 @@ mod tests {
     }
 
     #[test]
-    fn notify_body_cuts_long_lines_on_a_character() {
+    fn the_new_mail_alert_names_the_sender_and_subject() {
+        let tab = serde_json::json!({
+            "unread": 1,
+            "newest": { "id": "m1", "from_addr": "ann@example.com", "subject": " Hello " },
+        });
+        let n = NewMail::from_tab(&tab).unwrap();
+        assert_eq!(n.id, "m1");
+        assert_eq!(n.line(), "New mail from ann@example.com: Hello");
+        assert!(NewMail::from_tab(&serde_json::json!({ "newest": null })).is_none());
+    }
+
+    #[test]
+        fn notify_body_cuts_long_lines_on_a_character() {
         let long = "é".repeat(200);
         let body = notify_body(&long);
         assert_eq!(body.chars().count(), 121);
