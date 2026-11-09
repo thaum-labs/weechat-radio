@@ -78,7 +78,9 @@ Desktop app (Windows, v1.0.16) — animated overview, then stills. Dark UI, read
 
 ### Raspberry Pi gateway
 
-<table>
+<div align="center">
+
+<table align="center">
   <tr>
     <td align="center" valign="top" width="50%">
       <a href="web/guides/pi/chat.png">
@@ -131,11 +133,13 @@ Desktop app (Windows, v1.0.16) — animated overview, then stills. Dark UI, read
 
 <p align="center">
   <a href="web/guides/pi/software.png">
-    <img src="web/guides/pi/software.png" alt="Pi gateway Software / update card" width="560" />
+    <img src="web/guides/pi/software.png" alt="Pi gateway Software / update card" width="400" />
   </a>
   <br />
   <sub><b>Software</b> — in-app update (SHA-256 check, idle restart)</sub>
 </p>
+
+</div>
 
 **Still useful to add later** (not in the repo yet — capture for real, do not invent):
 
