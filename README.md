@@ -36,7 +36,47 @@ WeeChat is a trademark of Sébastien Helleu. This project is independent.
 
 ## Screenshots
 
-Raspberry Pi gateway web UI — real captures already in this repo (dark UI, readable on GitHub light and dark). Click any image for full size. No fabricated captures.
+Desktop app (Windows, v1.0.16) — animated overview, then stills. Dark UI, readable on GitHub light and dark. Click any still for full size.
+
+<p align="center">
+  <a href="docs/screenshots/desktop-live-chat.png">
+    <img src="docs/screenshots/desktop-tour.gif" alt="WeeChat Radio desktop slideshow: live chat, email, and setup" width="720" />
+  </a>
+  <br />
+  <sub>Slideshow — live chat → radio email → setup (~3&nbsp;s each, crossfade)</sub>
+</p>
+
+### Desktop app
+
+<table>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <a href="docs/screenshots/desktop-live-chat.png">
+        <img src="docs/screenshots/desktop-live-chat.png" alt="Desktop live chat on #bulletin with station panel" width="480" />
+      </a>
+      <br />
+      <sub><b>Live chat</b> — <code>#bulletin</code> with station panel and <code>[ok]</code> / <code>[rf]</code> marks</sub>
+    </td>
+    <td align="center" valign="top" width="50%">
+      <a href="docs/screenshots/desktop-email.png">
+        <img src="docs/screenshots/desktop-email.png" alt="Desktop radio email over VHF" width="480" />
+      </a>
+      <br />
+      <sub><b>Email</b> — radio email over VHF (Radio+)</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" colspan="2">
+      <a href="docs/screenshots/desktop-setup.png">
+        <img src="docs/screenshots/desktop-setup.png" alt="Desktop setup: callsign, gateway, supported radios" width="640" />
+      </a>
+      <br />
+      <sub><b>Setup</b> — callsign, mail gateway, supported radios (VR-N76, Digirig, HF CAT, …)</sub>
+    </td>
+  </tr>
+</table>
+
+### Raspberry Pi gateway
 
 <table>
   <tr>
@@ -97,14 +137,13 @@ Raspberry Pi gateway web UI — real captures already in this repo (dark UI, rea
   <sub><b>Software</b> — in-app update (SHA-256 check, idle restart)</sub>
 </p>
 
-**Still needed before launch posts** (not in the repo yet — capture for real, do not invent):
+**Still useful to add later** (not in the repo yet — capture for real, do not invent):
 
-- Desktop `wcr gui` with callsign on the status bar and an `[ok]` delivery mark
 - Terminal `wcr tui` on a real QSO
+- Short demo GIF of a single send → `[tx]` → `[ok]` (desktop carousel above already covers the three main windows)
 - Optional: photo of a Digirig / VR-N76 / HF CAT station next to the app
-- Short demo GIF of send → `[tx]` → `[ok]`
 
-Drop real captures under `branding/screenshots/` and add them to the grid above.
+Drop real captures under `docs/screenshots/` and extend the grids above.
 
 ---
 
