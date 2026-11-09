@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://weechatradio.com">
-    <img src="branding/readme-lockup.svg" alt="WeeChat Radio" width="440" height="116" />
+    <img src="branding/readme-lockup.svg" alt="WeeChat Radio" width="420" />
   </a>
 </p>
 
@@ -36,33 +36,75 @@ WeeChat is a trademark of Sébastien Helleu. This project is independent.
 
 ## Screenshots
 
-Real images already in this repository (Raspberry Pi gateway web UI). No fabricated captures.
+Raspberry Pi gateway web UI — real captures already in this repo (dark UI, readable on GitHub light and dark). Click any image for full size. No fabricated captures.
+
+<table>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <a href="web/guides/pi/chat.png">
+        <img src="web/guides/pi/chat.png" alt="Pi gateway Live Chat with delivery marks" width="360" />
+      </a>
+      <br />
+      <sub><b>Live Chat</b> — callsign thread with <code>[tx]</code> / <code>[ok rf]</code> marks</sub>
+    </td>
+    <td align="center" valign="top" width="50%">
+      <a href="web/guides/pi/mail.png">
+        <img src="web/guides/pi/mail.png" alt="Pi gateway Radio+ mail inbox" width="360" />
+      </a>
+      <br />
+      <sub><b>Radio+ mail</b> — inbox over a heard gateway</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <a href="web/guides/pi/station.png">
+        <img src="web/guides/pi/station.png" alt="Pi gateway station panel on the air" width="360" />
+      </a>
+      <br />
+      <sub><b>Station</b> — frequency, mode, internet / hub / radio</sub>
+    </td>
+    <td align="center" valign="top" width="50%">
+      <a href="web/guides/pi/air.png">
+        <img src="web/guides/pi/air.png" alt="Pi gateway On the air view" width="360" />
+      </a>
+      <br />
+      <sub><b>On the air</b> — heard traffic and levels</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <a href="web/guides/pi/levels.png">
+        <img src="web/guides/pi/levels.png" alt="Pi gateway audio levels" width="360" />
+      </a>
+      <br />
+      <sub><b>Levels</b> — RX / TX guidance in words</sub>
+    </td>
+    <td align="center" valign="top" width="50%">
+      <a href="web/guides/pi/health.png">
+        <img src="web/guides/pi/health.png" alt="Pi gateway system health" width="360" />
+      </a>
+      <br />
+      <sub><b>Health</b> — Pi CPU, RAM, temp, disk</sub>
+    </td>
+  </tr>
+</table>
 
 <p align="center">
-  <img src="web/guides/pi/chat.png" alt="Pi gateway Live Chat" width="720" />
+  <a href="web/guides/pi/software.png">
+    <img src="web/guides/pi/software.png" alt="Pi gateway Software / update card" width="560" />
+  </a>
+  <br />
+  <sub><b>Software</b> — in-app update (SHA-256 check, idle restart)</sub>
 </p>
-<p align="center"><em>Pi gateway — Live Chat</em></p>
 
-<p align="center">
-  <img src="web/guides/pi/station.png" alt="Pi gateway station panel" width="360" />
-  &nbsp;
-  <img src="web/guides/pi/mail.png" alt="Pi gateway Radio+ mail" width="360" />
-</p>
-<p align="center"><em>Station panel and Radio+ mail on the Pi portal</em></p>
-
-<p align="center">
-  <img src="web/guides/pi/air.png" alt="Pi gateway air / waterfall view" width="480" />
-</p>
-<p align="center"><em>Air / levels view on the gateway page</em></p>
-
-**Still needed (not in the repo yet — please capture before launch posts):**
+**Still needed before launch posts** (not in the repo yet — capture for real, do not invent):
 
 - Desktop `wcr gui` with callsign on the status bar and an `[ok]` delivery mark
 - Terminal `wcr tui` on a real QSO
 - Optional: photo of a Digirig / VR-N76 / HF CAT station next to the app
 - Short demo GIF of send → `[tx]` → `[ok]`
 
-Do not invent screenshots; drop real captures under `branding/screenshots/` and link them here.
+Drop real captures under `branding/screenshots/` and add them to the grid above.
 
 ---
 
