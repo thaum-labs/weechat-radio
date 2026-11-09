@@ -1,12 +1,13 @@
 <p align="center">
   <a href="https://weechatradio.com">
-    <img src="branding/readme-lockup.svg" alt="WeeChat Radio" width="440" height="116" />
+    <img src="branding/readme-lockup.svg" alt="WeeChat Radio" width="420" />
   </a>
 </p>
 
-<p align="center"><strong>Chat that keeps working when the internet does not.</strong></p>
+<p align="center"><strong>Amateur radio chat over HF/VHF — with optional internet gateways.</strong></p>
 
 <p align="center">
+  <a href="https://github.com/thaum-labs/weechat-radio/releases/tag/v1.0.17"><img src="https://img.shields.io/badge/release-v1.0.17-39ff14" alt="Release v1.0.17" /></a>
   <a href="https://github.com/thaum-labs/weechat-radio/releases/latest"><img src="https://img.shields.io/badge/download-latest%20release-brightgreen" alt="Download the latest release" /></a>
   <a href="https://github.com/thaum-labs/weechat-radio/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/thaum-labs/weechat-radio/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Pi-informational" alt="Windows, macOS, Linux and Raspberry Pi" />
@@ -16,20 +17,137 @@
 
 ## What is this?
 
-`wcr` is a small program that talks to [WeeChat](https://weechat.org/) like an IRC server and to [modem73](https://github.com/RFnexus/modem73) like a TNC. Chat over the internet, over HF/VHF radio, or both. Messages store-and-forward, so nobody has to leave a radio on all night.
+`wcr` is open-source station software for **licensed amateur radio operators**. It talks to [WeeChat](https://weechat.org/) like an IRC server and to [modem73](https://github.com/RFnexus/modem73) like a TNC, so you can send typed chat over HF/VHF/UHF, over the internet, or both. Messages store-and-forward on the air; a station can act as a gateway; email can ride through a heard gateway. You need a valid amateur licence to transmit.
 
 - Chat from the desktop app (`wcr gui`), a terminal UI (`wcr tui`), or WeeChat
-- Run internet-only, radio-only, or both at once
+- Modes: radio-only, Radio+, internet-radio (gateway), or internet-only
 - Direct messages, with small file attachments on VHF/UHF
 - Send and receive email over the radio through a gateway station
 - Run an always-on gateway on a Raspberry Pi with a web portal for status, chat and mail
 - Appear on the public map: [weechatradio.com/map.html](https://weechatradio.com/map.html)
 
-**You do not need a radio** to try internet mode. **You do not need WeeChat**: the desktop app or TUI is enough.
+Supported radio paths include Digirig/AIOC handhelds, VOX audio leads, CAT HF rigs, VR-N76 / UV-PRO over Bluetooth, and KISS TNCs. Check your band plan before you transmit; the docs suggest starting points such as 14.070 MHz on 20m or 144.950 MHz on 2m.
+
+**You do not need WeeChat**: the desktop app or TUI is enough. Internet-only mode works without a radio (including a guest name) so unlicensed friends can meet you online — transmitting on amateur bands still needs a licence.
 
 WeeChat is a trademark of Sébastien Helleu. This project is independent.
 
 > Early software: it works, but things may still change.
+
+## Screenshots
+
+Desktop app (Windows, v1.0.16) — animated overview, then stills. Dark UI, readable on GitHub light and dark. Click any still for full size.
+
+<p align="center">
+  <a href="docs/screenshots/desktop-live-chat.png">
+    <img src="docs/screenshots/desktop-tour.gif" alt="WeeChat Radio desktop slideshow: live chat, email, and setup" width="720" />
+  </a>
+  <br />
+  <sub>Slideshow — live chat → radio email → setup (~3&nbsp;s each, crossfade)</sub>
+</p>
+
+### Desktop app
+
+<table>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <a href="docs/screenshots/desktop-live-chat.png">
+        <img src="docs/screenshots/desktop-live-chat.png" alt="Desktop live chat on #bulletin with station panel" width="480" />
+      </a>
+      <br />
+      <sub><b>Live chat</b> — <code>#bulletin</code> with station panel and <code>[ok]</code> / <code>[rf]</code> marks</sub>
+    </td>
+    <td align="center" valign="top" width="50%">
+      <a href="docs/screenshots/desktop-email.png">
+        <img src="docs/screenshots/desktop-email.png" alt="Desktop radio email over VHF" width="480" />
+      </a>
+      <br />
+      <sub><b>Email</b> — radio email over VHF (Radio+)</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" colspan="2">
+      <a href="docs/screenshots/desktop-setup.png">
+        <img src="docs/screenshots/desktop-setup.png" alt="Desktop setup: callsign, gateway, supported radios" width="640" />
+      </a>
+      <br />
+      <sub><b>Setup</b> — callsign, mail gateway, supported radios (VR-N76, Digirig, HF CAT, …)</sub>
+    </td>
+  </tr>
+</table>
+
+### Raspberry Pi gateway
+
+<div align="center">
+
+<table align="center">
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <a href="web/guides/pi/chat.png">
+        <img src="web/guides/pi/chat.png" alt="Pi gateway Live Chat with delivery marks" width="360" />
+      </a>
+      <br />
+      <sub><b>Live Chat</b> — callsign thread with <code>[tx]</code> / <code>[ok rf]</code> marks</sub>
+    </td>
+    <td align="center" valign="top" width="50%">
+      <a href="web/guides/pi/mail.png">
+        <img src="web/guides/pi/mail.png" alt="Pi gateway Radio+ mail inbox" width="360" />
+      </a>
+      <br />
+      <sub><b>Radio+ mail</b> — inbox over a heard gateway</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <a href="web/guides/pi/station.png">
+        <img src="web/guides/pi/station.png" alt="Pi gateway station panel on the air" width="360" />
+      </a>
+      <br />
+      <sub><b>Station</b> — frequency, mode, internet / hub / radio</sub>
+    </td>
+    <td align="center" valign="top" width="50%">
+      <a href="web/guides/pi/air.png">
+        <img src="web/guides/pi/air.png" alt="Pi gateway On the air view" width="360" />
+      </a>
+      <br />
+      <sub><b>On the air</b> — heard traffic and levels</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="50%">
+      <a href="web/guides/pi/levels.png">
+        <img src="web/guides/pi/levels.png" alt="Pi gateway audio levels" width="360" />
+      </a>
+      <br />
+      <sub><b>Levels</b> — RX / TX guidance in words</sub>
+    </td>
+    <td align="center" valign="top" width="50%">
+      <a href="web/guides/pi/health.png">
+        <img src="web/guides/pi/health.png" alt="Pi gateway system health" width="360" />
+      </a>
+      <br />
+      <sub><b>Health</b> — Pi CPU, RAM, temp, disk</sub>
+    </td>
+  </tr>
+</table>
+
+<p align="center">
+  <a href="web/guides/pi/software.png">
+    <img src="web/guides/pi/software.png" alt="Pi gateway Software / update card" width="400" />
+  </a>
+  <br />
+  <sub><b>Software</b> — in-app update (SHA-256 check, idle restart)</sub>
+</p>
+
+</div>
+
+**Still useful to add later** (not in the repo yet — capture for real, do not invent):
+
+- Terminal `wcr tui` on a real QSO
+- Short demo GIF of a single send → `[tx]` → `[ok]` (desktop carousel above already covers the three main windows)
+- Optional: photo of a Digirig / VR-N76 / HF CAT station next to the app
+
+Drop real captures under `docs/screenshots/` and extend the grids above.
 
 ---
 
@@ -43,13 +161,13 @@ wcr setup   # callsign, grid, radio, hub/map choices, service
 wcr gui     # or: wcr tui
 ```
 
-### Windows (PowerShell, run as administrator)
+### Windows (PowerShell — no administrator needed)
 
 ```powershell
 irm https://weechatradio.com/install.ps1 | iex
 ```
 
-Leave the window open; WeeChat installs through Cygwin after the program and can take several minutes. Then open **WeeChat Radio** from the Start menu. First launch is setup.
+Open a normal PowerShell window (not elevated). The installer writes under your user profile and installs WeeChat via Cygwin with `--no-admin`; it does not ask for an administrator password. Leave the window open; WeeChat can take several minutes. Then open **WeeChat Radio** from the Start menu. First launch is setup. (Installing the station as a Windows service later is optional and is the step that needs an elevated PowerShell — see the [Windows setup guide](https://weechatradio.com/guides/windows.html).)
 
 You are set up when the status bar shows your callsign. Send a line in `#bulletin`: `[tx]` means sent, `[ok]` means delivered, `[no]` means it never got through.
 
