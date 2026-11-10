@@ -20,6 +20,17 @@ const FIX_STALE: Duration = Duration::from_secs(120);
 /// Wait before opening the port again after it failed or was unplugged.
 const REOPEN_WAIT: Duration = Duration::from_secs(10);
 
+/// The last fix and when it came, for the range test log.
+static LAST_FIX: Mutex<Option<(f64, f64, Instant)>> = Mutex::new(None);
+
+/// Where the receiver last put us, while that fix is fresh.
+pub fn position() -> Option<(f64, f64)> {
+    LAST_FIX
+        .lock()
+        .filter(|(_, _, at)| at.elapsed() <= FIX_STALE)
+        .map(|(lat, lon, _)| (lat, lon))
+}
+
 /// What one NMEA line says about the position.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Nmea {
@@ -156,6 +167,7 @@ async fn read_port(
                     Some(Nmea::Fix { lat, lon }) => {
                         if let Ok(g) = crate::grid::from_lat_lon(lat, lon, GRID_LEN) {
                             *last_fix = Some(Instant::now());
+                            *LAST_FIX.lock() = Some((lat, lon, Instant::now()));
                             let mut s = snap.lock();
                             s.grid = g.clone();
                             s.gps = format!("GPS: fix {g}");

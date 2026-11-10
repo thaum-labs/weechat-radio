@@ -130,6 +130,8 @@ struct Runtime {
     ack_grid_sent: Arc<Mutex<(String, u32)>>,
     /// Every frame heard or sent, for the all-traffic monitor (#243).
     traffic: crate::traffic::Shared,
+    /// `/rangetest`: probes to one station and the drive log.
+    range_test: Arc<Mutex<crate::range_test::RangeTest>>,
 }
 
 /// A beacon handed to the air queue that has not reached the modem yet.
@@ -515,6 +517,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         assembler: Arc::new(Mutex::new(FragAssembler::new())),
         files: Arc::new(Mutex::new(crate::proto::file::Assembler::new())),
         file_sends: Arc::new(Mutex::new(crate::proto::file::Outgoing::new())),
+        range_test: Arc::new(Mutex::new(crate::range_test::RangeTest::new())),
         last_rx_snr,
         radio_lock: Arc::new(tokio::sync::Mutex::new(())),
         ack_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -545,6 +548,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     if !rt.cfg.lock().gps.port.trim().is_empty() {
         tokio::spawn(crate::gps::run(rt.cfg.clone(), rt.snap.clone()));
     }
+    tokio::spawn(range_test_loop(rt.clone()));
 
     // Dial the hub before the radio. modem73's first open retries for up to
     // 20s, and the hello used to wait behind that.
@@ -1364,6 +1368,48 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
     Ok(())
 }
 
+/// Sends the range test's probes while a test runs (`/rangetest`). Each
+/// probe is a private line kept on the radio and never retried; the far
+/// station's receipt is the answer (see `range_test.rs`).
+async fn range_test_loop(rt: Runtime) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let now = chrono::Utc::now().timestamp();
+        let Some((far, n, done)) = rt.range_test.lock().due(now) else {
+            continue;
+        };
+        if let Some(row) = done {
+            rt.irc
+                .notice_all(&crate::range_test::row_notice(&far, &row))
+                .await;
+        }
+        let pos = crate::gps::position();
+        let text = crate::range_test::probe_text(n);
+        match send_chat_lines(&rt, &far, &text, true).await {
+            Ok(ids) => {
+                for id in &ids {
+                    // No retry: the log is about this one try.
+                    let hops = rt
+                        .store
+                        .get(id)
+                        .ok()
+                        .flatten()
+                        .map_or(0, |m| m.env.hops_left);
+                    let _ = rt.store.set_hold(id, 0, hops);
+                }
+                if let Some(id) = ids.first() {
+                    rt.range_test.lock().probe_sent(*id, n, now, pos);
+                }
+            }
+            Err(e) => {
+                rt.irc
+                    .notice_all(&format!("range test probe {n} to {far} not sent: {e}"))
+                    .await
+            }
+        }
+    }
+}
+
 /// Answers a `/report` request from `from` with the SNR we heard it at,
 /// once our ACK has had a moment to go out first.
 fn answer_report_request(rt: &Runtime, from: &str, medium: &str, snr: Option<f32>) {
@@ -1667,6 +1713,17 @@ async fn send_chat(rt: &Runtime, target: &str, text: &str) -> Result<()> {
 /// `rf_only` keeps the line on the radio: no hub or LAN copy, and a gateway
 /// that hears it leaves it there.
 async fn send_chat_with(rt: &Runtime, target: &str, text: &str, rf_only: bool) -> Result<()> {
+    send_chat_lines(rt, target, text, rf_only).await.map(|_| ())
+}
+
+/// Sends like [`send_chat_with`] and returns the ids of the lines keyed.
+async fn send_chat_lines(
+    rt: &Runtime,
+    target: &str,
+    text: &str,
+    rf_only: bool,
+) -> Result<Vec<MsgId>> {
+    let mut ids = Vec::new();
     let cfg_g = rt.cfg.lock().clone();
     let rf_only = rf_only && cfg_g.mode.uses_radio();
     let had_prefix = Priority::has_prefix(text);
@@ -1711,7 +1768,7 @@ async fn send_chat_with(rt: &Runtime, target: &str, text: &str, rf_only: bool) -
     let max = MAX_BODY.min(cfg_g.relay.max_message_bytes.max(1));
     let chunks = split_body_chunks(text, max);
     if chunks.is_empty() {
-        return Ok(());
+        return Ok(ids);
     }
     for chunk in chunks {
         let seq = rt.store.next_seq(origin.as_str())?;
@@ -1775,8 +1832,9 @@ async fn send_chat_with(rt: &Runtime, target: &str, text: &str, rf_only: bool) -
             let delay = Duration::from_millis(cfg_g.rf.emergency_dup_ms as u64);
             let _ = dispatch_rf_at(rt, &env, 0, delay, 1).await;
         }
+        ids.push(env.msg_id);
     }
-    Ok(())
+    Ok(ids)
 }
 
 /// Send a small file (at most 4 KB) to one station, on VHF/UHF only. Each
@@ -2822,6 +2880,7 @@ async fn on_envelope(rt: &Runtime, env: Envelope, medium: &str, snr: Option<f32>
     if medium == "rf" {
         note_exchange(rt, Some(&env), None);
         note_neighbour(rt, &env);
+        rt.range_test.lock().heard(&env, snr);
     }
     if env.origin.as_str() == rt.engine.our_call {
         // A relay closer to the destination has fewer hops than the copy we
@@ -4827,6 +4886,63 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                 Err(e) => format!("report request failed: {e}"),
             }
         }
+        "rangetest" => {
+            let arg = sp.next().unwrap_or("");
+            if arg.is_empty() {
+                return rt.range_test.lock().status().unwrap_or_else(|| {
+                    format!(
+                        "no range test running. /rangetest CALL [seconds] sends CALL a short probe every {} s (or the seconds you give, {}-{}) and logs your GPS position and whether each direction got through; /rangetest off stops it. Needs a GPS in setup for the map.",
+                        crate::range_test::DEFAULT_EVERY_S,
+                        crate::range_test::MIN_EVERY_S,
+                        crate::range_test::MAX_EVERY_S
+                    )
+                });
+            }
+            if arg.eq_ignore_ascii_case("off") || arg.eq_ignore_ascii_case("stop") {
+                return rt
+                    .range_test
+                    .lock()
+                    .stop()
+                    .map(|s| format!("stopped: {s}"))
+                    .unwrap_or_else(|| "no range test running".into());
+            }
+            let call = arg.to_ascii_uppercase();
+            if call.starts_with(['#', '&']) || Callsign::parse(&call).is_err() {
+                return format!("{arg} is not a callsign. /rangetest CALL [seconds]");
+            }
+            if call.eq_ignore_ascii_case(&rt.engine.our_call) {
+                return "a range test needs another station".into();
+            }
+            if !cfg.lock().mode.uses_radio() {
+                return "a range test needs the radio: this station is internet only".into();
+            }
+            let every = match sp.next() {
+                None => crate::range_test::DEFAULT_EVERY_S,
+                Some(v) => match v.parse::<u32>() {
+                    Ok(n) => n.clamp(crate::range_test::MIN_EVERY_S, crate::range_test::MAX_EVERY_S),
+                    Err(_) => return format!("{v} is not a number of seconds"),
+                },
+            };
+            let dir = crate::proto::file::received_dir(&cfg.lock().store);
+            let now = chrono::Utc::now().timestamp();
+            let started = rt.range_test.lock().start(&call, every, &dir, now);
+            match started {
+                Ok(csv) => {
+                    let gps = if crate::gps::position().is_some() {
+                        "GPS fix ok"
+                    } else if cfg.lock().gps.port.trim().is_empty() {
+                        "no GPS set in setup, so the log has no positions"
+                    } else {
+                        "waiting for a GPS fix; probes without one are logged but not mapped"
+                    };
+                    format!(
+                        "range test to {call} started: a probe every {every} s, {gps}. Log: {} (and .kml). Drop the file on weechatradio.com/guides/range.html to see the map. /rangetest off stops it.",
+                        csv.display()
+                    )
+                }
+                Err(e) => format!("range test not started: cannot write to {}: {e}", dir.display()),
+            }
+        }
         "wx" => {
             // Where we are now: the GPS square while it has a fix.
             let grid = snap.lock().grid.clone();
@@ -4968,7 +5084,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             said.unwrap_or_else(|e| e)
         }
         "" | "help" => {
-            "RADIO commands: mode preset level traffic tower gateway status form group queue flush trace history freq qsy prio ptt checkin net mute theme activity snr update report wx. /report CALL asks a station how well it hears you (signal report); /wx shows the weather for your grid and /wx CALL sends it to that station. Both answers are private lines in the CALL tab. Channels: /join #name (closed, +i)  /invite CALL (over-air notice from you)  /part /prio. /radio status shows relayed (every forwarded frame), unique (distinct messages), and groups (group_prios). /radio flush marks unacked outbound [no]."
+            "RADIO commands: mode preset level traffic tower gateway status form group queue flush trace history freq qsy prio ptt checkin net mute theme activity snr update report rangetest wx. /report CALL asks a station how well it hears you (signal report); /wx shows the weather for your grid and /wx CALL sends it to that station. Both answers are private lines in the CALL tab. Channels: /join #name (closed, +i)  /invite CALL (over-air notice from you)  /part /prio. /radio status shows relayed (every forwarded frame), unique (distinct messages), and groups (group_prios). /radio flush marks unacked outbound [no]."
                 .into()
         }
         other => format!("unknown RADIO subcommand '{other}'. Try /radio help"),

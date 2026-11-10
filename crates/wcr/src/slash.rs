@@ -274,6 +274,16 @@ const COMMANDS: &[Cmd] = &[
         send_bare: true,
     },
     Cmd {
+        name: "rangetest",
+        usage: "/rangetest [CALL [seconds] | off]",
+        summary: "Range test: probe CALL every 30 s and log GPS position and signal both ways",
+        args: &[Arg {
+            value: "off",
+            hint: "Stop the range test and keep its log",
+        }],
+        send_bare: true,
+    },
+    Cmd {
         name: "file",
         usage: "/file [CALL] path",
         summary: "Send a small file (4 KB max) to one station, VHF/UHF only",

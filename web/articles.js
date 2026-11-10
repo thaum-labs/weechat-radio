@@ -39,6 +39,7 @@
     { href: "/guides/antennas-vhf.html", cat: "antennas", title: "VHF and UHF antennas", desc: "From the handheld whip to a collinear on the roof: sizes and range.", keywords: "antenna whip collinear yagi 2m 70cm calculator" },
     // guides: Plan a contact
     { href: "/guides/band.html", cat: "plan-a-contact", title: "Path planner", desc: "Drop two pins. Get a calling frequency, USB or FM, and a power.", keywords: "plan which frequency band path map propagation" },
+    { href: "/guides/range.html", cat: "plan-a-contact", title: "Range test map", desc: "Drive with /rangetest on, drop the log, see where you had signal.", keywords: "range test coverage survey drive gps signal snr map rangetest" },
     { href: "/docs/calling.html", cat: "plan-a-contact", title: "Calling frequencies", desc: "Suggested VHF and HF spots. Check your band plan first.", keywords: "frequency spot dial meet" },
     { href: "/docs/band-plan.html", cat: "plan-a-contact", title: "Band plan", desc: "Every band from 160m to 23cm, plus CB and PMR446, to scale.", keywords: "bands frequency allocation iaru cb pmr446" },
     // docs: How it works

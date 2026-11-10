@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Range test map — WeeChat Radio</title>
+  <meta name="description" content="Live messaging chat powered by radio. HF, VHF, UHF and handhelds via VOX. Non-ham operators can get involved with just an internet connection." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="WeeChat Radio" />
+  <meta property="og:title" content="Range test map — WeeChat Radio" />
+  <meta property="og:description" content="Live messaging chat powered by radio. HF, VHF, UHF and handhelds via VOX. Non-ham operators can get involved with just an internet connection." />
+  <meta property="og:url" content="https://weechatradio.com/guides/range.html" />
+  <meta property="og:image" content="https://weechatradio.com/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="WeeChat Radio. Live messaging chat powered by radio." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://weechatradio.com/og.png" />
+  <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=58" />
+  <link rel="stylesheet" href="/docs.css?v=5" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" />
+  <link rel="stylesheet" href="/guides/range.css?v=1" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav aria-label="Main">
+      <a href="/why.html">why</a>
+      <a href="/guides.html">guides</a>
+      <a href="/guides/band.html">plan</a>
+      <a href="/map.html">map</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+      <a class="nav-github" href="https://github.com/thaum-labs/weechat-radio" aria-label="WeeChat Radio on GitHub"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-4 1.5-4-2-6-2.5M15 21v-3.5a3 3 0 0 0-.8-2.3c2.7-.3 5.6-1.3 5.6-6a4.7 4.7 0 0 0-1.3-3.2 4.4 4.4 0 0 0-.1-3.2s-1-.3-3.4 1.3a11.6 11.6 0 0 0-6 0C6.6 2.5 5.6 2.8 5.6 2.8a4.4 4.4 0 0 0-.1 3.2A4.7 4.7 0 0 0 4.2 9.2c0 4.6 2.9 5.7 5.6 6a3 3 0 0 0-.8 2.3V21"/></svg><span class="nav-github-text">github</span></a>
+      <a class="nav-cta" href="/downloads.html">download</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/guides.html">guides</a> › <a href="/guides.html#plan-a-contact">Plan a contact</a> › <span aria-current="page">Range test map</span></p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> Range test map</h1>
+      <p class="lead">Drive around with <code>/rangetest CALL</code> running, then drop the log here. The map shades where you had signal. Your file stays in this browser; nothing is uploaded.</p>
+
+      <section class="article-section article-section--first" aria-labelledby="mapH">
+        <h2 id="mapH">Your coverage</h2>
+        <label class="rt-drop" id="rt-drop">
+          <input type="file" id="rt-file" accept=".csv,text/csv" multiple />
+          <strong>Drop range test CSV files here</strong>
+          <span>or click to pick them. Several drives add up to one map.</span>
+        </label>
+        <div class="rt-tools">
+          <label><input type="checkbox" id="rt-show-area" checked /> coverage area</label>
+          <label><input type="checkbox" id="rt-show-route" checked /> route detail</label>
+          <label><input type="checkbox" id="rt-show-dots" checked /> probe dots</label>
+          <button type="button" class="rt-btn" id="rt-move-home" aria-pressed="false">move far station</button>
+          <label>map <select id="rt-style"><option value="satellite">satellite</option><option value="streets">streets</option></select></label>
+        </div>
+        <div class="rt-map" id="rt-map" role="region" aria-label="Range test map"></div>
+        <ul class="rt-legend" aria-label="Legend">
+          <li><i class="rt-sw rt-area"></i>coverage area</li>
+          <li><i class="rt-sw rt-good"></i>both ways</li>
+          <li><i class="rt-sw rt-patchy"></i>patchy or one way</li>
+          <li><i class="rt-sw rt-none"></i>no contact</li>
+          <li><i class="rt-sw rt-home"></i>far station (from its grid)</li>
+        </ul>
+        <p class="rt-summary" id="rt-summary" aria-live="polite">No log loaded yet.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="howH">
+        <h2 id="howH">How to run a test</h2>
+        <ol class="steps">
+          <li>
+            <strong class="step-title">Car station</strong>
+            <p>A laptop running WeeChat Radio with a USB GPS set in setup (<code>[gps] port</code>), on the same frequency as the station you test against.</p>
+          </li>
+          <li>
+            <strong class="step-title">Start</strong>
+            <p>Type <code>/rangetest CALL</code>, where CALL is the fixed station (your home gateway). It sends CALL a short private probe every 30 s; <code>/rangetest CALL 60</code> sets another gap (15–600 s). The fixed station needs no change: its normal receipt carries the SNR it heard you at.</p>
+          </li>
+          <li>
+            <strong class="step-title">Drive</strong>
+            <p>Each probe shows a line such as <code>range test probe 12 to CALL: both ways, they heard us at -3 dB, we heard them at 6 dB</code>.</p>
+          </li>
+          <li>
+            <strong class="step-title">Stop and map</strong>
+            <p><code>/rangetest off</code>. The log is in the <strong>WeeChat Radio</strong> folder on your Desktop (or the files folder on a Pi) as <code>range-test-CALL-date.csv</code>, with a <code>.kml</code> for Google Earth next to it. Drop the CSV above.</p>
+          </li>
+        </ol>
+      </section>
+
+      <section class="article-section" aria-labelledby="shadeH">
+        <h2 id="shadeH">How the shading works</h2>
+        <ul class="cards">
+          <li><strong>Coverage area</strong><span>The map around the far station is cut into 36 slices of 10°. In each slice the edge is the furthest point that worked both ways, as long as at least 70% of the probes closer in also worked, so one lucky hilltop does not stretch it. A slice you never drove stays empty: no guessing.</span></li>
+          <li><strong>Route detail</strong><span>Along your route, 150 m squares show the distance-weighted score of the probes within 500 m. Both ways scores 1 with a 10 dB margin, down to about 0.7 at the decode edge; heard them only 0.4; nothing 0. Green from 0.67, amber from 0.34, red below.</span></li>
+          <li><strong>Where the far station is</strong><span>Placed from the grid square its receipts carry, which can be a kilometre or two out. Use <strong>move far station</strong> and click the map to put it exactly. A probe is not retried, so one red square can be a collision; a wide red patch is real.</span></li>
+        </ul>
+      </section>
+      <p class="next">Before you drive: <a href="/guides/band.html">path planner</a> predicts a single path. This page shows what you measured.</p>
+    </main>
+  </div>
+  <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
+  <script src="/copy.js?v=1"></script>
+  <script src="/shell.js?v=15"></script>
+  <script src="/articles.js?v=9"></script>
+  <script src="/guides/range.js?v=1"></script>
+</body>
+</html>
