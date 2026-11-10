@@ -26,7 +26,7 @@
   <link rel="stylesheet" href="/styles.css?v=58" />
   <link rel="stylesheet" href="/docs.css?v=5" />
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" />
-  <link rel="stylesheet" href="/guides/range.css?v=1" />
+  <link rel="stylesheet" href="/guides/range.css?v=2" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -70,6 +70,11 @@
           <button type="button" class="rt-btn" id="rt-move-home" aria-pressed="false">move far station</button>
           <label>map <select id="rt-style"><option value="satellite">satellite</option><option value="streets">streets</option></select></label>
         </div>
+        <div class="rt-replay">
+          <button type="button" class="rt-btn rt-play" id="rt-replay" aria-pressed="false" disabled>▶ replay drive</button>
+          <label>speed <select id="rt-speed"><option value="120">120×</option><option value="500" selected>500×</option><option value="2000">2000×</option></select></label>
+          <span class="rt-clock" id="rt-clock" aria-live="off"></span>
+        </div>
         <div class="rt-map" id="rt-map" role="region" aria-label="Range test map"></div>
         <ul class="rt-legend" aria-label="Legend">
           <li><i class="rt-sw rt-area"></i>coverage area</li>
@@ -108,6 +113,7 @@
         <ul class="cards">
           <li><strong>Coverage area</strong><span>The map around the far station is cut into 36 slices of 10°. In each slice the edge is the furthest point that worked both ways, as long as at least 70% of the probes closer in also worked, so one lucky hilltop does not stretch it. A slice you never drove stays empty: no guessing.</span></li>
           <li><strong>Route detail</strong><span>Along your route, 150 m squares show the distance-weighted score of the probes within 500 m. Both ways scores 1 with a 10 dB margin, down to about 0.7 at the decode edge; heard them only 0.4; nothing 0. Green from 0.67, amber from 0.34, red below.</span></li>
+          <li><strong>Replay</strong><span>Plays the drive back in time order, 120, 500 or 2000 times faster than real time, with a white car marker. Stops longer than 2 minutes are skipped. The shading builds up as it goes.</span></li>
           <li><strong>Where the far station is</strong><span>Placed from the grid square its receipts carry, which can be a kilometre or two out. Use <strong>move far station</strong> and click the map to put it exactly. A probe is not retried, so one red square can be a collision; a wide red patch is real.</span></li>
         </ul>
       </section>
@@ -118,6 +124,6 @@
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=15"></script>
   <script src="/articles.js?v=9"></script>
-  <script src="/guides/range.js?v=1"></script>
+  <script src="/guides/range.js?v=2"></script>
 </body>
 </html>

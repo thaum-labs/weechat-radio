@@ -55,3 +55,15 @@
   cursor: pointer;
 }
 .rt-btn[aria-pressed="true"] { background: var(--accent); color: #07070a; }
+.rt-replay {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin: 0 0 8px;
+  font-size: 0.9em;
+}
+.rt-play { color: #ff7a3d; border-color: #ff7a3d; font-weight: 600; }
+.rt-play[aria-pressed="true"] { background: #ff7a3d; color: #07070a; }
+.rt-btn:disabled { opacity: 0.45; cursor: default; }
+.rt-clock { font-variant-numeric: tabular-nums; opacity: 0.85; min-width: 0; }
