@@ -38,11 +38,10 @@ pub enum Nmea {
     NoFix,
 }
 
-/// Reads an RMC or GGA sentence from any talker (GP, GN, GL…). Other
-/// sentences and lines with a bad checksum return `None`.
-pub fn parse_nmea(line: &str) -> Option<Nmea> {
-    let line = line.trim();
-    let body = line.strip_prefix('$')?;
+/// The fields of one NMEA line, after its checksum is checked. `None` for
+/// noise and lines with a bad checksum.
+fn nmea_fields(line: &str) -> Option<Vec<&str>> {
+    let body = line.trim().strip_prefix('$')?;
     let (body, sum) = match body.split_once('*') {
         Some((b, s)) => (b, Some(s)),
         None => (body, None),
@@ -54,7 +53,13 @@ pub fn parse_nmea(line: &str) -> Option<Nmea> {
             return None;
         }
     }
-    let f: Vec<&str> = body.split(',').collect();
+    Some(body.split(',').collect())
+}
+
+/// Reads an RMC or GGA sentence from any talker (GP, GN, GL…). Other
+/// sentences and lines with a bad checksum return `None`.
+pub fn parse_nmea(line: &str) -> Option<Nmea> {
+    let f = nmea_fields(line)?;
     let kind = f.first()?.get(2..)?;
     let (ok, lat_i) = match kind {
         // $GPRMC,time,status,lat,N,lon,E,...  status A = valid
@@ -72,6 +77,107 @@ pub fn parse_nmea(line: &str) -> Option<Nmea> {
         return Some(Nmea::NoFix);
     }
     Some(Nmea::Fix { lat, lon })
+}
+
+/// What one NMEA line says about satellites.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SatCount {
+    /// GGA: satellites used for the fix.
+    InUse(u32),
+    /// GSV: satellites one system (talker GP, GL, GA, GB…) can see.
+    InView { talker: String, count: u32 },
+}
+
+/// Reads the satellite count from a GGA or GSV sentence.
+pub fn parse_sats(line: &str) -> Option<SatCount> {
+    let f = nmea_fields(line)?;
+    let head = f.first()?;
+    let talker = head.get(..2)?;
+    match head.get(2..)? {
+        // $GPGGA,time,lat,N,lon,E,quality,satellites,...
+        "GGA" => Some(SatCount::InUse(f.get(7)?.parse().ok()?)),
+        // $GPGSV,messages,number,satellites in view,...
+        "GSV" => Some(SatCount::InView {
+            talker: talker.to_string(),
+            count: f.get(3)?.parse().ok()?,
+        }),
+        _ => None,
+    }
+}
+
+/// Satellite counts for the status line.
+#[derive(Debug, Default)]
+struct Sats {
+    in_use: Option<u32>,
+    /// Satellites in view per system; the receiver reports each one separately.
+    in_view: std::collections::BTreeMap<String, u32>,
+}
+
+impl Sats {
+    fn take(&mut self, c: SatCount) {
+        match c {
+            SatCount::InUse(n) => self.in_use = Some(n),
+            SatCount::InView { talker, count } => {
+                self.in_view.insert(talker, count);
+            }
+        }
+    }
+
+    fn seen(&self) -> Option<u32> {
+        (!self.in_view.is_empty()).then(|| self.in_view.values().sum())
+    }
+
+    /// Text after "waiting for a fix", e.g. ", 3 satellites seen".
+    fn waiting_note(&self) -> String {
+        match self.seen() {
+            Some(n) => format!(", {}", plural(n, "satellite seen", "satellites seen")),
+            None => String::new(),
+        }
+    }
+
+    /// Text after the fix grid, e.g. ", 8 satellites".
+    fn fix_note(&self) -> String {
+        match self.in_use.filter(|n| *n > 0) {
+            Some(n) => format!(", {}", plural(n, "satellite", "satellites")),
+            None => String::new(),
+        }
+    }
+}
+
+/// Traffic light for the GPS status line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Light {
+    /// No satellites heard, or the receiver is not answering.
+    Red,
+    /// Satellites seen but no fix yet.
+    Amber,
+    /// Position fix: the range test logs where you are.
+    Green,
+}
+
+/// Which light a GPS status line shows.
+pub fn light(state: &str) -> Light {
+    let state = state.trim_start_matches("GPS: ");
+    if state.starts_with("fix ") && !state.starts_with("fix lost") {
+        return Light::Green;
+    }
+    let seen = state
+        .rsplit_once(", ")
+        .and_then(|(_, tail)| tail.split(' ').next()?.parse::<u32>().ok())
+        .unwrap_or(0);
+    if state.starts_with("waiting for a fix") && seen > 0 {
+        Light::Amber
+    } else {
+        Light::Red
+    }
+}
+
+fn plural(n: u32, one: &str, many: &str) -> String {
+    if n == 1 {
+        format!("1 {one}")
+    } else {
+        format!("{n} {many}")
+    }
 }
 
 /// NMEA `ddmm.mmmm` (or `dddmm.mmmm`) plus hemisphere to signed degrees.
@@ -134,6 +240,7 @@ async fn read_port(
 ) {
     let mut line = Vec::new();
     let mut last_byte = Instant::now();
+    let mut sats = Sats::default();
     loop {
         // Each read waits at most 200 ms, so a stopped station frees the port quickly.
         let res = tokio::task::spawn_blocking(move || {
@@ -163,6 +270,9 @@ async fn read_port(
             if b == b'\n' {
                 let text = String::from_utf8_lossy(&line).into_owned();
                 line.clear();
+                if let Some(c) = parse_sats(&text) {
+                    sats.take(c);
+                }
                 match parse_nmea(&text) {
                     Some(Nmea::Fix { lat, lon }) => {
                         if let Ok(g) = crate::grid::from_lat_lon(lat, lon, GRID_LEN) {
@@ -170,11 +280,14 @@ async fn read_port(
                             *LAST_FIX.lock() = Some((lat, lon, Instant::now()));
                             let mut s = snap.lock();
                             s.grid = g.clone();
-                            s.gps = format!("GPS: fix {g}");
+                            s.gps = format!("GPS: fix {g}{}", sats.fix_note());
                         }
                     }
                     Some(Nmea::NoFix) if last_fix.is_none_or(|t| t.elapsed() > FIX_STALE) => {
-                        set_state(snap, "GPS: waiting for a fix".into());
+                        set_state(
+                            snap,
+                            format!("GPS: waiting for a fix{}", sats.waiting_note()),
+                        );
                     }
                     _ => {}
                 }
@@ -245,6 +358,67 @@ mod tests {
         );
         assert_eq!(parse_nmea("$GPGSV,3,1,11,03,03,111,00*74"), None);
         assert_eq!(parse_nmea("garbage"), None);
+    }
+
+    #[test]
+    fn satellites_in_use_and_in_view() {
+        assert_eq!(
+            parse_sats("$GNGGA,092750.000,5321.6802,N,00630.3372,W,1,8,1.03,61.7,M,55.2,M,,"),
+            Some(SatCount::InUse(8))
+        );
+        assert_eq!(
+            parse_sats("$GPGGA,123519,,,,,0,00,,,M,,M,,"),
+            Some(SatCount::InUse(0))
+        );
+        let mut sats = Sats::default();
+        assert_eq!(sats.waiting_note(), "", "nothing heard yet");
+        for line in [
+            "$GPGSV,3,1,11,03,03,111,00,04,15,270,00,06,01,010,00,13,06,292,00",
+            "$GPGSV,3,2,11,14,25,170,00,16,57,208,39,18,67,296,40,19,40,246,00",
+            "$GLGSV,1,1,03,65,30,100,20,66,40,200,22,67,10,300,",
+            "$GPRMC,123519,V,,,,,,,230394,,,N",
+        ] {
+            if let Some(c) = parse_sats(line) {
+                sats.take(c);
+            }
+        }
+        assert_eq!(sats.waiting_note(), ", 14 satellites seen");
+        sats.take(SatCount::InView {
+            talker: "GP".into(),
+            count: 0,
+        });
+        sats.take(SatCount::InView {
+            talker: "GL".into(),
+            count: 1,
+        });
+        assert_eq!(sats.waiting_note(), ", 1 satellite seen");
+        assert_eq!(sats.fix_note(), "");
+        sats.take(SatCount::InUse(7));
+        assert_eq!(sats.fix_note(), ", 7 satellites");
+    }
+
+    #[test]
+    fn traffic_light_follows_the_status_line() {
+        assert_eq!(light("GPS: waiting for a fix"), Light::Red);
+        assert_eq!(
+            light("GPS: waiting for a fix, 0 satellites seen"),
+            Light::Red
+        );
+        assert_eq!(
+            light("GPS: waiting for a fix, 1 satellite seen"),
+            Light::Amber
+        );
+        assert_eq!(
+            light("GPS: waiting for a fix, 9 satellites seen"),
+            Light::Amber
+        );
+        assert_eq!(light("GPS: fix IO81UF12, 8 satellites"), Light::Green);
+        assert_eq!(light("GPS: fix IO81UF12"), Light::Green);
+        assert_eq!(light("GPS: cannot open /dev/cu.x: busy"), Light::Red);
+        assert_eq!(
+            light("GPS: fix lost, using the grid from setup"),
+            Light::Red
+        );
     }
 
     #[test]

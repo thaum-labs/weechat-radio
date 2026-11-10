@@ -2079,7 +2079,13 @@ impl eframe::App for GuiApp {
                             kv(ui, "CALL", &s.callsign, ACCENT);
                             kv(ui, "GRID", &s.grid, PURPLE);
                             if !s.gps.is_empty() {
-                                kv(ui, "GPS", s.gps.trim_start_matches("GPS: "), DIM);
+                                let colour = match crate::gps::light(&s.gps) {
+                                    crate::gps::Light::Green => GREEN,
+                                    crate::gps::Light::Amber => AMBER,
+                                    crate::gps::Light::Red => RED,
+                                };
+                                let text = format!("● {}", s.gps.trim_start_matches("GPS: "));
+                                kv(ui, "GPS", &text, colour);
                             }
                             if let Some(next) = mode_pick(ui, s.mode) {
                                 if next == Mode::Radio && s.mode != Mode::Radio {
