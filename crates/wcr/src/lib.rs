@@ -31,6 +31,7 @@ pub mod node;
 pub mod presets;
 pub mod proto;
 pub mod radios;
+pub mod range_test;
 pub mod rate_limit;
 pub mod relay;
 pub mod restart;

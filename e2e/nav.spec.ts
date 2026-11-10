@@ -52,6 +52,7 @@ const PAGES: [string, string | null][] = [
   ["/guides/pi.html", "guides"],
   ["/guides/radio.html", "guides"],
   ["/guides/radios.html", "guides"],
+  ["/guides/range.html", "guides"],
   ["/guides/start.html", "guides"],
   ["/guides/troubleshooting.html", "guides"],
   ["/guides/vox.html", "guides"],

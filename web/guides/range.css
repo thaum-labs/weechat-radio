@@ -1,0 +1,57 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Range test map (guides/range.html). rt- prefix keeps clear of map/planner classes. */
+.rt-drop {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 18px 16px;
+  border: 1px dashed var(--accent);
+  cursor: pointer;
+  text-align: center;
+}
+.rt-drop.is-over { background: rgba(125, 155, 255, 0.12); }
+.rt-drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.rt-drop span { opacity: 0.75; font-size: 0.9em; }
+.rt-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 12px 0 8px;
+  font-size: 0.9em;
+}
+.rt-map {
+  height: min(70vh, 560px);
+  min-height: 320px;
+  border: 1px solid var(--line);
+}
+.rt-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  list-style: none;
+  padding: 0;
+  margin: 10px 0 0;
+  font-size: 0.9em;
+}
+.rt-sw {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+.rt-area { background: rgba(63, 191, 79, 0.3); outline: 2px solid #3fbf4f; outline-offset: -2px; }
+.rt-good { background: #3fbf4f; }
+.rt-patchy { background: #f5a81f; }
+.rt-none { background: #e03c3c; }
+.rt-home { background: #7d9bff; border-radius: 50%; }
+.rt-summary { margin-top: 10px; }
+.rt-btn {
+  font: inherit;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--accent);
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.rt-btn[aria-pressed="true"] { background: var(--accent); color: #07070a; }
