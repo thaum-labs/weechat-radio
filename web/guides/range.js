@@ -20,7 +20,7 @@
   // Shading: 150 m squares, each the distance-weighted score of probes within 500 m.
   const CELL_M = 150;
   const REACH_M = 500;
-  const COLORS = { good: "#39e65a", patchy: "#ffb020", none: "#ff4040" };
+  const COLORS = { good: "#3fbf4f", patchy: "#f5a81f", none: "#e03c3c" };
 
   /** Score of one probe, 0..1. */
   function score(p) {
@@ -248,15 +248,7 @@
     return {
       version: 8,
       sources: { base: { type: "raster", tiles: spec.tiles, tileSize: 256, attribution: spec.attribution } },
-      // The base map is dimmed and desaturated so the coverage colours stand out.
-      layers: [
-        {
-          id: "base",
-          type: "raster",
-          source: "base",
-          paint: { "raster-saturation": -0.6, "raster-brightness-max": 0.7, "raster-contrast": -0.1 },
-        },
-      ],
+      layers: [{ id: "base", type: "raster", source: "base" }],
     };
   }
 
@@ -303,28 +295,21 @@
       id: "rt-area",
       type: "fill",
       source: "rt-area",
-      paint: { "fill-color": COLORS.good, "fill-opacity": 0.4 },
-      layout: { visibility: areaBox.checked ? "visible" : "none" },
-    });
-    map.addLayer({
-      id: "rt-area-casing",
-      type: "line",
-      source: "rt-area",
-      paint: { "line-color": "#07070a", "line-width": 6, "line-opacity": 0.6 },
+      paint: { "fill-color": COLORS.good, "fill-opacity": 0.22 },
       layout: { visibility: areaBox.checked ? "visible" : "none" },
     });
     map.addLayer({
       id: "rt-area-edge",
       type: "line",
       source: "rt-area",
-      paint: { "line-color": COLORS.good, "line-width": 3 },
+      paint: { "line-color": COLORS.good, "line-width": 2 },
       layout: { visibility: areaBox.checked ? "visible" : "none" },
     });
     map.addLayer({
       id: "rt-route",
       type: "fill",
       source: "rt-route",
-      paint: { "fill-color": bandColor, "fill-opacity": 0.6, "fill-antialias": false },
+      paint: { "fill-color": bandColor, "fill-opacity": 0.38, "fill-antialias": false },
       layout: { visibility: routeBox.checked ? "visible" : "none" },
     });
     map.addLayer({
@@ -332,10 +317,10 @@
       type: "circle",
       source: "rt-dots",
       paint: {
-        "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 3.5, 14, 7],
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 2.5, 14, 5],
         "circle-color": bandColor,
-        "circle-stroke-color": "#ffffff",
-        "circle-stroke-width": 1.5,
+        "circle-stroke-color": "#07070a",
+        "circle-stroke-width": 1,
       },
       layout: { visibility: dotsBox.checked ? "visible" : "none" },
     });
@@ -343,7 +328,7 @@
       id: "rt-home",
       type: "circle",
       source: "rt-home",
-      paint: { "circle-radius": 9, "circle-color": "#7d9bff", "circle-stroke-color": "#fff", "circle-stroke-width": 3 },
+      paint: { "circle-radius": 7, "circle-color": "#7d9bff", "circle-stroke-color": "#fff", "circle-stroke-width": 2 },
     });
   }
   map.on("load", addLayers);
@@ -357,7 +342,7 @@
     map.once("styledata", addLayers);
   });
   areaBox.addEventListener("change", () => {
-    for (const id of ["rt-area", "rt-area-casing", "rt-area-edge"]) {
+    for (const id of ["rt-area", "rt-area-edge"]) {
       if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", areaBox.checked ? "visible" : "none");
     }
   });
