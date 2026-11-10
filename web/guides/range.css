@@ -40,10 +40,10 @@
   margin-right: 6px;
   vertical-align: -1px;
 }
-.rt-area { background: rgba(63, 191, 79, 0.3); outline: 2px solid #3fbf4f; outline-offset: -2px; }
-.rt-good { background: #3fbf4f; }
-.rt-patchy { background: #f5a81f; }
-.rt-none { background: #e03c3c; }
+.rt-area { background: rgba(57, 230, 90, 0.4); outline: 3px solid #39e65a; outline-offset: -3px; }
+.rt-good { background: #39e65a; }
+.rt-patchy { background: #ffb020; }
+.rt-none { background: #ff4040; }
 .rt-home { background: #7d9bff; border-radius: 50%; }
 .rt-summary { margin-top: 10px; }
 .rt-btn {
