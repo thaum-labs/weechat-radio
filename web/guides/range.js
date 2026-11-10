@@ -64,10 +64,12 @@
         unplaced++;
         continue;
       }
+      const time = f[col("time_utc")] || "";
       probes.push({
         lat,
         lon,
-        time: f[col("time_utc")] || "",
+        time,
+        ts: Date.parse(time) / 1000,
         probe: f[col("probe")] || "",
         result: (f[col("result")] || "none").trim(),
         they: num(f[col("snr_they_heard_db")]),
@@ -278,7 +280,7 @@
   const routeBox = document.getElementById("rt-show-route");
   const homeBtn = document.getElementById("rt-move-home");
   const dotsBox = document.getElementById("rt-show-dots");
-  let data = { area: [], route: [], dots: [], home: [] };
+  let data = { area: [], route: [], dots: [], home: [], car: [] };
   let loaded = { probes: [], unplaced: 0, far: "", bad: [] };
   let home = null;
   let homeMoved = false;
@@ -290,6 +292,7 @@
     map.addSource("rt-route", { type: "geojson", data: fc(data.route) });
     map.addSource("rt-dots", { type: "geojson", data: fc(data.dots) });
     map.addSource("rt-home", { type: "geojson", data: fc(data.home) });
+    map.addSource("rt-car", { type: "geojson", data: fc(data.car) });
     const bandColor = ["match", ["get", "band"], "good", COLORS.good, "patchy", COLORS.patchy, COLORS.none];
     map.addLayer({
       id: "rt-area",
@@ -329,6 +332,12 @@
       type: "circle",
       source: "rt-home",
       paint: { "circle-radius": 7, "circle-color": "#7d9bff", "circle-stroke-color": "#fff", "circle-stroke-width": 2 },
+    });
+    map.addLayer({
+      id: "rt-car",
+      type: "circle",
+      source: "rt-car",
+      paint: { "circle-radius": 9, "circle-color": "#ffffff", "circle-stroke-color": "#ff7a3d", "circle-stroke-width": 4 },
     });
   }
   map.on("load", addLayers);
@@ -403,17 +412,26 @@
         bad.push(`${f.name}: ${e.message}`);
       }
     }
+    // Oldest first, so a replay drives in order; rows without a time keep their place.
+    probes.forEach((p, i) => (p.order = Number.isFinite(p.ts) ? p.ts : i));
+    probes.sort((a, b) => a.order - b.order);
+    stopReplay();
     loaded = { probes, unplaced, far, bad };
     if (!homeMoved) home = gridCentre(farGrid);
+    replayBtn.disabled = !probes.length;
     draw(true);
   }
 
   function draw(fit) {
-    const { probes, unplaced, far, bad } = loaded;
+    const { unplaced, far, bad } = loaded;
+    // During a replay only the probes reached so far are drawn.
+    const probes = replay ? loaded.probes.slice(0, replay.shown) : loaded.probes;
     const area = coverageArea(probes, home);
+    const car = replay && probes.length ? probes[probes.length - 1] : null;
     data = {
       area: area.features,
       route: coverage(probes),
+      car: car ? [{ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [car.lon, car.lat] } }] : [],
       dots: probes.map((p) => ({
         type: "Feature",
         properties: { band: band(score(p)), probe: p.probe, time: p.time, words: words(p) },
@@ -421,7 +439,7 @@
       })),
       home: home ? [{ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [home.lon, home.lat] } }] : [],
     };
-    for (const id of ["rt-area", "rt-route", "rt-dots", "rt-home"]) {
+    for (const id of ["rt-area", "rt-route", "rt-dots", "rt-home", "rt-car"]) {
       const src = map.getSource(id);
       if (src) src.setData({ type: "FeatureCollection", features: data[id.slice(3)] });
     }
@@ -443,6 +461,7 @@
     if (unplaced) text += ` ${unplaced} probes had no GPS fix and are not shown.`;
     if (bad.length) text += ` Skipped ${bad.join("; ")}.`;
     summaryEl.textContent = text;
+    if (replay) return;
     if (fit && probes.length) {
       const b = new maplibregl.LngLatBounds();
       probes.forEach((p) => b.extend([p.lon, p.lat]));
@@ -450,6 +469,82 @@
       map.fitBounds(b, { padding: 40, maxZoom: 15, duration: 0 });
     }
   }
+
+  // Replay: the drive plays back in time order, faster than real time.
+  // Gaps over 2 minutes (a stop, or a break between drives) are skipped.
+  const replayBtn = document.getElementById("rt-replay");
+  const speedSel = document.getElementById("rt-speed");
+  const clockEl = document.getElementById("rt-clock");
+  const GAP_S = 120;
+  let replay = null;
+
+  function clockText(p, n, total) {
+    const t = p && p.time ? p.time.replace("T", " ").replace("Z", " UTC") : "";
+    return `${t}${t ? " · " : ""}probe ${n} of ${total}`;
+  }
+
+  function setReplayButton(playing) {
+    replayBtn.textContent = playing ? "❚❚ pause" : replay ? "▶ resume" : "▶ replay drive";
+    replayBtn.setAttribute("aria-pressed", String(playing));
+  }
+
+  function stopReplay() {
+    if (replay && replay.raf) cancelAnimationFrame(replay.raf);
+    replay = null;
+    if (clockEl) clockEl.textContent = "";
+    if (replayBtn) setReplayButton(false);
+  }
+
+  function tick(now) {
+    const r = replay;
+    if (!r) return;
+    const list = loaded.probes;
+    const dt = r.last ? (now - r.last) / 1000 : 0;
+    r.last = now;
+    r.clock += dt * Number(speedSel.value || 500);
+    // Jump over long gaps so a stop does not freeze the replay.
+    const next = list[r.shown];
+    if (next && Number.isFinite(next.order) && next.order - r.clock > GAP_S) r.clock = next.order;
+    let moved = false;
+    while (r.shown < list.length && !(list[r.shown].order > r.clock)) {
+      r.shown++;
+      moved = true;
+    }
+    if (moved && now - r.drawn > 120) {
+      r.drawn = now;
+      draw(false);
+      clockEl.textContent = clockText(list[r.shown - 1], r.shown, list.length);
+    }
+    if (r.shown >= list.length) {
+      clockEl.textContent = clockText(list[list.length - 1], list.length, list.length) + " · done";
+      replay = null;
+      setReplayButton(false);
+      draw(false);
+      return;
+    }
+    r.raf = requestAnimationFrame(tick);
+  }
+
+  replayBtn.addEventListener("click", () => {
+    if (!loaded.probes.length) return;
+    if (replay && replay.raf) {
+      // Pause.
+      cancelAnimationFrame(replay.raf);
+      replay.raf = 0;
+      setReplayButton(false);
+      return;
+    }
+    if (!replay) {
+      const first = loaded.probes[0];
+      replay = { shown: 0, clock: (Number.isFinite(first.order) ? first.order : 0) - 1, last: 0, drawn: 0, raf: 0 };
+      draw(false);
+    }
+    replay.last = 0;
+    replay.raf = requestAnimationFrame(tick);
+    setReplayButton(true);
+  });
+
+  window.wcrRange.replaying = () => (replay ? { shown: replay.shown, total: loaded.probes.length } : null);
 
   const input = document.getElementById("rt-file");
   const drop = document.getElementById("rt-drop");

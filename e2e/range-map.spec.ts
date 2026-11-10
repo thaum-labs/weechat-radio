@@ -13,6 +13,7 @@ declare global {
       score(p: { result: string; they: number; we: number }): number;
       gridCentre(g: string): { lat: number; lon: number } | null;
       coverage(p: unknown[]): { properties: { band: string } }[];
+      replaying(): { shown: number; total: number } | null;
       sliceReach(p: unknown[], home: { lat: number; lon: number }): { reach: number; probes: number }[];
       coverageArea(p: unknown[], home: { lat: number; lon: number }): { features: unknown[]; km2: number; measured: number };
     };
@@ -116,6 +117,31 @@ test("the coverage edge in a slice ignores one lucky far probe", async ({ page }
   expect(r.measured).toBe(1);
   expect(r.km2).toBeCloseTo((Math.PI * 25) / 36, 1);
   expect(r.n).toBe(1);
+});
+
+test("replay plays the drive back in order, pauses, and ends with everything drawn", async ({ page }) => {
+  await open(page);
+  const btn = page.locator("#rt-replay");
+  await expect(btn).toBeDisabled();
+  await page.setInputFiles("#rt-file", { name: "range-test-G0HOM.csv", mimeType: "text/csv", buffer: Buffer.from(drive()) });
+  await expect(btn).toBeEnabled();
+  // 120x: 30 probes 60 s apart take about 15 s, so a pause lands mid-drive.
+  await page.selectOption("#rt-speed", "120");
+  await btn.click();
+  await expect(btn).toHaveText("❚❚ pause");
+  await expect.poll(async () => (await page.evaluate(() => window.wcrRange.replaying()))?.shown ?? 0).toBeGreaterThan(1);
+  await btn.click();
+  await expect(btn).toHaveText("▶ resume");
+  const paused = (await page.evaluate(() => window.wcrRange.replaying()))!;
+  expect(paused.shown).toBeLessThan(paused.total);
+  await page.waitForTimeout(600);
+  expect((await page.evaluate(() => window.wcrRange.replaying()))!.shown).toBe(paused.shown);
+  await expect(page.locator("#rt-clock")).toContainText(`probe ${paused.shown} of 30`);
+  await page.selectOption("#rt-speed", "2000");
+  await btn.click();
+  await expect(page.locator("#rt-clock")).toContainText("probe 30 of 30 · done", { timeout: 10_000 });
+  await expect(btn).toHaveText("▶ replay drive");
+  expect(await page.evaluate(() => window.wcrRange.replaying())).toBeNull();
 });
 
 test("a file that is not a range test log is named and skipped", async ({ page }) => {
