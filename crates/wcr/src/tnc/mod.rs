@@ -16,6 +16,8 @@
 
 pub mod ax25;
 pub mod bluetooth;
+#[cfg(target_os = "linux")]
+mod bluetoothctl;
 pub mod cli;
 pub mod link;
 pub mod serial;

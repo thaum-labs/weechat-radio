@@ -107,9 +107,15 @@ csma_mode = "auto"     # auto (default) | sync | level
 2. **Transmit:** your beacon or a bulletin shows on the other station with a comfortable SNR. Target: 10 dB or more with the radios in the same room. Under 6 dB, try TX level 0, -6, -12 and -18 dB with the far end reading its SNR, and check the far radio's own receive meter.
 3. **Both ways:** a direct message of about 500 characters arrives whole, and you see `[ok rf]`.
 
-## Linux
+## Linux and Raspberry Pi
 
-Pair once, then the app connects by address:
+**Find radio** (and `wcr tnc find`, and the radio step of `wcr setup` over SSH on a Pi) works on Linux too: it searches for ~8 s, pairs with PIN `0000` and trusts the radio, all through BlueZ's `bluetoothctl`, which Raspberry Pi OS already has. After that the station connects by address and reconnects by itself.
+
+If it says why it cannot search, the message names the fix: `sudo apt install bluez` (no bluetoothctl), `sudo rfkill unblock bluetooth` (Bluetooth switched off), or `sudo usermod -aG bluetooth $USER` and log in again (your user may not use Bluetooth).
+
+Raspberry Pi 3: its Bluetooth shares one chip and antenna with 2.4 GHz Wi-Fi, so busy Wi-Fi can cause gaps in the radio's audio. Use Ethernet if you can (a Pi 3B+ can also use 5 GHz Wi-Fi) and keep the radio within a few metres of the Pi.
+
+By hand, if you prefer:
 
 ```
 bluetoothctl
