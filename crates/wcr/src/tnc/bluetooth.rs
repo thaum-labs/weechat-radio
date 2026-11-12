@@ -3,8 +3,9 @@
 //!
 //! Windows: enumerate paired devices, run an inquiry, pair (PIN 0000 /
 //! numeric comparison accepted automatically), and open the SPP socket by
-//! address — no COM port hunting. Linux: connect by address over an RFCOMM
-//! socket (pair once with `bluetoothctl`). macOS: use `backend = "serial"`
+//! address — no COM port hunting. Linux: list, scan and pair through
+//! `bluetoothctl` (see `bluetoothctl.rs`), connect by address over an RFCOMM
+//! socket. macOS: use `backend = "serial"`
 //! with the `/dev/cu.VR-N76` port the OS creates on pairing.
 
 use crate::config::TncConfig;
@@ -495,29 +496,10 @@ mod imp {
         Ok(super::sdp::rfcomm_channel(&attrs))
     }
 
-    fn unsupported() -> io::Error {
-        io::Error::new(
-            io::ErrorKind::Unsupported,
-            "device listing needs bluetoothctl on Linux: run `bluetoothctl devices`, then set tnc.bt_addr",
-        )
-    }
+    // Listing, scanning and pairing go through BlueZ's bluetoothctl.
+    pub use crate::tnc::bluetoothctl::{discover, pair, paired_devices};
 
-    pub fn paired_devices() -> io::Result<Vec<BtDevice>> {
-        Err(unsupported())
-    }
-
-    pub fn discover(_seconds: u8) -> io::Result<Vec<BtDevice>> {
-        Err(unsupported())
-    }
-
-    pub fn pair(_addr: u64) -> io::Result<()> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "pair once with `bluetoothctl pair <addr>` and `trust <addr>`",
-        ))
-    }
-
-    /// Connect to RFCOMM channel 1 by address (pair + trust first with bluetoothctl).
+    /// Connect to RFCOMM channel 1 by address (Find radio pairs and trusts it first).
     pub fn connect(dev: &BtDevice) -> io::Result<Connection> {
         connect_channel(dev, RFCOMM_CHANNEL)
     }
