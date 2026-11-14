@@ -328,21 +328,43 @@ test("a near miss is marginal, stays on FM, and is drawn yellow", async ({ page 
   await expect.poll(() => page.evaluate(() => window.__WCR_BAND.state().terrain)).toMatchObject({ blocked: false, marginal: true });
 });
 
+test("each end picks its own VHF/UHF antenna type, which sets the gain", async ({ page }) => {
+  await mockServices(page, () => 100);
+  await open(page, "?tx=46.2,6.14&rx=46.1,6.25&txant=6&rxant=1.5&w=50&rw=50");
+  // Old links: the type follows the height.
+  await expect(page.locator("#band-tx-type")).toHaveValue("vertical");
+  await expect(page.locator("#band-rx-type")).toHaveValue("duck");
+  const heard = page.locator(".band-heard li").first();
+  await expect(heard).toContainText("13 dB to spare");
+  // A collinear (5 dBi) instead of a vertical (2 dBi) adds 3 dB.
+  await page.locator("#band-tx-type").selectOption("collinear");
+  await expect(heard).toContainText("16 dB to spare");
+  await expect(page).toHaveURL(/txtype=collinear/);
+  // A Yagi taken up from hand height goes on a 10 m mast.
+  await page.locator("#band-rx-type").selectOption("yagi");
+  await expect(page.locator("#band-rx-ant")).toHaveValue("10");
+  // A handheld height brings the rubber duck back.
+  await page.locator("#band-rx-ant").selectOption("1.5");
+  await expect(page.locator("#band-rx-type")).toHaveValue("duck");
+  await page.locator("#band-tx-type").selectOption("whip");
+  await expect(page.locator("#band-tx-ant")).toHaveValue("mobile");
+});
+
 test("each end has its own power and the card says who hears whom", async ({ page }) => {
   await mockServices(page, () => 100);
   await open(page, "?tx=46.2,6.14&rx=46.1,6.25&txant=6&rxant=1.5&w=50&rw=1");
   await expect(page.locator("#band-rx-power")).toHaveValue("1");
   const heard = page.locator(".band-heard li");
   await expect(heard).toHaveCount(2);
-  await expect(heard.nth(0)).toContainText("RX hears TX (50 W)");
+  await expect(heard.nth(0)).toContainText("RX hears home (50 W)");
   await expect(heard.nth(0)).toHaveAttribute("data-state", "works");
-  await expect(heard.nth(1)).toContainText("TX doesn't hear RX (1 W)");
+  await expect(heard.nth(1)).toContainText("Home doesn't hear RX (1 W)");
   await expect(heard.nth(1)).toHaveAttribute("data-state", "none");
-  await expect(page.locator(".band-stats")).toContainText("TX 50 W · RX 1 W");
+  await expect(page.locator(".band-stats")).toContainText("home 50 W · RX 1 W");
   // The two-way verdict goes by the weaker end.
   await expect(page.locator(".band-why")).toContainText("Unlikely at 1 W");
   await page.locator("#band-rx-power").selectOption("50");
-  await expect(heard.nth(1)).toContainText("TX hears RX (50 W)");
+  await expect(heard.nth(1)).toContainText("Home hears RX (50 W)");
   await expect(page).toHaveURL(/rw=50/);
 });
 
@@ -499,7 +521,7 @@ test("on a phone, the wire setup row and note never move the map", async ({ page
   for (const width of [390, 360]) {
     await page.setViewportSize({ width, height: 844 });
     await open(page, "?tx=51.5,-0.12&rx=40.7,-74&hfant=vertical");
-    const mapTop = () => page.locator("#map").evaluate((e) => e.getBoundingClientRect().top);
+    const mapTop = () => page.locator("#map").evaluate((e) => e.getBoundingClientRect().top + window.scrollY);
     const top = await mapTop();
     await page.locator(".band-hfant label", { hasText: "dipole" }).click();
     await expect(page.locator("#band-hfwire")).toBeVisible();
@@ -531,11 +553,27 @@ test("clear removes both pins and the card without a reload", async ({ page }) =
   await expect(page.locator(".band-answer")).toHaveCount(0);
   await expect(page.locator("#band-empty")).toBeVisible();
   await expect(page.locator(".map-mark-wrap")).toHaveCount(0);
-  await expect(page.locator("#band-hint")).toHaveText("Click where you are");
+  await expect(page.locator("#band-hint")).toHaveText("Click your home station first");
   await expect(page).not.toHaveURL(/tx=|rx=/);
   // Your own power stays.
   await expect(page).toHaveURL(/w=50/);
   expect(await page.evaluate(() => window.__WCR_BAND.state().terrain)).toBeNull();
+});
+
+test("clear RX keeps the home station and the next click places a new receiver", async ({ page }) => {
+  await mockServices(page, () => 0);
+  await open(page, "?tx=51.5,-0.12&rx=51.6,-0.3");
+  await expect(page.locator(".band-freq")).toBeVisible();
+  await page.locator("#band-clear-rx").click();
+  await expect(page.locator(".band-answer")).toHaveCount(0);
+  await expect(page.locator(".map-mark-wrap")).toHaveCount(1);
+  await expect(page.locator("#band-hint")).toHaveText("Now click the receiving station");
+  await expect(page).toHaveURL(/tx=/);
+  await expect(page).not.toHaveURL(/rx=/);
+  const home = await page.evaluate(() => window.__WCR_BAND.state().tx);
+  await page.locator("#map").click({ position: { x: 40, y: 120 } });
+  await expect.poll(() => page.evaluate(() => window.__WCR_BAND.state().rx)).not.toBeNull();
+  expect(await page.evaluate(() => window.__WCR_BAND.state().tx)).toEqual(home);
 });
 
 test("a band picked by hand rates the path at that band, shows a banner, and reverts", async ({ page }) => {
@@ -1115,7 +1153,7 @@ for (const width of [1280, 390, 360]) {
     await mockServices(page, () => 100);
     await open(page);
     const hf = page.locator('.band-hfant a.band-ant-guide[href="/guides/antennas-hf.html"]');
-    const vhf = page.locator('.band-opts a.band-ant-guide[href="/guides/antennas-vhf.html"]');
+    const vhf = page.locator('.band-stations a.band-ant-guide[href="/guides/antennas-vhf.html"]');
     for (const link of [hf, vhf]) {
       await expect(link).toBeVisible();
       const box = (await link.boundingBox())!;
@@ -1124,9 +1162,9 @@ for (const width of [1280, 390, 360]) {
     }
     const mid = (b: { y: number; height: number }) => b.y + b.height / 2;
     const near = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThanOrEqual(4);
-    // VHF/UHF link: on the TX antenna line. HF link: beside the tiles on a
-    // desktop, beside the "HF antenna" label on a phone.
-    near(mid((await vhf.boundingBox())!), mid((await page.locator("label.band-ant").first().boundingBox())!));
+    // VHF/UHF link: on the "stations" heading line. HF link: beside the
+    // tiles on a desktop, beside the "HF antenna" label on a phone.
+    near(mid((await vhf.boundingBox())!), mid((await page.locator(".band-stations-title").boundingBox())!));
     const beside = width > 600 ? ".band-hfant-tiles" : ".band-hfant-label";
     near(mid((await hf.boundingBox())!), mid((await page.locator(beside).boundingBox())!));
   });

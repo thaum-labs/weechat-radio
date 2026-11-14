@@ -87,6 +87,8 @@
   const hourLabel = document.getElementById("band-hour-label");
   const txAntEl = document.getElementById("band-tx-ant");
   const rxAntEl = document.getElementById("band-rx-ant");
+  const txTypeEl = document.getElementById("band-tx-type");
+  const rxTypeEl = document.getElementById("band-rx-type");
   const powerEl = document.getElementById("band-power");
   const rxPowerEl = document.getElementById("band-rx-power");
   const profileEl = document.getElementById("band-profile");
@@ -146,6 +148,31 @@
     sel.value = hit ? hit.value : "other";
     if (!hit) sel.parentElement.querySelector("input").value = String(m);
     showAntennaBox(sel);
+  }
+  // VHF/UHF antenna type at each end, with its gain in the signal budget.
+  // A Yagi is taken as pointed at the other station.
+  const ANT_DBI = { duck: -5, whip: MOBILE_DBI, vertical: 2, collinear: 5, yagi: 10 };
+  // The type a height suggests: a handheld at 2 m or less, a car whip at
+  // "mobile", otherwise a vertical. Old links without a type use this.
+  function defaultType(sel) {
+    if (sel && sel.value === "mobile") return "whip";
+    return antennaM(sel) <= 2 ? "duck" : "vertical";
+  }
+  function setType(typeSel, value) {
+    if (typeSel && ANT_DBI[value] != null) typeSel.value = value;
+  }
+  // A new height brings the matching type along when the old one no
+  // longer fits (a rubber duck on a 10 m mast).
+  function heightChanged(sel, typeSel) {
+    const d = defaultType(sel);
+    if (d !== "vertical" || typeSel.value === "duck" || typeSel.value === "whip") setType(typeSel, d);
+  }
+  // A new type brings a fitting height: a handheld at 1.5 m, a car whip on
+  // the roof, and a fixed antenna up a mast when it was at hand height.
+  function typeChanged(typeSel, sel) {
+    if (typeSel.value === "duck") setAntenna(sel, 1.5);
+    else if (typeSel.value === "whip") setAntenna(sel, "mobile");
+    else if (antennaM(sel) <= 2) setAntenna(sel, 10);
   }
   function showAntennaBox(sel) {
     const other = sel.value === "other";
@@ -672,12 +699,12 @@
   const PLENTY_NOTE = "Ground is close to the signal path in places; you have plenty of signal to cover it.";
   const POWER_STEPS = [1, 2, 3, 5, 10, 20, 50, 100];
 
-  function antGainDbi(sel) {
-    if (sel && sel.value === "mobile") return MOBILE_DBI;
-    return antennaM(sel) <= 2 ? -5 : 0;
+  function antGainDbi(typeSel) {
+    const g = typeSel && ANT_DBI[typeSel.value];
+    return g != null ? g : ANT_DBI.vertical;
   }
   function antGainsDbi() {
-    return antGainDbi(txAntEl) + antGainDbi(rxAntEl);
+    return antGainDbi(txTypeEl) + antGainDbi(rxTypeEl);
   }
   // ITU-R P.526 single knife edge, nu = sqrt(2) x height above the line / F1.
   function knifeEdgeDb(nu) {
@@ -719,7 +746,7 @@
       const watts = Math.min(w, maxW || w);
       return { hearer, sender, watts, margin: Math.round(marginDb(t, watts, mhz)) };
     };
-    return [one("RX", "TX", txPowerW()), one("TX", "RX", rxPowerW())];
+    return [one("RX", "home", txPowerW()), one("Home", "RX", rxPowerW())];
   }
   function heardHtml(lines) {
     if (!lines) return "";
@@ -1358,7 +1385,7 @@
 
   function placeMarker(kind, lngLat) {
     const color = kind === "tx" ? "#39ff14" : "#00e5ff";
-    const el = markEl(color, kind.toUpperCase());
+    const el = markEl(color, kind === "tx" ? "HOME" : "RX");
     const marker = new maplibregl.Marker({ element: el, draggable: true })
       .setLngLat(lngLat)
       .addTo(map);
@@ -1383,7 +1410,7 @@
     txMarker = placeMarker("tx", ll);
     terrain = null;
     if (!rx) {
-      setHint("RX", "Click the other station");
+      setHint("RX", "Now click the receiving station");
       saveUrl();
     } else requestCard();
   }
@@ -1400,14 +1427,18 @@
   // Clear: back to an empty map without a reload. Both pins, the card, a
   // band picked by hand and the time go; the station settings (antenna,
   // power, HF antenna) stay, since they describe your own gear.
-  function clearPlan() {
+  // `keepHome` clears only the receiving station, so the next map click
+  // places a new one against the same home.
+  function clearPlan(keepHome) {
     if (abort) abort.abort();
     abort = null;
-    tx = null;
+    if (!keepHome) {
+      tx = null;
+      if (txMarker) txMarker.remove();
+      txMarker = null;
+    }
     rx = null;
-    if (txMarker) txMarker.remove();
     if (rxMarker) rxMarker.remove();
-    txMarker = null;
     rxMarker = null;
     terrain = null;
     answer = null;
@@ -1430,7 +1461,8 @@
     paintPath();
     drawProfile();
     setLosNote("terrain along the path");
-    setHint("TX", "Click where you are");
+    if (tx) setHint("RX", "Now click the receiving station");
+    else setHint("HOME", "Click your home station first");
     saveUrl();
   }
 
@@ -1777,7 +1809,10 @@
     }
     // Mobile stays allowed on PMR446 with its roof-whip gain; it only gets a
     // short note (Tobias, #150).
-    const mobile = txAntEl.value === "mobile" || rxAntEl.value === "mobile";
+    // An add-on antenna at either end (not the radio's own, and not the
+    // default vertical) gets the licence-free band's antenna note.
+    const ADDON = ["whip", "collinear", "yagi"];
+    const mobile = ADDON.includes(txTypeEl.value) || ADDON.includes(rxTypeEl.value);
     const antNote = o && o.mobileNote && mobile ? o.mobileNote : "";
     shownCard = card;
     renderCard(card, o ? { label: o.label, info: o.info, antNote, rec: rec.band } : null);
@@ -1867,7 +1902,7 @@
         ${hits.marginal ? `<path class="pf-marginal" d="${hits.marginal}"/>` : ""}
         ${hits.blocked ? `<path class="pf-block" d="${hits.blocked}"/>` : ""}
         <line class="pf-line" x1="${f(x(0))}" y1="${f(y(terrain.y0))}" x2="${f(x(D))}" y2="${f(y(terrain.y1))}"/>
-        <text x="${pad.l}" y="11">TX ${end(pts[0], terrain.txAnt)}</text>
+        <text x="${pad.l}" y="11">HOME ${end(pts[0], terrain.txAnt)}</text>
         <text x="${W / 2}" y="11" text-anchor="middle">${W < 560 ? `${km} km` : `path profile · ${km} km · 4/3 earth`}</text>
         <text x="${W - pad.r}" y="11" text-anchor="end">RX ${end(pts[pts.length - 1], terrain.rxAnt)}</text>
         <text x="${pad.l}" y="${H - 2}">ground</text>
@@ -1954,7 +1989,7 @@
     const rec = manual ? manual.rec : c.band;
     const nogo = manual && c.ok === false;
     const split = txPowerW() !== rxPowerW() && c.heard;
-    const power = split ? `TX ${c.heard[0].watts} W · RX ${c.heard[1].watts} W`
+    const power = split ? `home ${c.heard[0].watts} W · RX ${c.heard[1].watts} W`
       : c.power_w != null ? `${c.power_w} W each end` : nogo ? "none" : `over ${powerW()} W`;
     const ssb = c.ssb ? "on" : "off";
     const voice = c.voice_note ? `<p class="band-voice">${escapeHtml(c.voice_note)}</p>` : "";
@@ -2112,6 +2147,8 @@
     set("ant", null);
     set("txant", antennaParam(txAntEl) !== "10" ? antennaParam(txAntEl) : null);
     set("rxant", antennaParam(rxAntEl) !== "10" ? antennaParam(rxAntEl) : null);
+    set("txtype", txTypeEl.value !== defaultType(txAntEl) ? txTypeEl.value : null);
+    set("rxtype", rxTypeEl.value !== defaultType(rxAntEl) ? rxTypeEl.value : null);
     set("hfant", hfAntenna() !== "dipole" ? hfAntenna() : null);
     set("hfwire", isWireAntenna() && wireOrientation() !== "flat" ? wireOrientation() : null);
     set("band", overrideKey() || null);
@@ -2133,6 +2170,10 @@
     const both = q.get("ant");
     setAntenna(txAntEl, q.get("txant") || both);
     setAntenna(rxAntEl, q.get("rxant") || both);
+    setType(txTypeEl, defaultType(txAntEl));
+    setType(rxTypeEl, defaultType(rxAntEl));
+    setType(txTypeEl, q.get("txtype"));
+    setType(rxTypeEl, q.get("rxtype"));
     pickOption(powerEl, q.get("w"));
     pickOption(rxPowerEl, q.get("rw"));
     const hf = hfAntEls.find((el) => el.value === q.get("hfant"));
@@ -2160,8 +2201,8 @@
     });
   }
   let antTimer = null;
-  for (const sel of [txAntEl, rxAntEl]) {
-    if (!sel) continue;
+  for (const [sel, typeSel] of [[txAntEl, txTypeEl], [rxAntEl, rxTypeEl]]) {
+    if (!sel || !typeSel) continue;
     const box = sel.parentElement.querySelector("input");
     const changed = () => {
       judgeTerrain();
@@ -2173,17 +2214,27 @@
         if (!box.value) box.value = "10";
         box.focus();
       }
+      heightChanged(sel, typeSel);
       changed();
     });
     box.addEventListener("input", () => {
       clearTimeout(antTimer);
-      antTimer = setTimeout(changed, 300);
+      antTimer = setTimeout(() => {
+        heightChanged(sel, typeSel);
+        changed();
+      }, 300);
+    });
+    typeSel.addEventListener("change", () => {
+      typeChanged(typeSel, sel);
+      changed();
     });
   }
   if (powerEl) powerEl.addEventListener("change", () => requestCard({ refit: false }));
   if (rxPowerEl) rxPowerEl.addEventListener("change", () => requestCard({ refit: false }));
   const clearEl = document.getElementById("band-clear");
-  if (clearEl) clearEl.addEventListener("click", clearPlan);
+  if (clearEl) clearEl.addEventListener("click", () => clearPlan(false));
+  const clearRxEl = document.getElementById("band-clear-rx");
+  if (clearRxEl) clearRxEl.addEventListener("click", () => clearPlan(true));
   for (const el of hfAntEls) {
     el.addEventListener("change", () => {
       showWireNote();
@@ -2437,7 +2488,7 @@
     if (!searchEl.contains(e.target) && placesEl && !placesEl.contains(e.target)) hidePlaces();
   });
 
-  setHint("TX", "Click where you are");
+  setHint("HOME", "Click your home station first");
   showHourLabel();
   restoreUrl();
 
