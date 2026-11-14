@@ -447,7 +447,7 @@ test("every antenna picker shows a drawing of the antenna, in the button and the
   await expect(page.locator("#band-tx-type + .band-icopick .band-icopick-btn")).toContainText("Yagi");
 });
 
-test("the time slider asks for a later hour and moves the night shading", async ({ page }) => {
+test("a later hour picked on the 24 hour strip is asked for", async ({ page }) => {
   const bodies = await mockServices(page, () => 0);
   await open(page);
   await page.evaluate(() => {
@@ -455,9 +455,15 @@ test("the time slider asks for a later hour and moves the night shading", async 
     window.__WCR_BAND.setRxLngLat(-74, 40.7);
   });
   await expect(page.locator(".band-conf")).toHaveText(`hour ${new Date().getUTCHours()}`);
-  await page.locator("#band-hour").fill("5");
+  await expect(page.locator("#band-hour-label")).toHaveCount(0);
+  // The page has no slider; the hour comes from the hidden field the HF
+  // card's 24 hour strip sets.
+  await page.evaluate(() => {
+    const h = document.getElementById("band-hour") as HTMLInputElement;
+    h.value = "5";
+    h.dispatchEvent(new Event("input"));
+  });
   const later = (new Date().getUTCHours() + 5) % 24;
-  await expect(page.locator("#band-hour-label")).toHaveText(`${String(later).padStart(2, "0")}:00 UTC · +5 h`);
   await expect(page.locator(".band-conf")).toHaveText(`hour ${later}`);
   expect(bodies.at(-1)!.hour_utc).toBe(later);
 });
@@ -1052,15 +1058,14 @@ test("the sky view draws hops, a side view and a 24 hour strip, and goes for VHF
   const cells = page.locator(".sky-cell");
   await expect(cells).toHaveCount(24);
   await expect(page.locator(".sky-cell.is-sel")).toHaveAttribute("data-off", "0");
-  await page.locator("#band-hour").fill("5");
+  await cells.nth(5).click();
   await expect(page.locator(".sky-cell.is-sel")).toHaveAttribute("data-off", "5");
   // 80m works at every hour (open or marginal), so its chip stays green.
   await expect(page.locator('.band-works-pick[data-band="80m"]')).toHaveAttribute("data-state", "works");
   await expect(cells.nth(5)).toHaveClass(/sky-open/);
-  // A click on a cell sets the slider.
+  // A click on another cell moves the planned hour.
   await cells.nth(9).click();
-  await expect(page.locator("#band-hour")).toHaveValue("9");
-  await expect(page.locator("#band-hour-label")).toContainText("+9 h");
+  await expect(page.locator(".sky-cell.is-sel")).toHaveAttribute("data-off", "9");
   // The tag colour comes from the band's verdict.
   await expect(page.locator(".band-conf")).toHaveClass(/band-conf-ok/);
   // 2m: back to the terrain key and profile, no sky pieces.
@@ -1129,7 +1134,8 @@ test("the greyline is the sunrise and sunset line at the planned hour", async ({
   await open(page, `${BATH_MADRID}&band=40m`);
   await expect(page.locator(".band-map-stage")).toHaveClass(/is-sky/);
   for (const off of ["0", "6", "13"]) {
-    await page.locator("#band-hour").fill(off);
+    await page.locator(`.sky-cell[data-off="${off}"]`).click();
+    await expect(page.locator(".sky-cell.is-sel")).toHaveAttribute("data-off", off);
     const line = await page.evaluate(() => window.__WCR_BAND.state().sky!.greyline);
     // Independent check: every point is 90° from the subsolar point.
     const t = new Date(Date.now() + Number(off) * 3600000);

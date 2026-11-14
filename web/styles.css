@@ -1459,29 +1459,13 @@ details.maplibregl-ctrl-attrib:not([open]) {
   animation: band-spin 0.8s linear infinite;
 }
 @keyframes band-spin { to { transform: rotate(360deg); } }
-.band-opts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  align-items: center;
-  margin: 0 0 8px;
-  font-size: 12px;
-  color: var(--dim);
-}
-.band-opts label {
+.band-override-pick {
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-left: auto;
 }
-.band-opts select {
-  background: #050508;
-  border: 1px solid var(--line);
-  color: var(--fg);
-  font: 12px/1.4 var(--font-mono);
-  padding: 4px 6px;
-}
-.band-opts input[type="number"] {
-  width: 5em;
+.band-override-pick select {
   background: #050508;
   border: 1px solid var(--line);
   color: var(--fg);
@@ -1489,7 +1473,8 @@ details.maplibregl-ctrl-attrib:not([open]) {
   padding: 4px 6px;
 }
 .band-ant i { font-style: normal; }
-/* VHF/UHF stations: one row per end, antenna type, height and power. */
+/* Stations: home on the left, RX on the right (stacked on narrow
+   screens), each with its antenna, height and power. */
 .band-stations {
   display: grid;
   gap: 6px;
@@ -1500,47 +1485,11 @@ details.maplibregl-ctrl-attrib:not([open]) {
   font-size: 12px;
   color: var(--dim);
 }
-/* Time and band sit beside the stations when there is room for both,
-   so the space to the right of the station rows is used; otherwise they
-   wrap below the stations. Narrow windows keep them above, as before. */
-.band-controls { display: contents; }
-@media (min-width: 861px) {
-  .band-controls {
-    display: flex;
-    flex-wrap: wrap;
-    column-gap: 32px;
-    margin: 0 0 10px;
-    border-top: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
-  }
-  .band-controls .band-stations { order: 1; flex: 0 1 auto; margin: 0; border: 0; }
-  .band-controls .band-opts {
-    order: 2;
-    flex: 1 1 240px;
-    min-width: 0;
-    flex-direction: column;
-    flex-wrap: nowrap;
-    align-items: stretch;
-    justify-content: center;
-    gap: 12px;
-    margin: 8px 0;
-  }
-  /* The wire note wraps to the rows' width instead of widening them. */
-  .band-controls .band-hfwire-notes { width: 0; min-width: 100%; }
-  .band-controls .band-time { flex: none; }
-  .band-controls .band-time input { width: 0; }
-  .band-controls .band-override-pick span, .band-controls .band-time span { width: 2.5em; }
-}
 .band-stations-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.band-station {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 16px;
+  gap: 6px 12px;
 }
 .band-station-name {
   width: 3em;
@@ -1561,41 +1510,27 @@ details.maplibregl-ctrl-attrib:not([open]) {
   padding: 4px 6px;
 }
 .band-station input[type="number"] { width: 5em; }
-/* Wider screens: both station rows share one grid, so the pickers line
-   up in columns (RX has no wire setup cell). */
-@media (min-width: 861px) {
-  /* Column gaps come from each cell's right margin, so a column that a
-     picked band hides takes no room at all. */
-  .band-stations { grid-template-columns: auto repeat(5, auto) minmax(0, 1fr); gap: 6px 0; align-items: center; justify-items: start; }
-  .band-station > * { margin-right: 16px; }
-  .band-stations-head, .band-hfwire-notes { grid-column: 1 / -1; }
-  .band-station { display: contents; }
-  .band-station-name { grid-column: 1; }
-  .band-station .band-ant-type { grid-column: 2; }
-  .band-station .band-ant { grid-column: 3; }
-  .band-station .band-hf-type { grid-column: 4; }
-  .band-station .band-hfwire { grid-column: 5; }
-  .band-station .band-pwr { grid-column: 6; }
-}
 .band-hfwire-btn svg, .band-hfwire-menu svg { fill: none; stroke: currentColor; stroke-width: 1.5; }
 /* With a band picked, only that band's antenna pickers show. */
 .band-stations[data-range="hf"] .band-vhf-only,
 .band-stations[data-range="vhf"] .band-hf-only { display: none; }
-/* Phones and narrow windows: V/UHF antenna on one line, height and power
-   side by side, then
-   the HF antenna and (home only) how a wire is strung up. */
-@media (max-width: 860px) {
-  .band-station { display: grid; grid-template-columns: 3em 1.5fr 1fr; gap: 6px 8px; }
-  .band-station label { min-width: 0; }
-  .band-station label select { flex: 1; min-width: 0; }
-  .band-station .band-ant-type { grid-column: 2 / 4; }
-  .band-station .band-hf-type { grid-column: 2; }
-  .band-station .band-pwr { grid-column: 3; grid-row: 2; }
-  .band-stations[data-range="hf"] .band-station .band-pwr { grid-row: 1; }
-  .band-station .band-hfwire { grid-column: 3; }
-  .band-station .band-ant input[type="number"] { width: 3.5em; }
-  .band-station-name { grid-row: 1 / span 3; align-self: start; padding-top: 5px; }
-  .band-hfwire-notes { padding-left: 0; }
+/* Inside each station: V/UHF antenna on one line, height and power side
+   by side, then the HF antenna and (home only) how a wire is strung up. */
+.band-station { display: grid; grid-template-columns: 3em 1.5fr 1fr; gap: 6px 8px; align-content: start; }
+.band-station label { min-width: 0; }
+.band-station label select { flex: 1; min-width: 0; }
+.band-station .band-ant-type { grid-column: 2 / 4; }
+.band-station .band-hf-type { grid-column: 2; }
+.band-station .band-pwr { grid-column: 3; grid-row: 2; }
+.band-stations[data-range="hf"] .band-station .band-pwr { grid-row: 1; }
+.band-stations[data-range="hf"] .band-station .band-hfwire { grid-column: 2; grid-row: 2; justify-self: start; }
+.band-station .band-hfwire { grid-column: 3; }
+.band-station .band-hfwire-notes { grid-column: 2 / 4; padding-left: 0; }
+.band-station .band-ant input[type="number"] { width: 3.5em; }
+.band-station-name { grid-row: 1 / span 3; align-self: start; padding-top: 5px; }
+@media (min-width: 861px) {
+  .band-stations { grid-template-columns: 1fr 1fr; column-gap: 32px; }
+  .band-stations-head { grid-column: 1 / -1; }
 }
 /* #177: a clear way from the antenna pickers to the antenna guides. */
 .band-ant-guide {
@@ -1679,10 +1614,8 @@ details.maplibregl-ctrl-attrib:not([open]) {
 .band-icopick-btn span { overflow: hidden; text-overflow: ellipsis; }
 .band-icopick-btn svg, .band-icopick .band-hfwire-menu svg { flex: none; }
 .band-icopick .band-hfwire-menu svg { width: 22px; height: 22px; }
-@media (max-width: 860px) {
-  .band-icopick, .band-icopick-btn { flex: 1; }
-  .band-icopick-btn i { margin-left: auto; }
-}
+.band-icopick, .band-icopick-btn { flex: 1; }
+.band-icopick-btn i { margin-left: auto; }
 .band-hfwire-notes {
   display: grid;
   padding-left: 3em;
@@ -1747,14 +1680,6 @@ details.maplibregl-ctrl-attrib:not([open]) {
 }
 .band-revert:hover,
 .band-retry:hover { background: var(--orange); color: #07070a; }
-.band-time { flex: 1 1 240px; min-width: 0; }
-.band-time input { flex: 1; min-width: 80px; accent-color: var(--accent); }
-.band-time b {
-  font-weight: 400;
-  color: var(--orange);
-  min-width: 9.5em;
-  white-space: nowrap;
-}
 .band-places .band-onair-hit span {
   float: right;
   color: #39ff14;
