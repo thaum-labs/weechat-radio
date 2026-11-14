@@ -1489,6 +1489,56 @@ details.maplibregl-ctrl-attrib:not([open]) {
   padding: 4px 6px;
 }
 .band-ant i { font-style: normal; }
+/* VHF/UHF stations: one row per end, antenna type, height and power. */
+.band-stations {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--dim);
+}
+.band-stations-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.band-station {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+}
+.band-station-name {
+  width: 3em;
+  font-weight: 400;
+  color: var(--orange);
+}
+.band-station label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.band-station select,
+.band-station input[type="number"] {
+  background: #050508;
+  border: 1px solid var(--line);
+  color: var(--fg);
+  font: 12px/1.4 var(--font-mono);
+  padding: 4px 6px;
+}
+.band-station input[type="number"] { width: 5em; }
+/* Phones: antenna type on one line, height and power side by side below. */
+@media (max-width: 600px) {
+  .band-station { display: grid; grid-template-columns: 3em 1.5fr 1fr; gap: 6px 8px; }
+  .band-station label { min-width: 0; }
+  .band-station label select { flex: 1; min-width: 0; }
+  .band-station .band-ant-type { grid-column: 2 / 4; }
+  .band-station .band-ant input[type="number"] { width: 3.5em; }
+  .band-station-name { grid-row: 1 / span 2; align-self: start; padding-top: 5px; }
+}
 .band-hfant {
   display: flex;
   flex-wrap: wrap;
