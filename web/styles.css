@@ -1626,6 +1626,28 @@ details.maplibregl-ctrl-attrib:not([open]) {
 }
 .band-hfwire-menu li:hover, .band-hfwire-menu li:focus { color: var(--fg); background: #0d0d14; outline: none; }
 .band-hfwire-menu li[aria-selected="true"] { color: var(--orange); }
+/* Antenna type pickers: a drawing of each antenna in the button and the
+   list. The real <select> stays (links, screen readers) but is hidden. */
+.band-ant-type, .band-hf-type { position: relative; }
+.band-icopick-select {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.band-icopick { position: relative; display: flex; min-width: 0; }
+.band-icopick-btn { border-color: var(--line); min-width: 0; }
+.band-icopick-btn:hover, .band-icopick-btn[aria-expanded="true"] { border-color: var(--orange); }
+.band-icopick-btn span { overflow: hidden; text-overflow: ellipsis; }
+.band-icopick-btn svg, .band-icopick .band-hfwire-menu svg { flex: none; }
+.band-icopick .band-hfwire-menu svg { width: 22px; height: 22px; }
+@media (max-width: 600px) {
+  .band-icopick, .band-icopick-btn { flex: 1; }
+  .band-icopick-btn i { margin-left: auto; }
+}
 .band-hfwire-notes {
   display: grid;
   padding-left: 3em;
