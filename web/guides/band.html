@@ -194,6 +194,10 @@
               <option value="whip" title="Mobile whip or manpack">mobile whip</option>
             </select>
           </div>
+          <div class="band-hfwire band-hf-only" id="band-rx-hfwire-row">
+            <button type="button" id="band-rx-hfwire" class="band-hfwire-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="band-rx-hfwire-menu" aria-label="How the RX wire antenna is strung up"></button>
+            <ul id="band-rx-hfwire-menu" class="band-hfwire-menu" role="listbox" aria-label="How the RX wire antenna is strung up" hidden></ul>
+          </div>
           <label class="band-pwr">
             <span>power</span>
             <select id="band-rx-power" aria-label="RX station power">
@@ -207,6 +211,7 @@
               <option value="100" selected>100 W</option>
             </select>
           </label>
+          <div class="band-hfwire-notes band-hf-only"><p class="band-hfwire-note" id="band-rx-hfwire-note"></p></div>
         </div>
       </div>
       <div class="band-map-stage">
@@ -235,6 +240,6 @@
   <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=15"></script>
-  <script src="/guides/band.js?v=39"></script>
+  <script src="/guides/band.js?v=40"></script>
 </body>
 </html>
