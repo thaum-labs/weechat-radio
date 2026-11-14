@@ -12,7 +12,7 @@ pub const REF_POWER_W: f64 = 100.0;
 /// Antenna height when the page sends none: a 10 m mast at each end.
 pub const DEFAULT_ANTENNA_M: f64 = 10.0;
 
-pub const POWER_STEPS: [u32; 5] = [5, 10, 20, 50, 100];
+pub const POWER_STEPS: [u32; 8] = [1, 2, 3, 5, 10, 20, 50, 100];
 
 /// VHF radio horizon in km between a TX antenna `tx_m` and an RX antenna
 /// `rx_m` high (4/3 earth radius). 10 m at both ends gives about 26 km.
@@ -681,8 +681,10 @@ mod tests {
 
     #[test]
     fn power_rounds_up() {
-        assert_eq!(round_power_up(1.0), Some(5));
-        assert_eq!(round_power_up(5.0), Some(5));
+        assert_eq!(round_power_up(0.4), Some(1));
+        assert_eq!(round_power_up(1.5), Some(2));
+        assert_eq!(round_power_up(2.5), Some(3));
+        assert_eq!(round_power_up(4.0), Some(5));
         assert_eq!(round_power_up(11.0), Some(20));
         assert_eq!(round_power_up(100.0), Some(100));
         assert_eq!(round_power_up(101.0), None);
@@ -917,7 +919,8 @@ mod tests {
         let bands = hf_bands(&cells, &[3.58, 7.045, 14.07], 12, 20, &muf);
         let ok: Vec<_> = bands.iter().filter(|b| b.ok).map(|b| b.band).collect();
         assert_eq!(ok, ["80m", "40m"]);
-        assert_eq!(bands[1].power_w, Some(5));
+        // 40m clears 27 dB-Hz with ~1.6 W, so 2 W.
+        assert_eq!(bands[1].power_w, Some(2));
         assert!(bands[2].power_w.is_none());
         // 20m is closed and above the 10 MHz path MUF: it skips.
         assert_eq!(bands[2].state, "closed");

@@ -337,7 +337,12 @@ test("the signal budget says how well FM should work and picks the power", async
     window.__WCR_BAND.setRxLngLat(6.25, 46.1);
   });
   await expect(page.locator(".band-why")).toContainText("Should work well");
-  await expect(page.locator(".band-stats")).toContainText("5 W");
+  // Between masts 1 W is enough; power is the same at both ends (two-way).
+  await expect(page.locator(".band-stats")).toContainText("1 W each end");
+  await expect(page.locator("#band-power option")).toHaveText(["1 W", "2 W", "3 W", "5 W", "10 W", "20 W", "50 W", "100 W"]);
+  await page.locator("#band-power").selectOption("2");
+  await expect(page).toHaveURL(/w=2/);
+  await page.locator("#band-power").selectOption("100");
   await page.locator("#band-tx-ant").selectOption("1.5");
   await page.locator("#band-rx-ant").selectOption("1.5");
   await expect(page.locator(".band-why")).toContainText("Unlikely at 100 W");

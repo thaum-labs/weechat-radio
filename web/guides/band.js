@@ -657,7 +657,7 @@
   const GOOD_MARGIN_DB = 10;
   const SOLID_MARGIN_DB = 20;
   const PLENTY_NOTE = "Ground is close to the signal path in places; you have plenty of signal to cover it.";
-  const POWER_STEPS = [5, 10, 20, 50, 100];
+  const POWER_STEPS = [1, 2, 3, 5, 10, 20, 50, 100];
 
   function antGainDbi(sel) {
     if (sel && sel.value === "mobile") return MOBILE_DBI;
@@ -1917,7 +1917,7 @@
   function renderCard(c, manual) {
     const rec = manual ? manual.rec : c.band;
     const nogo = manual && c.ok === false;
-    const power = c.power_w != null ? `${c.power_w} W` : nogo ? "none" : `over ${powerW()} W`;
+    const power = c.power_w != null ? `${c.power_w} W each end` : nogo ? "none" : `over ${powerW()} W`;
     const ssb = c.ssb ? "on" : "off";
     const voice = c.voice_note ? `<p class="band-voice">${escapeHtml(c.voice_note)}</p>` : "";
     // "SSB on, USB for data." only repeats the SSB and mode readouts.

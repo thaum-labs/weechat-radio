@@ -102,7 +102,10 @@
         </label>
         <label>
           <span>power</span>
-          <select id="band-power" aria-label="Most power you have">
+          <select id="band-power" aria-label="Most power at each end" title="Both stations are assumed to use this power, so the range shown works both ways.">
+            <option value="1">1 W</option>
+            <option value="2">2 W</option>
+            <option value="3">3 W</option>
             <option value="5">5 W</option>
             <option value="10">10 W</option>
             <option value="20">20 W</option>
@@ -181,6 +184,6 @@
   <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=15"></script>
-  <script src="/guides/band.js?v=32"></script>
+  <script src="/guides/band.js?v=33"></script>
 </body>
 </html>
