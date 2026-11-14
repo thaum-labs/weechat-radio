@@ -12,7 +12,7 @@
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css" />
-  <link rel="stylesheet" href="/styles.css?v=60" />
+  <link rel="stylesheet" href="/styles.css?v=66" />
 </head>
 <body class="page-map page-band">
   <div id="scan"></div>
@@ -70,49 +70,44 @@
         <button type="button" id="band-clear-rx" class="band-locate" title="Remove the receiving station, keep home">clear RX</button>
         <button type="button" id="band-clear" class="band-locate" title="Remove both stations and start again">clear all</button>
       </div>
-      <div class="band-opts">
-        <label class="band-time">
-          <span>time</span>
-          <input id="band-hour" type="range" min="0" max="23" step="1" value="0" aria-label="Hours from now" />
-          <b id="band-hour-label">now</b>
-        </label>
-        <label class="band-override-pick">
-          <span>band</span>
-          <select id="band-override" aria-label="Pick a band by hand instead of the recommendation">
-            <option value="" selected>recommended</option>
-            <optgroup label="VHF / UHF">
-              <option value="2m">2m</option>
-              <option value="70cm">70cm</option>
-            </optgroup>
-            <optgroup label="licence-free">
-              <option value="cb">CB 27 MHz</option>
-              <option value="pmr446">PMR446</option>
-              <option value="murs">MURS (US)</option>
-            </optgroup>
-            <optgroup label="HF">
-              <option value="80m">80m</option>
-              <option value="60m">60m</option>
-              <option value="40m">40m</option>
-              <option value="30m">30m</option>
-              <option value="20m">20m</option>
-              <option value="17m">17m</option>
-              <option value="15m">15m</option>
-              <option value="12m">12m</option>
-              <option value="10m">10m</option>
-            </optgroup>
-          </select>
-        </label>
-      </div>
-      <div class="band-stations">
+      <div class="band-stations" id="band-stations">
         <div class="band-stations-head">
           <span class="band-stations-title">stations</span>
-          <a class="band-ant-guide" href="/guides/antennas-vhf.html"><span class="band-ant-guide-full">VHF/UHF antenna</span><span class="band-ant-guide-short">V/UHF</span> guide →</a>
+          <a class="band-ant-guide band-vhf-only" href="/guides/antennas-vhf.html"><span class="band-ant-guide-full">VHF/UHF antenna</span><span class="band-ant-guide-short">V/UHF</span> guide →</a>
+          <a class="band-ant-guide band-hf-only" href="/guides/antennas-hf.html"><span class="band-ant-guide-full">HF antenna</span><span class="band-ant-guide-short">HF</span> guide →</a>
+          <label class="band-override-pick">
+            <span>band</span>
+            <select id="band-override" aria-label="Pick a band by hand instead of the recommendation">
+              <option value="" selected>recommended</option>
+              <optgroup label="VHF / UHF">
+                <option value="2m">2m</option>
+                <option value="70cm">70cm</option>
+              </optgroup>
+              <optgroup label="licence-free">
+                <option value="cb">CB 27 MHz</option>
+                <option value="pmr446">PMR446</option>
+                <option value="murs">MURS (US)</option>
+              </optgroup>
+              <optgroup label="HF">
+                <option value="80m">80m</option>
+                <option value="60m">60m</option>
+                <option value="40m">40m</option>
+                <option value="30m">30m</option>
+                <option value="20m">20m</option>
+                <option value="17m">17m</option>
+                <option value="15m">15m</option>
+                <option value="12m">12m</option>
+                <option value="10m">10m</option>
+              </optgroup>
+            </select>
+          </label>
+          <input type="hidden" id="band-hour" value="0" />
         </div>
         <div class="band-station" role="group" aria-label="Home station">
           <b class="band-station-name">home</b>
-          <label class="band-ant-type">
-            <span>antenna</span>
-            <select id="band-tx-type" aria-label="Home antenna type">
+          <label class="band-ant-type band-vhf-only">
+            <span>V/UHF ant.</span>
+            <select id="band-tx-type" aria-label="Home VHF/UHF antenna type">
               <option value="duck">handheld rubber duck</option>
               <option value="whip">mobile whip</option>
               <option value="vertical" selected>vertical / J-pole</option>
@@ -120,7 +115,7 @@
               <option value="yagi">Yagi</option>
             </select>
           </label>
-          <label class="band-ant">
+          <label class="band-ant band-vhf-only">
             <span>height</span>
             <select id="band-tx-ant" aria-label="Home antenna height">
               <option value="1.5">1.5 m hand</option>
@@ -132,6 +127,22 @@
             </select>
             <input id="band-tx-ant-m" type="number" min="0.5" max="100" step="0.5" inputmode="decimal" aria-label="Home antenna height in metres" hidden /><i hidden>m</i>
           </label>
+          <label class="band-hf-type band-hf-only">
+            <span>HF ant.</span>
+            <select id="band-hf-ant" aria-label="Home HF antenna">
+              <option value="dipole" selected>dipole</option>
+              <option value="efhw">end-fed ½λ</option>
+              <option value="endfed">end-fed wire</option>
+              <option value="vertical">vertical</option>
+              <option value="loop">mag loop</option>
+              <option value="beam">beam</option>
+              <option value="whip">mobile whip</option>
+            </select>
+          </label>
+          <div class="band-hfwire band-hf-only" id="band-hfwire-row">
+            <button type="button" id="band-hfwire" class="band-hfwire-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="band-hfwire-menu" aria-label="How your wire antenna is strung up"></button>
+            <ul id="band-hfwire-menu" class="band-hfwire-menu" role="listbox" aria-label="How your wire antenna is strung up" hidden></ul>
+          </div>
           <label class="band-pwr">
             <span>power</span>
             <select id="band-power" aria-label="Home station power">
@@ -145,12 +156,13 @@
               <option value="100" selected>100 W</option>
             </select>
           </label>
+          <div class="band-hfwire-notes band-hf-only"><p class="band-hfwire-note" id="band-hfwire-note"></p></div>
         </div>
-        <div class="band-station" role="group" aria-label="Receiving station">
+        <div class="band-station" role="group" aria-label="RX station">
           <b class="band-station-name">RX</b>
-          <label class="band-ant-type">
-            <span>antenna</span>
-            <select id="band-rx-type" aria-label="RX antenna type">
+          <label class="band-ant-type band-vhf-only">
+            <span>V/UHF ant.</span>
+            <select id="band-rx-type" aria-label="RX VHF/UHF antenna type">
               <option value="duck">handheld rubber duck</option>
               <option value="whip">mobile whip</option>
               <option value="vertical" selected>vertical / J-pole</option>
@@ -158,7 +170,7 @@
               <option value="yagi">Yagi</option>
             </select>
           </label>
-          <label class="band-ant">
+          <label class="band-ant band-vhf-only">
             <span>height</span>
             <select id="band-rx-ant" aria-label="RX antenna height">
               <option value="1.5">1.5 m hand</option>
@@ -169,6 +181,18 @@
               <option value="other">other…</option>
             </select>
             <input id="band-rx-ant-m" type="number" min="0.5" max="100" step="0.5" inputmode="decimal" aria-label="RX antenna height in metres" hidden /><i hidden>m</i>
+          </label>
+          <label class="band-hf-type band-hf-only">
+            <span>HF ant.</span>
+            <select id="band-rx-hf-ant" aria-label="RX HF antenna">
+              <option value="dipole" selected>dipole</option>
+              <option value="efhw">end-fed ½λ</option>
+              <option value="endfed">end-fed wire</option>
+              <option value="vertical">vertical</option>
+              <option value="loop">mag loop</option>
+              <option value="beam">beam</option>
+              <option value="whip">mobile whip</option>
+            </select>
           </label>
           <label class="band-pwr">
             <span>power</span>
@@ -184,24 +208,6 @@
             </select>
           </label>
         </div>
-      </div>
-      <div class="band-hfant" role="radiogroup" aria-label="Your HF antenna">
-        <a class="band-hfant-label" href="/guides/antennas-hf.html" title="Antenna guide and calculator">HF antenna</a>
-        <div class="band-hfant-tiles">
-          <label title="Dipole or inverted V, fed in the middle"><input type="radio" name="band-hfant" value="dipole" checked /><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 8h20M12 8v13"/><circle cx="12" cy="8" r="1.5"/></svg><span>dipole</span></label>
-          <label title="End-fed half-wave (EFHW, 49:1 transformer)"><input type="radio" name="band-hfant" value="efhw" /><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="17" width="5" height="4"/><path d="M7 18 22 4"/></svg><span>end-fed ½λ</span></label>
-          <label title="End-fed random or long wire on a 9:1 unun, often 10–20 m long"><input type="radio" name="band-hfant" value="endfed" /><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="17" width="5" height="4"/><path d="M7 18 13 6h9"/></svg><span>end-fed wire</span></label>
-          <label title="Vertical or ground plane"><input type="radio" name="band-hfant" value="vertical" /><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v17M12 19l-7 3M12 19l7 3"/></svg><span>vertical</span></label>
-          <label title="Small magnetic loop"><input type="radio" name="band-hfant" value="loop" /><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="9" r="7"/><path d="M12 16v6M8 22h8"/></svg><span>mag loop</span></label>
-          <label title="Yagi or other beam (20m and up)"><input type="radio" name="band-hfant" value="beam" /><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h18M6 4v10M12 5v8M18 6v6M12 9v13"/></svg><span>beam</span></label>
-          <label title="Mobile whip or manpack"><input type="radio" name="band-hfant" value="whip" /><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v15"/><rect x="8" y="17" width="8" height="4"/></svg><span>mobile whip</span></label>
-        </div>
-        <a class="band-ant-guide" href="/guides/antennas-hf.html">antenna guide →</a>
-        <div class="band-hfwire" id="band-hfwire-row">
-          <button type="button" id="band-hfwire" class="band-hfwire-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="band-hfwire-menu" aria-label="How your wire antenna is strung up"></button>
-          <ul id="band-hfwire-menu" class="band-hfwire-menu" role="listbox" aria-label="How your wire antenna is strung up" hidden></ul>
-        </div>
-        <div class="band-hfwire-notes"><p class="band-hfwire-note" id="band-hfwire-note"></p></div>
       </div>
       <div class="band-map-stage">
         <div id="map"></div>
@@ -229,6 +235,6 @@
   <script src="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.js"></script>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=15"></script>
-  <script src="/guides/band.js?v=35"></script>
+  <script src="/guides/band.js?v=38"></script>
 </body>
 </html>

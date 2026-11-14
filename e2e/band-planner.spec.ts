@@ -389,18 +389,65 @@ test("the signal budget says how well FM should work and picks the power", async
   await expect(page.locator(".band-why")).toContainText("More antenna height helps most");
 });
 
-test("the HF antenna picker goes to the service and the link", async ({ page }) => {
+test("each end's HF antenna goes to the service and the link", async ({ page }) => {
   const bodies = await mockServices(page, () => 0);
   await open(page, "?tx=51.5,-0.12&rx=40.7,-74");
-  await expect.poll(() => bodies.at(-1)).toMatchObject({ hf_antenna: "dipole" });
-  await page.locator(".band-hfant label", { hasText: "end-fed wire" }).click();
+  await expect.poll(() => bodies.at(-1)).toMatchObject({ hf_antenna: "dipole", rx_hf_antenna: "dipole" });
+  await page.locator("#band-hf-ant").selectOption("endfed");
   await expect.poll(() => bodies.at(-1)).toMatchObject({ hf_antenna: "endfed" });
+  await page.locator("#band-rx-hf-ant").selectOption("whip");
+  await expect.poll(() => bodies.at(-1)).toMatchObject({ hf_antenna: "endfed", rx_hf_antenna: "whip" });
   await expect(page).toHaveURL(/hfant=endfed/);
+  await expect(page).toHaveURL(/rxhfant=whip/);
   await page.reload();
-  await expect(page.locator('input[name="band-hfant"][value="endfed"]')).toBeChecked();
+  await expect(page.locator("#band-hf-ant")).toHaveValue("endfed");
+  await expect(page.locator("#band-rx-hf-ant")).toHaveValue("whip");
 });
 
-test("the time slider asks for a later hour and moves the night shading", async ({ page }) => {
+test("a picked band shows only that band's antenna pickers", async ({ page }) => {
+  await mockServices(page, () => 0);
+  await open(page, "?tx=51.5,-0.12&rx=40.7,-74");
+  const vhf = page.locator("#band-tx-type");
+  const hf = page.locator("#band-hf-ant");
+  await expect(vhf).toBeVisible();
+  await expect(hf).toBeVisible();
+  await page.locator("#band-override").selectOption("40m");
+  await expect(vhf).toBeHidden();
+  await expect(page.locator("#band-tx-ant")).toBeHidden();
+  await expect(hf).toBeVisible();
+  await expect(page.locator("#band-rx-hf-ant")).toBeVisible();
+  await page.locator("#band-override").selectOption("2m");
+  await expect(vhf).toBeVisible();
+  await expect(page.locator("#band-rx-type")).toBeVisible();
+  await expect(hf).toBeHidden();
+  await expect(page.locator("#band-hfwire")).toBeHidden();
+  await page.locator("#band-override").selectOption("");
+  await expect(hf).toBeVisible();
+});
+
+test("every antenna picker shows a drawing of the antenna, in the button and the list", async ({ page }) => {
+  await mockServices(page, () => 0);
+  await open(page, "?tx=51.5,-0.12&rx=40.7,-74");
+  for (const id of ["band-tx-type", "band-rx-type", "band-hf-ant", "band-rx-hf-ant"]) {
+    const btn = page.locator(`#${id} + .band-icopick .band-icopick-btn`);
+    await expect(btn.locator("svg path, svg rect, svg circle").first()).toBeAttached();
+  }
+  const btn = page.locator("#band-rx-hf-ant + .band-icopick .band-icopick-btn");
+  await expect(btn).toContainText("dipole");
+  await btn.click();
+  const menu = page.locator("#band-rx-hf-ant + .band-icopick ul");
+  await expect(menu.locator("li svg")).toHaveCount(7);
+  await menu.locator('li[data-value="loop"]').click();
+  await expect(menu).toBeHidden();
+  await expect(page.locator("#band-rx-hf-ant")).toHaveValue("loop");
+  await expect(btn).toContainText("mag loop");
+  await expect(page).toHaveURL(/rxhfant=loop/);
+  // A value set from a link shows in the button too.
+  await open(page, "?tx=51.5,-0.12&rx=51.6,-0.2&txtype=yagi");
+  await expect(page.locator("#band-tx-type + .band-icopick .band-icopick-btn")).toContainText("Yagi");
+});
+
+test("a later hour picked on the 24 hour strip is asked for", async ({ page }) => {
   const bodies = await mockServices(page, () => 0);
   await open(page);
   await page.evaluate(() => {
@@ -408,9 +455,15 @@ test("the time slider asks for a later hour and moves the night shading", async 
     window.__WCR_BAND.setRxLngLat(-74, 40.7);
   });
   await expect(page.locator(".band-conf")).toHaveText(`hour ${new Date().getUTCHours()}`);
-  await page.locator("#band-hour").fill("5");
+  await expect(page.locator("#band-hour-label")).toHaveCount(0);
+  // The page has no slider; the hour comes from the hidden field the HF
+  // card's 24 hour strip sets.
+  await page.evaluate(() => {
+    const h = document.getElementById("band-hour") as HTMLInputElement;
+    h.value = "5";
+    h.dispatchEvent(new Event("input"));
+  });
   const later = (new Date().getUTCHours() + 5) % 24;
-  await expect(page.locator("#band-hour-label")).toHaveText(`${String(later).padStart(2, "0")}:00 UTC · +5 h`);
   await expect(page.locator(".band-conf")).toHaveText(`hour ${later}`);
   expect(bodies.at(-1)!.hour_utc).toBe(later);
 });
@@ -446,7 +499,7 @@ test("on a phone the page has no sideways scroll", async ({ page }) => {
   await expect(page.locator(".band-freq")).toBeVisible();
   const widths = await page.evaluate(() => ({
     page: document.documentElement.scrollWidth,
-    tiles: Math.max(...[...document.querySelectorAll(".band-hfant label")].map((el) => el.getBoundingClientRect().right)),
+    tiles: Math.max(...[...document.querySelectorAll(".band-station select, .band-hfwire-btn")].map((el) => el.getBoundingClientRect().right)),
     style: document.getElementById("map-style")!.getBoundingClientRect().right,
   }));
   expect(widths.page).toBeLessThanOrEqual(390);
@@ -490,7 +543,7 @@ test("a wire antenna shows how it can be strung, and the link keeps it", async (
   await expect(menu.locator("li")).toHaveText(["horizontal", "inverted V", "sloper"]);
   await page.keyboard.press("Escape");
   await expect(menu).toBeHidden();
-  await page.locator(".band-hfant label", { hasText: "end-fed ½λ" }).click();
+  await page.locator("#band-hf-ant").selectOption("efhw");
   await pick.click();
   await expect(menu.locator("li")).toHaveText(["horizontal", "sloper", "inverted V", "inverted L", "vertical"]);
   await menu.locator("li", { hasText: "sloper" }).click();
@@ -498,17 +551,13 @@ test("a wire antenna shows how it can be strung, and the link keeps it", async (
   await expect(pick).toContainText("sloper");
   await expect(page.locator("#band-hfwire-note")).toContainText("Sloper: a common, good setup.");
   await expect(page).toHaveURL(/hfwire=sloper/);
-  // The picker sits under the selected tile.
-  const tileX = await page.locator(".band-hfant label", { hasText: "end-fed ½λ" }).evaluate((e) => e.getBoundingClientRect().left);
-  const pickX = await pick.evaluate((e) => e.getBoundingClientRect().left);
-  expect(Math.abs(pickX - tileX)).toBeLessThan(2);
   await page.reload();
   await expect(pick).toContainText("sloper");
   await expect(page.locator("#band-hfwire-note")).toContainText("Sloper:");
   // The row keeps its space when hidden, so the map below does not move.
   const mapTop = () => page.locator("#map").evaluate((e) => e.getBoundingClientRect().top);
   const top = await mapTop();
-  await page.locator(".band-hfant label", { hasText: "vertical" }).first().click();
+  await page.locator("#band-hf-ant").selectOption("vertical");
   await expect(pick).toBeHidden();
   await expect(page).not.toHaveURL(/hfwire=/);
   expect(await mapTop()).toBe(top);
@@ -523,10 +572,10 @@ test("on a phone, the wire setup row and note never move the map", async ({ page
     await open(page, "?tx=51.5,-0.12&rx=40.7,-74&hfant=vertical");
     const mapTop = () => page.locator("#map").evaluate((e) => e.getBoundingClientRect().top + window.scrollY);
     const top = await mapTop();
-    await page.locator(".band-hfant label", { hasText: "dipole" }).click();
+    await page.locator("#band-hf-ant").selectOption("dipole");
     await expect(page.locator("#band-hfwire")).toBeVisible();
     expect(await mapTop()).toBe(top);
-    await page.locator(".band-hfant label", { hasText: "end-fed ½λ" }).click();
+    await page.locator("#band-hf-ant").selectOption("efhw");
     for (const setup of ["inverted V", "inverted L", "vertical", "sloper"]) {
       await page.locator("#band-hfwire").click();
       await page.locator("#band-hfwire-menu li", { hasText: setup }).click();
@@ -540,7 +589,7 @@ test("an old link with a setup the antenna does not have falls back to horizonta
   await mockServices(page, () => 0);
   await open(page, "?tx=51.5,-0.12&rx=40.7,-74&hfwire=vertical");
   await expect(page.locator("#band-hfwire")).toContainText("horizontal");
-  await page.locator(".band-hfant label", { hasText: "end-fed wire" }).click();
+  await page.locator("#band-hf-ant").selectOption("endfed");
   await expect(page.locator("#band-hfwire")).toContainText("vertical");
   await expect(page).toHaveURL(/hfant=endfed&hfwire=vertical|hfwire=vertical.*hfant=endfed/);
 });
@@ -1009,15 +1058,14 @@ test("the sky view draws hops, a side view and a 24 hour strip, and goes for VHF
   const cells = page.locator(".sky-cell");
   await expect(cells).toHaveCount(24);
   await expect(page.locator(".sky-cell.is-sel")).toHaveAttribute("data-off", "0");
-  await page.locator("#band-hour").fill("5");
+  await cells.nth(5).click();
   await expect(page.locator(".sky-cell.is-sel")).toHaveAttribute("data-off", "5");
   // 80m works at every hour (open or marginal), so its chip stays green.
   await expect(page.locator('.band-works-pick[data-band="80m"]')).toHaveAttribute("data-state", "works");
   await expect(cells.nth(5)).toHaveClass(/sky-open/);
-  // A click on a cell sets the slider.
+  // A click on another cell moves the planned hour.
   await cells.nth(9).click();
-  await expect(page.locator("#band-hour")).toHaveValue("9");
-  await expect(page.locator("#band-hour-label")).toContainText("+9 h");
+  await expect(page.locator(".sky-cell.is-sel")).toHaveAttribute("data-off", "9");
   // The tag colour comes from the band's verdict.
   await expect(page.locator(".band-conf")).toHaveClass(/band-conf-ok/);
   // 2m: back to the terrain key and profile, no sky pieces.
@@ -1053,7 +1101,9 @@ test("a short HF path shows NVIS, the ground wave and the skip zone", async ({ p
   expect(rings!.skip).toBeGreaterThan(159);
 });
 
-test("on a phone, HF and VHF band changes and antenna taps never move the map or the card", async ({ page }) => {
+// Switching between an HF and a VHF/UHF band swaps the station pickers
+// (Tobias, 2026-11-14), so only changes within one range must hold still.
+test("on a phone, HF band changes and antenna taps never move the map or the card", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockServices(page, () => 100);
   await open(page, `${BATH_MADRID}&band=40m`);
@@ -1064,14 +1114,14 @@ test("on a phone, HF and VHF band changes and antenna taps never move the map or
       ["#map", ".band-answer"].map((s) => Math.round(document.querySelector(s)!.getBoundingClientRect().top + scrollY)),
     );
   const want = await tops();
-  for (const band of ["2m", "80m", "pmr446", "20m", ""]) {
+  for (const band of ["80m", "20m", "40m"]) {
     await page.locator("#band-override").selectOption(band);
     await expect(page.locator("#band-wait")).toBeHidden();
     await page.waitForTimeout(300);
     expect(await tops()).toEqual(want);
   }
   for (const ant of ["vertical", "endfed", "dipole"]) {
-    await page.locator(`.band-hfant-tiles input[value="${ant}"]`).check({ force: true });
+    await page.locator("#band-hf-ant").selectOption(ant);
     // Straight after the tap, while the path is worked out, and once done.
     expect((await tops())[0]).toBe(want[0]);
     await page.waitForTimeout(800);
@@ -1084,7 +1134,8 @@ test("the greyline is the sunrise and sunset line at the planned hour", async ({
   await open(page, `${BATH_MADRID}&band=40m`);
   await expect(page.locator(".band-map-stage")).toHaveClass(/is-sky/);
   for (const off of ["0", "6", "13"]) {
-    await page.locator("#band-hour").fill(off);
+    await page.locator(`.sky-cell[data-off="${off}"]`).click();
+    await expect(page.locator(".sky-cell.is-sel")).toHaveAttribute("data-off", off);
     const line = await page.evaluate(() => window.__WCR_BAND.state().sky!.greyline);
     // Independent check: every point is 90° from the subsolar point.
     const t = new Date(Date.now() + Number(off) * 3600000);
@@ -1152,7 +1203,7 @@ for (const width of [1280, 390, 360]) {
     await page.setViewportSize({ width, height: 844 });
     await mockServices(page, () => 100);
     await open(page);
-    const hf = page.locator('.band-hfant a.band-ant-guide[href="/guides/antennas-hf.html"]');
+    const hf = page.locator('.band-stations a.band-ant-guide[href="/guides/antennas-hf.html"]');
     const vhf = page.locator('.band-stations a.band-ant-guide[href="/guides/antennas-vhf.html"]');
     for (const link of [hf, vhf]) {
       await expect(link).toBeVisible();
@@ -1162,11 +1213,10 @@ for (const width of [1280, 390, 360]) {
     }
     const mid = (b: { y: number; height: number }) => b.y + b.height / 2;
     const near = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThanOrEqual(4);
-    // VHF/UHF link: on the "stations" heading line. HF link: beside the
-    // tiles on a desktop, beside the "HF antenna" label on a phone.
-    near(mid((await vhf.boundingBox())!), mid((await page.locator(".band-stations-title").boundingBox())!));
-    const beside = width > 600 ? ".band-hfant-tiles" : ".band-hfant-label";
-    near(mid((await hf.boundingBox())!), mid((await page.locator(beside).boundingBox())!));
+    // Both links sit on the "stations" heading line.
+    const title = mid((await page.locator(".band-stations-title").boundingBox())!);
+    near(mid((await vhf.boundingBox())!), title);
+    near(mid((await hf.boundingBox())!), title);
   });
 }
 

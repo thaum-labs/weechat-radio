@@ -60,6 +60,9 @@ struct PathBody {
     /// HF antenna at the user's end. Missing means a dipole.
     #[serde(default)]
     hf_antenna: HfAntenna,
+    /// HF antenna at the other station. Missing means a dipole.
+    #[serde(default)]
+    rx_hf_antenna: HfAntenna,
     /// HF band the user picked by hand ("40m"). The answer then also
     /// carries `band_card`, the prediction for that band alone, unless the
     /// band has no calling spot on this path.
@@ -216,6 +219,7 @@ async fn path_handler(
         body.hour_utc,
         max_w,
         body.hf_antenna,
+        body.rx_hf_antenna,
         body.band.as_deref(),
     )
     .await?;
@@ -295,6 +299,7 @@ async fn hf_cards(
     hour_utc: Option<u8>,
     max_w: u32,
     antenna: HfAntenna,
+    far_antenna: HfAntenna,
     band: Option<&str>,
 ) -> Result<HfAnswer, (StatusCode, String)> {
     let now = Utc::now();
@@ -318,9 +323,10 @@ async fn hf_cards(
 
     let mut cells = prediction.cells;
     antenna.apply(&mut cells);
+    far_antenna.apply(&mut cells);
     let now = hour == this_hour;
     let solar = |c: &mut Card| {
-        antenna.footnote(c);
+        antenna.footnote(far_antenna, c);
         if !solar_live {
             c.footnote = format!("{SOLAR_FALLBACK_NOTE} {}", c.footnote);
         }
