@@ -289,6 +289,36 @@
     iconPickers.push(refresh);
     refresh();
   }
+  // HF antennas: a row of tiles, each a drawing and a name, one per
+  // antenna, as the planner had before the station rows. The <select>
+  // still holds the value.
+  function makeTilePicker(sel, iconFor) {
+    if (!sel) return;
+    const tiles = document.createElement("div");
+    tiles.className = "band-hfant-tiles";
+    tiles.setAttribute("role", "radiogroup");
+    tiles.setAttribute("aria-label", sel.getAttribute("aria-label") || "");
+    tiles.innerHTML = [...sel.options]
+      .map((o) => `<label title="${o.title}"><input type="radio" name="${sel.id}-tile" value="${o.value}" />${iconSvg(iconFor(o.value))}<span>${o.textContent}</span></label>`)
+      .join("");
+    sel.classList.add("band-icopick-select");
+    sel.tabIndex = -1;
+    sel.after(tiles);
+    tiles.addEventListener("change", (e) => {
+      const v = e.target.value;
+      if (!v || sel.value === v) return;
+      sel.value = v;
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const refresh = () => {
+      tiles.querySelectorAll("input").forEach((i) => {
+        i.checked = i.value === sel.value;
+      });
+    };
+    sel.addEventListener("change", refresh);
+    iconPickers.push(refresh);
+    refresh();
+  }
   // Pickers follow values set from code (a link, a height that brings a
   // matching type along).
   function refreshPickers() {
@@ -298,8 +328,8 @@
   const hfIcon = (v) => (v === "vertical" ? "hfvertical" : v === "whip" ? "hfwhip" : v);
   makeIconPicker(txTypeEl, vhfIcon);
   makeIconPicker(rxTypeEl, vhfIcon);
-  makeIconPicker(hfAntEl, hfIcon);
-  makeIconPicker(rxHfAntEl, hfIcon);
+  makeTilePicker(hfAntEl, hfIcon);
+  makeTilePicker(rxHfAntEl, hfIcon);
 
   // With a band picked, each station shows only the antenna picker for
   // that band (HF, or VHF/UHF with its height); "recommended" shows both.
