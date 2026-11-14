@@ -1809,6 +1809,16 @@ details.maplibregl-ctrl-attrib:not([open]) {
   color: var(--fg);
 }
 .band-err { color: var(--warn); font-size: 15px; margin: 0; }
+.band-heard {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+.band-heard li { display: flex; align-items: baseline; gap: 6px; }
+.band-heard .band-dot { flex: none; }
 .band-works {
   display: flex;
   flex-wrap: wrap;
@@ -1848,6 +1858,7 @@ p.band-works { border: 0; }
 }
 .is-skips .band-dot { background: #ffd60a; }
 .is-none .band-dot { background: #8a8a99; }
+.band-heard .is-none .band-dot { background: #ff4d6d; }
 .band-works-pick.is-works { color: #39ff14; }
 .band-works-pick.is-skips { color: #ffd60a; }
 .band-works-pick.is-none { color: #8a8a99; }

@@ -328,6 +328,24 @@ test("a near miss is marginal, stays on FM, and is drawn yellow", async ({ page 
   await expect.poll(() => page.evaluate(() => window.__WCR_BAND.state().terrain)).toMatchObject({ blocked: false, marginal: true });
 });
 
+test("each end has its own power and the card says who hears whom", async ({ page }) => {
+  await mockServices(page, () => 100);
+  await open(page, "?tx=46.2,6.14&rx=46.1,6.25&txant=6&rxant=1.5&w=50&rw=1");
+  await expect(page.locator("#band-rx-power")).toHaveValue("1");
+  const heard = page.locator(".band-heard li");
+  await expect(heard).toHaveCount(2);
+  await expect(heard.nth(0)).toContainText("RX hears TX (50 W)");
+  await expect(heard.nth(0)).toHaveAttribute("data-state", "works");
+  await expect(heard.nth(1)).toContainText("TX doesn't hear RX (1 W)");
+  await expect(heard.nth(1)).toHaveAttribute("data-state", "none");
+  await expect(page.locator(".band-stats")).toContainText("TX 50 W · RX 1 W");
+  // The two-way verdict goes by the weaker end.
+  await expect(page.locator(".band-why")).toContainText("Unlikely at 1 W");
+  await page.locator("#band-rx-power").selectOption("50");
+  await expect(heard.nth(1)).toContainText("TX hears RX (50 W)");
+  await expect(page).toHaveURL(/rw=50/);
+});
+
 test("the signal budget says how well FM should work and picks the power", async ({ page }) => {
   // Flat 14 km path: fine between 10 m masts, too far for two handhelds.
   await mockServices(page, () => 100);

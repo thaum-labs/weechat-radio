@@ -88,6 +88,7 @@
   const txAntEl = document.getElementById("band-tx-ant");
   const rxAntEl = document.getElementById("band-rx-ant");
   const powerEl = document.getElementById("band-power");
+  const rxPowerEl = document.getElementById("band-rx-power");
   const profileEl = document.getElementById("band-profile");
   const overrideEl = document.getElementById("band-override");
   const wireEl = document.getElementById("band-hfwire");
@@ -302,9 +303,21 @@
     return OVERRIDES[overrideKey()] || null;
   }
 
-  function powerW() {
-    const v = powerEl ? Number(powerEl.value) : 100;
+  // Power at each end. A path loses the same both ways, so TX hears RX
+  // at RX's power and RX hears TX at TX's power; a two-way link (and the
+  // HF service) goes by the weaker end.
+  function selW(el) {
+    const v = el ? Number(el.value) : 100;
     return Number.isFinite(v) && v > 0 ? v : 100;
+  }
+  function txPowerW() {
+    return selW(powerEl);
+  }
+  function rxPowerW() {
+    return selW(rxPowerEl);
+  }
+  function powerW() {
+    return Math.min(txPowerW(), rxPowerW());
   }
   function showHourLabel() {
     if (!hourLabel) return;
@@ -697,6 +710,27 @@
     else if (margin >= 0) text = `Should work, but may be noisy or drop out as you move: about ${margin} dB to spare at ${watts} W.`;
     else text = `Unlikely at ${watts} W: about ${-margin} dB short. More antenna height helps most.`;
     return { watts, margin, text };
+  }
+
+  // Who hears whom over the terrain `t` at `mhz`, each end at its own
+  // power (capped by a licence-free band's `maxW`).
+  function heardLines(t, mhz, maxW) {
+    const one = (hearer, sender, w) => {
+      const watts = Math.min(w, maxW || w);
+      return { hearer, sender, watts, margin: Math.round(marginDb(t, watts, mhz)) };
+    };
+    return [one("RX", "TX", txPowerW()), one("TX", "RX", rxPowerW())];
+  }
+  function heardHtml(lines) {
+    if (!lines) return "";
+    const li = (h) => {
+      const state = h.margin >= GOOD_MARGIN_DB ? "works" : h.margin >= 0 ? "skips" : "none";
+      const text = h.margin >= 0
+        ? `${h.hearer} hears ${h.sender} (${h.watts} W): ${h.margin} dB to spare${h.margin < GOOD_MARGIN_DB ? ", may be noisy" : ""}`
+        : `${h.hearer} doesn't hear ${h.sender} (${h.watts} W): ${-h.margin} dB short`;
+      return `<li class="is-${state}" data-state="${state}"><i class="band-dot" aria-hidden="true"></i>${escapeHtml(text)}</li>`;
+    };
+    return `<ul class="band-heard">${lines.map(li).join("")}</ul>`;
   }
 
   // Map and profile colours. The card keeps the strict Fresnel rating above;
@@ -1694,6 +1728,7 @@
       ssb: false,
       mode: "FM",
       power_w: budget && (!v || v.ok || v.budget) ? budget.watts : null,
+      heard: v && v.budget ? heardLines(v.t, o.mhz, o.maxW) : null,
       preset: "vhf-fm",
       qsy: `/radio qsy ${freq}`,
       preset_cmd: "/radio preset vhf-fm",
@@ -1733,6 +1768,7 @@
     else if (card.kind === "fm" && !(terrain && terrain.blocked)) {
       budget = signalBudget(terrain, fresnelMhz(), powerW());
       card.power_w = budget.watts;
+      card.heard = terrain ? heardLines(terrain, fresnelMhz()) : null;
       card.why = `${card.why || ""} ${budget.text}`.trim();
       if (terrain && terrain.marginal && budget.margin >= SOLID_MARGIN_DB) {
         card.confidence = `Should work well on ${card.band} FM.`;
@@ -1917,7 +1953,9 @@
   function renderCard(c, manual) {
     const rec = manual ? manual.rec : c.band;
     const nogo = manual && c.ok === false;
-    const power = c.power_w != null ? `${c.power_w} W each end` : nogo ? "none" : `over ${powerW()} W`;
+    const split = txPowerW() !== rxPowerW() && c.heard;
+    const power = split ? `TX ${c.heard[0].watts} W · RX ${c.heard[1].watts} W`
+      : c.power_w != null ? `${c.power_w} W each end` : nogo ? "none" : `over ${powerW()} W`;
     const ssb = c.ssb ? "on" : "off";
     const voice = c.voice_note ? `<p class="band-voice">${escapeHtml(c.voice_note)}</p>` : "";
     // "SSB on, USB for data." only repeats the SSB and mode readouts.
@@ -1957,6 +1995,7 @@
           <div class="band-verdict">
             <p class="band-conf band-conf-${skyOn() ? SKY_TAG[skyState()] : verdictState(c, nogo, manual)}${nogo ? " band-nogo" : ""}"><i class="band-led" aria-hidden="true"></i>${escapeHtml(c.confidence || "")}</p>
             ${c.why ? `<p class="band-why">${escapeHtml(c.why)}</p>` : ""}
+            ${heardHtml(c.heard)}
             ${skyOn() ? skyLines() : ""}
             ${voice}
             ${note}
@@ -2076,7 +2115,8 @@
     set("hfant", hfAntenna() !== "dipole" ? hfAntenna() : null);
     set("hfwire", isWireAntenna() && wireOrientation() !== "flat" ? wireOrientation() : null);
     set("band", overrideKey() || null);
-    set("w", powerW() !== 100 ? String(powerW()) : null);
+    set("w", txPowerW() !== 100 ? String(txPowerW()) : null);
+    set("rw", rxPowerW() !== 100 ? String(rxPowerW()) : null);
     set("muf", mufOn() ? "1" : null);
     const qs = q.toString().replace(/%2C/g, ",");
     try {
@@ -2094,6 +2134,7 @@
     setAntenna(txAntEl, q.get("txant") || both);
     setAntenna(rxAntEl, q.get("rxant") || both);
     pickOption(powerEl, q.get("w"));
+    pickOption(rxPowerEl, q.get("rw"));
     const hf = hfAntEls.find((el) => el.value === q.get("hfant"));
     if (hf) hf.checked = true;
     if (WIRE_NOTES[q.get("hfwire")]) wire = q.get("hfwire");
@@ -2140,6 +2181,7 @@
     });
   }
   if (powerEl) powerEl.addEventListener("change", () => requestCard({ refit: false }));
+  if (rxPowerEl) rxPowerEl.addEventListener("change", () => requestCard({ refit: false }));
   const clearEl = document.getElementById("band-clear");
   if (clearEl) clearEl.addEventListener("click", clearPlan);
   for (const el of hfAntEls) {
