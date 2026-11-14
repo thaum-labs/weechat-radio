@@ -106,6 +106,8 @@ function drawStatus(d) {
   );
   const facts = [];
   if (running) {
+    // #334: the dial shows here even while the radio is not ready.
+    if (s.frequency) facts.push(["dial", `${s.frequency}${s.band ? ` · ${s.band}` : ""}${s.freq_source === "rig" ? " (CAT)" : ""}`]);
     if (s.preset) facts.push(["preset", `${s.preset}${s.tx_rung ? ` · now ${s.tx_rung}` : ""}`]);
     const modem = s.tnc || (s.modem73 ? `modem73 ${s.modem73}` : "");
     if (modem) facts.push(["modem", modem]);
@@ -495,6 +497,7 @@ function draw(d) {
   shown = { mode: s.mode, preset: s.preset };
   drawStatus(d);
   drawPickers(d.choices || {}, running, s);
+  drawDial(d.dial, s);
   drawMailGateway(d.mail_gateway, s);
   drawGatewayMode(d.gateway_mode, d.mail_gateway, s);
   drawRadio(running, s);
@@ -584,6 +587,61 @@ async function pick(what, sel, current) {
     setTimeout(poll, 500);
   }
 }
+
+// Dial frequency (#334): the same /radio freq the desktop app sends. Saved
+// in wcr.toml while stopped too. wcr never retunes the radio itself.
+let dialEdited = false;
+
+function drawDial(g, s) {
+  if (!g) return;
+  const spot = $("dial-spot");
+  const items = [{ value: "", name: "Calling spots…" }, ...(g.spots || []).map((p) => ({ value: p.mhz, name: p.name }))];
+  fillSelect(spot, items, "");
+  if (!dialEdited && document.activeElement !== $("dial-mhz")) $("dial-mhz").value = g.mhz || "";
+  // With CAT on the station reads the dial from the radio, and that wins.
+  const live = s.frequency ? `${s.frequency}${s.band ? ` (${s.band})` : ""}` : "";
+  $("dial-now").textContent = g.cat
+    ? `CAT is on: the station reads the dial from the radio${live ? `, now ${live}` : ""}. A typed dial is replaced at the next reading.`
+    : live ? `Station dial now: ${live}.` : g.mhz ? `Saved: ${g.mhz} MHz, used at the next Start.` : "No dial set yet.";
+  if (!dialEdited) $("dial-warn").textContent = g.warning || "";
+}
+
+async function saveDial() {
+  const value = $("dial-mhz").value.trim();
+  if (!/^\d+(\.\d+)?\s*(mhz|khz)?$/i.test(value)) { $("dial-warn").textContent = "Type the dial in MHz, e.g. 144.950"; return; }
+  if (!confirm(`Set the dial to ${value} MHz?\nwcr does not retune the radio: turn the radio's own dial to ${value} too. You are the control operator.`)) return;
+  $("dial-save").disabled = true;
+  try {
+    const r = await fetch("/api/station/setting", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ what: "freq", value }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok) {
+      dialEdited = false;
+      $("dial-mhz").value = "";
+      $("dial-warn").textContent = d.warning || "";
+      $("action").textContent = `Dial set to ${d.now}.`;
+    } else {
+      $("dial-warn").textContent = d.error || "could not set the dial";
+    }
+  } finally {
+    $("dial-save").disabled = false;
+    setTimeout(poll, 500);
+  }
+}
+
+$("dial-mhz").addEventListener("input", () => { dialEdited = true; $("dial-warn").textContent = ""; });
+$("dial-mhz").addEventListener("keydown", (e) => { if (e.key === "Enter") saveDial(); });
+$("dial-spot").addEventListener("change", () => {
+  if (!$("dial-spot").value) return;
+  $("dial-mhz").value = $("dial-spot").value;
+  $("dial-spot").value = "";
+  dialEdited = true;
+  $("dial-warn").textContent = "";
+});
+$("dial-save").addEventListener("click", saveDial);
 
 // Setup's mail gateway (#274): only in Radio+, Auto or a callsign. The
 // typed callsign is kept when Auto is picked.

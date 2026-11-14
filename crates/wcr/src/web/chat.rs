@@ -128,7 +128,7 @@ impl Chat {
 
     /// Change the station's mode, preset or levels with the same commands the
     /// desktop app sends (`/mode X`, `/preset X`, #226; `/level rx|tx X`,
-    /// #241). Nothing else is accepted, so the page cannot run other commands.
+    /// #241; `/freq X`, #334). Nothing else is accepted, so the page cannot run other commands.
     pub fn radio_setting(&self, what: &str, value: &str) -> Result<(), String> {
         let cmd = match what {
             "mode" => {
@@ -164,9 +164,16 @@ impl Chat {
                 g.set_mode(value)?;
                 format!("/gateway {}", g.mode_name())
             }
+            // The dial (#334): the same /freq the desktop app sends. The page
+            // saves it in wcr.toml first; this tells the running station.
+            "freq" => {
+                let khz = crate::band::parse_mhz(value)
+                    .ok_or_else(|| format!("{value} is not a frequency"))?;
+                format!("/freq {}", crate::band::fmt_mhz(khz))
+            }
             _ => {
                 return Err(
-                    "only mode, preset, the levels and the gateway mode can be changed here".into(),
+                    "only mode, preset, dial, levels and gateway mode can be changed here".into(),
                 )
             }
         };

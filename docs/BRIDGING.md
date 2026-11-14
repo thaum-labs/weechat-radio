@@ -83,7 +83,7 @@ What the program never does
 - `radio` and `radio-plus` never put chat frames on the hub from this computer. Map data (callsign, grid, tx/rx ids — never message text) still POSTs if `[telemetry] url` is set. A gateway may forward `radio-plus` only.
 - Internet traffic is not put on the air unless this node is a gateway, `rf_egress = true`, and the dest was recently heard on this frequency (or it is a group with members heard here).
 
-Beacons carry `B|<mode>|<khz>` so peers and the map know your dial. Tell the app the dial if you have no CAT: `/radio freq 144.950`.
+Beacons carry `B|<mode>|<khz>` so peers and the map know your dial. Tell the app the dial if you have no CAT: `/radio freq 144.950` in the desktop app, or **Dial frequency** under **Dial, mode and preset** on a Pi's web page. wcr never retunes the radio: turn its own dial to match.
 
 LAN: nodes on the same local network can also pass frames without the public hub. Gateway rules still apply.
 

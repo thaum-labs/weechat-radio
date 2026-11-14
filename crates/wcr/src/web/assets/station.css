@@ -113,6 +113,11 @@ details.more > :not(summary) { margin-top: 8px; }
 .pickers label.inline { flex-direction: row; align-items: center; gap: 6px; min-height: 40px; color: var(--fg, inherit); }
 .mailgw input#mailgw-call { min-height: 40px; width: 9em; max-width: 100%; text-transform: uppercase; }
 .mailgw button { min-height: 40px; }
+.mailgw.dial { margin-top: 0; margin-bottom: 14px; }
+.dial-in { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.mailgw input#dial-mhz { min-height: 40px; width: 7.5em; }
+.mailgw select#dial-spot { min-height: 40px; min-width: 0; max-width: 100%; flex: 1 1 12em; }
+.warn:empty { display: none; }
 .mailgw label.inline { white-space: nowrap; flex: none; }
 
 /* Lists */
