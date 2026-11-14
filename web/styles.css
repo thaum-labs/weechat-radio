@@ -1500,6 +1500,37 @@ details.maplibregl-ctrl-attrib:not([open]) {
   font-size: 12px;
   color: var(--dim);
 }
+/* Time and band sit beside the stations when there is room for both,
+   so the space to the right of the station rows is used; otherwise they
+   wrap below the stations. Narrow windows keep them above, as before. */
+.band-controls { display: contents; }
+@media (min-width: 861px) {
+  .band-controls {
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: 32px;
+    margin: 0 0 10px;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  .band-controls .band-stations { order: 1; flex: 0 1 auto; margin: 0; border: 0; }
+  .band-controls .band-opts {
+    order: 2;
+    flex: 1 1 240px;
+    min-width: 0;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    justify-content: center;
+    gap: 12px;
+    margin: 8px 0;
+  }
+  /* The wire note wraps to the rows' width instead of widening them. */
+  .band-controls .band-hfwire-notes { width: 0; min-width: 100%; }
+  .band-controls .band-time { flex: none; }
+  .band-controls .band-time input { width: 0; }
+  .band-controls .band-override-pick span, .band-controls .band-time span { width: 2.5em; }
+}
 .band-stations-head {
   display: flex;
   align-items: center;
@@ -1532,8 +1563,11 @@ details.maplibregl-ctrl-attrib:not([open]) {
 .band-station input[type="number"] { width: 5em; }
 /* Wider screens: both station rows share one grid, so the pickers line
    up in columns (RX has no wire setup cell). */
-@media (min-width: 601px) {
-  .band-stations { grid-template-columns: 3em repeat(5, auto) minmax(0, 1fr); gap: 6px 16px; align-items: center; justify-items: start; }
+@media (min-width: 861px) {
+  /* Column gaps come from each cell's right margin, so a column that a
+     picked band hides takes no room at all. */
+  .band-stations { grid-template-columns: auto repeat(5, auto) minmax(0, 1fr); gap: 6px 0; align-items: center; justify-items: start; }
+  .band-station > * { margin-right: 16px; }
   .band-stations-head, .band-hfwire-notes { grid-column: 1 / -1; }
   .band-station { display: contents; }
   .band-station-name { grid-column: 1; }
@@ -1547,9 +1581,10 @@ details.maplibregl-ctrl-attrib:not([open]) {
 /* With a band picked, only that band's antenna pickers show. */
 .band-stations[data-range="hf"] .band-vhf-only,
 .band-stations[data-range="vhf"] .band-hf-only { display: none; }
-/* Phones: V/UHF antenna on one line, height and power side by side, then
+/* Phones and narrow windows: V/UHF antenna on one line, height and power
+   side by side, then
    the HF antenna and (home only) how a wire is strung up. */
-@media (max-width: 600px) {
+@media (max-width: 860px) {
   .band-station { display: grid; grid-template-columns: 3em 1.5fr 1fr; gap: 6px 8px; }
   .band-station label { min-width: 0; }
   .band-station label select { flex: 1; min-width: 0; }
@@ -1644,7 +1679,7 @@ details.maplibregl-ctrl-attrib:not([open]) {
 .band-icopick-btn span { overflow: hidden; text-overflow: ellipsis; }
 .band-icopick-btn svg, .band-icopick .band-hfwire-menu svg { flex: none; }
 .band-icopick .band-hfwire-menu svg { width: 22px; height: 22px; }
-@media (max-width: 600px) {
+@media (max-width: 860px) {
   .band-icopick, .band-icopick-btn { flex: 1; }
   .band-icopick-btn i { margin-left: auto; }
 }
