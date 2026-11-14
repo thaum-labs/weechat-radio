@@ -389,15 +389,40 @@ test("the signal budget says how well FM should work and picks the power", async
   await expect(page.locator(".band-why")).toContainText("More antenna height helps most");
 });
 
-test("the HF antenna picker goes to the service and the link", async ({ page }) => {
+test("each end's HF antenna goes to the service and the link", async ({ page }) => {
   const bodies = await mockServices(page, () => 0);
   await open(page, "?tx=51.5,-0.12&rx=40.7,-74");
-  await expect.poll(() => bodies.at(-1)).toMatchObject({ hf_antenna: "dipole" });
-  await page.locator(".band-hfant label", { hasText: "end-fed wire" }).click();
+  await expect.poll(() => bodies.at(-1)).toMatchObject({ hf_antenna: "dipole", rx_hf_antenna: "dipole" });
+  await page.locator("#band-hf-ant").selectOption("endfed");
   await expect.poll(() => bodies.at(-1)).toMatchObject({ hf_antenna: "endfed" });
+  await page.locator("#band-rx-hf-ant").selectOption("whip");
+  await expect.poll(() => bodies.at(-1)).toMatchObject({ hf_antenna: "endfed", rx_hf_antenna: "whip" });
   await expect(page).toHaveURL(/hfant=endfed/);
+  await expect(page).toHaveURL(/rxhfant=whip/);
   await page.reload();
-  await expect(page.locator('input[name="band-hfant"][value="endfed"]')).toBeChecked();
+  await expect(page.locator("#band-hf-ant")).toHaveValue("endfed");
+  await expect(page.locator("#band-rx-hf-ant")).toHaveValue("whip");
+});
+
+test("a picked band shows only that band's antenna pickers", async ({ page }) => {
+  await mockServices(page, () => 0);
+  await open(page, "?tx=51.5,-0.12&rx=40.7,-74");
+  const vhf = page.locator("#band-tx-type");
+  const hf = page.locator("#band-hf-ant");
+  await expect(vhf).toBeVisible();
+  await expect(hf).toBeVisible();
+  await page.locator("#band-override").selectOption("40m");
+  await expect(vhf).toBeHidden();
+  await expect(page.locator("#band-tx-ant")).toBeHidden();
+  await expect(hf).toBeVisible();
+  await expect(page.locator("#band-rx-hf-ant")).toBeVisible();
+  await page.locator("#band-override").selectOption("2m");
+  await expect(vhf).toBeVisible();
+  await expect(page.locator("#band-rx-type")).toBeVisible();
+  await expect(hf).toBeHidden();
+  await expect(page.locator("#band-hfwire")).toBeHidden();
+  await page.locator("#band-override").selectOption("");
+  await expect(hf).toBeVisible();
 });
 
 test("the time slider asks for a later hour and moves the night shading", async ({ page }) => {
@@ -446,7 +471,7 @@ test("on a phone the page has no sideways scroll", async ({ page }) => {
   await expect(page.locator(".band-freq")).toBeVisible();
   const widths = await page.evaluate(() => ({
     page: document.documentElement.scrollWidth,
-    tiles: Math.max(...[...document.querySelectorAll(".band-hfant label")].map((el) => el.getBoundingClientRect().right)),
+    tiles: Math.max(...[...document.querySelectorAll(".band-station select, .band-hfwire-btn")].map((el) => el.getBoundingClientRect().right)),
     style: document.getElementById("map-style")!.getBoundingClientRect().right,
   }));
   expect(widths.page).toBeLessThanOrEqual(390);
@@ -490,7 +515,7 @@ test("a wire antenna shows how it can be strung, and the link keeps it", async (
   await expect(menu.locator("li")).toHaveText(["horizontal", "inverted V", "sloper"]);
   await page.keyboard.press("Escape");
   await expect(menu).toBeHidden();
-  await page.locator(".band-hfant label", { hasText: "end-fed ½λ" }).click();
+  await page.locator("#band-hf-ant").selectOption("efhw");
   await pick.click();
   await expect(menu.locator("li")).toHaveText(["horizontal", "sloper", "inverted V", "inverted L", "vertical"]);
   await menu.locator("li", { hasText: "sloper" }).click();
@@ -498,17 +523,13 @@ test("a wire antenna shows how it can be strung, and the link keeps it", async (
   await expect(pick).toContainText("sloper");
   await expect(page.locator("#band-hfwire-note")).toContainText("Sloper: a common, good setup.");
   await expect(page).toHaveURL(/hfwire=sloper/);
-  // The picker sits under the selected tile.
-  const tileX = await page.locator(".band-hfant label", { hasText: "end-fed ½λ" }).evaluate((e) => e.getBoundingClientRect().left);
-  const pickX = await pick.evaluate((e) => e.getBoundingClientRect().left);
-  expect(Math.abs(pickX - tileX)).toBeLessThan(2);
   await page.reload();
   await expect(pick).toContainText("sloper");
   await expect(page.locator("#band-hfwire-note")).toContainText("Sloper:");
   // The row keeps its space when hidden, so the map below does not move.
   const mapTop = () => page.locator("#map").evaluate((e) => e.getBoundingClientRect().top);
   const top = await mapTop();
-  await page.locator(".band-hfant label", { hasText: "vertical" }).first().click();
+  await page.locator("#band-hf-ant").selectOption("vertical");
   await expect(pick).toBeHidden();
   await expect(page).not.toHaveURL(/hfwire=/);
   expect(await mapTop()).toBe(top);
@@ -523,10 +544,10 @@ test("on a phone, the wire setup row and note never move the map", async ({ page
     await open(page, "?tx=51.5,-0.12&rx=40.7,-74&hfant=vertical");
     const mapTop = () => page.locator("#map").evaluate((e) => e.getBoundingClientRect().top + window.scrollY);
     const top = await mapTop();
-    await page.locator(".band-hfant label", { hasText: "dipole" }).click();
+    await page.locator("#band-hf-ant").selectOption("dipole");
     await expect(page.locator("#band-hfwire")).toBeVisible();
     expect(await mapTop()).toBe(top);
-    await page.locator(".band-hfant label", { hasText: "end-fed ½λ" }).click();
+    await page.locator("#band-hf-ant").selectOption("efhw");
     for (const setup of ["inverted V", "inverted L", "vertical", "sloper"]) {
       await page.locator("#band-hfwire").click();
       await page.locator("#band-hfwire-menu li", { hasText: setup }).click();
@@ -540,7 +561,7 @@ test("an old link with a setup the antenna does not have falls back to horizonta
   await mockServices(page, () => 0);
   await open(page, "?tx=51.5,-0.12&rx=40.7,-74&hfwire=vertical");
   await expect(page.locator("#band-hfwire")).toContainText("horizontal");
-  await page.locator(".band-hfant label", { hasText: "end-fed wire" }).click();
+  await page.locator("#band-hf-ant").selectOption("endfed");
   await expect(page.locator("#band-hfwire")).toContainText("vertical");
   await expect(page).toHaveURL(/hfant=endfed&hfwire=vertical|hfwire=vertical.*hfant=endfed/);
 });
@@ -1053,7 +1074,9 @@ test("a short HF path shows NVIS, the ground wave and the skip zone", async ({ p
   expect(rings!.skip).toBeGreaterThan(159);
 });
 
-test("on a phone, HF and VHF band changes and antenna taps never move the map or the card", async ({ page }) => {
+// Switching between an HF and a VHF/UHF band swaps the station pickers
+// (Tobias, 2026-11-14), so only changes within one range must hold still.
+test("on a phone, HF band changes and antenna taps never move the map or the card", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockServices(page, () => 100);
   await open(page, `${BATH_MADRID}&band=40m`);
@@ -1064,14 +1087,14 @@ test("on a phone, HF and VHF band changes and antenna taps never move the map or
       ["#map", ".band-answer"].map((s) => Math.round(document.querySelector(s)!.getBoundingClientRect().top + scrollY)),
     );
   const want = await tops();
-  for (const band of ["2m", "80m", "pmr446", "20m", ""]) {
+  for (const band of ["80m", "20m", "40m"]) {
     await page.locator("#band-override").selectOption(band);
     await expect(page.locator("#band-wait")).toBeHidden();
     await page.waitForTimeout(300);
     expect(await tops()).toEqual(want);
   }
   for (const ant of ["vertical", "endfed", "dipole"]) {
-    await page.locator(`.band-hfant-tiles input[value="${ant}"]`).check({ force: true });
+    await page.locator("#band-hf-ant").selectOption(ant);
     // Straight after the tap, while the path is worked out, and once done.
     expect((await tops())[0]).toBe(want[0]);
     await page.waitForTimeout(800);
@@ -1152,7 +1175,7 @@ for (const width of [1280, 390, 360]) {
     await page.setViewportSize({ width, height: 844 });
     await mockServices(page, () => 100);
     await open(page);
-    const hf = page.locator('.band-hfant a.band-ant-guide[href="/guides/antennas-hf.html"]');
+    const hf = page.locator('.band-stations a.band-ant-guide[href="/guides/antennas-hf.html"]');
     const vhf = page.locator('.band-stations a.band-ant-guide[href="/guides/antennas-vhf.html"]');
     for (const link of [hf, vhf]) {
       await expect(link).toBeVisible();
@@ -1162,11 +1185,10 @@ for (const width of [1280, 390, 360]) {
     }
     const mid = (b: { y: number; height: number }) => b.y + b.height / 2;
     const near = (a: number, b: number) => expect(Math.abs(a - b)).toBeLessThanOrEqual(4);
-    // VHF/UHF link: on the "stations" heading line. HF link: beside the
-    // tiles on a desktop, beside the "HF antenna" label on a phone.
-    near(mid((await vhf.boundingBox())!), mid((await page.locator(".band-stations-title").boundingBox())!));
-    const beside = width > 600 ? ".band-hfant-tiles" : ".band-hfant-label";
-    near(mid((await hf.boundingBox())!), mid((await page.locator(beside).boundingBox())!));
+    // Both links sit on the "stations" heading line.
+    const title = mid((await page.locator(".band-stations-title").boundingBox())!);
+    near(mid((await vhf.boundingBox())!), title);
+    near(mid((await hf.boundingBox())!), title);
   });
 }
 

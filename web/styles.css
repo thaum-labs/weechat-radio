@@ -1530,25 +1530,38 @@ details.maplibregl-ctrl-attrib:not([open]) {
   padding: 4px 6px;
 }
 .band-station input[type="number"] { width: 5em; }
-/* Phones: antenna type on one line, height and power side by side below. */
+/* Wider screens: both station rows share one grid, so the pickers line
+   up in columns (RX has no wire setup cell). */
+@media (min-width: 601px) {
+  .band-stations { grid-template-columns: 3em repeat(5, auto) minmax(0, 1fr); gap: 6px 16px; align-items: center; justify-items: start; }
+  .band-stations-head, .band-hfwire-notes { grid-column: 1 / -1; }
+  .band-station { display: contents; }
+  .band-station-name { grid-column: 1; }
+  .band-station .band-ant-type { grid-column: 2; }
+  .band-station .band-ant { grid-column: 3; }
+  .band-station .band-hf-type { grid-column: 4; }
+  .band-station .band-hfwire { grid-column: 5; }
+  .band-station .band-pwr { grid-column: 6; }
+}
+.band-hfwire-btn svg, .band-hfwire-menu svg { fill: none; stroke: currentColor; stroke-width: 1.5; }
+/* With a band picked, only that band's antenna pickers show. */
+.band-stations[data-range="hf"] .band-vhf-only,
+.band-stations[data-range="vhf"] .band-hf-only { display: none; }
+/* Phones: V/UHF antenna on one line, height and power side by side, then
+   the HF antenna and (home only) how a wire is strung up. */
 @media (max-width: 600px) {
   .band-station { display: grid; grid-template-columns: 3em 1.5fr 1fr; gap: 6px 8px; }
   .band-station label { min-width: 0; }
   .band-station label select { flex: 1; min-width: 0; }
   .band-station .band-ant-type { grid-column: 2 / 4; }
+  .band-station .band-hf-type { grid-column: 2; }
+  .band-station .band-pwr { grid-column: 3; grid-row: 2; }
+  .band-stations[data-range="hf"] .band-station .band-pwr { grid-row: 1; }
+  .band-station .band-hfwire { grid-column: 3; }
   .band-station .band-ant input[type="number"] { width: 3.5em; }
-  .band-station-name { grid-row: 1 / span 2; align-self: start; padding-top: 5px; }
+  .band-station-name { grid-row: 1 / span 3; align-self: start; padding-top: 5px; }
+  .band-hfwire-notes { padding-left: 0; }
 }
-.band-hfant {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin: 0 0 8px;
-  font-size: 12px;
-  color: var(--dim);
-}
-.band-hfant-label { white-space: nowrap; }
 /* #177: a clear way from the antenna pickers to the antenna guides. */
 .band-ant-guide {
   display: inline-block;
@@ -1564,52 +1577,12 @@ details.maplibregl-ctrl-attrib:not([open]) {
   .band-ant-guide { line-height: 14px; padding: 5px 0; margin: -5px 0; }
   .band-ant-guide-full { display: none; }
   .band-ant-guide-short { display: inline; }
-  .band-hfant-label { order: -2; }
-  .band-hfant .band-ant-guide { order: -1; }
 }
-.band-hfant-tiles {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
-}
-.band-hfant label {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  flex: none;
-  padding: 4px 6px;
-  border: 1px solid var(--line);
-  background: #050508;
-  color: var(--dim);
-  font-size: 11px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.band-hfant input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-.band-hfant svg {
-  width: 22px;
-  height: 22px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.5;
-}
-.band-hfant label:hover { color: var(--fg); }
-.band-hfant label:has(input:checked) { color: var(--orange); border-color: var(--orange); }
-.band-hfant label:has(input:focus-visible) { outline: 1px solid var(--accent); }
+/* How a wire HF antenna is strung up, right after the home HF antenna. */
 .band-hfwire {
   position: relative;
-  flex: 1 1 100%;
   display: flex;
-  margin-top: -2px;
 }
-/* The picker hangs off the selected tile: a notch points up at it. */
 .band-hfwire-btn {
   position: relative;
   display: flex;
@@ -1623,22 +1596,9 @@ details.maplibregl-ctrl-attrib:not([open]) {
   cursor: pointer;
   white-space: nowrap;
 }
-.band-hfwire-btn::before {
-  content: "";
-  position: absolute;
-  top: -5px;
-  left: 14px;
-  width: 8px;
-  height: 8px;
-  background: #050508;
-  border-left: 1px solid var(--orange);
-  border-top: 1px solid var(--orange);
-  transform: rotate(45deg);
-}
 .band-hfwire-btn i { font-style: normal; color: var(--dim); }
 .band-hfwire-btn b { font-weight: normal; color: var(--orange); }
 .band-hfwire-btn b:empty { display: none; }
-.band-hfwire.is-detached .band-hfwire-btn::before { display: none; }
 .band-hfwire-btn:hover i, .band-hfwire-btn[aria-expanded="true"] i { color: var(--orange); }
 .band-hfwire-btn:focus-visible { outline: 1px solid var(--accent); }
 .band-hfwire-btn svg, .band-hfwire-menu svg { width: 18px; height: 18px; color: var(--orange); }
@@ -1667,8 +1627,8 @@ details.maplibregl-ctrl-attrib:not([open]) {
 .band-hfwire-menu li:hover, .band-hfwire-menu li:focus { color: var(--fg); background: #0d0d14; outline: none; }
 .band-hfwire-menu li[aria-selected="true"] { color: var(--orange); }
 .band-hfwire-notes {
-  flex: 1 1 100%;
   display: grid;
+  padding-left: 3em;
 }
 .band-hfwire-note {
   grid-area: 1 / 1;

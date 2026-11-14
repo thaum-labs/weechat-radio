@@ -178,11 +178,25 @@
     const other = sel.value === "other";
     sel.parentElement.querySelectorAll("input, i").forEach((el) => (el.hidden = !other));
   }
-  // HF antenna at your end; the far end is taken as a simple wire.
-  const hfAntEls = [...document.querySelectorAll('input[name="band-hfant"]')];
+  // HF antenna at each end; the path service adds both ends' gain.
+  const hfAntEl = document.getElementById("band-hf-ant");
+  const rxHfAntEl = document.getElementById("band-rx-hf-ant");
+  const stationsEl = document.getElementById("band-stations");
   function hfAntenna() {
-    const hit = hfAntEls.find((el) => el.checked);
-    return hit ? hit.value : "dipole";
+    return hfAntEl ? hfAntEl.value : "dipole";
+  }
+  function rxHfAntenna() {
+    return rxHfAntEl ? rxHfAntEl.value : "dipole";
+  }
+  // With a band picked, each station shows only the antenna picker for
+  // that band (HF, or VHF/UHF with its height); "recommended" shows both.
+  function showRange() {
+    if (!stationsEl) return;
+    const o = override();
+    const range = o ? (o.hf ? "hf" : "vhf") : "";
+    if (stationsEl.dataset.range === range) return;
+    stationsEl.dataset.range = range;
+    showWireNote();
   }
   // How a wire antenna is strung up. It does not change the prediction; it
   // shows a short note so a new user knows their setup is a good one. Each
@@ -252,7 +266,8 @@
   function showWireNote() {
     if (!wireEl) return;
     const row = wireEl.parentElement;
-    const show = isWireAntenna() ? "" : "hidden";
+    const vhfOnly = stationsEl && stationsEl.dataset.range === "vhf";
+    const show = isWireAntenna() && !vhfOnly ? "" : "hidden";
     row.style.visibility = show;
     if (wireNoteEl) wireNoteEl.style.visibility = show;
     closeWireMenu();
@@ -264,22 +279,9 @@
     if (wireNoteEl) wireNoteEl.textContent = WIRE_NOTES[o];
     placeWirePicker();
   }
-  function placeWirePicker() {
-    if (!wireEl) return;
-    const tile = hfAntEls.find((el) => el.checked);
-    const row = wireEl.parentElement;
-    if (!tile || row.style.visibility) return;
-    // On a phone the tiles wrap; when the selected one is not on the last
-    // line the picker can't sit under it, so it starts at the left and names
-    // the antenna instead.
-    const box = tile.parentElement.getBoundingClientRect();
-    const under = box.bottom >= tile.parentElement.parentElement.getBoundingClientRect().bottom - 1;
-    row.classList.toggle("is-detached", !under);
-    const name = wireEl.querySelector("b");
-    if (name) name.textContent = under ? "" : `${tile.parentElement.textContent.trim()}:`;
-    const x = under ? box.left - row.getBoundingClientRect().left : 0;
-    row.style.paddingLeft = `${Math.max(0, Math.min(x, row.clientWidth - wireEl.offsetWidth))}px`;
-  }
+  // The picker sits right after the home HF antenna, so it reads as that
+  // antenna's setting.
+  function placeWirePicker() {}
   const wireMenuEl = document.getElementById("band-hfwire-menu");
   function openWireMenu() {
     wireMenuEl.hidden = false;
@@ -1513,6 +1515,7 @@
   });
 
   async function requestCard(opts) {
+    showRange();
     if (!tx || !rx) return;
     const refit = !opts || opts.refit !== false;
     pathFailed = false;
@@ -1548,6 +1551,7 @@
           tx_antenna_m: txAntM(),
           rx_antenna_m: rxAntM(),
           hf_antenna: hfAntenna(),
+          rx_hf_antenna: rxHfAntenna(),
           band: override() && override().hf ? overrideKey() : undefined,
         }),
         signal,
@@ -2140,6 +2144,7 @@
     return { lat: m[0], lng: m[1] };
   }
   function saveUrl() {
+    showRange();
     const q = new URLSearchParams(location.search);
     const set = (k, v) => (v == null ? q.delete(k) : q.set(k, v));
     set("tx", tx ? fmtLL(tx) : null);
@@ -2150,6 +2155,7 @@
     set("txtype", txTypeEl.value !== defaultType(txAntEl) ? txTypeEl.value : null);
     set("rxtype", rxTypeEl.value !== defaultType(rxAntEl) ? rxTypeEl.value : null);
     set("hfant", hfAntenna() !== "dipole" ? hfAntenna() : null);
+    set("rxhfant", rxHfAntenna() !== "dipole" ? rxHfAntenna() : null);
     set("hfwire", isWireAntenna() && wireOrientation() !== "flat" ? wireOrientation() : null);
     set("band", overrideKey() || null);
     set("w", txPowerW() !== 100 ? String(txPowerW()) : null);
@@ -2176,11 +2182,15 @@
     setType(rxTypeEl, q.get("rxtype"));
     pickOption(powerEl, q.get("w"));
     pickOption(rxPowerEl, q.get("rw"));
-    const hf = hfAntEls.find((el) => el.value === q.get("hfant"));
-    if (hf) hf.checked = true;
+    const pickHf = (sel, v) => {
+      if (sel && [...sel.options].some((o) => o.value === v)) sel.value = v;
+    };
+    pickHf(hfAntEl, q.get("hfant"));
+    pickHf(rxHfAntEl, q.get("rxhfant"));
     if (WIRE_NOTES[q.get("hfwire")]) wire = q.get("hfwire");
     showWireNote();
     if (overrideEl && OVERRIDES[q.get("band")]) overrideEl.value = q.get("band");
+    showRange();
     if (mufToggle && q.get("muf") === "1") mufToggle.checked = true;
     const t = parseLL(q.get("tx"));
     const r = parseLL(q.get("rx"));
@@ -2235,7 +2245,8 @@
   if (clearEl) clearEl.addEventListener("click", () => clearPlan(false));
   const clearRxEl = document.getElementById("band-clear-rx");
   if (clearRxEl) clearRxEl.addEventListener("click", () => clearPlan(true));
-  for (const el of hfAntEls) {
+  for (const el of [hfAntEl, rxHfAntEl]) {
+    if (!el) continue;
     el.addEventListener("change", () => {
       showWireNote();
       requestCard({ refit: false });

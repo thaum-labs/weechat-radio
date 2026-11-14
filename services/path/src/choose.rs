@@ -79,14 +79,21 @@ impl HfAntenna {
         }
     }
 
-    pub fn footnote(self, card: &mut Card) {
-        if self != HfAntenna::Dipole {
-            card.footnote = card.footnote.replacen(
-                "Simple wire antenna at each end",
-                &format!("{} at your end, simple wire at the other", self.label()),
-                1,
-            );
+    /// Name both ends' antennas in the footnote: `self` at your end, `far`
+    /// at the other (a dipole there reads "simple wire", as before).
+    pub fn footnote(self, far: HfAntenna, card: &mut Card) {
+        if self == HfAntenna::Dipole && far == HfAntenna::Dipole {
+            return;
         }
+        let far = match far {
+            HfAntenna::Dipole => "simple wire".to_string(),
+            f => f.label().to_lowercase(),
+        };
+        card.footnote = card.footnote.replacen(
+            "Simple wire antenna at each end",
+            &format!("{} at your end, {far} at the other", self.label()),
+            1,
+        );
     }
 }
 
@@ -783,9 +790,23 @@ mod tests {
         assert_eq!(pick_hf(&endfed, 12, true, 1000.0, 100).power_w, Some(50));
         assert!(pick_hf(&whip, 12, true, 1000.0, 100).power_w.unwrap_or(999) > 50);
         let mut card = pick_hf(&endfed, 12, true, 1000.0, 100);
-        HfAntenna::Endfed.footnote(&mut card);
+        HfAntenna::Endfed.footnote(HfAntenna::Dipole, &mut card);
         assert!(
-            card.footnote.starts_with("End-fed wire at your end"),
+            card.footnote
+                .starts_with("End-fed wire at your end, simple wire at the other"),
+            "{}",
+            card.footnote
+        );
+        // The far end's antenna counts too: two end-feds lose 4 dB each.
+        let mut both = base.clone();
+        HfAntenna::Endfed.apply(&mut both);
+        HfAntenna::Endfed.apply(&mut both);
+        assert!((both[0].snr - (base[0].snr - 8.0)).abs() < 1e-9);
+        let mut card = pick_hf(&both, 12, true, 1000.0, 100);
+        HfAntenna::Dipole.footnote(HfAntenna::Whip, &mut card);
+        assert!(
+            card.footnote
+                .starts_with("Dipole at your end, mobile whip at the other"),
             "{}",
             card.footnote
         );
