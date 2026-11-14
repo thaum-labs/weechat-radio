@@ -418,6 +418,9 @@ async fn setting(State(web): State<Web>, Json(b): Json<SettingBody>) -> Response
     if b.what == "gateway_mode" {
         return set_gateway_mode(&web, &b.value);
     }
+    if b.what == "freq" {
+        return set_dial(&web, &b.value);
+    }
     // The node refuses some presets on this link and only says so in chat;
     // give the page the same answer instead of ok (#235).
     if b.what == "preset" {
@@ -509,6 +512,82 @@ fn set_gateway_mode(web: &Web, value: &str) -> Response {
     Json(json!({ "ok": true })).into_response()
 }
 
+/// Seconds a dial change waits for a starting station to answer.
+const DIAL_RETRIES: u32 = 30;
+
+/// Save the dial frequency in wcr.toml and, when the station runs, use it
+/// now, as `/radio freq` does in the desktop app (#334). wcr never retunes
+/// the radio: the operator turns the radio's own dial.
+fn set_dial(web: &Web, value: &str) -> Response {
+    let bad = |e: String| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response();
+    let Some(khz) = crate::band::parse_mhz(value) else {
+        return bad(format!(
+            "{} is not a frequency. Type MHz, e.g. 144.950",
+            value.trim()
+        ));
+    };
+    let mut cfg = match Config::load(&web.cfg_path) {
+        Ok(c) => c,
+        Err(e) => return bad(e.to_string()),
+    };
+    cfg.rf.frequency_khz = khz;
+    if let Err(e) = cfg.save(&web.cfg_path) {
+        return bad(e.to_string());
+    }
+    // Tell the running station. Just after Start the page's link to it can
+    // still be connecting, so keep trying for a while instead of losing the
+    // change. Not an error while stopped: the saved value is used at the
+    // next Start.
+    let mhz = crate::band::fmt_mhz(khz);
+    if web.chat.radio_setting("freq", &mhz).is_err() {
+        let web = web.clone();
+        tokio::spawn(async move {
+            for _ in 0..DIAL_RETRIES {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                // Stopped, or a newer dial was saved since: nothing to do.
+                let saved = Config::load(&web.cfg_path).map(|c| c.rf.frequency_khz);
+                if !web.station.wanted().await || saved.ok() != Some(khz) {
+                    return;
+                }
+                if web.chat.radio_setting("freq", &mhz).is_ok() {
+                    return;
+                }
+            }
+        });
+    }
+    let now = crate::band::describe(khz);
+    web.station
+        .note(&format!("dial set to {now} on the web page"));
+    Json(json!({ "ok": true, "now": now, "warning": crate::band::dial_warning(khz) }))
+        .into_response()
+}
+
+/// The saved dial, whether CAT reads the radio, and the calling spots for
+/// the page's dial picker (#334).
+fn dial(cfg: Option<&Config>) -> Value {
+    let khz = cfg.map(|c| c.rf.frequency_khz).unwrap_or(0);
+    let spots: Vec<Value> = crate::band::calling_freqs_unique()
+        .into_iter()
+        .map(|c| {
+            let note = if c.note.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", c.note)
+            };
+            json!({
+                "mhz": crate::band::fmt_mhz(c.khz),
+                "name": format!("{} {} {} {}{note}", c.region, c.band(), crate::band::fmt_mhz(c.khz), c.mode),
+            })
+        })
+        .collect();
+    json!({
+        "mhz": (khz > 0).then(|| crate::band::fmt_mhz(khz)),
+        "cat": cfg.is_some_and(|c| c.rig.enabled),
+        "warning": crate::band::dial_warning(khz),
+        "spots": spots,
+    })
+}
+
 /// The modes, and the presets this station's link can use, for the pickers.
 fn choices(cfg: Option<&Config>) -> Value {
     use crate::presets::Preset;
@@ -591,6 +670,7 @@ async fn gateway(State(web): State<Web>) -> Json<Value> {
         "frequency": frequency,
         "mail_gateway": mail_gateway,
         "gateway_mode": gateway_mode,
+        "dial": dial(cfg.as_ref()),
         "choices": choices(cfg.as_ref()),
         "station": state,
         "answering": !status.is_null(),

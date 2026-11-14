@@ -34,7 +34,18 @@
     <dl id="facts" class="facts"></dl>
     <p id="action" class="note" role="status"></p>
     <details class="more" id="settings-box">
-      <summary>Mode and preset</summary>
+      <summary>Dial, mode and preset</summary>
+      <div id="dial-box" class="mailgw dial">
+        <fieldset class="pickers">
+          <legend>Dial frequency</legend>
+          <span class="dial-in"><input id="dial-mhz" inputmode="decimal" placeholder="e.g. 144.950" autocomplete="off" spellcheck="false" aria-label="Dial frequency in MHz" maxlength="12"> MHz</span>
+          <select id="dial-spot" aria-label="Calling spots"></select>
+          <button type="button" id="dial-save" class="quiet">Save</button>
+        </fieldset>
+        <p class="meta">wcr never retunes the radio: turn the radio's own dial to the same frequency.</p>
+        <p class="meta" id="dial-now"></p>
+        <p class="warn" id="dial-warn" role="status"></p>
+      </div>
       <div class="pickers">
         <label>Mode <select id="mode-pick" aria-label="Station mode"></select></label>
         <label id="preset-label">Preset <select id="preset-pick" aria-label="Modem preset"></select></label>

@@ -89,6 +89,23 @@ pub fn describe(khz: u32) -> String {
     }
 }
 
+/// A one-line warning for a dial that is a poor pick for chat (#334):
+/// the APRS frequencies, PMR446, or a frequency outside any known band.
+pub fn dial_warning(khz: u32) -> Option<String> {
+    match khz {
+        144_800 => Some("144.800 is the UK/EU APRS frequency: pick another spot for chat.".into()),
+        144_390 => Some("144.390 is the US APRS frequency: pick another spot for chat.".into()),
+        _ if band_for_khz(khz) == Some("PMR446") => Some(
+            "PMR446 is licence-free: only handhelds with a fixed antenna are allowed there. Check your rules before you transmit.".into(),
+        ),
+        _ if khz > 0 && band_for_khz(khz).is_none() => Some(format!(
+            "{} MHz is not in a band wcr knows. Check your band plan before you transmit.",
+            fmt_mhz(khz)
+        )),
+        _ => None,
+    }
+}
+
 /// Parse hamlib `f` / `rigctl` text (Hz, sometimes labelled) into kHz.
 pub fn parse_rigctl_hz(s: &str) -> Option<u32> {
     let mut num = String::new();
@@ -386,6 +403,17 @@ pub fn calling_freqs_unique() -> Vec<CallingFreq> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dial_warning_flags_aprs_pmr446_and_unknown() {
+        assert!(dial_warning(144_800).unwrap().contains("APRS"));
+        assert!(dial_warning(144_390).unwrap().contains("APRS"));
+        assert!(dial_warning(446_006).unwrap().contains("PMR446"));
+        assert!(dial_warning(100_000).unwrap().contains("not in a band"));
+        assert_eq!(dial_warning(144_950), None);
+        assert_eq!(dial_warning(433_625), None);
+        assert_eq!(dial_warning(0), None);
+    }
 
     #[test]
     fn beacon_names_its_mode() {
