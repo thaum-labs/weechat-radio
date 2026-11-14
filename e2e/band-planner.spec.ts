@@ -425,26 +425,36 @@ test("a picked band shows only that band's antenna pickers", async ({ page }) =>
   await expect(hf).toBeVisible();
 });
 
-test("every antenna picker shows a drawing of the antenna, in the button and the list", async ({ page }) => {
+test("every antenna picker shows a drawing of the antenna", async ({ page }) => {
   await mockServices(page, () => 0);
   await open(page, "?tx=51.5,-0.12&rx=40.7,-74");
-  for (const id of ["band-tx-type", "band-rx-type", "band-hf-ant", "band-rx-hf-ant"]) {
+  // V/UHF: a button with the drawing that opens a list of drawings.
+  for (const id of ["band-tx-type", "band-rx-type"]) {
     const btn = page.locator(`#${id} + .band-icopick .band-icopick-btn`);
-    await expect(btn.locator("svg path, svg rect, svg circle").first()).toBeAttached();
+    await expect(btn.locator("svg path").first()).toBeAttached();
   }
-  const btn = page.locator("#band-rx-hf-ant + .band-icopick .band-icopick-btn");
-  await expect(btn).toContainText("dipole");
+  const btn = page.locator("#band-rx-type + .band-icopick .band-icopick-btn");
   await btn.click();
-  const menu = page.locator("#band-rx-hf-ant + .band-icopick ul");
-  await expect(menu.locator("li svg")).toHaveCount(7);
-  await menu.locator('li[data-value="loop"]').click();
+  const menu = page.locator("#band-rx-type + .band-icopick ul");
+  await expect(menu.locator("li svg")).toHaveCount(5);
+  await menu.locator('li[data-value="yagi"]').click();
   await expect(menu).toBeHidden();
+  await expect(page.locator("#band-rx-type")).toHaveValue("yagi");
+  await expect(btn).toContainText("Yagi");
+  // HF: a row of tiles per station, each a drawing and a name.
+  for (const id of ["band-hf-ant", "band-rx-hf-ant"]) {
+    await expect(page.locator(`#${id} + .band-hfant-tiles label svg`)).toHaveCount(7);
+  }
+  const rxTiles = page.locator("#band-rx-hf-ant + .band-hfant-tiles");
+  await expect(rxTiles.locator("input:checked")).toHaveValue("dipole");
+  await rxTiles.locator("label", { hasText: "mag loop" }).click();
   await expect(page.locator("#band-rx-hf-ant")).toHaveValue("loop");
-  await expect(btn).toContainText("mag loop");
   await expect(page).toHaveURL(/rxhfant=loop/);
-  // A value set from a link shows in the button too.
-  await open(page, "?tx=51.5,-0.12&rx=51.6,-0.2&txtype=yagi");
+  await expect(page.locator("#band-hf-ant")).toHaveValue("dipole");
+  // A value set from a link shows in the picker too.
+  await open(page, "?tx=51.5,-0.12&rx=51.6,-0.2&txtype=yagi&hfant=efhw");
   await expect(page.locator("#band-tx-type + .band-icopick .band-icopick-btn")).toContainText("Yagi");
+  await expect(page.locator("#band-hf-ant + .band-hfant-tiles input:checked")).toHaveValue("efhw");
 });
 
 test("a later hour picked on the 24 hour strip is asked for", async ({ page }) => {

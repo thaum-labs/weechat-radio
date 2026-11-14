@@ -1515,16 +1515,18 @@ details.maplibregl-ctrl-attrib:not([open]) {
 .band-stations[data-range="hf"] .band-vhf-only,
 .band-stations[data-range="vhf"] .band-hf-only { display: none; }
 /* Inside each station: V/UHF antenna on one line, height and power side
-   by side, then the HF antenna and (home only) how a wire is strung up. */
+   by side, then the HF antenna tiles and (home only) how a wire is
+   strung up, under the tiles. */
 .band-station { display: grid; grid-template-columns: 3em 1.5fr 1fr; gap: 6px 8px; align-content: start; }
 .band-station label { min-width: 0; }
 .band-station label select { flex: 1; min-width: 0; }
 .band-station .band-ant-type { grid-column: 2 / 4; }
-.band-station .band-hf-type { grid-column: 2; }
+.band-station .band-hf-type { grid-column: 2 / 4; display: flex; align-items: flex-start; gap: 6px; }
+.band-station .band-hf-type > span { padding-top: 5px; }
 .band-station .band-pwr { grid-column: 3; grid-row: 2; }
-.band-stations[data-range="hf"] .band-station .band-pwr { grid-row: 1; }
+.band-stations[data-range="hf"] .band-station .band-pwr { grid-row: 2; }
 .band-stations[data-range="hf"] .band-station .band-hfwire { grid-column: 2; grid-row: 2; }
-.band-station .band-hfwire { grid-column: 3; }
+.band-station .band-hfwire { grid-column: 2; }
 .band-station .band-hfwire-notes { grid-column: 2 / 4; padding-left: 0; }
 .band-station .band-ant input[type="number"] { width: 3.5em; }
 /* Every picker in the middle column starts at the same x: the labels
@@ -1532,7 +1534,7 @@ details.maplibregl-ctrl-attrib:not([open]) {
    picker, which has no label, is indented by the same amount. */
 .band-station :is(.band-ant-type, .band-ant, .band-hf-type) > span { flex: none; width: 6em; }
 .band-station .band-hfwire { justify-self: stretch; }
-.band-stations[data-range="hf"] .band-station .band-hfwire { margin-left: calc(6em + 6px); }
+.band-station .band-hfwire { margin-left: calc(6em + 6px); }
 .band-station .band-hfwire .band-hfwire-btn { flex: 1; min-width: 0; }
 .band-station .band-hfwire .band-hfwire-btn i { margin-left: auto; }
 .band-station-name { grid-row: 1 / span 3; align-self: start; padding-top: 5px; }
@@ -1542,11 +1544,14 @@ details.maplibregl-ctrl-attrib:not([open]) {
   .band-station { grid-template-columns: 1.5fr 1fr; }
   .band-station-name { grid-column: 1 / -1; grid-row: 1; padding-top: 0; }
   .band-station .band-ant-type { grid-column: 1 / 3; }
-  .band-station .band-ant, .band-station .band-hf-type { grid-column: 1; }
+  .band-station .band-ant { grid-column: 1; }
+  .band-station .band-hf-type { grid-column: 1 / 3; }
   .band-station .band-pwr { grid-column: 2; grid-row: 3; }
-  .band-stations[data-range="hf"] .band-station .band-pwr { grid-row: 2; }
-  .band-station .band-hfwire { grid-column: 2; }
-  .band-stations[data-range="hf"] .band-station .band-hfwire { grid-column: 1; grid-row: 3; }
+  /* HF only: power gets its own line under the antenna, lined up with it. */
+  .band-stations[data-range="hf"] .band-station .band-pwr { grid-column: 1 / 3; grid-row: 4; }
+  .band-stations[data-range="hf"] .band-station .band-pwr > span { flex: none; width: 6em; }
+  .band-station .band-hfwire { grid-column: 1 / 3; justify-self: start; }
+  .band-stations[data-range="hf"] .band-station .band-hfwire { grid-column: 1 / 3; grid-row: 3; }
   .band-station .band-hfwire-notes { grid-column: 1 / 3; }
   .band-station + .band-station { margin-top: 8px; }
 }
@@ -1554,6 +1559,43 @@ details.maplibregl-ctrl-attrib:not([open]) {
   .band-stations { grid-template-columns: 1fr 1fr; column-gap: 32px; }
   .band-stations-head { grid-column: 1 / -1; }
 }
+/* HF antenna tiles: a drawing and a name for each antenna. */
+.band-hfant-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.band-hfant-tiles label {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  padding: 4px;
+  border: 1px solid var(--line);
+  background: #050508;
+  color: var(--dim);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.band-hfant-tiles input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.band-hfant-tiles svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+.band-hfant-tiles label:hover { color: var(--fg); }
+.band-hfant-tiles label:has(input:checked) { color: var(--orange); border-color: var(--orange); }
+.band-hfant-tiles label:has(input:focus-visible) { outline: 1px solid var(--accent); }
 /* #177: a clear way from the antenna pickers to the antenna guides. */
 .band-ant-guide {
   display: inline-block;
