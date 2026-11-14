@@ -573,18 +573,17 @@ test("a wire antenna shows how it can be strung, and the link keeps it", async (
   expect(await mapTop()).toBe(top);
 });
 
-test("on a phone, the wire setup row and note never move the map", async ({ page }) => {
-  // A link with a non-wire antenna used to load an empty row, so the first
-  // wire tap pushed the map down; longer notes did the same on a phone.
+test("on a phone, picking a wire setup never moves the map, and other antennas take no room", async ({ page }) => {
+  // Every note is as tall as the longest, so a setup change keeps the map
+  // still. An antenna with no wire setup drops the row and note, so the map
+  // moves up into that space (Tobias, 2026-11-14).
   await mockServices(page, () => 0);
   for (const width of [390, 360]) {
     await page.setViewportSize({ width, height: 844 });
-    await open(page, "?tx=51.5,-0.12&rx=40.7,-74&hfant=vertical");
+    await open(page, "?tx=51.5,-0.12&rx=40.7,-74&hfant=dipole");
     const mapTop = () => page.locator("#map").evaluate((e) => e.getBoundingClientRect().top + window.scrollY);
     const top = await mapTop();
-    await page.locator("#band-hf-ant").selectOption("dipole");
     await expect(page.locator("#band-hfwire")).toBeVisible();
-    expect(await mapTop()).toBe(top);
     await page.locator("#band-hf-ant").selectOption("efhw");
     for (const setup of ["inverted V", "inverted L", "vertical", "sloper"]) {
       await page.locator("#band-hfwire").click();
@@ -592,7 +591,26 @@ test("on a phone, the wire setup row and note never move the map", async ({ page
       await expect(page.locator("#band-hfwire")).toContainText(setup);
       expect(await mapTop()).toBe(top);
     }
+    await page.locator("#band-hf-ant").selectOption("beam");
+    await expect(page.locator("#band-hfwire")).toBeHidden();
+    await expect(page.locator("#band-hfwire-note")).toBeHidden();
+    expect(await mapTop()).toBeLessThan(top);
   }
+});
+
+test("the RX station has its own wire setup, kept in the link", async ({ page }) => {
+  await mockServices(page, () => 0);
+  await open(page, "?tx=51.5,-0.12&rx=40.7,-74&rxhfant=endfed&rxhfwire=invl");
+  await expect(page.locator("#band-rx-hfwire")).toContainText("inverted L");
+  await expect(page.locator("#band-rx-hfwire-note")).toContainText("Inverted L");
+  await expect(page.locator("#band-hfwire")).toContainText("horizontal");
+  await page.locator("#band-rx-hfwire").click();
+  await page.locator("#band-rx-hfwire-menu li", { hasText: "sloper" }).click();
+  await expect(page).toHaveURL(/rxhfwire=sloper/);
+  await expect(page).not.toHaveURL(/[?&]hfwire=/);
+  await page.locator("#band-rx-hf-ant").selectOption("loop");
+  await expect(page.locator("#band-rx-hfwire")).toBeHidden();
+  await expect(page).not.toHaveURL(/rxhfwire=/);
 });
 
 test("an old link with a setup the antenna does not have falls back to horizontal", async ({ page }) => {
@@ -1113,7 +1131,7 @@ test("a short HF path shows NVIS, the ground wave and the skip zone", async ({ p
 
 // Switching between an HF and a VHF/UHF band swaps the station pickers
 // (Tobias, 2026-11-14), so only changes within one range must hold still.
-test("on a phone, HF band changes and antenna taps never move the map or the card", async ({ page }) => {
+test("on a phone, HF band changes and wire antenna taps never move the map or the card", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockServices(page, () => 100);
   await open(page, `${BATH_MADRID}&band=40m`);
@@ -1130,7 +1148,8 @@ test("on a phone, HF band changes and antenna taps never move the map or the car
     await page.waitForTimeout(300);
     expect(await tops()).toEqual(want);
   }
-  for (const ant of ["vertical", "endfed", "dipole"]) {
+  // Between wire antennas (each has a wire setup row and note).
+  for (const ant of ["efhw", "endfed", "dipole"]) {
     await page.locator("#band-hf-ant").selectOption(ant);
     // Straight after the tap, while the path is worked out, and once done.
     expect((await tops())[0]).toBe(want[0]);
