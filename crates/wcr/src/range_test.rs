@@ -18,7 +18,7 @@
 //! Each row goes to a CSV file, and a KML file is rewritten next to it, in
 //! the received-files folder. The exact GPS position never goes on the air.
 
-use crate::proto::{Envelope, MsgId, MsgType};
+use crate::proto::{Envelope, MsgId};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
