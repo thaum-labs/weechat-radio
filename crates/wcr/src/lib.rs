@@ -1,6 +1,7 @@
 //! SPDX-License-Identifier: Apache-2.0
 //! WeeChat Radio library.
 
+pub mod activity_bars;
 pub mod air;
 pub mod audio_meter;
 pub mod band;

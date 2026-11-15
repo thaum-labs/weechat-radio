@@ -56,7 +56,12 @@ pub enum Command {
     /// Offline help
     Help { topic: Option<String> },
     /// Desktop window: setup, station, and chat
-    Gui,
+    Gui {
+        /// Window layout for this run: `classic` or `modem73` (overrides
+        /// `[ui] layout`; `WCR_UI_LAYOUT` does the same)
+        #[arg(long, value_name = "LAYOUT")]
+        ui_layout: Option<String>,
+    },
     /// Launch the real WeeChat client (after `wcr node`)
     Weechat {
         /// Write the local radio server and load radio.py, then exit
