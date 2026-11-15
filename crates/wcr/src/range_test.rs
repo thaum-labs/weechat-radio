@@ -28,10 +28,11 @@ pub const DEFAULT_EVERY_S: u32 = 30;
 pub const MIN_EVERY_S: u32 = 15;
 pub const MAX_EVERY_S: u32 = 600;
 /// How long a probe waits for its receipt before it is logged. A receipt can
-/// land after the next probe has gone out (the probe sat behind a busy
-/// channel, or the far end waited to key), so a short gap must not throw it
-/// away. A gap longer than this waits one gap instead.
-pub const RECEIPT_WAIT_S: i64 = 60;
+/// land long after the next probe has gone out: on a 20 s drive test the far
+/// end's receipts queued up and came back 25-150 s late. The receipt still
+/// says the far end heard us where the probe was sent. A gap longer than
+/// this waits one gap instead.
+pub const RECEIPT_WAIT_S: i64 = 180;
 
 /// The text of a probe line, as the far station shows it.
 pub fn probe_text(n: u32) -> String {
@@ -423,7 +424,7 @@ mod tests {
         t.heard(&receipt(&line, -4.0), Some(7.0));
         let (_, n, done) = t.due(1_700_000_030).unwrap();
         assert_eq!((n, done), (2, vec![]), "still inside the receipt wait");
-        let (_, n, mut done) = t.due(1_700_000_060).unwrap();
+        let (_, n, mut done) = t.due(1_700_000_180).unwrap();
         assert_eq!((n, done.len()), (3, 1));
         let row = done.remove(0);
         assert_eq!(row.outcome, Outcome::Both);
@@ -456,7 +457,7 @@ mod tests {
         let mut stranger = receipt(&line, 9.0);
         stranger.origin = Callsign::parse("M0XYZ").unwrap();
         t.heard(&stranger, Some(12.0));
-        let row = t.due(160).unwrap().2.remove(0);
+        let row = t.due(280).unwrap().2.remove(0);
         assert_eq!(row.outcome, Outcome::HeardThem);
         assert_eq!((row.snr_they_heard, row.snr_we_heard), (None, Some(-2.0)));
         assert!(row_notice("G0HOM", &row).contains("no GPS fix"));
@@ -480,12 +481,16 @@ mod tests {
         t.heard(&receipt(&one, -6.0), Some(9.0));
         t.due(140).unwrap();
         t.probe_sent(probe_env(3).msg_id, 3, 140, Some((1.2, 2.0)));
+        // Probe 2's receipt comes back two minutes late, behind a queue.
         t.heard(&receipt(&two, -7.0), Some(8.0));
-        let rows = t.due(160).unwrap().2;
+        assert!(t.due(160).unwrap().2.is_empty(), "both still waiting");
+        let rows = t.due(280).unwrap().2;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].probe, 1);
         assert_eq!(rows[0].outcome, Outcome::Both);
         assert_eq!(rows[0].snr_they_heard, Some(-6.0));
+        let rows = t.due(300).unwrap().2;
+        assert_eq!((rows[0].probe, rows[0].outcome), (2, Outcome::Both));
         t.stop().unwrap();
         let _ = std::fs::remove_dir_all(dir);
     }
