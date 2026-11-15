@@ -8,16 +8,17 @@
 //! with a receipt that carries the SNR it heard the line at. So:
 //!
 //! - a receipt back = both directions work (their SNR from the receipt,
-//!   ours from decoding the receipt);
-//! - no receipt, but we decoded some other frame from them in the window =
-//!   we hear them, they may not hear us;
+//!   ours from decoding the receipt). A receipt counts for its probe for
+//!   [`RECEIPT_WAIT_S`] (or one gap, if longer), even after later probes;
+//! - no receipt, but we decoded some other frame from them while it was the
+//!   newest probe = we hear them, they may not hear us;
 //! - nothing = no contact.
 //!
 //! Probes are not retried: a retry would hide where the first try failed.
 //! Each row goes to a CSV file, and a KML file is rewritten next to it, in
 //! the received-files folder. The exact GPS position never goes on the air.
 
-use crate::proto::{Envelope, MsgId, MsgType};
+use crate::proto::{Envelope, MsgId};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -26,6 +27,12 @@ pub const DEFAULT_EVERY_S: u32 = 30;
 /// A probe and its receipt take a few seconds of air on VHF FM.
 pub const MIN_EVERY_S: u32 = 15;
 pub const MAX_EVERY_S: u32 = 600;
+/// How long a probe waits for its receipt before it is logged. A receipt can
+/// land long after the next probe has gone out: on a 20 s drive test the far
+/// end's receipts queued up and came back 25-150 s late. The receipt still
+/// says the far end heard us where the probe was sent. A gap longer than
+/// this waits one gap instead.
+pub const RECEIPT_WAIT_S: i64 = 180;
 
 /// The text of a probe line, as the far station shows it.
 pub fn probe_text(n: u32) -> String {
@@ -123,7 +130,8 @@ struct Session {
     kml: PathBuf,
     next_probe: u32,
     next_due: i64,
-    pending: Option<Pending>,
+    /// Probes still waiting for a receipt, oldest first.
+    pending: std::collections::VecDeque<Pending>,
     rows: Vec<Row>,
 }
 
@@ -169,7 +177,7 @@ impl RangeTest {
             kml,
             next_probe: 1,
             next_due: now,
-            pending: None,
+            pending: Default::default(),
             rows: Vec::new(),
         });
         Ok(csv)
@@ -178,11 +186,24 @@ impl RangeTest {
     /// Stops the test, logging the probe still waiting. Returns a summary.
     pub fn stop(&mut self) -> Option<String> {
         let mut s = self.session.take()?;
-        if let Some(p) = s.pending.take() {
-            let row = p.finish();
-            write_row(&mut s, row);
+        while let Some(p) = s.pending.pop_front() {
+            write_row(&mut s, p.finish());
         }
         Some(summary(&s))
+    }
+
+    /// Probes sent and not yet logged, so `/rangetest off` can take back the
+    /// ones still waiting for the radio.
+    pub fn pending_ids(&self) -> Vec<MsgId> {
+        self.session
+            .as_ref()
+            .map(|s| s.pending.iter().map(|p| p.id).collect())
+            .unwrap_or_default()
+    }
+
+    /// The newest probe sent, if it is not logged yet.
+    pub fn last_probe(&self) -> Option<MsgId> {
+        self.session.as_ref()?.pending.back().map(|p| p.id)
     }
 
     /// A short line on the test, for `/rangetest` with no argument.
@@ -190,9 +211,10 @@ impl RangeTest {
         self.session.as_ref().map(summary)
     }
 
-    /// When a probe is due: logs the one before it and returns the far
-    /// station, the probe number and the finished row (for a chat notice).
-    pub fn due(&mut self, now: i64) -> Option<(String, u32, Option<Row>)> {
+    /// When a probe is due: logs the probes whose receipt wait is over and
+    /// returns the far station, the probe number and the finished rows (for
+    /// chat notices), oldest first.
+    pub fn due(&mut self, now: i64) -> Option<(String, u32, Vec<Row>)> {
         let s = self.session.as_mut()?;
         if now < s.next_due {
             return None;
@@ -200,9 +222,12 @@ impl RangeTest {
         s.next_due = now + s.every_s as i64;
         let n = s.next_probe;
         s.next_probe += 1;
-        let done = s.pending.take().map(Pending::finish);
-        if let Some(row) = &done {
+        let wait = RECEIPT_WAIT_S.max(s.every_s as i64);
+        let mut done = Vec::new();
+        while s.pending.front().is_some_and(|p| now - p.ts >= wait) {
+            let row = s.pending.pop_front().map(Pending::finish).unwrap();
             write_row(s, row.clone());
+            done.push(row);
         }
         Some((s.far.clone(), n, done))
     }
@@ -210,7 +235,7 @@ impl RangeTest {
     /// The probe went to the radio as line `id`.
     pub fn probe_sent(&mut self, id: MsgId, probe: u32, ts: i64, pos: Option<(f64, f64)>) {
         if let Some(s) = self.session.as_mut() {
-            s.pending = Some(Pending {
+            s.pending.push_back(Pending {
                 id,
                 ts,
                 pos,
@@ -229,13 +254,15 @@ impl RangeTest {
         if !env.origin.as_str().eq_ignore_ascii_case(&s.far) {
             return;
         }
-        let Some(p) = s.pending.as_mut() else {
-            return;
-        };
-        if env.kind == MsgType::Ack && env.acked_id() == Some(p.id) {
+        let acked = env.acked_id();
+        if let Some(p) = s.pending.iter_mut().find(|p| acked == Some(p.id)) {
             p.receipt = Some((env.acked_snr(), snr, env.acked_grid().unwrap_or_default()));
-        } else {
-            p.heard_snr = Some(snr);
+        }
+        // Any frame from them also says we hear them where we are now.
+        if let Some(p) = s.pending.back_mut() {
+            if acked != Some(p.id) {
+                p.heard_snr = Some(snr);
+            }
         }
     }
 }
@@ -404,14 +431,16 @@ mod tests {
         let mut t = RangeTest::new();
         let csv = t.start("g0hom", 30, &dir, 1_700_000_000).unwrap();
         let (far, n, done) = t.due(1_700_000_000).unwrap();
-        assert_eq!((far.as_str(), n, done), ("G0HOM", 1, None));
+        assert_eq!((far.as_str(), n, done), ("G0HOM", 1, vec![]));
         let line = probe_env(1);
         t.probe_sent(line.msg_id, 1, 1_700_000_000, Some((51.5, -0.12)));
         assert!(t.due(1_700_000_010).is_none(), "not due before the gap");
         t.heard(&receipt(&line, -4.0), Some(7.0));
         let (_, n, done) = t.due(1_700_000_030).unwrap();
-        assert_eq!(n, 2);
-        let row = done.unwrap();
+        assert_eq!((n, done), (2, vec![]), "still inside the receipt wait");
+        let (_, n, mut done) = t.due(1_700_000_180).unwrap();
+        assert_eq!((n, done.len()), (3, 1));
+        let row = done.remove(0);
         assert_eq!(row.outcome, Outcome::Both);
         assert_eq!(row.snr_they_heard, Some(-4.0));
         assert_eq!(row.snr_we_heard, Some(7.0));
@@ -442,10 +471,41 @@ mod tests {
         let mut stranger = receipt(&line, 9.0);
         stranger.origin = Callsign::parse("M0XYZ").unwrap();
         t.heard(&stranger, Some(12.0));
-        let row = t.due(130).unwrap().2.unwrap();
+        let row = t.due(280).unwrap().2.remove(0);
         assert_eq!(row.outcome, Outcome::HeardThem);
         assert_eq!((row.snr_they_heard, row.snr_we_heard), (None, Some(-2.0)));
         assert!(row_notice("G0HOM", &row).contains("no GPS fix"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_receipt_after_the_next_probe_still_counts() {
+        // Seen on a 20 s drive test: every receipt landed after the next
+        // probe had gone out, so the map showed no both-ways points.
+        let dir = tmp();
+        let mut t = RangeTest::new();
+        t.start("G0HOM", 20, &dir, 100).unwrap();
+        t.due(100).unwrap();
+        let one = probe_env(1);
+        t.probe_sent(one.msg_id, 1, 100, Some((1.0, 2.0)));
+        t.due(120).unwrap();
+        let two = probe_env(2);
+        t.probe_sent(two.msg_id, 2, 120, Some((1.1, 2.0)));
+        // Probe 1's receipt lands in probe 2's window.
+        t.heard(&receipt(&one, -6.0), Some(9.0));
+        t.due(140).unwrap();
+        t.probe_sent(probe_env(3).msg_id, 3, 140, Some((1.2, 2.0)));
+        // Probe 2's receipt comes back two minutes late, behind a queue.
+        t.heard(&receipt(&two, -7.0), Some(8.0));
+        assert!(t.due(160).unwrap().2.is_empty(), "both still waiting");
+        let rows = t.due(280).unwrap().2;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].probe, 1);
+        assert_eq!(rows[0].outcome, Outcome::Both);
+        assert_eq!(rows[0].snr_they_heard, Some(-6.0));
+        let rows = t.due(300).unwrap().2;
+        assert_eq!((rows[0].probe, rows[0].outcome), (2, Outcome::Both));
+        t.stop().unwrap();
         let _ = std::fs::remove_dir_all(dir);
     }
 
