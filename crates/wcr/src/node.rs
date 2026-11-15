@@ -1378,7 +1378,7 @@ async fn range_test_loop(rt: Runtime) {
         let Some((far, n, done)) = rt.range_test.lock().due(now) else {
             continue;
         };
-        if let Some(row) = done {
+        for row in done {
             rt.irc
                 .notice_all(&crate::range_test::row_notice(&far, &row))
                 .await;
