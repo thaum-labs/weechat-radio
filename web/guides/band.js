@@ -91,6 +91,8 @@
   const rxTypeEl = document.getElementById("band-rx-type");
   const powerEl = document.getElementById("band-power");
   const rxPowerEl = document.getElementById("band-rx-power");
+  const txLoftEl = document.getElementById("band-tx-loft");
+  const rxLoftEl = document.getElementById("band-rx-loft");
   const profileEl = document.getElementById("band-profile");
   const overrideEl = document.getElementById("band-override");
   const wireEl = document.getElementById("band-hfwire");
@@ -867,7 +869,12 @@
   // antenna on a roof or mast as 0 dBi after feeder loss. -116 dBm is a clean FM signal; 10 dB above it
   // counts as "should work well". On a marginal path the signal margin sets
   // the headline: 20 dB or more covers the ground crowding the path.
+  // An antenna in the loft or indoors loses LOFT_DB through the roof, walls
+  // and house wiring (Tobias's 2m drives, 2026-11-15: a loft vertical at
+  // 10 m did 14-20 dB worse than an outdoor one would; a typical loft is
+  // taken as 12 dB).
   const FM_FLOOR_DBM = -116;
+  const LOFT_DB = 12;
   const GOOD_MARGIN_DB = 10;
   const SOLID_MARGIN_DB = 20;
   const PLENTY_NOTE = "Ground is close to the signal path in places; you have plenty of signal to cover it.";
@@ -877,8 +884,11 @@
     const g = typeSel && ANT_DBI[typeSel.value];
     return g != null ? g : ANT_DBI.vertical;
   }
+  function loftLossDb(el) {
+    return el && el.checked ? LOFT_DB : 0;
+  }
   function antGainsDbi() {
-    return antGainDbi(txTypeEl) + antGainDbi(rxTypeEl);
+    return antGainDbi(txTypeEl) + antGainDbi(rxTypeEl) - loftLossDb(txLoftEl) - loftLossDb(rxLoftEl);
   }
   // ITU-R P.526 single knife edge, nu = sqrt(2) x height above the line / F1.
   function knifeEdgeDb(nu) {
@@ -909,7 +919,11 @@
     let text;
     if (margin >= GOOD_MARGIN_DB) text = `Should work well: about ${margin} dB to spare at ${watts} W.`;
     else if (margin >= 0) text = `Should work, but may be noisy or drop out as you move: about ${margin} dB to spare at ${watts} W.`;
-    else text = `Unlikely at ${watts} W: about ${-margin} dB short. More antenna height helps most.`;
+    else {
+      const loft = (txLoftEl && txLoftEl.checked) || (rxLoftEl && rxLoftEl.checked);
+      const tip = loft ? "Getting the antenna out of the loft helps most." : "More antenna height helps most.";
+      text = `Unlikely at ${watts} W: about ${-margin} dB short. ${tip}`;
+    }
     return { watts, margin, text };
   }
 
@@ -2328,6 +2342,8 @@
     set("rxant", antennaParam(rxAntEl) !== "10" ? antennaParam(rxAntEl) : null);
     set("txtype", txTypeEl.value !== defaultType(txAntEl) ? txTypeEl.value : null);
     set("rxtype", rxTypeEl.value !== defaultType(rxAntEl) ? rxTypeEl.value : null);
+    set("txloft", txLoftEl && txLoftEl.checked ? "1" : null);
+    set("rxloft", rxLoftEl && rxLoftEl.checked ? "1" : null);
     set("hfant", hfAntenna() !== "dipole" ? hfAntenna() : null);
     set("rxhfant", rxHfAntenna() !== "dipole" ? rxHfAntenna() : null);
     const wireKey = (w) => (w && w.isWire() && w.orientation() !== "flat" ? w.orientation() : null);
@@ -2356,6 +2372,8 @@
     setType(rxTypeEl, defaultType(rxAntEl));
     setType(txTypeEl, q.get("txtype"));
     setType(rxTypeEl, q.get("rxtype"));
+    if (txLoftEl) txLoftEl.checked = q.get("txloft") === "1";
+    if (rxLoftEl) rxLoftEl.checked = q.get("rxloft") === "1";
     pickOption(powerEl, q.get("w"));
     pickOption(rxPowerEl, q.get("rw"));
     const pickHf = (sel, v) => {
@@ -2414,6 +2432,12 @@
     typeSel.addEventListener("change", () => {
       typeChanged(typeSel, sel);
       changed();
+    });
+  }
+  for (const el of [txLoftEl, rxLoftEl]) {
+    if (el) el.addEventListener("change", () => {
+      judgeTerrain();
+      requestCard({ refit: false });
     });
   }
   if (powerEl) powerEl.addEventListener("change", () => requestCard({ refit: false }));
