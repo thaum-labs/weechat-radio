@@ -4879,7 +4879,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                 };
             }
             let call = arg.to_ascii_uppercase();
-            if call.is_empty() || call.starts_with('#') {
+            if call.is_empty() || call.starts_with(['#', '&']) || Callsign::parse(&call).is_err() {
                 return format!(
                     "usage: /report CALL asks that station how well it hears you (a signal report, not weather); the answer comes back privately in the CALL tab. In a private tab, /report alone asks that station. /report auto on|off turns your own automatic answers on or off (now {})",
                     if cfg.lock().rf.auto_report { "on" } else { "off" }
@@ -4934,9 +4934,9 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             }
             let every = match sp.next() {
                 None => crate::range_test::DEFAULT_EVERY_S,
-                Some(v) => match v.parse::<u32>() {
-                    Ok(n) => n.clamp(crate::range_test::MIN_EVERY_S, crate::range_test::MAX_EVERY_S),
-                    Err(_) => return format!("{v} is not a number of seconds"),
+                Some(v) => match crate::range_test::parse_every(v) {
+                    Ok(n) => n,
+                    Err(e) => return e,
                 },
             };
             let dir = crate::proto::file::received_dir(&cfg.lock().store);

@@ -24,9 +24,32 @@ use std::path::{Path, PathBuf};
 
 /// Seconds between probes unless the user picks another gap.
 pub const DEFAULT_EVERY_S: u32 = 30;
-/// A probe and its receipt take a few seconds of air on VHF FM.
-pub const MIN_EVERY_S: u32 = 15;
+/// Shortest gap between probes. A probe and its receipt take a few seconds
+/// of air, but on a busy channel 20 s was too short: probes piled up and a
+/// Pi at the far end could not keep up (2026-11-15).
+pub const MIN_EVERY_S: u32 = 30;
 pub const MAX_EVERY_S: u32 = 600;
+/// Reads the seconds in `/rangetest CALL seconds`. Out-of-range values are
+/// refused, not clamped, so the user sees why.
+pub fn parse_every(v: &str) -> Result<u32, String> {
+    let Ok(n) = v.trim().parse::<u32>() else {
+        return Err(format!(
+            "{v} is not a number of seconds. /rangetest CALL [seconds], {MIN_EVERY_S}-{MAX_EVERY_S}"
+        ));
+    };
+    if n < MIN_EVERY_S {
+        return Err(format!(
+            "{n} s is too short: a range test needs at least {MIN_EVERY_S} s between probes so both stations keep up"
+        ));
+    }
+    if n > MAX_EVERY_S {
+        return Err(format!(
+            "{n} s is too long: at most {MAX_EVERY_S} s between probes"
+        ));
+    }
+    Ok(n)
+}
+
 /// How long a probe waits for its receipt before it is logged. A receipt can
 /// land long after the next probe has gone out: on a 20 s drive test the far
 /// end's receipts queued up and came back 25-150 s late. The receipt still
@@ -480,30 +503,30 @@ mod tests {
 
     #[test]
     fn a_receipt_after_the_next_probe_still_counts() {
-        // Seen on a 20 s drive test: every receipt landed after the next
-        // probe had gone out, so the map showed no both-ways points.
+        // Seen on a 20 s drive test (now 30 s at least): every receipt landed
+        // after the next probe had gone out, so the map showed no both-ways points.
         let dir = tmp();
         let mut t = RangeTest::new();
-        t.start("G0HOM", 20, &dir, 100).unwrap();
+        t.start("G0HOM", 30, &dir, 100).unwrap();
         t.due(100).unwrap();
         let one = probe_env(1);
         t.probe_sent(one.msg_id, 1, 100, Some((1.0, 2.0)));
-        t.due(120).unwrap();
+        t.due(130).unwrap();
         let two = probe_env(2);
-        t.probe_sent(two.msg_id, 2, 120, Some((1.1, 2.0)));
+        t.probe_sent(two.msg_id, 2, 130, Some((1.1, 2.0)));
         // Probe 1's receipt lands in probe 2's window.
         t.heard(&receipt(&one, -6.0), Some(9.0));
-        t.due(140).unwrap();
-        t.probe_sent(probe_env(3).msg_id, 3, 140, Some((1.2, 2.0)));
+        t.due(160).unwrap();
+        t.probe_sent(probe_env(3).msg_id, 3, 160, Some((1.2, 2.0)));
         // Probe 2's receipt comes back two minutes late, behind a queue.
         t.heard(&receipt(&two, -7.0), Some(8.0));
-        assert!(t.due(160).unwrap().2.is_empty(), "both still waiting");
+        assert!(t.due(190).unwrap().2.is_empty(), "both still waiting");
         let rows = t.due(280).unwrap().2;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].probe, 1);
         assert_eq!(rows[0].outcome, Outcome::Both);
         assert_eq!(rows[0].snr_they_heard, Some(-6.0));
-        let rows = t.due(300).unwrap().2;
+        let rows = t.due(310).unwrap().2;
         assert_eq!((rows[0].probe, rows[0].outcome), (2, Outcome::Both));
         t.stop().unwrap();
         let _ = std::fs::remove_dir_all(dir);
@@ -527,6 +550,15 @@ mod tests {
         let text = std::fs::read_to_string(&csv).unwrap();
         assert!(text.lines().nth(1).unwrap().contains(",1,none,,,G0HOM,"));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn probe_gap_is_at_least_30_seconds() {
+        assert_eq!(parse_every("30"), Ok(30));
+        assert_eq!(parse_every("600"), Ok(600));
+        assert!(parse_every("20").unwrap_err().contains("at least 30 s"));
+        assert!(parse_every("601").is_err());
+        assert!(parse_every("abc").unwrap_err().contains("not a number"));
     }
 
     #[test]

@@ -271,17 +271,17 @@ const COMMANDS: &[Cmd] = &[
         usage: "/report [CALL] | /report auto on|off",
         summary: "Signal report: how well CALL (or this private tab) hears you (not weather)",
         args: &[],
-        send_bare: true,
+        send_bare: false,
     },
     Cmd {
         name: "rangetest",
-        usage: "/rangetest [CALL [seconds] | off]",
-        summary: "Range test: probe CALL every 30 s and log GPS position and signal both ways",
+        usage: "/rangetest CALL [seconds] | off",
+        summary: "Range test: probe CALL every 30 s (or 30-600 s) and log GPS position and signal both ways",
         args: &[Arg {
             value: "off",
             hint: "Stop the range test and keep its log",
         }],
-        send_bare: true,
+        send_bare: false,
     },
     Cmd {
         name: "file",
@@ -528,8 +528,55 @@ pub fn line_error(raw: &str, channel: &str) -> Option<String> {
     match head.as_str() {
         "join" | "j" => channel_limit_error(&tail),
         "invite" | "prio" | "priority" | "part" | "leave" => channel_limit_error(channel),
+        "report" => report_error(&tail, channel),
+        "rangetest" => rangetest_error(&tail),
         _ => None,
     }
+}
+
+const REPORT_USAGE: &str =
+    "/report CALL asks that station for a signal report (in a private tab, /report alone asks that station). /report auto on|off";
+const RANGETEST_USAGE: &str =
+    "/rangetest CALL [seconds] probes CALL every 30 s (or 30-600 s). /rangetest off stops it";
+
+fn is_private_tab(channel: &str) -> bool {
+    !channel.is_empty() && !channel.starts_with(['#', '&'])
+}
+
+fn not_a_callsign(word: &str) -> bool {
+    word.starts_with(['#', '&']) || crate::proto::Callsign::parse(word).is_err()
+}
+
+/// `/report` needs a station: a callsign, or a private tab to ask.
+fn report_error(tail: &str, channel: &str) -> Option<String> {
+    let mut words = tail.split_whitespace();
+    match words.next() {
+        None if is_private_tab(channel) => None,
+        None => Some(format!("who to ask? {REPORT_USAGE}")),
+        Some(a) if a.eq_ignore_ascii_case("auto") => match words.next() {
+            Some(v) if v.eq_ignore_ascii_case("on") || v.eq_ignore_ascii_case("off") => None,
+            _ => Some(format!("on or off? {REPORT_USAGE}")),
+        },
+        Some(call) if not_a_callsign(call) => {
+            Some(format!("{call} is not a callsign. {REPORT_USAGE}"))
+        }
+        Some(_) => None,
+    }
+}
+
+/// `/rangetest CALL [seconds]` needs a callsign and a gap of 30-600 s.
+/// Bare `/rangetest` only shows the running test, so it may go.
+fn rangetest_error(tail: &str) -> Option<String> {
+    let mut words = tail.split_whitespace();
+    let call = words.next()?;
+    if call.eq_ignore_ascii_case("off") || call.eq_ignore_ascii_case("stop") {
+        return None;
+    }
+    if not_a_callsign(call) {
+        return Some(format!("{call} is not a callsign. {RANGETEST_USAGE}"));
+    }
+    let secs = words.next()?;
+    crate::range_test::parse_every(secs).err()
 }
 
 pub fn normalize_channel(raw: &str) -> String {
@@ -920,7 +967,44 @@ mod tests {
             vec!["RADIO report auto off"]
         );
         let s = suggestions("/rep");
-        assert!(s.iter().any(|x| x.label == "/report" && x.send_now));
+        // Picking /report waits for a callsign; Enter in a private tab asks that station.
+        assert!(s.iter().any(|x| x.label == "/report" && !x.send_now));
+    }
+
+    #[test]
+    fn incomplete_report_and_rangetest_are_refused() {
+        // /report needs a station.
+        assert!(line_error("/report", "#bulletin")
+            .unwrap()
+            .contains("who to ask"));
+        assert!(line_error("/report", "G4ABC").is_none());
+        assert!(line_error("/report #net", "#bulletin")
+            .unwrap()
+            .contains("not a callsign"));
+        assert!(line_error("/report auto", "#bulletin")
+            .unwrap()
+            .contains("on or off"));
+        assert!(line_error("/report auto off", "#bulletin").is_none());
+        assert!(line_error("/report m0xyz", "#bulletin").is_none());
+        assert!(line_error("/radio report", "#bulletin").is_some());
+        // /rangetest needs a callsign and at least 30 s.
+        assert!(line_error("/rangetest", "#bulletin").is_none());
+        assert!(line_error("/rangetest off", "#bulletin").is_none());
+        assert!(line_error("/rangetest #x", "#bulletin")
+            .unwrap()
+            .contains("not a callsign"));
+        assert!(line_error("/rangetest M7TJF 20", "#bulletin")
+            .unwrap()
+            .contains("at least 30 s"));
+        assert!(line_error("/rangetest M7TJF ten", "#bulletin").is_some());
+        assert!(line_error("/rangetest M7TJF", "#bulletin").is_none());
+        assert!(line_error("/rangetest M7TJF 30", "#bulletin").is_none());
+        // Picking either from the list waits for the rest of the line.
+        for c in ["/rangetest", "/report"] {
+            assert!(suggestions(c)
+                .iter()
+                .any(|x| x.label == c && !x.send_now && x.insert.ends_with(' ')));
+        }
     }
 
     #[test]
