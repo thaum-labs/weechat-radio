@@ -1375,6 +1375,15 @@ async fn range_test_loop(rt: Runtime) {
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
         let now = chrono::Utc::now().timestamp();
+        // A new probe goes only once the last one has left for the radio.
+        // A busy channel (carrier sense waiting out hiss) used to let probes
+        // pile up in the air queue: receipts came back minutes late, probes
+        // kept going after `/rangetest off`, and the mail gateway ask could
+        // not get on the air.
+        let last = rt.range_test.lock().last_probe();
+        if last.is_some_and(|id| rt.air().is_some_and(|a| a.on_its_way(id))) {
+            continue;
+        }
         let Some((far, n, done)) = rt.range_test.lock().due(now) else {
             continue;
         };
@@ -4899,6 +4908,13 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                 });
             }
             if arg.eq_ignore_ascii_case("off") || arg.eq_ignore_ascii_case("stop") {
+                // A probe still waiting for the radio is not sent after off.
+                let ids = rt.range_test.lock().pending_ids();
+                if let Some(air) = rt.air() {
+                    for id in ids {
+                        air.cancel(id);
+                    }
+                }
                 return rt
                     .range_test
                     .lock()

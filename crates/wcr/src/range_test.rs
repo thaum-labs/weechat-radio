@@ -192,6 +192,20 @@ impl RangeTest {
         Some(summary(&s))
     }
 
+    /// Probes sent and not yet logged, so `/rangetest off` can take back the
+    /// ones still waiting for the radio.
+    pub fn pending_ids(&self) -> Vec<MsgId> {
+        self.session
+            .as_ref()
+            .map(|s| s.pending.iter().map(|p| p.id).collect())
+            .unwrap_or_default()
+    }
+
+    /// The newest probe sent, if it is not logged yet.
+    pub fn last_probe(&self) -> Option<MsgId> {
+        self.session.as_ref()?.pending.back().map(|p| p.id)
+    }
+
     /// A short line on the test, for `/rangetest` with no argument.
     pub fn status(&self) -> Option<String> {
         self.session.as_ref().map(summary)
