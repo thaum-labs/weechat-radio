@@ -1538,6 +1538,10 @@ details.maplibregl-ctrl-attrib:not([open]) {
 .band-station .band-hfwire .band-hfwire-btn { flex: 1; min-width: 0; }
 .band-station .band-hfwire .band-hfwire-btn i { margin-left: auto; }
 .band-station-name { grid-row: 1 / span 3; align-self: start; padding-top: 5px; }
+/* Loft / indoors tick: its own line under height and power, lined up
+   with the pickers. */
+.band-station .band-loft { grid-column: 2 / 4; margin-left: calc(6em + 6px); font-size: 12px; cursor: pointer; }
+.band-station .band-loft input { margin: 0; accent-color: var(--orange); }
 /* Phones: the station name goes on its own line above its pickers, so the
    pickers get the full width. */
 @media (max-width: 600px) {
@@ -1553,6 +1557,7 @@ details.maplibregl-ctrl-attrib:not([open]) {
   .band-station .band-hfwire { grid-column: 1 / 3; justify-self: start; }
   .band-stations[data-range="hf"] .band-station .band-hfwire { grid-column: 1 / 3; grid-row: 3; }
   .band-station .band-hfwire-notes { grid-column: 1 / 3; }
+  .band-station .band-loft { grid-column: 1 / 3; margin-left: 0; }
   .band-station + .band-station { margin-top: 8px; }
 }
 @media (min-width: 861px) {

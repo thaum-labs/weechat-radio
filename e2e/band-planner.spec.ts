@@ -350,6 +350,26 @@ test("each end picks its own VHF/UHF antenna type, which sets the gain", async (
   await expect(page.locator("#band-tx-ant")).toHaveValue("mobile");
 });
 
+test("an antenna in the loft or indoors costs 12 dB, per end and in links", async ({ page }) => {
+  await mockServices(page, () => 100);
+  await open(page, "?tx=46.2,6.14&rx=46.1,6.25&txant=6&rxant=1.5&w=50&rw=50");
+  const heard = page.locator(".band-heard li").first();
+  await expect(heard).toContainText("13 dB to spare");
+  await page.locator("#band-tx-loft").check();
+  await expect(heard).toContainText("1 dB to spare");
+  await expect(page).toHaveURL(/txloft=1/);
+  await page.locator("#band-rx-loft").check();
+  await expect(heard).toContainText("11 dB short");
+  await expect(page).toHaveURL(/rxloft=1/);
+  await page.locator("#band-tx-loft").uncheck();
+  await expect(heard).toContainText("1 dB to spare");
+  await expect(page).not.toHaveURL(/txloft/);
+  // A shared link brings the tick back.
+  await open(page, "?tx=46.2,6.14&rx=46.1,6.25&txant=6&rxant=1.5&w=50&rw=50&rxloft=1");
+  await expect(page.locator("#band-rx-loft")).toBeChecked();
+  await expect(page.locator("#band-tx-loft")).not.toBeChecked();
+});
+
 test("each end has its own power and the card says who hears whom", async ({ page }) => {
   await mockServices(page, () => 100);
   await open(page, "?tx=46.2,6.14&rx=46.1,6.25&txant=6&rxant=1.5&w=50&rw=1");
