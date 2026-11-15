@@ -23,7 +23,7 @@ async fn main() {
 fn main() {
     init_tracing();
     let cli = Cli::parse();
-    let gui = matches!(cli.cmd, Command::Gui);
+    let gui = matches!(cli.cmd, Command::Gui { .. });
     let run = move || {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -145,9 +145,12 @@ async fn real_main(cli: Cli) -> Result<()> {
                 std::process::exit(1);
             }
         }
-        Command::Gui => {
+        Command::Gui { ui_layout } => {
             #[cfg(feature = "desktop")]
             {
+                if let Some(layout) = &ui_layout {
+                    wcr::gui::set_layout_override(layout);
+                }
                 wcr::gui::run()?;
             }
             // The Linux release `wcr` is headless (it must start on a Pi
@@ -164,10 +167,12 @@ async fn real_main(cli: Cli) -> Result<()> {
                             .into(),
                     ));
                 };
-                let status = std::process::Command::new(&gui)
-                    .arg("-c")
-                    .arg(&cfg_path)
-                    .status()?;
+                let mut cmd = std::process::Command::new(&gui);
+                cmd.arg("-c").arg(&cfg_path);
+                if let Some(layout) = &ui_layout {
+                    cmd.arg("--ui-layout").arg(layout);
+                }
+                let status = cmd.status()?;
                 if !status.success() {
                     std::process::exit(status.code().unwrap_or(1));
                 }

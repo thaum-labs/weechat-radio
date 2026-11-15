@@ -23,7 +23,10 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
+mod modem73;
 mod software;
+
+pub use modem73::set_layout_override;
 
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
@@ -73,8 +76,13 @@ pub fn run() -> Result<()> {
         options,
         Box::new(|cc| {
             apply_fonts(&cc.egui_ctx);
-            apply_visuals(&cc.egui_ctx);
-            Ok(Box::new(GuiApp::new()))
+            let app = GuiApp::new();
+            if app.layout == modem73::Layout::Modem73 {
+                modem73::apply_visuals(&cc.egui_ctx);
+            } else {
+                apply_visuals(&cc.egui_ctx);
+            }
+            Ok(Box::new(app))
         }),
     )
     .map_err(|e| Error::Msg(e.to_string()))
@@ -753,6 +761,10 @@ struct GuiApp {
     traffic: Vec<serde_json::Value>,
     traffic_last: u64,
     last_traffic_poll: Instant,
+    /// `[ui] layout`: the classic window or the modem73-style one.
+    layout: modem73::Layout,
+    /// State only the modem73 layout uses (ACTIVITY samples, ON AIR filter).
+    m73: modem73::State,
 }
 
 /// A copy-to save or confirm, answered off the UI thread.
@@ -879,6 +891,8 @@ impl GuiApp {
             traffic: Vec::new(),
             traffic_last: 0,
             last_traffic_poll: Instant::now() - Duration::from_secs(5),
+            layout: modem73::Layout::chosen(),
+            m73: modem73::State::default(),
         };
         app.install_tray();
         crate::service::soften_keep_alive();
@@ -1878,6 +1892,11 @@ impl eframe::App for GuiApp {
             self.palette_i = 0;
         }
 
+        if self.layout == modem73::Layout::Modem73 {
+            self.update_modem73(ctx, &suggestions, enter);
+            return;
+        }
+
         egui::TopBottomPanel::top("top")
             .frame(chrome(TOPBAR))
             .show(ctx, |ui| {
@@ -1957,91 +1976,7 @@ impl eframe::App for GuiApp {
         self.software.window(ctx);
 
         if !self.configured() || self.show_setup {
-            self.poll_hardware_probe();
-            let reopened = self.configured();
-            // Save and start stays on screen however long the form is (#232).
-            egui::TopBottomPanel::bottom("setup_actions")
-                .frame(chrome(SHELL))
-                .show(ctx, |ui| {
-                    ui.add_space(8.0);
-                    ui.add_space(16.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(20.0);
-                        if ui
-                            .add(
-                                egui::Button::new(
-                                    RichText::new("Save and start").color(ACCENT).monospace(),
-                                )
-                                .fill(Color32::TRANSPARENT)
-                                .stroke(hairline(ACCENT)),
-                            )
-                            .clicked()
-                        {
-                            self.save_setup();
-                            if self.error.is_empty() {
-                                if reopened {
-                                    // The node reads wcr.toml at start: restart it on the new path.
-                                    self.stop_station();
-                                    self.show_setup = false;
-                                }
-                                self.auto_started = true;
-                                self.start_station();
-                            }
-                        }
-                        if reopened
-                            && ui
-                                .add(
-                                    egui::Button::new(RichText::new("Back").color(DIM).monospace())
-                                        .fill(Color32::TRANSPARENT)
-                                        .stroke(hairline(LINE)),
-                                )
-                                .clicked()
-                        {
-                            self.error.clear();
-                            self.leave_setup();
-                        }
-                    });
-                    if !self.error.is_empty() {
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            ui.add_space(20.0);
-                            ui.label(RichText::new(&self.error).color(ORANGE));
-                        });
-                    }
-                    ui.add_space(8.0);
-                });
-            egui::CentralPanel::default()
-                .frame(chrome(SHELL))
-                .show(ctx, |ui| {
-                    ui.add_space(8.0);
-                    let setup_meta = if reopened {
-                        format!("STATION · {}", version_label())
-                    } else {
-                        format!("FIRST RUN · {}", version_label())
-                    };
-                    module_title(ui, "SETUP", &setup_meta);
-                    ui.add_space(12.0);
-                    egui::ScrollArea::vertical()
-                        .id_salt("setup_scroll")
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            // Two columns when there is room: who you are and the
-                            // chosen radio's settings left, the radio list right (#232).
-                            if ui.available_width() >= SETUP_TWO_COLUMNS_PX {
-                                ui.columns(2, |cols| {
-                                    self.setup_identity_ui(&mut cols[0]);
-                                    cols[0].add_space(8.0);
-                                    self.setup_details_ui(&mut cols[0]);
-                                    self.setup_radio_list_ui(&mut cols[1]);
-                                });
-                            } else {
-                                self.setup_identity_ui(ui);
-                                self.setup_radio_list_ui(ui);
-                                self.setup_details_ui(ui);
-                            }
-                            ui.add_space(12.0);
-                        });
-                });
+            self.paint_setup(ctx, SHELL);
             return;
         }
 
@@ -2329,48 +2264,7 @@ impl eframe::App for GuiApp {
         self.paint_mail_send(ctx);
         self.paint_mail_get(ctx);
         self.paint_mail_new(ctx);
-        if self.confirm_radio {
-            egui::Window::new("Switch to radio?")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .frame(chrome(TOPBAR))
-                .show(ctx, |ui| {
-                    ui.label(
-                        RichText::new("Radio mode drops hub chat. Messages stay on RF. The map still updates if telemetry is on.")
-                            .color(FG)
-                            .monospace(),
-                    );
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add(
-                                egui::Button::new(
-                                    RichText::new("Confirm").color(ORANGE).monospace(),
-                                )
-                                .fill(Color32::TRANSPARENT)
-                                .stroke(hairline(ORANGE)),
-                            )
-                            .clicked()
-                        {
-                            self.send_cmd("/mode radio confirm");
-                            self.confirm_radio = false;
-                        }
-                        if ui
-                            .add(
-                                egui::Button::new(
-                                    RichText::new("Cancel").color(PURPLE).monospace(),
-                                )
-                                .fill(Color32::TRANSPARENT)
-                                .stroke(hairline(LINE)),
-                            )
-                            .clicked()
-                        {
-                            self.confirm_radio = false;
-                        }
-                    });
-                });
-        }
+        self.paint_confirm_radio(ctx);
 
         let palette_h = if suggestions.is_empty() {
             0.0
@@ -2910,62 +2804,7 @@ impl eframe::App for GuiApp {
                             });
                     });
                 });
-                // The command list sits on an opaque panel right above the
-                // input, drawn over the chat. Inline in the layout, the chat
-                // painted through it (QA v0.1.109: /snr /wx /report unreadable).
-                if let (Some(input), false) = (input_rect, suggestions.is_empty()) {
-                    let room = (input.top() - panel_top - 8.0).max(28.0);
-                    let height = palette_h.min(room);
-                    // Same edges as the input box (QA v0.1.110: 4–6 px off).
-                    let width = input.width() - 2.0 * PALETTE_PAD;
-                    let mut pick = None;
-                    egui::Area::new(egui::Id::new("slash_palette_popup"))
-                        .order(egui::Order::Foreground)
-                        .fixed_pos(egui::pos2(input.left(), input.top() - height - 4.0))
-                        .show(ui.ctx(), |ui| {
-                            egui::Frame::none()
-                                .fill(SHELL)
-                                .stroke(hairline(ACCENT))
-                                .inner_margin(egui::Margin::same(PALETTE_PAD))
-                                .show(ui, |ui| {
-                                    ui.set_width(width);
-                                    ui.set_max_height(height);
-                                    ui.label(
-                                        RichText::new("tab complete  ·  ↑↓ pick  ·  enter run")
-                                            .color(DIM)
-                                            .small()
-                                            .monospace(),
-                                    );
-                                    egui::ScrollArea::vertical()
-                                        .id_salt("slash_palette")
-                                        .max_height((height - 28.0).max(8.0))
-                                        .show(ui, |ui| {
-                                            // One line per command. A narrow window cuts
-                                            // the hint short (hover shows it) instead of
-                                            // wrapping it under the names (QA v0.1.111).
-                                            ui.style_mut().wrap_mode =
-                                                Some(egui::TextWrapMode::Truncate);
-                                            for (i, s) in suggestions.iter().enumerate() {
-                                                let selected = i == self.palette_i;
-                                                let row = format!("{:<22}  {}", s.label, s.hint);
-                                                let color = if selected { ORANGE } else { PURPLE };
-                                                let resp = ui
-                                                    .selectable_label(
-                                                        selected,
-                                                        RichText::new(row).color(color).monospace(),
-                                                    )
-                                                    .on_hover_text(&s.hint);
-                                                if resp.clicked() {
-                                                    pick = Some(s.clone());
-                                                }
-                                            }
-                                        });
-                                });
-                        });
-                    if let Some(s) = pick {
-                        self.apply_suggestion(&s, true);
-                    }
-                }
+                self.paint_slash_palette(ui, input_rect, panel_top, &suggestions, palette_h);
             });
         self.sync_tray();
         paint_scan(ctx);
@@ -2973,6 +2812,209 @@ impl eframe::App for GuiApp {
 }
 
 impl GuiApp {
+    /// The setup page: Save and start bar and the form (first run, or the
+    /// setup link). Both layouts show it.
+    fn paint_setup(&mut self, ctx: &egui::Context, fill: Color32) {
+        self.poll_hardware_probe();
+        let reopened = self.configured();
+        // Save and start stays on screen however long the form is (#232).
+        egui::TopBottomPanel::bottom("setup_actions")
+            .frame(chrome(fill))
+            .show(ctx, |ui| {
+                ui.add_space(8.0);
+                ui.add_space(16.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(20.0);
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new("Save and start").color(ACCENT).monospace(),
+                            )
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(hairline(ACCENT)),
+                        )
+                        .clicked()
+                    {
+                        self.save_setup();
+                        if self.error.is_empty() {
+                            if reopened {
+                                // The node reads wcr.toml at start: restart it on the new path.
+                                self.stop_station();
+                                self.show_setup = false;
+                            }
+                            self.auto_started = true;
+                            self.start_station();
+                        }
+                    }
+                    if reopened
+                        && ui
+                            .add(
+                                egui::Button::new(RichText::new("Back").color(DIM).monospace())
+                                    .fill(Color32::TRANSPARENT)
+                                    .stroke(hairline(LINE)),
+                            )
+                            .clicked()
+                    {
+                        self.error.clear();
+                        self.leave_setup();
+                    }
+                });
+                if !self.error.is_empty() {
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(20.0);
+                        ui.label(RichText::new(&self.error).color(ORANGE));
+                    });
+                }
+                ui.add_space(8.0);
+            });
+        egui::CentralPanel::default()
+            .frame(chrome(fill))
+            .show(ctx, |ui| {
+                ui.add_space(8.0);
+                let setup_meta = if reopened {
+                    format!("STATION · {}", version_label())
+                } else {
+                    format!("FIRST RUN · {}", version_label())
+                };
+                module_title(ui, "SETUP", &setup_meta);
+                ui.add_space(12.0);
+                egui::ScrollArea::vertical()
+                    .id_salt("setup_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        // Two columns when there is room: who you are and the
+                        // chosen radio's settings left, the radio list right (#232).
+                        if ui.available_width() >= SETUP_TWO_COLUMNS_PX {
+                            ui.columns(2, |cols| {
+                                self.setup_identity_ui(&mut cols[0]);
+                                cols[0].add_space(8.0);
+                                self.setup_details_ui(&mut cols[0]);
+                                self.setup_radio_list_ui(&mut cols[1]);
+                            });
+                        } else {
+                            self.setup_identity_ui(ui);
+                            self.setup_radio_list_ui(ui);
+                            self.setup_details_ui(ui);
+                        }
+                        ui.add_space(12.0);
+                    });
+            });
+    }
+
+    /// "Switch to radio?" after picking radio mode.
+    fn paint_confirm_radio(&mut self, ctx: &egui::Context) {
+        if !self.confirm_radio {
+            return;
+        }
+        egui::Window::new("Switch to radio?")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .frame(chrome(TOPBAR))
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new("Radio mode drops hub chat. Messages stay on RF. The map still updates if telemetry is on.")
+                        .color(FG)
+                        .monospace(),
+                );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new("Confirm").color(ORANGE).monospace(),
+                            )
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(hairline(ORANGE)),
+                        )
+                        .clicked()
+                    {
+                        self.send_cmd("/mode radio confirm");
+                        self.confirm_radio = false;
+                    }
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new("Cancel").color(PURPLE).monospace(),
+                            )
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(hairline(LINE)),
+                        )
+                        .clicked()
+                    {
+                        self.confirm_radio = false;
+                    }
+                });
+            });
+    }
+
+    /// The command list on an opaque panel right above the input, drawn
+    /// over the chat. Inline in the layout, the chat painted through it
+    /// (QA v0.1.109: /snr /wx /report unreadable).
+    fn paint_slash_palette(
+        &mut self,
+        ui: &mut egui::Ui,
+        input_rect: Option<egui::Rect>,
+        panel_top: f32,
+        suggestions: &[crate::slash::Suggestion],
+        palette_h: f32,
+    ) {
+        let (Some(input), false) = (input_rect, suggestions.is_empty()) else {
+            return;
+        };
+        let room = (input.top() - panel_top - 8.0).max(28.0);
+        let height = palette_h.min(room);
+        // Same edges as the input box (QA v0.1.110: 4–6 px off).
+        let width = input.width() - 2.0 * PALETTE_PAD;
+        let mut pick = None;
+        egui::Area::new(egui::Id::new("slash_palette_popup"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(egui::pos2(input.left(), input.top() - height - 4.0))
+            .show(ui.ctx(), |ui| {
+                egui::Frame::none()
+                    .fill(SHELL)
+                    .stroke(hairline(ACCENT))
+                    .inner_margin(egui::Margin::same(PALETTE_PAD))
+                    .show(ui, |ui| {
+                        ui.set_width(width);
+                        ui.set_max_height(height);
+                        ui.label(
+                            RichText::new("tab complete  ·  ↑↓ pick  ·  enter run")
+                                .color(DIM)
+                                .small()
+                                .monospace(),
+                        );
+                        egui::ScrollArea::vertical()
+                            .id_salt("slash_palette")
+                            .max_height((height - 28.0).max(8.0))
+                            .show(ui, |ui| {
+                                // One line per command. A narrow window cuts
+                                // the hint short (hover shows it) instead of
+                                // wrapping it under the names (QA v0.1.111).
+                                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                                for (i, s) in suggestions.iter().enumerate() {
+                                    let selected = i == self.palette_i;
+                                    let row = format!("{:<22}  {}", s.label, s.hint);
+                                    let color = if selected { ORANGE } else { PURPLE };
+                                    let resp = ui
+                                        .selectable_label(
+                                            selected,
+                                            RichText::new(row).color(color).monospace(),
+                                        )
+                                        .on_hover_text(&s.hint);
+                                    if resp.clicked() {
+                                        pick = Some(s.clone());
+                                    }
+                                }
+                            });
+                    });
+            });
+        if let Some(s) = pick {
+            self.apply_suggestion(&s, true);
+        }
+    }
+
     fn sync_tray(&mut self) {
         if self.tray.is_none() {
             return;
