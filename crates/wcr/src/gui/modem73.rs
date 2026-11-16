@@ -61,7 +61,12 @@ const M_FG: Color32 = Color32::from_rgb(0xe8, 0xe0, 0xe4);
 const M_DIM: Color32 = Color32::from_rgb(0x6e, 0x66, 0x6a);
 const M_MUTE: Color32 = Color32::from_rgb(0x8a, 0x82, 0x86);
 const M_LINE: Color32 = Color32::from_rgb(0x3a, 0x32, 0x36);
-const M_SLASH: Color32 = Color32::from_rgb(0x7a, 0x00, 0xff);
+/// The header's `///`: the website's --accent, --orange and --purple.
+const LOGO_SLASHES: [Color32; 3] = [
+    Color32::from_rgb(0x7d, 0x9b, 0xff),
+    Color32::from_rgb(0xff, 0x7a, 0x3d),
+    Color32::from_rgb(0xc4, 0xb5, 0xfd),
+];
 const M_GREEN: Color32 = Color32::from_rgb(0x18, 0xfc, 0x7c);
 const M_RED: Color32 = Color32::from_rgb(0xff, 0x4d, 0x4d);
 const M_GOLD: Color32 = Color32::from_rgb(0xe6, 0xb8, 0x00);
@@ -587,13 +592,15 @@ impl GuiApp {
         let sep = |ui: &mut egui::Ui| {
             ui.label(text("│", M_LINE));
         };
-        ui.label(
-            RichText::new("///")
-                .color(M_SLASH)
-                .font(mono(14.0))
-                .strong()
-                .extra_letter_spacing(3.0),
-        );
+        // Three slashes in weechat-radio's own colours (accent, orange,
+        // purple, as on the website), not modem73's purple logo.
+        let mut logo = egui::text::LayoutJob::default();
+        for c in LOGO_SLASHES {
+            let mut f = egui::TextFormat::simple(mono(14.0), c);
+            f.extra_letter_spacing = 3.0;
+            logo.append("/", 0.0, f);
+        }
+        ui.label(logo);
         ui.add_space(4.0);
         ui.label(
             RichText::new("WEECHAT RADIO")
