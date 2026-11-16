@@ -36,7 +36,7 @@ WeeChat is a trademark of Sébastien Helleu. This project is independent.
 
 ## Screenshots
 
-Desktop app (Windows, v1.0.16) — animated overview, then stills. Dark UI, readable on GitHub light and dark. Click any still for full size.
+Desktop app (v1.0.18-rc9) — animated overview, then stills. Dark UI, readable on GitHub light and dark. Click any still for full size.
 
 <p align="center">
   <a href="docs/screenshots/desktop-live-chat.png">
@@ -52,10 +52,10 @@ Desktop app (Windows, v1.0.16) — animated overview, then stills. Dark UI, read
   <tr>
     <td align="center" valign="top" width="50%">
       <a href="docs/screenshots/desktop-live-chat.png">
-        <img src="docs/screenshots/desktop-live-chat.png" alt="Desktop live chat on #bulletin with station panel" width="480" />
+        <img src="docs/screenshots/desktop-live-chat.png" alt="Desktop live chat on #bulletin with STATION and SIGNAL panels" width="480" />
       </a>
       <br />
-      <sub><b>Live chat</b> — <code>#bulletin</code> with station panel and <code>[ok]</code> / <code>[rf]</code> marks</sub>
+      <sub><b>Live chat</b> — <code>#bulletin</code> with the STATION and SIGNAL panels, and <code>[ok]</code> / <code>[rf]</code> marks</sub>
     </td>
     <td align="center" valign="top" width="50%">
       <a href="docs/screenshots/desktop-email.png">
