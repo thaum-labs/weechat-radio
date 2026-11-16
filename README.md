@@ -36,7 +36,7 @@ WeeChat is a trademark of Sébastien Helleu. This project is independent.
 
 ## Screenshots
 
-Desktop app (v1.0.18-rc9) — animated overview, then stills. Dark UI, readable on GitHub light and dark. Click any still for full size.
+Desktop app (v1.0.18) — animated overview, then stills. Dark UI, readable on GitHub light and dark. Click any still for full size.
 
 <p align="center">
   <a href="docs/screenshots/desktop-live-chat.png">
