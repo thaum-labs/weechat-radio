@@ -57,7 +57,7 @@ pub enum Command {
     Help { topic: Option<String> },
     /// Desktop window: setup, station, and chat
     Gui {
-        /// Window layout for this run: `classic` or `modem73` (overrides
+        /// Window layout for this run: `modem73` (default) or `classic` (overrides
         /// `[ui] layout`; `WCR_UI_LAYOUT` does the same)
         #[arg(long, value_name = "LAYOUT")]
         ui_layout: Option<String>,

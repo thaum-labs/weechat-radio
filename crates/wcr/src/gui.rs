@@ -5326,6 +5326,8 @@ impl GuiApp {
         } else {
             crate::mail::hint_line(&preview, mode, preset, 250)
         };
+        // Breathing room between the message box and the Send row.
+        ui.add_space(8.0);
         ui.horizontal(|ui| {
             ui.label(RichText::new(hint).color(DIM).monospace());
             if ui.add(hair_btn("Send", ORANGE)).clicked() && !self.mail_hold {
@@ -6203,7 +6205,9 @@ impl GuiApp {
             }
         }
         // The generic setups fold away so the radio list fits a laptop screen (#232).
-        let other_open = self.radio.is_none() && matches!(self.path, 1 | 2 | 3 | 5);
+        // The modem73 layout always starts with them open (Tobias, rc8).
+        let other_open = self.layout == modem73::Layout::Modem73
+            || (self.radio.is_none() && matches!(self.path, 1 | 2 | 3 | 5));
         egui::CollapsingHeader::new(RichText::new("Other setups").color(DIM).monospace())
             .id_salt("setup_other")
             .default_open(other_open)

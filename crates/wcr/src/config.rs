@@ -575,7 +575,7 @@ pub struct UiConfig {
     /// Show the SNR next to each line received by radio (`/snr on|off`).
     #[serde(default = "default_true")]
     pub show_snr: bool,
-    /// Desktop app layout: `classic` (default) or `modem73`. `wcr-gui
+    /// Desktop app layout: `modem73` (default) or `classic`. `wcr-gui
     /// --ui-layout` or `WCR_UI_LAYOUT` override it for one run.
     pub layout: String,
 }
@@ -589,7 +589,7 @@ impl Default for UiConfig {
             bell: false,
             boot: true,
             show_snr: true,
-            layout: "classic".into(),
+            layout: "modem73".into(),
         }
     }
 }
