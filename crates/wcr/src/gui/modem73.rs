@@ -32,13 +32,14 @@ impl Layout {
         }
     }
 
-    /// Flag, then environment, then wcr.toml; anything unknown is classic.
+    /// Flag, then environment, then wcr.toml; anything unknown is modem73
+    /// (the default since v1.0.18-rc8).
     fn resolve(flag: Option<&str>, env: Option<&str>, config: &str) -> Self {
         [flag, env, Some(config)]
             .into_iter()
             .flatten()
             .find_map(Self::parse)
-            .unwrap_or(Self::Classic)
+            .unwrap_or(Self::Modem73)
     }
 
     pub(super) fn chosen() -> Self {
@@ -60,7 +61,12 @@ const M_FG: Color32 = Color32::from_rgb(0xe8, 0xe0, 0xe4);
 const M_DIM: Color32 = Color32::from_rgb(0x6e, 0x66, 0x6a);
 const M_MUTE: Color32 = Color32::from_rgb(0x8a, 0x82, 0x86);
 const M_LINE: Color32 = Color32::from_rgb(0x3a, 0x32, 0x36);
-const M_SLASH: Color32 = Color32::from_rgb(0x7a, 0x00, 0xff);
+/// The header's `///`: the website's --accent, --orange and --purple.
+const LOGO_SLASHES: [Color32; 3] = [
+    Color32::from_rgb(0x7d, 0x9b, 0xff),
+    Color32::from_rgb(0xff, 0x7a, 0x3d),
+    Color32::from_rgb(0xc4, 0xb5, 0xfd),
+];
 const M_GREEN: Color32 = Color32::from_rgb(0x18, 0xfc, 0x7c);
 const M_RED: Color32 = Color32::from_rgb(0xff, 0x4d, 0x4d);
 const M_GOLD: Color32 = Color32::from_rgb(0xe6, 0xb8, 0x00);
@@ -72,6 +78,7 @@ const M_PEER: Color32 = Color32::from_rgb(0xc8, 0xb4, 0xf0);
 
 const STRIP_H: f32 = 214.0;
 const DELIVERY_W: f32 = 300.0;
+/// Fewest cells a SIGNAL meter shows, on a narrow window.
 const METER_W: usize = 18;
 const PAD: f32 = 12.0;
 
@@ -158,14 +165,36 @@ fn meter_fill(frac: f32, width: usize) -> usize {
     ((frac.clamp(0.0, 1.0) * width as f32).round() as usize).min(width)
 }
 
-/// An ASCII meter `[====------]`, the fill in `color`.
-fn ascii_meter(frac: f32, color: Color32) -> egui::text::LayoutJob {
-    let n = meter_fill(frac, METER_W);
+/// Characters kept free right of a SIGNAL meter for its reading, so the
+/// widest one (" -60 clipping") still fits and IN, OUT and OCC line up.
+const METER_TAIL_CHARS: f32 = 14.0;
+
+/// How many cells a meter gets to fill the rest of its row: the width
+/// left after the key, less the reading on the right, in monospace
+/// cells. Never fewer than `METER_W`.
+fn meter_cells(ui: &egui::Ui) -> usize {
+    let cell = ui.fonts(|f| f.glyph_width(&mono(13.0), '-')).max(1.0);
+    meter_cells_for(ui.available_width(), cell)
+}
+
+fn meter_cells_for(avail: f32, cell: f32) -> usize {
+    // Two cells for the `[` and `]`.
+    let n = (avail / cell - METER_TAIL_CHARS - 2.0).floor();
+    if n.is_finite() && n > METER_W as f32 {
+        n as usize
+    } else {
+        METER_W
+    }
+}
+
+/// An ASCII meter `[====------]` of `width` cells, the fill in `color`.
+fn ascii_meter(frac: f32, width: usize, color: Color32) -> egui::text::LayoutJob {
+    let n = meter_fill(frac, width);
     let mut job = egui::text::LayoutJob::default();
     let fmt = |c: Color32| egui::TextFormat::simple(mono(13.0), c);
     job.append("[", 0.0, fmt(M_MUTE));
     job.append(&"=".repeat(n), 0.0, fmt(color));
-    job.append(&"-".repeat(METER_W - n), 0.0, fmt(M_MUTE));
+    job.append(&"-".repeat(width - n), 0.0, fmt(M_MUTE));
     job.append("]", 0.0, fmt(M_MUTE));
     job
 }
@@ -280,6 +309,11 @@ pub(super) struct State {
     next_sample: Option<Instant>,
     last_tone: Option<Instant>,
     on_air: OnAirFilter,
+    /// Height of the STATS block under ACTIVITY last frame, so the BARS
+    /// graph can take the rest of the strip.
+    stats_h: f32,
+    /// Q was pressed: the "Quit?" box is showing.
+    quit_ask: bool,
 }
 
 impl State {
@@ -333,6 +367,7 @@ impl GuiApp {
         self.m73_keys(ctx);
         self.m73_header(ctx);
         self.m73_footer(ctx);
+        self.m73_quit_ask(ctx);
         self.software.window(ctx);
         if !self.configured() || self.show_setup {
             self.paint_setup(ctx, M_BG);
@@ -484,7 +519,56 @@ impl GuiApp {
             self.m73_weechat();
         }
         if q {
+            self.m73.quit_ask = true;
+        }
+    }
+
+    /// The "Quit?" box, centred on the window. Enter or Y quits, Esc or N
+    /// keeps the station running.
+    fn m73_quit_ask(&mut self, ctx: &egui::Context) {
+        if !self.m73.quit_ask {
+            return;
+        }
+        let (mut yes, mut no) = (false, false);
+        ctx.input_mut(|i| {
+            let none = egui::Modifiers::NONE;
+            yes = i.consume_key(none, egui::Key::Enter) || i.consume_key(none, egui::Key::Y);
+            no = i.consume_key(none, egui::Key::Escape) || i.consume_key(none, egui::Key::N);
+        });
+        egui::Window::new(text("QUIT", M_DIM).size(12.0))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .frame(
+                egui::Frame::none()
+                    .fill(M_BG)
+                    .stroke(hairline(M_LINE))
+                    .inner_margin(PAD),
+            )
+            .show(ctx, |ui| {
+                ui.label(text("Are you sure you want to quit?", M_FG));
+                let station = if self.status.is_some() {
+                    "This also stops the station."
+                } else {
+                    "The station is not running."
+                };
+                ui.label(text(station, M_DIM).size(12.0));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.add(flat_btn("Quit", M_RED)).clicked() {
+                        yes = true;
+                    }
+                    if ui.add(flat_btn("Cancel", M_FG)).clicked() {
+                        no = true;
+                    }
+                    ui.label(text("Enter quits · Esc cancels", M_DIM).size(11.0));
+                });
+            });
+        if yes {
+            self.m73.quit_ask = false;
             self.quit_app(ctx);
+        } else if no {
+            self.m73.quit_ask = false;
         }
     }
 
@@ -508,13 +592,15 @@ impl GuiApp {
         let sep = |ui: &mut egui::Ui| {
             ui.label(text("│", M_LINE));
         };
-        ui.label(
-            RichText::new("///")
-                .color(M_SLASH)
-                .font(mono(14.0))
-                .strong()
-                .extra_letter_spacing(3.0),
-        );
+        // Three slashes in weechat-radio's own colours (accent, orange,
+        // purple, as on the website), not modem73's purple logo.
+        let mut logo = egui::text::LayoutJob::default();
+        for c in LOGO_SLASHES {
+            let mut f = egui::TextFormat::simple(mono(14.0), c);
+            f.extra_letter_spacing = 3.0;
+            logo.append("/", 0.0, f);
+        }
+        ui.label(logo);
         ui.add_space(4.0);
         ui.label(
             RichText::new("WEECHAT RADIO")
@@ -704,7 +790,7 @@ impl GuiApp {
                         self.m73_weechat();
                     }
                     if hint(ui, "Q", "quit", "Stop the station and quit") {
-                        self.quit_app(ui.ctx());
+                        self.m73.quit_ask = true;
                     }
                 });
             });
@@ -879,7 +965,8 @@ impl GuiApp {
         let r = ui
             .horizontal(|ui| {
                 key_cell(ui, "IN");
-                ui.label(ascii_meter(frac(s.audio_in_db), M_GREEN));
+                let cells = meter_cells(ui);
+                ui.label(ascii_meter(frac(s.audio_in_db), cells, M_GREEN));
                 ui.label(text(db_text(s.audio_in_db), M_MUTE));
                 if live && !s.audio_in_word.is_empty() {
                     ui.label(text(&s.audio_in_word, word_tone(&s.audio_in_word)));
@@ -904,8 +991,10 @@ impl GuiApp {
         let r = ui
             .horizontal(|ui| {
                 key_cell(ui, "OUT");
+                let cells = meter_cells(ui);
                 ui.label(ascii_meter(
                     frac(s.audio_out_db),
+                    cells,
                     if s.ptt_on { M_RED } else { M_MUTE },
                 ));
                 ui.label(text(db_text(s.audio_out_db), M_MUTE));
@@ -919,9 +1008,9 @@ impl GuiApp {
         if s.shows_level_sliders() {
             if let Some(g) = &s.rx_gain {
                 let tip = if g.kind == "bluetooth" {
-                    "RX gain: wcr's gain on the radio's Bluetooth audio. Drag or scroll to change, double-click for 0 dB."
+                    "RX gain: wcr's gain on the radio's Bluetooth audio. Click or drag the bar (or scroll on it) to change, double-click for 0 dB."
                 } else {
-                    "RX gain: the sound card's capture gain. Set it so IN reads good. Drag or scroll to change, double-click for 0 dB."
+                    "RX gain: the sound card's capture gain. Set it so IN reads good. Click or drag the bar (or scroll on it) to change, double-click for 0 dB."
                 };
                 if let Some(db) = level_text(
                     ui,
@@ -947,7 +1036,7 @@ impl GuiApp {
                 s.tx_level_db,
                 crate::levels::TX_LEVEL_MIN_DB..=crate::levels::TX_LEVEL_MAX_DB,
                 1.0,
-                "TX level: only turns down, the modem already sends at full scale. Set the deviation with the radio's own mic gain, then lower TX level until the far end's SNR stops getting better. Drag or scroll to change, double-click for 0 dB.",
+                "TX level: only turns down, the modem already sends at full scale. Set the deviation with the radio's own mic gain, then lower TX level until the far end's SNR stops getting better. Click or drag the bar (or scroll on it) to change, double-click for 0 dB.",
             ) {
                 level_cmd = Some(format!("/level tx {db:.0}"));
             }
@@ -973,7 +1062,8 @@ impl GuiApp {
         let r = ui
             .horizontal(|ui| {
                 key_cell(ui, "OCC");
-                ui.label(ascii_meter(s.occupancy_pct as f32 / 100.0, M_GOLD));
+                let cells = meter_cells(ui);
+                ui.label(ascii_meter(s.occupancy_pct as f32 / 100.0, cells, M_GOLD));
                 ui.label(text(format!("{}%", s.occupancy_pct), M_MUTE));
             })
             .response;
@@ -1022,8 +1112,17 @@ impl GuiApp {
             .as_ref()
             .and_then(|s| s.csma_threshold_db)
             .unwrap_or(activity_bars::DEFAULT_THRESHOLD_DB);
-        paint_bars(ui, &self.m73.activity, threshold);
+        // The graph takes whatever height STATS leaves, so the strip has
+        // no empty band at the bottom.
+        let stats_h = if self.m73.stats_h > 0.0 {
+            self.m73.stats_h
+        } else {
+            70.0
+        };
+        let bars_h = ui.available_height() - stats_h - 4.0;
+        paint_bars(ui, &self.m73.activity, threshold, bars_h);
         ui.add_space(4.0);
+        let stats_top = ui.cursor().top();
         ui.label(text(">>> STATS", M_CYAN).size(12.0));
         let (rx, tx, letters) = self.m73_counts();
         let queue = self.status.as_ref().map(|s| s.queue_out).unwrap_or(0);
@@ -1047,6 +1146,7 @@ impl GuiApp {
             "RX / TX: lines received and sent in this channel. Queue: your messages not yet delivered. Letters: lines in this channel.",
         );
         let Some(s) = self.status.clone() else {
+            self.m73.stats_h = ui.cursor().top() - stats_top;
             return;
         };
         let now = crate::status::unix_now_f64();
@@ -1113,6 +1213,7 @@ impl GuiApp {
         if !self.error.is_empty() {
             ui.label(text(&self.error, M_GOLD).size(11.0));
         }
+        self.m73.stats_h = ui.cursor().top() - stats_top;
     }
 
     /// RX, TX and all lines in the open channel.
@@ -1736,6 +1837,41 @@ fn level_text(
     let mut send = None;
     ui.horizontal(|ui| {
         key_cell(ui, k);
+        // The bar: click or drag anywhere on it to set the level there.
+        let cells = meter_cells(ui);
+        let bar = ui
+            .add(
+                egui::Label::new(ascii_meter((v - lo) / (hi - lo), cells, M_CYAN))
+                    .sense(egui::Sense::click_and_drag()),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if bar.is_pointer_button_down_on() {
+            if let Some(p) = bar.interact_pointer_pos() {
+                // Skip the `[` and `]` cells so the ends map to lo and hi.
+                let cell = bar.rect.width() / (cells + 2) as f32;
+                let left = bar.rect.left() + cell;
+                let frac = ((p.x - left) / (cell * cells as f32)).clamp(0.0, 1.0);
+                v = snap(lo + frac * (hi - lo));
+                *held = Some((v, Instant::now()));
+            }
+        }
+        if bar.drag_stopped() || bar.clicked() {
+            send = Some(v);
+        }
+        if bar.double_clicked() {
+            v = 0.0f32.clamp(lo, hi);
+            *held = Some((v, Instant::now()));
+            send = Some(v);
+        }
+        if bar.hovered() {
+            let scroll = ui.input(|i| i.raw_scroll_delta.y);
+            if scroll != 0.0 {
+                v = snap(v + scroll.signum() * step as f32);
+                *held = Some((v, Instant::now()));
+                send = Some(v);
+            }
+        }
+        hover_tip(&bar, tip);
         let resp = ui
             .add(
                 egui::Label::new(text(format!("{v:+.1} dB"), M_FG))
@@ -1770,13 +1906,23 @@ fn level_text(
     send
 }
 
+/// Rows of the BARS graph share `height`, never shorter than 14 px.
+fn bar_row_height(height: f32) -> f32 {
+    let h = height / activity_bars::ROWS as f32;
+    if h.is_finite() && h > 14.0 {
+        h
+    } else {
+        14.0
+    }
+}
+
 /// The BARS graph: narrow pickets for full cells, `. : | #` for part-full
 /// ones, a dim gold line on the threshold row. One column per character
 /// of the pane's width.
-fn paint_bars(ui: &mut egui::Ui, history: &activity_bars::History, threshold_db: f32) {
+fn paint_bars(ui: &mut egui::Ui, history: &activity_bars::History, threshold_db: f32, height: f32) {
     let font = mono(12.0);
     let ch_w = ui.fonts(|f| f.glyph_width(&font, '0')).max(4.0);
-    let row_h = 14.0;
+    let row_h = bar_row_height(height);
     let width = ui.available_width();
     let cols = ((width / ch_w).floor() as usize).max(1);
     let (rect, _) = ui.allocate_exact_size(
@@ -1832,12 +1978,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn classic_unless_something_asks_for_modem73() {
-        assert_eq!(Layout::resolve(None, None, ""), Layout::Classic);
-        assert_eq!(Layout::resolve(None, None, "classic"), Layout::Classic);
-        assert_eq!(Layout::resolve(None, None, "nonsense"), Layout::Classic);
+    fn modem73_unless_something_asks_for_classic() {
+        assert_eq!(Layout::resolve(None, None, ""), Layout::Modem73);
+        assert_eq!(Layout::resolve(None, None, "nonsense"), Layout::Modem73);
         assert_eq!(Layout::resolve(None, None, "modem73"), Layout::Modem73);
-        assert_eq!(Layout::resolve(None, None, " Modem73 "), Layout::Modem73);
+        assert_eq!(Layout::resolve(None, None, "classic"), Layout::Classic);
+        assert_eq!(Layout::resolve(None, None, " Classic "), Layout::Classic);
     }
 
     #[test]
@@ -1857,12 +2003,24 @@ mod tests {
     }
 
     #[test]
-    fn config_default_is_classic() {
-        assert_eq!(Config::default().ui.layout, "classic");
-        let cfg: Config = toml::from_str("[ui]\nlayout = \"modem73\"\n").unwrap();
-        assert_eq!(cfg.ui.layout, "modem73");
+    fn config_default_is_modem73() {
+        assert_eq!(Config::default().ui.layout, "modem73");
+        let cfg: Config = toml::from_str("[ui]\nlayout = \"classic\"\n").unwrap();
+        assert_eq!(cfg.ui.layout, "classic");
         let old: Config = toml::from_str("[ui]\ntheme = \"tron\"\n").unwrap();
-        assert_eq!(old.ui.layout, "classic");
+        assert_eq!(old.ui.layout, "modem73");
+    }
+
+    #[test]
+    fn on_air_starts_on_all() {
+        assert_eq!(State::default().on_air, OnAirFilter::All);
+    }
+
+    #[test]
+    fn bar_rows_share_the_height() {
+        assert_eq!(bar_row_height(120.0), 20.0);
+        assert_eq!(bar_row_height(30.0), 14.0);
+        assert_eq!(bar_row_height(f32::NAN), 14.0);
     }
 
     #[test]
@@ -1871,6 +2029,17 @@ mod tests {
         assert_eq!(meter_fill(0.5, 18), 9);
         assert_eq!(meter_fill(1.0, 18), 18);
         assert_eq!(meter_fill(2.0, 18), 18);
+    }
+
+    #[test]
+    fn meters_stretch_to_the_row() {
+        // 8 px cells: 400 px is 50 cells, less 14 for the reading and 2
+        // for the brackets.
+        assert_eq!(meter_cells_for(400.0, 8.0), 34);
+        assert_eq!(meter_cells_for(800.0, 8.0), 84);
+        // Narrow column: never below the old fixed width.
+        assert_eq!(meter_cells_for(100.0, 8.0), METER_W);
+        assert_eq!(meter_cells_for(f32::INFINITY, 8.0), METER_W);
     }
 
     #[test]
