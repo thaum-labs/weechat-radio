@@ -165,9 +165,10 @@ fn meter_fill(frac: f32, width: usize) -> usize {
     ((frac.clamp(0.0, 1.0) * width as f32).round() as usize).min(width)
 }
 
-/// Characters kept free right of a SIGNAL meter for its reading, so the
-/// widest one (" -60 clipping") still fits and IN, OUT and OCC line up.
-const METER_TAIL_CHARS: f32 = 14.0;
+/// Characters kept free right of a SIGNAL meter for its reading: the
+/// widest ("-15.0 dB", "-28 good") plus a gap before it. Readings are
+/// right-aligned, so the column's right padding matches its left.
+const METER_TAIL_CHARS: f32 = 10.0;
 
 /// How many cells a meter gets to fill the rest of its row: the width
 /// left after the key, less the reading on the right, in monospace
@@ -185,6 +186,13 @@ fn meter_cells_for(avail: f32, cell: f32) -> usize {
     } else {
         METER_W
     }
+}
+
+/// A meter's reading, flush with the right edge of the SIGNAL column.
+/// Widgets added in `add` run right to left, so add the rightmost first.
+fn reading<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), add)
+        .inner
 }
 
 /// An ASCII meter `[====------]` of `width` cells, the fill in `color`.
@@ -209,6 +217,22 @@ fn key_cell(ui: &mut egui::Ui, k: &str) {
             ui.label(text(k, M_DIM).size(12.0));
         },
     );
+}
+
+/// A STATION value, its text lined up with the text inside the MODE,
+/// FREQ and PRESET pickers.
+fn station_text(ui: &mut egui::Ui, v: RichText) {
+    ui.add_space(ui.spacing().button_padding.x + 1.0);
+    ui.add(egui::Label::new(v).truncate());
+}
+
+/// One STATION key and value: the key in the fixed column, the value lined
+/// up with the pickers' text.
+fn station_kv(ui: &mut egui::Ui, k: &str, v: RichText) {
+    ui.horizontal(|ui| {
+        key_cell(ui, k);
+        station_text(ui, v);
+    });
 }
 
 /// One key and value, the key in a fixed column.
@@ -859,77 +883,77 @@ impl GuiApp {
         let mut freq_cmd = None;
         let mut tower_cmd = None;
         let display_khz = self.freq_pending.unwrap_or(s.freq_khz);
-        let half = (ui.available_width() - 12.0) / 2.0;
-        ui.horizontal_top(|ui| {
-            ui.allocate_ui(egui::vec2(half, STRIP_H), |ui| {
-                ui.vertical(|ui| {
-                    ui.set_width(half);
-                    kv(ui, "CALL", text(&s.callsign, M_FG).strong());
-                    kv(ui, "GRID", text(&s.grid, M_FG));
-                    if !s.gps.is_empty() {
-                        let c = match crate::gps::light(&s.gps) {
-                            crate::gps::Light::Green => M_GREEN,
-                            crate::gps::Light::Amber => M_GOLD,
-                            crate::gps::Light::Red => M_RED,
-                        };
-                        kv(
-                            ui,
-                            "GPS",
-                            text(format!("● {}", s.gps.trim_start_matches("GPS: ")), c),
-                        );
-                    }
-                    if !s.tnc.is_empty() {
-                        kv(
-                            ui,
-                            "RADIO",
-                            text(&s.tnc, if s.tnc_ok { M_FG } else { M_GOLD }),
-                        );
-                    }
-                    if let Some(c) = freq_pick(ui, display_khz, &s.freq_source, self.freq_pick_last)
-                    {
-                        self.freq_pick_last = Some(c);
-                        if c.khz != display_khz {
-                            self.freq_pending = Some(c.khz);
-                            freq_cmd = Some(format!("/qsy {}", crate::band::fmt_mhz(c.khz)));
-                        }
-                    }
-                    if !s.builtin_tnc() && !s.modem73.is_empty() {
-                        kv(ui, "MODEM", text(format!("modem73 v{}", s.modem73), M_MUTE));
-                    }
-                });
-            });
-            ui.add_space(12.0);
-            ui.vertical(|ui| {
-                ui.set_width(half);
-                if let Some(next) = mode_pick(ui, s.mode) {
-                    if next == Mode::Radio && s.mode != Mode::Radio {
-                        self.confirm_radio = true;
-                    } else if next != s.mode {
-                        mode_cmd = Some(format!("/mode {}", next.as_str()));
-                    }
-                }
-                let (ptt, c) = if s.ptt_on {
-                    ("TX".to_string(), M_RED)
-                } else if s.deferred {
-                    ("WAIT".to_string(), M_GOLD)
-                } else {
-                    (s.channel.to_uppercase(), M_FG)
-                };
-                kv(ui, "PTT", text(ptt, c).strong());
-                if !s.tnc.is_empty() {
-                    kv(ui, "PRESET", text(&s.preset, M_FG));
-                } else if let Some(next) = preset_pick(ui, &s.preset) {
-                    if next != s.preset {
-                        preset_cmd = Some(format!("/preset {next}"));
-                    }
-                }
-                if s.mode == Mode::InternetRadio {
-                    if let Some(on) = tower_toggle(ui, s.tower) {
-                        tower_cmd = Some(format!("/tower {}", if on { "on" } else { "off" }));
-                    }
-                }
-            });
+        // One column: keys in the same left-aligned column as SIGNAL, the
+        // pickers as wide as the panel so their text is not cut off.
+        ui.horizontal(|ui| {
+            key_cell(ui, "CALL");
+            station_text(ui, text(&s.callsign, M_FG).strong());
+            ui.add_space(16.0);
+            ui.label(text("GRID", M_DIM).size(12.0));
+            ui.label(text(&s.grid, M_FG));
         });
+        if let Some(next) = mode_pick(ui, s.mode, key_cell) {
+            if next == Mode::Radio && s.mode != Mode::Radio {
+                self.confirm_radio = true;
+            } else if next != s.mode {
+                mode_cmd = Some(format!("/mode {}", next.as_str()));
+            }
+        }
+        if let Some(c) = freq_pick(
+            ui,
+            display_khz,
+            &s.freq_source,
+            self.freq_pick_last,
+            key_cell,
+        ) {
+            self.freq_pick_last = Some(c);
+            if c.khz != display_khz {
+                self.freq_pending = Some(c.khz);
+                freq_cmd = Some(format!("/qsy {}", crate::band::fmt_mhz(c.khz)));
+            }
+        }
+        if !s.tnc.is_empty() {
+            station_kv(ui, "PRESET", text(&s.preset, M_FG));
+        } else if let Some(next) = preset_pick(ui, &s.preset, key_cell) {
+            if next != s.preset {
+                preset_cmd = Some(format!("/preset {next}"));
+            }
+        }
+        if s.mode == Mode::InternetRadio {
+            if let Some(on) = tower_toggle(ui, s.tower, key_cell) {
+                tower_cmd = Some(format!("/tower {}", if on { "on" } else { "off" }));
+            }
+        }
+        let (ptt, c) = if s.ptt_on {
+            ("TX".to_string(), M_RED)
+        } else if s.deferred {
+            ("WAIT".to_string(), M_GOLD)
+        } else {
+            (s.channel.to_uppercase(), M_FG)
+        };
+        station_kv(ui, "PTT", text(ptt, c).strong());
+        if !s.builtin_tnc() && !s.modem73.is_empty() {
+            station_kv(ui, "MODEM", text(format!("modem73 v{}", s.modem73), M_MUTE));
+        }
+        if !s.tnc.is_empty() {
+            station_kv(
+                ui,
+                "RADIO",
+                text(&s.tnc, if s.tnc_ok { M_FG } else { M_GOLD }),
+            );
+        }
+        if !s.gps.is_empty() {
+            let c = match crate::gps::light(&s.gps) {
+                crate::gps::Light::Green => M_GREEN,
+                crate::gps::Light::Amber => M_GOLD,
+                crate::gps::Light::Red => M_RED,
+            };
+            station_kv(
+                ui,
+                "GPS",
+                text(format!("● {}", s.gps.trim_start_matches("GPS: ")), c),
+            );
+        }
         for cmd in [mode_cmd, tower_cmd, preset_cmd, freq_cmd]
             .into_iter()
             .flatten()
@@ -967,10 +991,15 @@ impl GuiApp {
                 key_cell(ui, "IN");
                 let cells = meter_cells(ui);
                 ui.label(ascii_meter(frac(s.audio_in_db), cells, M_GREEN));
-                ui.label(text(db_text(s.audio_in_db), M_MUTE));
-                if live && !s.audio_in_word.is_empty() {
-                    ui.label(text(&s.audio_in_word, word_tone(&s.audio_in_word)));
-                }
+                reading(ui, |ui| {
+                    // Short word (good / low / hot) so the reading fits the
+                    // tail; the hover tip has the detail.
+                    if live && !s.audio_in_word.is_empty() {
+                        let word = crate::status::label_for(&s.audio_in_word, s.audio_in_db);
+                        ui.label(text(word, word_tone(&s.audio_in_word)));
+                    }
+                    ui.label(text(db_text(s.audio_in_db), M_MUTE));
+                });
             })
             .response;
         let mut tip = format!("Receive audio from the radio: {:.0} dBFS", s.audio_in_db);
@@ -997,7 +1026,9 @@ impl GuiApp {
                     cells,
                     if s.ptt_on { M_RED } else { M_MUTE },
                 ));
-                ui.label(text(db_text(s.audio_out_db), M_MUTE));
+                reading(ui, |ui| {
+                    ui.label(text(db_text(s.audio_out_db), M_MUTE));
+                });
             })
             .response;
         hover_tip(
@@ -1064,7 +1095,9 @@ impl GuiApp {
                 key_cell(ui, "OCC");
                 let cells = meter_cells(ui);
                 ui.label(ascii_meter(s.occupancy_pct as f32 / 100.0, cells, M_GOLD));
-                ui.label(text(format!("{}%", s.occupancy_pct), M_MUTE));
+                reading(ui, |ui| {
+                    ui.label(text(format!("{}%", s.occupancy_pct), M_MUTE));
+                });
             })
             .response;
         hover_tip(
@@ -1872,12 +1905,13 @@ fn level_text(
             }
         }
         hover_tip(&bar, tip);
-        let resp = ui
-            .add(
+        let resp = reading(ui, |ui| {
+            ui.add(
                 egui::Label::new(text(format!("{v:+.1} dB"), M_FG))
                     .sense(egui::Sense::click_and_drag()),
             )
-            .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+            .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+        });
         if resp.dragged() {
             let d = resp.drag_delta();
             v = (v + (d.x - d.y) * (hi - lo) / 160.0).clamp(lo, hi);
@@ -2033,10 +2067,10 @@ mod tests {
 
     #[test]
     fn meters_stretch_to_the_row() {
-        // 8 px cells: 400 px is 50 cells, less 14 for the reading and 2
+        // 8 px cells: 400 px is 50 cells, less 10 for the reading and 2
         // for the brackets.
-        assert_eq!(meter_cells_for(400.0, 8.0), 34);
-        assert_eq!(meter_cells_for(800.0, 8.0), 84);
+        assert_eq!(meter_cells_for(400.0, 8.0), 38);
+        assert_eq!(meter_cells_for(800.0, 8.0), 88);
         // Narrow column: never below the old fixed width.
         assert_eq!(meter_cells_for(100.0, 8.0), METER_W);
         assert_eq!(meter_cells_for(f32::INFINITY, 8.0), METER_W);
