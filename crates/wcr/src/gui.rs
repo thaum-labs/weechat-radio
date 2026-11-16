@@ -2022,7 +2022,7 @@ impl eframe::App for GuiApp {
                                 let text = format!("● {}", s.gps.trim_start_matches("GPS: "));
                                 kv(ui, "GPS", &text, colour);
                             }
-                            if let Some(next) = mode_pick(ui, s.mode) {
+                            if let Some(next) = mode_pick(ui, s.mode, station_key) {
                                 if next == Mode::Radio && s.mode != Mode::Radio {
                                     want_radio_confirm = true;
                                 } else if next != s.mode {
@@ -2030,7 +2030,7 @@ impl eframe::App for GuiApp {
                                 }
                             }
                             if s.mode == Mode::InternetRadio {
-                                if let Some(on) = tower_toggle(ui, s.tower) {
+                                if let Some(on) = tower_toggle(ui, s.tower, station_key) {
                                     tower_cmd = Some(if on {
                                         "/tower on".to_string()
                                     } else {
@@ -2047,7 +2047,7 @@ impl eframe::App for GuiApp {
                             };
                             kv(ui, "PTT", &ptt_label, if s.ptt_on { ORANGE } else { DIM });
                             if let Some(c) =
-                                freq_pick(ui, display_khz, &s.freq_source, self.freq_pick_last)
+                                freq_pick(ui, display_khz, &s.freq_source, self.freq_pick_last, station_key)
                             {
                                 freq_pick_last_set = Some(c);
                                 if c.khz != display_khz {
@@ -2059,7 +2059,7 @@ impl eframe::App for GuiApp {
                             if !s.tnc.is_empty() {
                                 kv(ui, "RADIO", &s.tnc, if s.tnc_ok { GREEN } else { ORANGE });
                                 kv(ui, "PRESET", &s.preset, PURPLE);
-                            } else if let Some(next) = preset_pick(ui, &s.preset) {
+                            } else if let Some(next) = preset_pick(ui, &s.preset, station_key) {
                                 if next != s.preset {
                                     preset_cmd = Some(format!("/preset {next}"));
                                 }
@@ -3619,10 +3619,14 @@ fn cheat_sheet(ui: &mut egui::Ui) {
     );
 }
 
-fn mode_pick(ui: &mut egui::Ui, current: Mode) -> Option<Mode> {
+/// Draws a picker's key: classic's [`station_key`] or the modem73 layout's
+/// own left-aligned key column.
+type KeyFn = fn(&mut egui::Ui, &str);
+
+fn mode_pick(ui: &mut egui::Ui, current: Mode, key: KeyFn) -> Option<Mode> {
     let mut chosen = None;
     ui.horizontal(|ui| {
-        station_key(ui, "MODE");
+        key(ui, "MODE");
         let w = ui.available_width();
         egui::ComboBox::from_id_salt("mode_pick")
             .selected_text(
@@ -3649,10 +3653,10 @@ fn mode_pick(ui: &mut egui::Ui, current: Mode) -> Option<Mode> {
     chosen
 }
 
-fn tower_toggle(ui: &mut egui::Ui, on: bool) -> Option<bool> {
+fn tower_toggle(ui: &mut egui::Ui, on: bool, key: KeyFn) -> Option<bool> {
     let mut flipped = None;
     let inner = ui.horizontal(|ui| {
-        station_key(ui, "TOWER");
+        key(ui, "TOWER");
         let w = ui.available_width();
         let h = ui.spacing().interact_size.y;
         let label = if on { "on" } else { "off" };
@@ -3679,10 +3683,10 @@ fn tower_toggle(ui: &mut egui::Ui, on: bool) -> Option<bool> {
     flipped
 }
 
-fn preset_pick(ui: &mut egui::Ui, current: &str) -> Option<String> {
+fn preset_pick(ui: &mut egui::Ui, current: &str, key: KeyFn) -> Option<String> {
     let mut chosen = None;
     ui.horizontal(|ui| {
-        station_key(ui, "PRESET");
+        key(ui, "PRESET");
         let w = ui.available_width();
         egui::ComboBox::from_id_salt("preset_pick")
             .selected_text(RichText::new(current).color(PURPLE).monospace())
@@ -3712,6 +3716,7 @@ fn freq_pick(
     current_khz: u32,
     source: &str,
     last: Option<crate::band::CallingFreq>,
+    key: KeyFn,
 ) -> Option<crate::band::CallingFreq> {
     let options = crate::band::calling_freqs();
     let current_row = last
@@ -3742,18 +3747,24 @@ fn freq_pick(
         format!("{} · {source}", crate::band::describe(current_khz))
     };
     ui.horizontal(|ui| {
-        station_key(ui, "FREQ");
+        key(ui, "FREQ");
         let w = ui.available_width();
         let popup_id = ui.make_persistent_id("freq_pick_popup");
-        let button = ui.add_sized(
-            [w, ui.spacing().interact_size.y],
-            egui::Button::new(
-                RichText::new(format!("{current_label}  ▾"))
-                    .color(if current_khz == 0 { DIM } else { PURPLE })
-                    .monospace(),
-            )
-            .wrap_mode(egui::TextWrapMode::Truncate),
-        );
+        // Text left-aligned like the MODE and PRESET pickers' (a button
+        // places its text by the layout it sits in).
+        let button = ui
+            .with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.add(
+                    egui::Button::new(
+                        RichText::new(format!("{current_label}  ▾"))
+                            .color(if current_khz == 0 { DIM } else { PURPLE })
+                            .monospace(),
+                    )
+                    .wrap_mode(egui::TextWrapMode::Truncate)
+                    .min_size(egui::vec2(w, ui.spacing().interact_size.y)),
+                )
+            })
+            .inner;
         if button.clicked() {
             ui.memory_mut(|m| m.toggle_popup(popup_id));
         }
