@@ -460,7 +460,7 @@ index 8e002ab..961f5be 100644
          else if (strcmp(key, "alt_mode_mask") == 0)
              alt_mode_mask = atoi(value) & ((1 << ALT_MODE_COUNT) - 1);
 diff --git a/net_audio.hh b/net_audio.hh
-index 69356a3..03d60b7 100644
+index 69356a3..4e46295 100644
 --- a/net_audio.hh
 +++ b/net_audio.hh
 @@ -26,6 +26,12 @@ class NetAudioLink {
@@ -468,19 +468,42 @@ index 69356a3..03d60b7 100644
      static constexpr const char* PREFIX = "tcp:";
      static constexpr int POLL_MS = 20;
 +    // wcr: a peer that is the audio clock and sends 20 ms blocks (wcr's
-+    // Bluetooth bridge) is often a millisecond or two late, and POLL_MS is
-+    // also 20 ms, so every late block read as a stall and flooded the log
-+    // with "no capture data" lines (QA #359). Pace transmit locally only
-+    // after a real gap.
++    // Bluetooth bridge) is often a millisecond or two late, so POLL_MS alone
++    // logged "no capture data" thousands of times per session (QA #359).
++    // Transmit pacing is unchanged (rc2 dropped it and the Mac's transmit got
++    // weaker on air); only a capture gap this long is logged and reported.
 +    static constexpr int STALL_MS = 250;
      static constexpr int CONNECT_TIMEOUT_MS = 3000;
      static constexpr int SEND_TIMEOUT_S = 2;
  
-@@ -180,6 +186,7 @@ private:
-             }
-             if (r == 0) {
-                 int64_t now = now_ms();
-+                if (!stalled && now - last_fallback < STALL_MS) continue;
+@@ -170,6 +176,7 @@ private:
+         uint8_t carry = 0;
+         bool have_carry = false;
+         int64_t last_fallback = now_ms();
++        int64_t last_capture = last_fallback;
+         bool stalled = false;
+         while (!stop_) {
+             struct pollfd p = {fd_, POLLIN, 0};
+@@ -183,9 +190,11 @@ private:
                  int frames = (int)((now - last_fallback) * rate_ / 1000);
                  last_fallback = now;
                  if (frames > 0 && playback_pending()) {
+-                    if (!stalled && log_) log_("Network audio: no capture data, pacing transmit locally");
+-                    stalled = true;
+-                    stalled_ = true;
++                    if (!stalled && now - last_capture >= STALL_MS) {
++                        if (log_) log_("Network audio: no capture data, pacing transmit locally");
++                        stalled = true;
++                        stalled_ = true;
++                    }
+                     if (!send_playback(frames)) break;
+                     credit_ += frames;
+                 }
+@@ -197,6 +206,7 @@ private:
+                 break;
+             }
+             last_fallback = now_ms();
++            last_capture = last_fallback;
+             stalled = false;
+             stalled_ = false;
+             size_t start = 0;
