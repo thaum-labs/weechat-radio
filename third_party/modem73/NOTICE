@@ -16,9 +16,10 @@ sound card, is upstream since v2.5.0 and needs no patch.
   waterfall; TX level down to 1 % (upstream stops at 5 %); and in CSMA sync
   mode a contention slot at least as long as modem73 needs to hear another
   station's frame (#241), so two stations in nearby slots do not collide;
-  and network audio waits 250 ms without capture before it paces transmit
-  itself (upstream waits 20 ms, the same as wcr's Bluetooth bridge tick, so
-  every slightly late block logged "no capture data", #359).
+  and network audio logs "no capture data" (and reports the link stalled)
+  only after 250 ms without capture. Upstream does it after 20 ms, the same
+  as wcr's Bluetooth bridge tick, so every slightly late block logged it
+  (#359). Transmit pacing is upstream's, unchanged.
 - `patches/wcr-features-win.patch` (Windows): the same CSMA sync slot and
   network audio changes.
 - `patches/encode-before-busy-test.patch` (Linux and macOS): modem73

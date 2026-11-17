@@ -597,3 +597,154 @@ fn meter_reports_the_bridge_audio_in_and_out() {
         .take(t0 + METER_FRESH + Duration::from_millis(10))
         .is_none());
 }
+
+/// What one modem73 build sent the radio for one frame.
+#[derive(Debug)]
+struct SentToRadio {
+    /// RMS of the frame's audio as the radio decodes it, dBFS.
+    level_db: f32,
+    /// Audio the radio got, in seconds.
+    audio_s: f32,
+    /// How long the radio's playout ran dry inside the frame, in ms: audio
+    /// arriving slower than the radio plays it (it starts playing when the
+    /// first audio arrives).
+    gap_ms: f32,
+}
+
+/// Queues one frame into `binary` behind a bridge and a fake radio, and
+/// measures the audio the radio is sent until the end-of-audio frame.
+fn send_one_frame(binary: &str) -> SentToRadio {
+    let (connector, radio_rx) = fake_radio();
+    let ports = start(connector, crate::status::new_shared()).unwrap();
+    let mut radio = radio_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let kiss = free_port();
+    let mut modem = std::process::Command::new(binary)
+        .args(["--headless", "-p", &kiss.to_string(), "--control-port", "0"])
+        .args([
+            "-d",
+            &ports.audio_device(),
+            "--rigctl",
+            &ports.rigctl_addr(),
+        ])
+        .args(["--callsign", "TEST1A"])
+        .args(crate::presets::Preset::VhfFm.modem73_args())
+        .env("HOME", home.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_secs(3));
+    let mut k = TcpStream::connect(("127.0.0.1", kiss)).unwrap();
+    let payload: Vec<u8> = (0..120u8).collect();
+    k.write_all(&crate::modem::kiss::encode_frame(&payload))
+        .unwrap();
+
+    radio
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    let mut deframer = frame::Deframer::default();
+    let mut dec = sbc::Decode::default();
+    let mut pcm: Vec<i16> = Vec::new();
+    let mut first: Option<Instant> = None;
+    let mut gap = Duration::ZERO;
+    let mut ended = false;
+    let deadline = Instant::now() + Duration::from_secs(40);
+    let mut buf = [0u8; 4096];
+    while !ended && Instant::now() < deadline {
+        let n = match radio.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        let now = Instant::now();
+        let mut got = Vec::new();
+        deframer.push(&buf[..n], |m| match m {
+            frame::Message::Audio(b) => got.push(b),
+            frame::Message::End => ended = true,
+            frame::Message::Other(_) => {}
+        });
+        for b in got {
+            let start = *first.get_or_insert(now);
+            // Played so far, at the radio's own rate, against what arrived.
+            let played = now.duration_since(start).as_secs_f32() * sbc::SAMPLE_RATE as f32;
+            let short = played - pcm.len() as f32;
+            if short > 0.0 && !pcm.is_empty() {
+                gap += Duration::from_secs_f32(short / sbc::SAMPLE_RATE as f32);
+                first = Some(start + Duration::from_secs_f32(short / sbc::SAMPLE_RATE as f32));
+            }
+            dec.push(&b, &mut pcm);
+        }
+    }
+    let _ = modem.kill();
+    let _ = modem.wait();
+    assert!(ended, "{binary}: no end-of-audio frame");
+    let lo = pcm
+        .iter()
+        .position(|&v| v.unsigned_abs() > 300)
+        .unwrap_or(0);
+    let hi = pcm
+        .iter()
+        .rposition(|&v| v.unsigned_abs() > 300)
+        .unwrap_or(0);
+    let body = &pcm[lo..=hi.max(lo)];
+    let ms = body
+        .iter()
+        .map(|&v| (v as f64 / 32768.0).powi(2))
+        .sum::<f64>()
+        / body.len() as f64;
+    SentToRadio {
+        level_db: (10.0 * ms.log10()) as f32,
+        audio_s: pcm.len() as f32 / sbc::SAMPLE_RATE as f32,
+        gap_ms: gap.as_secs_f32() * 1000.0,
+    }
+}
+
+/// QA #359: rc2 sent the radio weaker or broken audio on air, though the
+/// frame body matched in the lab. Compares the audio a modem73 build sends
+/// the radio over the Bluetooth bridge with a reference build: level and
+/// continuity (the radio's playout must not run dry inside the frame).
+/// Run with `WCR_TEST_MODEM73=<new> WCR_TEST_MODEM73_REF=<old>
+/// cargo test -- --ignored`.
+#[test]
+#[ignore = "needs two modem73 builds (WCR_TEST_MODEM73, WCR_TEST_MODEM73_REF)"]
+fn transmit_audio_matches_the_reference_build() {
+    let (Ok(new), Ok(old)) = (
+        std::env::var("WCR_TEST_MODEM73"),
+        std::env::var("WCR_TEST_MODEM73_REF"),
+    ) else {
+        return;
+    };
+    let runs: usize = std::env::var("WCR_TEST_RUNS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
+    let measure = |bin: &str| {
+        let all: Vec<SentToRadio> = (0..runs).map(|_| send_one_frame(bin)).collect();
+        println!("{bin}: {all:?}");
+        all
+    };
+    let o = measure(&old);
+    let n = measure(&new);
+    let level = |v: &[SentToRadio]| v.iter().map(|s| s.level_db).sum::<f32>() / v.len() as f32;
+    let gap = |v: &[SentToRadio]| v.iter().map(|s| s.gap_ms).fold(0.0f32, f32::max);
+    let audio = |v: &[SentToRadio]| v.iter().map(|s| s.audio_s).sum::<f32>() / v.len() as f32;
+    assert!(
+        (level(&n) - level(&o)).abs() <= 1.0,
+        "level {:.1} dBFS vs reference {:.1}",
+        level(&n),
+        level(&o)
+    );
+    assert!(
+        (audio(&n) - audio(&o)).abs() <= 0.25,
+        "audio {:.2} s vs reference {:.2} s",
+        audio(&n),
+        audio(&o)
+    );
+    assert!(
+        gap(&n) <= gap(&o) + 20.0,
+        "playout ran dry {:.0} ms vs reference {:.0} ms",
+        gap(&n),
+        gap(&o)
+    );
+}
