@@ -5,21 +5,26 @@ Windows binaries come from the experimental Win32 port:
 https://github.com/RFnexus/modem73-win
 
 Release archives include a modem73 built from the upstream source at a
-pinned tag (.github/workflows/modem73.yml) with a patch added:
-`patches/network-audio.patch` (`patches/network-audio-win.patch` for the
-Windows port). It adds network audio (`-d tcp:HOST:PORT`), which WeeChat
-Radio uses to carry a Bluetooth radio's audio (VR-N76 / VR-N7600) into
-modem73 with no sound card. The Linux and macOS patch also adds the
-`audio_in_db` level to the control port's status and a `get_spectrum`
-command, which feed the level line and the waterfall on `wcr web`'s page.
-Linux and macOS builds also get `patches/encode-before-busy-test.patch`:
-modem73 encodes a frame to audio before its CSMA busy test instead of
-after `CSMA: Channel clear`, so PTT keys straight after the clear (on a
-Pi 3 the encode took about 1 s, long enough for another station to key
-in that gap). It logs `TX: frame encoded before the busy test (N ms)`.
-Both patches are offered upstream; once
-upstream ships network audio the patch goes away. The patch is under the
-same Unlicense as modem73. That binary is not Apache-2.0.
+pinned tag (.github/workflows/modem73.yml, v2.5.0 for both) with small
+patches added. Network audio (`-d tcp:HOST:PORT`), which WeeChat Radio uses
+to carry a Bluetooth radio's audio (VR-N76 / VR-N7600) into modem73 with no
+sound card, is upstream since v2.5.0 and needs no patch.
+
+- `patches/wcr-features.patch` (Linux and macOS): the `audio_in_db`,
+  `audio_in_peak_db` and `audio_in_clip_pct` levels in the control port's
+  status and a `get_spectrum` command, which feed the level meter and the
+  waterfall; TX level down to 1 % (upstream stops at 5 %); and in CSMA sync
+  mode a contention slot at least as long as modem73 needs to hear another
+  station's frame (#241), so two stations in nearby slots do not collide.
+- `patches/wcr-features-win.patch` (Windows): the same CSMA sync slot change.
+- `patches/encode-before-busy-test.patch` (Linux and macOS): modem73
+  encodes a frame to audio before its CSMA busy test instead of after
+  `CSMA: Channel clear`, so PTT keys straight after the clear (on a Pi 3
+  the encode took about 1 s, long enough for another station to key in
+  that gap). It logs `TX: frame encoded before the busy test (N ms)`.
+
+The patches are under the same Unlicense as modem73. That binary is not
+Apache-2.0.
 macOS archives also include the `libs/` folder (`@executable_path/libs`).
 See the Unlicense at the upstream repository.
 

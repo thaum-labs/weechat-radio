@@ -89,7 +89,7 @@ jobs:
           PRE=""
           case "$TAG" in *-rc*) PRE="--prerelease" ;; esac
           gh release create "$TAG" --repo "${GITHUB_REPOSITORY}" --verify-tag --draft $PRE --title "$TAG" --notes-file release-notes.md
-  # modem73 with our network-audio patch, built from source (modem73.yml).
+  # modem73 with our patches, built from source (modem73.yml).
   modem73:
     uses: ./.github/workflows/modem73.yml
   build:

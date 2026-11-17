@@ -1,9 +1,8 @@
 # Builds the modem73 that ships inside WeeChat Radio: upstream RFnexus/modem73
-# (modem73-win on Windows) at a pinned tag, plus our network-audio patch
-# (third_party/modem73/patches). Linux and macOS also get
-# encode-before-busy-test.patch (the frame is encoded before the CSMA busy
-# test, so PTT keys straight after "Channel clear"). Network audio lets wcr feed modem73 the
-# radio's Bluetooth audio (VR-N76 / VR-N7600) with no sound card.
+# (modem73-win on Windows) at a pinned tag, plus our patches
+# (third_party/modem73/patches, see NOTICE there for what each one does).
+# Network audio (`-d tcp:HOST:PORT`, how wcr feeds modem73 a VR-N76 /
+# VR-N7600's Bluetooth audio) is upstream since v2.5.0, so it needs no patch.
 #
 # Each job uploads one artifact named after the release asset it makes,
 # holding exactly that file. release.yml calls this workflow and bundles them.
@@ -19,8 +18,8 @@ permissions:
   contents: read
 env:
   # Bump together with the patches when upstream moves.
-  MODEM73_TAG: v2.4.8
-  MODEM73_WIN_TAG: v2.4.2
+  MODEM73_TAG: v2.5.0
+  MODEM73_WIN_TAG: v2.5.0
 jobs:
   linux:
     strategy:
@@ -57,7 +56,7 @@ jobs:
         working-directory: m73
         run: |
           set -euo pipefail
-          git apply ../third_party/modem73/patches/network-audio.patch
+          git apply ../third_party/modem73/patches/wcr-features.patch
           git apply ../third_party/modem73/patches/encode-before-busy-test.patch
           make -f packaging/Makefile.pkg ARCH_FLAGS="${{ matrix.arch_flags }}" VERSION="${MODEM73_TAG#v}-wcr" -j"$(nproc)"
       - name: check
@@ -101,7 +100,7 @@ jobs:
         working-directory: m73
         run: |
           set -euo pipefail
-          git apply ../third_party/modem73/patches/network-audio.patch
+          git apply ../third_party/modem73/patches/wcr-features.patch
           git apply ../third_party/modem73/patches/encode-before-busy-test.patch
           make ARCHFLAGS="${{ matrix.arch_flags }}" VERSION="${MODEM73_TAG#v}-wcr" -j"$(sysctl -n hw.ncpu)"
       # Same layout as upstream's macOS tarball: modem73 next to libs/.
@@ -166,7 +165,7 @@ jobs:
         working-directory: m73
         run: |
           set -euo pipefail
-          git apply ../third_party/modem73/patches/network-audio-win.patch
+          git apply ../third_party/modem73/patches/wcr-features-win.patch
           make -j"$(nproc)" CXX=x86_64-w64-mingw32-g++-posix CC=x86_64-w64-mingw32-gcc-posix VERSION="${MODEM73_WIN_TAG#v}-wcr"
       - name: check
         working-directory: m73

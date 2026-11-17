@@ -1,51 +1,51 @@
 diff --git a/control_port.hh b/control_port.hh
-index 2b40c05..16e0684 100644
+index 694c858..d1e895a 100644
 --- a/control_port.hh
 +++ b/control_port.hh
-@@ -100,6 +100,7 @@ public:
-         std::function<bool()> send_beacon;
-         std::function<bool()> reconnect_audio;
-         std::function<std::vector<RxFrameInfo>(size_t limit, uint64_t since_seq)> rx_frame_history;
+@@ -165,6 +165,7 @@ public:
+         std::function<void()> reset_stats;
+         std::function<void()> restart;
+         std::function<void()> idle;
 +        std::function<cJSON*()> get_spectrum;  // wcr: waterfall on the web page
      };
  
-     ControlPort(int port, const std::string& bind_address, TNCInterface iface)
-@@ -341,6 +342,8 @@ private:
-             handle_reconnect_audio(client_fd);
-         } else if (strcmp(cmd_str, "rx_frame_history") == 0) {
-             handle_rx_frame_history(client_fd, request);
+     static constexpr int STREAM_TICK_MS = 100;
+@@ -527,6 +528,8 @@ private:
+             handle_reset_stats(id);
+         } else if (strcmp(cmd_str, "restart") == 0) {
+             handle_restart(id);
 +        } else if (strcmp(cmd_str, "get_spectrum") == 0) {
-+            handle_get_spectrum(client_fd);
++            handle_get_spectrum(id);
          } else {
-             send_error(client_fd, "unknown command");
+             send_error(id, "unknown command");
          }
-@@ -348,6 +351,21 @@ private:
+@@ -534,6 +537,21 @@ private:
          cJSON_Delete(request);
      }
  
-+    void handle_get_spectrum(int client_fd) {
++    void handle_get_spectrum(uint64_t id) {
 +        if (!iface_.get_spectrum) {
-+            send_error(client_fd, "get_spectrum not available");
++            send_error(id, "get_spectrum not available");
 +            return;
 +        }
 +        cJSON* response = iface_.get_spectrum();
 +        if (response) {
 +            cJSON_AddBoolToObject(response, "ok", 1);
-+            send_json(client_fd, response);
++            send_json(id, response);
 +            cJSON_Delete(response);
 +        } else {
-+            send_error(client_fd, "get_spectrum failed");
++            send_error(id, "get_spectrum failed");
 +        }
 +    }
 +
-     void handle_get_status(int client_fd) {
+     void handle_get_status(uint64_t id) {
          if (!iface_.get_status) {
-             send_error(client_fd, "get_status not available");
+             send_error(id, "get_status not available");
 diff --git a/csma.hh b/csma.hh
-index ba0d04c..8a29adb 100644
+index 2011939..68b804d 100644
 --- a/csma.hh
 +++ b/csma.hh
-@@ -156,6 +156,15 @@ public:
+@@ -161,6 +161,15 @@ public:
          window_ = std::max(1, cfg_.rank_n) * rank_slot_;
      }
  
@@ -61,7 +61,7 @@ index ba0d04c..8a29adb 100644
      Reason reason() const { return reason_; }
      bool quiet_met() const { return idle_ms_ >= quiet_needed_; }
      int window_ms() const { return window_; }
-@@ -172,7 +181,7 @@ private:
+@@ -177,7 +186,7 @@ private:
          int slots = std::max(2, window_ / slot);
          return cfg_.extra_delay_ms + slot *
              std::uniform_int_distribution<int>(0, slots - 1)(gen_) +
@@ -71,10 +71,10 @@ index ba0d04c..8a29adb 100644
  
      int credit(int idle_since_ms) const {
 diff --git a/kiss_tnc.cc b/kiss_tnc.cc
-index f3fe696..6919c3c 100644
+index 3582f46..0102b1b 100644
 --- a/kiss_tnc.cc
 +++ b/kiss_tnc.cc
-@@ -159,7 +159,7 @@ static bool apply_settings_file(const std::string& path, TNCConfig& config,
+@@ -220,7 +220,7 @@ static bool apply_settings_file(const std::string& path, TNCConfig& config,
          else if (!strcmp(key, "tx_blanking_enabled") && take(key)) config.tx_blanking_enabled = atoi(value) != 0;
          else if (!strcmp(key, "tx_drive") && take(key)) {
              float v = (float)atof(value);
@@ -83,13 +83,8 @@ index f3fe696..6919c3c 100644
          }
          else if (!strcmp(key, "audio_input") && take(key)) config.audio_input_device = value;
          else if (!strcmp(key, "audio_output") && take(key)) config.audio_output_device = value;
-@@ -288,9 +288,12 @@ void print_help(const char* prog) {
-               << "  -d, --device DEV        Audio device for both capture and playback\n"
-               << "      --input-device DEV  Audio capture device\n"
+@@ -357,7 +357,7 @@ void print_help(const char* prog) {
                << "      --output-device DEV Audio playback device\n"
-+              << "                          DEV tcp:HOST:PORT (use -d) = network audio: mono\n"
-+              << "                          s16le PCM over TCP; the peer sends capture samples\n"
-+              << "                          and gets the same number of playback samples back\n"
                << "      --audio-backend B   Audio backend: auto, alsa, pulse, jack (default: auto)\n"
                << "                          Place before --list-audio to list that backend's devices\n"
 -              << "      --tx-level PCT      TX audio output level, 5-100 (default: 100)\n"
@@ -97,7 +92,7 @@ index f3fe696..6919c3c 100644
                << "\nModem:\n"
                << "  -c, --callsign CALL     Callsign (default: N0CALL)\n"
                << "      --modem TYPE        ofdm, mfsk or robust (default: ofdm)\n"
-@@ -487,7 +490,7 @@ int main(int argc, char** argv) {
+@@ -570,7 +570,7 @@ int main(int argc, char** argv) {
              config.audio_backend = b;
              cli_set.insert("audio_backend");
          } else if (arg == "--tx-level" && i + 1 < argc) {
@@ -106,10 +101,10 @@ index f3fe696..6919c3c 100644
              cli_set.insert("tx_drive");
          } else if ((arg == "-c" || arg == "--callsign") && i + 1 < argc) {
              config.callsign = argv[++i];
-@@ -1303,12 +1306,45 @@ int main(int argc, char** argv) {
-                 cJSON_AddNumberToObject(j, "client_count", tnc.get_client_count());
-                 cJSON_AddBoolToObject(j, "rigctl_connected", tnc.is_rigctl_connected());
-                 cJSON_AddBoolToObject(j, "audio_connected", tnc.is_audio_healthy());
+@@ -1527,12 +1527,45 @@ int main(int argc, char** argv) {
+                     cJSON_AddNumberToObject(j, "net_audio_rx_frames", (double)ns.rx_frames);
+                     cJSON_AddNumberToObject(j, "net_audio_tx_frames", (double)ns.tx_frames);
+                 }
 +                // wcr: live capture level, so wcr needs no second capture
 +                // stream on a card modem73 holds. Below 0 dB only: 0 means
 +                // "no recent audio", and -100 means capture is down.
@@ -152,7 +147,7 @@ index f3fe696..6919c3c 100644
              ctrl_iface.get_config = [&tnc]() -> cJSON* {
                  cJSON* j = cJSON_CreateObject();
                  TNCConfig cfg = tnc.get_config();
-@@ -1431,7 +1467,7 @@ int main(int argc, char** argv) {
+@@ -1674,7 +1707,7 @@ int main(int argc, char** argv) {
                  if ((item = cJSON_GetObjectItemCaseSensitive(params, "tx_lead_tone")) && cJSON_IsBool(item))
                      new_config.tx_lead_tone = cJSON_IsTrue(item);
                  if ((item = cJSON_GetObjectItemCaseSensitive(params, "tx_drive")) && cJSON_IsNumber(item)
@@ -162,10 +157,10 @@ index f3fe696..6919c3c 100644
                  if ((item = cJSON_GetObjectItemCaseSensitive(params, "tx_blanking_enabled")) && cJSON_IsBool(item))
                      new_config.tx_blanking_enabled = cJSON_IsTrue(item);
 diff --git a/kiss_tnc_impl.hh b/kiss_tnc_impl.hh
-index b721d8a..7ac1a59 100644
+index c3bbbb5..64a9a15 100644
 --- a/kiss_tnc_impl.hh
 +++ b/kiss_tnc_impl.hh
-@@ -39,6 +39,9 @@
+@@ -40,6 +40,9 @@
  #include "csma.hh"
  #include "tone_dcd.hh"
  #include "miniaudio_audio.hh"
@@ -175,7 +170,7 @@ index b721d8a..7ac1a59 100644
  #include "rigctl_ptt.hh"
  #include "hamlib_ptt.hh"
  #include "serial_ptt.hh"
-@@ -842,6 +845,12 @@ private:
+@@ -865,6 +868,12 @@ private:
                                       pkt.enqueue_ms >= rx_ms &&
                                       pkt.enqueue_ms - rx_ms <= 5000 &&
                                       steady_now_ms() - rx_ms <= 8000;
@@ -188,7 +183,7 @@ index b721d8a..7ac1a59 100644
                      CsmaGate gate(gcfg, (uint32_t)gen());
  #ifdef WITH_UI
                      if (g_ui_state) g_ui_state->csma_window_ms = gate.window_ms();
-@@ -1664,6 +1673,7 @@ private:
+@@ -1775,6 +1784,7 @@ private:
              if (n > 0) {
                  if (rx_tap) rx_tap(buffer.data(), n);
                  bool blanking = tx_blanking_active_.load();
@@ -196,7 +191,7 @@ index b721d8a..7ac1a59 100644
  
                  {
                      int64_t now_ms = steady_now_ms();
-@@ -2532,6 +2542,168 @@ public:
+@@ -2662,6 +2672,168 @@ public:
          return tx_on_air_.load() || tx_blanking_active_.load();
      }
  
@@ -365,7 +360,7 @@ index b721d8a..7ac1a59 100644
      void unkey() {
          set_ptt(false);
          tx_on_air_ = false;
-@@ -2606,6 +2778,13 @@ public:
+@@ -2785,6 +2957,13 @@ public:
          return audio_->instant_level_db(100);
      }
  
@@ -380,44 +375,10 @@ index b721d8a..7ac1a59 100644
          if (audio_) return audio_->is_healthy();
          return false;
 diff --git a/miniaudio_audio.hh b/miniaudio_audio.hh
-index f95bf69..1c1db92 100644
+index 9235fed..3cd1d04 100644
 --- a/miniaudio_audio.hh
 +++ b/miniaudio_audio.hh
-@@ -23,6 +23,8 @@
- #include <thread>
- #include <chrono>
- 
-+#include "net_audio.hh"
-+
- class MiniAudio {
- public:
-     static std::vector<std::pair<std::string, std::string>> list_capture_devices(const std::string& backend = "auto") {
-@@ -65,6 +67,7 @@ public:
- 
-     std::string backend_name() {
-         std::lock_guard<std::mutex> guard(lifecycle_mutex_);
-+        if (net_in_use_.load()) return "network";
-         return context_ ? ma_get_backend_name(context_->backend) : std::string("none");
-     }
- 
-@@ -200,6 +203,8 @@ public:
-             playback_lost_.load(std::memory_order_acquire) ||
-             rerouted_.load(std::memory_order_acquire))
-             return false;
-+        if (net_in_use_.load() && !net_.alive())
-+            return false;
-         if (consecutive_read_failures_.load() >= 3 ||
-             consecutive_write_failures_.load() >= 3)
-             return false;
-@@ -217,6 +222,7 @@ public:
-         if (capture_lost_.load()) return "capture device stopped";
-         if (playback_lost_.load()) return "playback device stopped";
-         if (rerouted_.load()) return "stream moved to another device";
-+        if (net_in_use_.load() && !net_.alive()) return "network audio disconnected";
-         int64_t now = steady_ms();
-         if (now - last_block_ms_.load() > HEARTBEAT_STALE_MS) return "no capture callbacks";
-         if (now - last_playback_ms_.load() > HEARTBEAT_STALE_MS) return "no playback callbacks";
-@@ -307,6 +313,32 @@ public:
+@@ -349,6 +349,32 @@ public:
          return 20.0f * std::log10(rms);
      }
  
@@ -450,181 +411,30 @@ index f95bf69..1c1db92 100644
      int sample_rate() const { return sample_rate_; }
  
  private:
-@@ -536,8 +568,49 @@ private:
-         return "";
-     }
- 
-+    // Shared by capture and playback: both must name the same tcp: device,
-+    // and one connection carries both directions.
-+    bool open_net_locked(bool capture) {
-+        if (capture_device_id_ != playback_device_id_) {
-+            log_msg("(!) Network audio needs the same tcp: address for input and output");
-+            return false;
-+        }
-+        if (!net_.alive()) {
-+            std::string err;
-+            bool ok = net_.open(
-+                capture_device_id_,
-+                [this](const float* in, size_t n) { push_capture(in, (ma_uint32)n); },
-+                [this](float* out, size_t n) { pull_playback(out, (ma_uint32)n); },
-+                &err);
-+            if (!ok) {
-+                log_msg("(!) Network audio " + capture_device_id_ + ": " + err);
-+                return false;
-+            }
-+        }
-+        net_in_use_.store(true);
-+        if (capture) {
-+            capture_lost_.store(false);
-+            last_block_ms_.store(steady_ms(), std::memory_order_relaxed);
-+            capture_open_.store(true, std::memory_order_release);
-+            log_msg("Capture: network audio " + capture_device_id_);
-+        } else {
-+            playback_lost_.store(false);
-+            last_playback_ms_.store(steady_ms(), std::memory_order_relaxed);
-+            playback_open_.store(true, std::memory_order_release);
-+            log_msg("Playback: network audio " + playback_device_id_);
-+        }
-+        return true;
-+    }
-+
-+    // Any close stops the shared connection; reconnect() reopens both sides.
-+    void close_net_locked() {
-+        if (!net_in_use_.exchange(false)) return;
-+        net_.close();
-+    }
-+
-     bool open_playback_locked(bool strict) {
-         if (playback_open_.load(std::memory_order_acquire)) return true;
-+        if (NetAudioLink::is_net_device(playback_device_id_)) return open_net_locked(false);
-         if (!ensure_context()) return false;
- 
-         ma_device_config config = ma_device_config_init(ma_device_type_playback);
-@@ -601,6 +674,7 @@ private:
- 
-     bool open_capture_locked(bool strict) {
-         if (capture_open_.load(std::memory_order_acquire)) return true;
-+        if (NetAudioLink::is_net_device(capture_device_id_)) return open_net_locked(true);
-         if (!ensure_context()) return false;
- 
-         ma_device_config config = ma_device_config_init(ma_device_type_capture);
-@@ -671,6 +745,7 @@ private:
- 
-     void close_playback_locked() {
-         bool was_open = playback_open_.exchange(false, std::memory_order_acq_rel);
-+        close_net_locked();
-         ma_device* dev = playback_device_.exchange(nullptr, std::memory_order_acq_rel);
-         std::unique_lock<std::shared_mutex> lock(playback_rw_);
-         if (dev) {
-@@ -687,6 +762,7 @@ private:
- 
-     void close_capture_locked() {
-         bool was_open = capture_open_.exchange(false, std::memory_order_acq_rel);
-+        close_net_locked();
-         ma_device* dev = capture_device_.exchange(nullptr, std::memory_order_acq_rel);
-         std::unique_lock<std::shared_mutex> lock(capture_rw_);
-         if (dev) {
-@@ -733,59 +809,74 @@ private:
-             for (ma_uint32 i = 0; i < frame_count; i++) out[i] = 0.0f;
-             return;
-         }
-+        self->pull_playback(out, frame_count);
-+    }
-+
-+    static void capture_callback(ma_device* device, void* output, const void* input, ma_uint32 frame_count) {
-+        (void)output;
-+        MiniAudio* self = static_cast<MiniAudio*>(device->pUserData);
-+        const float* in = static_cast<const float*>(input);
-+
-+        if (device != self->capture_device_.load(std::memory_order_acquire)) return;
-+        self->push_capture(in, frame_count);
-+    }
- 
--        size_t read_pos = self->playback_read_pos_.load();
--        size_t write_pos = self->playback_write_pos_.load();
-+    // Fill out with queued playback samples, silence once the queue is empty.
-+    void pull_playback(float* out, ma_uint32 frame_count) {
-+        size_t read_pos = playback_read_pos_.load();
-+        size_t write_pos = playback_write_pos_.load();
-         size_t available = (write_pos - read_pos + RING_BUFFER_SIZE) % RING_BUFFER_SIZE;
- 
-         ma_uint32 to_read = std::min((ma_uint32)available, frame_count);
- 
-         for (ma_uint32 i = 0; i < to_read; i++) {
--            out[i] = self->playback_buffer_[(read_pos + i) % RING_BUFFER_SIZE];
-+            out[i] = playback_buffer_[(read_pos + i) % RING_BUFFER_SIZE];
-         }
-         for (ma_uint32 i = to_read; i < frame_count; i++) {
-             out[i] = 0.0f;
-         }
- 
--        self->playback_read_pos_ = (read_pos + to_read) % RING_BUFFER_SIZE;
--        self->last_playback_ms_.store(steady_ms(), std::memory_order_relaxed);
-+        playback_read_pos_ = (read_pos + to_read) % RING_BUFFER_SIZE;
-+        last_playback_ms_.store(steady_ms(), std::memory_order_relaxed);
-     }
- 
--    static void capture_callback(ma_device* device, void* output, const void* input, ma_uint32 frame_count) {
--        (void)output;
--        MiniAudio* self = static_cast<MiniAudio*>(device->pUserData);
--        const float* in = static_cast<const float*>(input);
--
--        if (device != self->capture_device_.load(std::memory_order_acquire)) return;
--
--        size_t read_pos = self->capture_read_pos_.load();
--        size_t write_pos = self->capture_write_pos_.load();
-+    // Queue captured samples for read() and track the level for CSMA.
-+    void push_capture(const float* in, ma_uint32 frame_count) {
-+        size_t read_pos = capture_read_pos_.load();
-+        size_t write_pos = capture_write_pos_.load();
-         size_t used = (write_pos - read_pos + CAPTURE_RING_SIZE) % CAPTURE_RING_SIZE;
-         size_t available = CAPTURE_RING_SIZE - 1 - used;
- 
-         ma_uint32 to_write = std::min((ma_uint32)available, frame_count);
- 
-         for (ma_uint32 i = 0; i < to_write; i++) {
--            self->capture_buffer_[(write_pos + i) % CAPTURE_RING_SIZE] = in[i];
-+            capture_buffer_[(write_pos + i) % CAPTURE_RING_SIZE] = in[i];
-         }
- 
--        self->capture_write_pos_ = (write_pos + to_write) % CAPTURE_RING_SIZE;
-+        capture_write_pos_ = (write_pos + to_write) % CAPTURE_RING_SIZE;
+@@ -848,8 +874,13 @@ private:
+         capture_write_pos_ = (write_pos + to_write) % CAPTURE_RING_SIZE;
  
          float sum_sq = 0.0f;
 +        float peak = 0.0f;       // wcr: level meter
 +        uint32_t clipped = 0;
-         for (ma_uint32 i = 0; i < frame_count; i++) {
+         for (int i = 0; i < frame_count; i++) {
              sum_sq += in[i] * in[i];
 +            const float a = std::fabs(in[i]);
 +            if (a > peak) peak = a;
 +            if (a >= CLIP_LEVEL) clipped++;
          }
--        self->capture_energy_.store(self->capture_energy_.load() + sum_sq);
--        self->capture_samples_.store(self->capture_samples_.load() + frame_count);
-+        capture_energy_.store(capture_energy_.load() + sum_sq);
-+        capture_samples_.store(capture_samples_.load() + frame_count);
- 
-         if (frame_count > 0) {
--            uint64_t seq = self->block_seq_.load(std::memory_order_relaxed);
--            self->block_msq_[seq % LEVEL_RING].store(sum_sq / frame_count,
--                                                     std::memory_order_relaxed);
--            self->block_frames_[seq % LEVEL_RING].store(frame_count,
--                                                        std::memory_order_relaxed);
--            self->block_seq_.store(seq + 1, std::memory_order_release);
--            self->last_block_ms_.store(steady_ms(), std::memory_order_relaxed);
-+            uint64_t seq = block_seq_.load(std::memory_order_relaxed);
-+            block_msq_[seq % LEVEL_RING].store(sum_sq / frame_count,
-+                                               std::memory_order_relaxed);
-+            block_frames_[seq % LEVEL_RING].store(frame_count,
-+                                                  std::memory_order_relaxed);
+         capture_energy_.store(capture_energy_.load() + sum_sq);
+         capture_samples_.store(capture_samples_.load() + frame_count);
+@@ -860,6 +891,8 @@ private:
+                                                std::memory_order_relaxed);
+             block_frames_[seq % LEVEL_RING].store(frame_count,
+                                                   std::memory_order_relaxed);
 +            block_peak_[seq % LEVEL_RING].store(peak, std::memory_order_relaxed);
 +            block_clipped_[seq % LEVEL_RING].store(clipped, std::memory_order_relaxed);
-+            block_seq_.store(seq + 1, std::memory_order_release);
-+            last_block_ms_.store(steady_ms(), std::memory_order_relaxed);
+             block_seq_.store(seq + 1, std::memory_order_release);
+             last_block_ms_.store(steady_ms(), std::memory_order_relaxed);
          }
-     }
- 
-@@ -836,7 +927,15 @@ private:
+@@ -936,6 +969,11 @@ private:
      static constexpr size_t LEVEL_RING = 64;
      std::atomic<double> block_msq_[LEVEL_RING] = {};
      std::atomic<uint32_t> block_frames_[LEVEL_RING] = {};
@@ -636,202 +446,16 @@ index f95bf69..1c1db92 100644
      std::atomic<uint64_t> block_seq_{0};
      std::atomic<int64_t> last_block_ms_{0};
      std::atomic<int64_t> last_playback_ms_{0};
-+
-+    NetAudioLink net_;
-+    std::atomic<bool> net_in_use_{false};
- };
-diff --git a/net_audio.hh b/net_audio.hh
-new file mode 100644
-index 0000000..bbee646
---- /dev/null
-+++ b/net_audio.hh
-@@ -0,0 +1,176 @@
-+#pragma once
-+
-+// Network audio: raw PCM over a TCP socket instead of a sound card.
-+//
-+// Select it by giving the same "tcp:HOST:PORT" as both --input-device and
-+// --output-device. modem73 connects to HOST:PORT. The peer is the audio clock:
-+// it streams mono signed 16-bit little-endian capture samples at the modem's
-+// sample rate, and for every block it sends, modem73 answers with the same
-+// number of playback samples (silence while idle). This lets another program
-+// carry the modem's audio over a link that is not a sound card, such as a
-+// radio's Bluetooth audio channel.
-+
-+#include <algorithm>
-+#include <atomic>
-+#include <cstdint>
-+#include <functional>
-+#include <string>
-+#include <thread>
-+#include <vector>
-+
-+#ifdef _WIN32
-+#include <winsock2.h>
-+#include <ws2tcpip.h>
-+#undef IN
-+#undef OUT
-+#else
-+#include <netdb.h>
-+#include <netinet/in.h>
-+#include <netinet/tcp.h>
-+#include <sys/socket.h>
-+#include <unistd.h>
-+#endif
-+
-+class NetAudioLink {
-+public:
-+    using CaptureSink = std::function<void(const float*, size_t)>;
-+    using PlaybackSource = std::function<void(float*, size_t)>;
-+
-+    static constexpr const char* PREFIX = "tcp:";
-+
-+    static bool is_net_device(const std::string& device) {
-+        return device.rfind(PREFIX, 0) == 0;
-+    }
-+
-+    ~NetAudioLink() { close(); }
-+
-+    // Connect and start the pump thread. On failure returns false and sets err.
-+    bool open(const std::string& device, CaptureSink capture, PlaybackSource playback,
-+              std::string* err) {
-+        close();
-+        std::string spec = device.substr(std::string(PREFIX).size());
-+        size_t colon = spec.rfind(':');
-+        if (colon == std::string::npos || colon == 0 || colon + 1 == spec.size()) {
-+            if (err) *err = "expected tcp:HOST:PORT";
-+            return false;
-+        }
-+        std::string host = spec.substr(0, colon);
-+        std::string port = spec.substr(colon + 1);
-+
-+        addrinfo hints{};
-+        hints.ai_family = AF_UNSPEC;
-+        hints.ai_socktype = SOCK_STREAM;
-+        addrinfo* res = nullptr;
-+        if (getaddrinfo(host.c_str(), port.c_str(), &hints, &res) != 0 || !res) {
-+            if (err) *err = "cannot resolve " + host;
-+            return false;
-+        }
-+        Socket s = INVALID;
-+        for (addrinfo* a = res; a; a = a->ai_next) {
-+            s = ::socket(a->ai_family, a->ai_socktype, a->ai_protocol);
-+            if (s == INVALID) continue;
-+            if (::connect(s, a->ai_addr, (int)a->ai_addrlen) == 0) break;
-+            close_socket(s);
-+            s = INVALID;
-+        }
-+        freeaddrinfo(res);
-+        if (s == INVALID) {
-+            if (err) *err = "nothing listening on " + host + ":" + port;
-+            return false;
-+        }
-+        int one = 1;
-+        setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof(one));
-+
-+        sock_ = s;
-+        capture_ = std::move(capture);
-+        playback_ = std::move(playback);
-+        stop_.store(false);
-+        alive_.store(true);
-+        thread_ = std::thread([this] { pump(); });
-+        return true;
-+    }
-+
-+    void close() {
-+        stop_.store(true);
-+        if (sock_ != INVALID) shutdown_socket(sock_);
-+        if (thread_.joinable()) thread_.join();
-+        if (sock_ != INVALID) close_socket(sock_);
-+        sock_ = INVALID;
-+        alive_.store(false);
-+    }
-+
-+    // True while the peer is connected and the pump is running.
-+    bool alive() const { return alive_.load(); }
-+
-+private:
-+#ifdef _WIN32
-+    using Socket = SOCKET;
-+    static constexpr Socket INVALID = INVALID_SOCKET;
-+    static void close_socket(Socket s) { closesocket(s); }
-+    static void shutdown_socket(Socket s) { ::shutdown(s, SD_BOTH); }
-+#else
-+    using Socket = int;
-+    static constexpr Socket INVALID = -1;
-+    static void close_socket(Socket s) { ::close(s); }
-+    static void shutdown_socket(Socket s) { ::shutdown(s, SHUT_RDWR); }
-+#endif
-+
-+    bool send_all(const char* data, size_t len) {
-+#ifdef MSG_NOSIGNAL
-+        const int flags = MSG_NOSIGNAL;
-+#else
-+        const int flags = 0;
-+#endif
-+        while (len > 0) {
-+            int n = ::send(sock_, data, (int)len, flags);
-+            if (n <= 0) return false;
-+            data += n;
-+            len -= (size_t)n;
-+        }
-+        return true;
-+    }
-+
-+    void pump() {
-+        std::vector<char> bytes(8192);
-+        size_t have = 0;
-+        std::vector<float> in;
-+        std::vector<float> out;
-+        std::vector<char> wire;
-+        while (!stop_.load()) {
-+            int n = ::recv(sock_, bytes.data() + have, (int)(bytes.size() - have), 0);
-+            if (n <= 0) break;
-+            have += (size_t)n;
-+            size_t frames = have / 2;
-+            if (frames == 0) continue;
-+
-+            in.resize(frames);
-+            for (size_t i = 0; i < frames; i++) {
-+                int16_t v = (int16_t)((uint8_t)bytes[2 * i] | ((uint8_t)bytes[2 * i + 1] << 8));
-+                in[i] = v / 32768.0f;
-+            }
-+            if (have % 2) bytes[0] = bytes[have - 1];
-+            have %= 2;
-+
-+            capture_(in.data(), frames);
-+            out.assign(frames, 0.0f);
-+            playback_(out.data(), frames);
-+
-+            wire.resize(frames * 2);
-+            for (size_t i = 0; i < frames; i++) {
-+                float v = std::max(-1.0f, std::min(1.0f, out[i]));
-+                uint16_t u = (uint16_t)(int16_t)(v * 32767.0f);
-+                wire[2 * i] = (char)(u & 0xff);
-+                wire[2 * i + 1] = (char)(u >> 8);
-+            }
-+            if (!send_all(wire.data(), wire.size())) break;
-+        }
-+        alive_.store(false);
-+    }
-+
-+    Socket sock_ = INVALID;
-+    std::thread thread_;
-+    std::atomic<bool> stop_{false};
-+    std::atomic<bool> alive_{false};
-+    CaptureSink capture_;
-+    PlaybackSource playback_;
-+};
 diff --git a/tnc_ui_state.hh b/tnc_ui_state.hh
-index bf1b660..be0b115 100644
+index 8e002ab..961f5be 100644
 --- a/tnc_ui_state.hh
 +++ b/tnc_ui_state.hh
-@@ -843,7 +843,7 @@ struct TNCUIState {
-                 }
-                 else if (strcmp(key, "tx_drive") == 0) {
-                     float v = strtof(value, nullptr);
--                    if (v >= 0.05f && v <= 1.0f) tx_drive = v;
-+                    if (v >= 0.01f && v <= 1.0f) tx_drive = v;
-                 }
-                 else if (strcmp(key, "alt_mode_mask") == 0)
-                     alt_mode_mask = atoi(value) & ((1 << ALT_MODE_COUNT) - 1);
+@@ -1002,7 +1002,7 @@ struct TNCUIState {
+         }
+         else if (strcmp(key, "tx_drive") == 0) {
+             float v = strtof(value, nullptr);
+-            if (v >= 0.05f && v <= 1.0f) tx_drive = v;
++            if (v >= 0.01f && v <= 1.0f) tx_drive = v;
+         }
+         else if (strcmp(key, "alt_mode_mask") == 0)
+             alt_mode_mask = atoi(value) & ((1 << ALT_MODE_COUNT) - 1);

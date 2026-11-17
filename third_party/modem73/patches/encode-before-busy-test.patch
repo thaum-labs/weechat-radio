@@ -1,8 +1,8 @@
 diff --git a/kiss_tnc.hh b/kiss_tnc.hh
-index 241f41c..fade2fe 100644
+index c34390c..17420f4 100644
 --- a/kiss_tnc.hh
 +++ b/kiss_tnc.hh
-@@ -473,6 +473,13 @@ struct TxPacket {
+@@ -476,6 +476,13 @@ struct TxPacket {
      int64_t enqueue_ms;
      bool beacon = false;
      bool manual = false;
@@ -17,10 +17,10 @@ index 241f41c..fade2fe 100644
      TxPacket(std::vector<uint8_t> d, int mode = -1)
          : data(std::move(d)), oper_mode(mode), enqueue_ms(steady_now_ms()) {}
 diff --git a/kiss_tnc_impl.hh b/kiss_tnc_impl.hh
-index 7ac1a59..86366ae 100644
+index 64a9a15..c28731e 100644
 --- a/kiss_tnc_impl.hh
 +++ b/kiss_tnc_impl.hh
-@@ -712,6 +712,17 @@ private:
+@@ -734,6 +734,17 @@ private:
                          continue;
                      }
                  }
@@ -38,7 +38,7 @@ index 7ac1a59..86366ae 100644
                  // CSMA
                  bool csma_enabled, csma_sync_only, csma_fast_floor, csma_ranked;
                  int csma_band;
-@@ -988,7 +999,7 @@ private:
+@@ -1011,7 +1022,7 @@ private:
                      }
  #endif
                      bool sent = transmit(cur.data, cur.oper_mode, first, !have_next,
@@ -47,7 +47,7 @@ index 7ac1a59..86366ae 100644
                      if (!have_next) {
                          if (!cur.beacon)
                              last_burst_end = steady_now_ms();
-@@ -1096,11 +1107,74 @@ private:
+@@ -1119,11 +1130,69 @@ private:
          return config_.tx_delay_ms;
      }
  
@@ -72,12 +72,7 @@ index 7ac1a59..86366ae 100644
 +        int tx_mode = (oper_mode_override >= 0) ? oper_mode_override : modem_config_.oper_mode;
 +        oversize = false;
 +        {
-+            size_t cap = payload_size_;
-+            if (config_.modem_type == 0 && oper_mode_override >= 0)
-+                cap = encoder_->get_payload_size(oper_mode_override);
-+            else if (config_.modem_type == 2 && oper_mode_override >= 0 &&
-+                     oper_mode_override < ROBUST_MODE_COUNT)
-+                cap = robust_encoder_->get_payload_size((RobustMode)oper_mode_override);
++            size_t cap = mode_capacity(config_.modem_type, oper_mode_override);
 +            if (cap < 2 || data.size() > cap - 2) {
 +                ui_log("(!) TX: " + std::to_string(data.size()) + " byte frame exceeds " +
 +                       std::to_string(cap >= 2 ? cap - 2 : 0) + " byte capacity of current mode, dropped");
@@ -123,7 +118,7 @@ index 7ac1a59..86366ae 100644
  
          if (beacon) {
              ui_log("TX: presence tone");
-@@ -1133,51 +1207,18 @@ private:
+@@ -1156,46 +1225,18 @@ private:
          }
  #endif
  
@@ -132,12 +127,7 @@ index 7ac1a59..86366ae 100644
 +        // when the settings are unchanged)
          bool data_oversize = false;
 -        {
--            size_t cap = payload_size_;
--            if (config_.modem_type == 0 && oper_mode_override >= 0)
--                cap = encoder_->get_payload_size(oper_mode_override);
--            else if (config_.modem_type == 2 && oper_mode_override >= 0 &&
--                     oper_mode_override < ROBUST_MODE_COUNT)
--                cap = robust_encoder_->get_payload_size((RobustMode)oper_mode_override);
+-            size_t cap = mode_capacity(config_.modem_type, oper_mode_override);
 -            if (cap < 2 || data.size() > cap - 2) {
 -                ui_log("(!) TX: " + std::to_string(data.size()) + " byte frame exceeds " +
 -                       std::to_string(cap >= 2 ? cap - 2 : 0) + " byte capacity of current mode, dropped");
