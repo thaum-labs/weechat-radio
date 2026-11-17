@@ -225,6 +225,7 @@ fn two_modem73s_talk_through_two_bridges() {
     }
 
     let dir = tempfile::tempdir().unwrap();
+    let log_of = |call: &str| dir.path().join(format!("{call}.log"));
     let spawn = |ports: Ports, kiss: u16, call: &str| {
         let home = dir.path().join(call);
         std::fs::create_dir_all(&home).unwrap();
@@ -239,7 +240,7 @@ fn two_modem73s_talk_through_two_bridges() {
             .args(["--callsign", call])
             .args(&args)
             .env("HOME", &home)
-            .stdout(std::process::Stdio::null())
+            .stdout(std::fs::File::create(log_of(call)).unwrap())
             .stderr(std::process::Stdio::null())
             .spawn()
             .unwrap()
@@ -275,6 +276,15 @@ fn two_modem73s_talk_through_two_bridges() {
         let _ = m.wait();
     }
     assert!(contains(&got, &payload), "frame crossed the fake air");
+    // QA #359: the bridge is the audio clock. A block that is a millisecond
+    // late is not a stall, so modem73 must not pace transmit itself.
+    for call in ["TEST1A", "TEST1B"] {
+        let log = std::fs::read_to_string(log_of(call)).unwrap_or_default();
+        assert!(
+            !log.contains("no capture data"),
+            "{call}: modem73 called the bridge stalled:\n{log}"
+        );
+    }
 }
 
 /// QA #239: a VR-N76 at squelch 0 streams receiver hiss at about -4 dBFS.

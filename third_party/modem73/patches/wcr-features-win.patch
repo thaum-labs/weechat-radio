@@ -44,3 +44,28 @@ index 6540c7a..f9ee04d 100644
                      CsmaGate gate(gcfg, (uint32_t)gen());
  #ifdef WITH_UI
                      if (g_ui_state) g_ui_state->csma_window_ms = gate.window_ms();
+diff --git a/net_audio.hh b/net_audio.hh
+index 9bc61ee..77a75cf 100644
+--- a/net_audio.hh
++++ b/net_audio.hh
+@@ -16,6 +16,12 @@ class NetAudioLink {
+ public:
+     static constexpr const char* PREFIX = "tcp:";
+     static constexpr int POLL_MS = 20;
++    // wcr: a peer that is the audio clock and sends 20 ms blocks (wcr's
++    // Bluetooth bridge) is often a millisecond or two late, and POLL_MS is
++    // also 20 ms, so every late block read as a stall and flooded the log
++    // with "no capture data" lines (QA #359). Pace transmit locally only
++    // after a real gap.
++    static constexpr int STALL_MS = 250;
+     static constexpr int CONNECT_TIMEOUT_MS = 3000;
+     static constexpr int SEND_TIMEOUT_S = 2;
+ 
+@@ -176,6 +182,7 @@ private:
+             }
+             if (r == 0) {
+                 int64_t now = now_ms();
++                if (!stalled && now - last_fallback < STALL_MS) continue;
+                 int frames = (int)((now - last_fallback) * rate_ / 1000);
+                 last_fallback = now;
+                 if (frames > 0 && playback_pending()) {

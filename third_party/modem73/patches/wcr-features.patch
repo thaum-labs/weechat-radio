@@ -459,3 +459,28 @@ index 8e002ab..961f5be 100644
          }
          else if (strcmp(key, "alt_mode_mask") == 0)
              alt_mode_mask = atoi(value) & ((1 << ALT_MODE_COUNT) - 1);
+diff --git a/net_audio.hh b/net_audio.hh
+index 69356a3..03d60b7 100644
+--- a/net_audio.hh
++++ b/net_audio.hh
+@@ -26,6 +26,12 @@ class NetAudioLink {
+ public:
+     static constexpr const char* PREFIX = "tcp:";
+     static constexpr int POLL_MS = 20;
++    // wcr: a peer that is the audio clock and sends 20 ms blocks (wcr's
++    // Bluetooth bridge) is often a millisecond or two late, and POLL_MS is
++    // also 20 ms, so every late block read as a stall and flooded the log
++    // with "no capture data" lines (QA #359). Pace transmit locally only
++    // after a real gap.
++    static constexpr int STALL_MS = 250;
+     static constexpr int CONNECT_TIMEOUT_MS = 3000;
+     static constexpr int SEND_TIMEOUT_S = 2;
+ 
+@@ -180,6 +186,7 @@ private:
+             }
+             if (r == 0) {
+                 int64_t now = now_ms();
++                if (!stalled && now - last_fallback < STALL_MS) continue;
+                 int frames = (int)((now - last_fallback) * rate_ / 1000);
+                 last_fallback = now;
+                 if (frames > 0 && playback_pending()) {
