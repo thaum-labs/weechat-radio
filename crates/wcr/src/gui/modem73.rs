@@ -956,6 +956,7 @@ impl GuiApp {
                 text(format!("● {}", s.gps.trim_start_matches("GPS: ")), c),
             );
         }
+        m73_heard(ui, &s.heard);
         for cmd in [mode_cmd, tower_cmd, preset_cmd, freq_cmd]
             .into_iter()
             .flatten()
@@ -1132,6 +1133,13 @@ impl GuiApp {
             &ui.interact(r.rect, ui.id().with("m73_mini"), egui::Sense::hover()),
             "RETRY: last ARQ retry count. AIR: radio frames waiting to leave this station now. HOLD: next store-and-forward relay or your own unacked retry.",
         );
+        let snrs: Vec<f32> = self
+            .traffic
+            .iter()
+            .filter(|r| r["dir"].as_str() != Some("sent"))
+            .filter_map(|r| r["snr"].as_f64().map(|v| v as f32))
+            .collect();
+        m73_snr_history(ui, &snrs);
         if let Some(cmd) = level_cmd {
             self.send_cmd(&cmd);
         }
@@ -1993,6 +2001,136 @@ fn bar_row_height(height: f32) -> f32 {
     } else {
         14.0
     }
+}
+
+/// One HEARD row: call, band, SNR and how long ago, in fixed columns.
+const HEARD_ROW_H: f32 = 15.0;
+
+/// STATION's lower part (Tobias on rc1: use the empty space): the stations
+/// heard most recently, as many as fit. Same list as the email HEARD.
+fn m73_heard(ui: &mut egui::Ui, heard: &[crate::status::HeardBrief]) {
+    let room = ui.available_height() - 6.0 - HEARD_ROW_H;
+    if room < HEARD_ROW_H {
+        return;
+    }
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label(label("HEARD"));
+        if !heard.is_empty() {
+            ui.label(text(heard.len().to_string(), M_DIM).size(11.0));
+        }
+    });
+    if heard.is_empty() {
+        ui.label(text("nobody yet", M_DIM).size(12.0));
+        return;
+    }
+    let now = crate::status::unix_now_f64() as i64;
+    let fits = (room / HEARD_ROW_H).floor().max(1.0) as usize;
+    for h in heard.iter().take(fits) {
+        let tag = match h.band_tag() {
+            "inet" => "net",
+            tag => tag,
+        };
+        let snr = h.snr.map(|v| format!("{v:.0} dB")).unwrap_or_default();
+        let ago = ago_short(now - h.last_heard as i64);
+        ui.horizontal(|ui| {
+            ui.set_height(HEARD_ROW_H - 1.0);
+            key_cell(ui, &h.callsign);
+            ui.label(text(format!("{tag:<5}"), M_MUTE).size(12.0));
+            reading(ui, |ui| {
+                ui.label(text(format!("{ago:>4}"), M_DIM).size(12.0));
+                if !snr.is_empty() {
+                    ui.label(text(snr, M_GOLD).size(12.0));
+                }
+            });
+        });
+    }
+}
+
+/// "12s", "4m", "2h", "3d".
+fn ago_short(secs: i64) -> String {
+    let s = secs.max(0);
+    match s {
+        0..=59 => format!("{s}s"),
+        60..=3599 => format!("{}m", s / 60),
+        3600..=86_399 => format!("{}h", s / 3600),
+        _ => format!("{}d", s / 86_400),
+    }
+}
+
+/// SNR scale of the history graph: weak decodes near the bottom, a strong
+/// local signal at the top.
+const SNR_LO: f32 = -10.0;
+const SNR_HI: f32 = 30.0;
+
+/// SIGNAL's lower part (Tobias on rc1: use the empty space): the SNR of
+/// each frame heard, oldest left, as bars that fill the rest of the column.
+/// The key sits in the same column as IN, OUT and SNR.
+fn m73_snr_history(ui: &mut egui::Ui, snrs: &[f32]) {
+    let h = ui.available_height() - 6.0;
+    if h < 14.0 {
+        return;
+    }
+    ui.add_space(6.0);
+    let w = ui.available_width();
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    let key_w = 64.0;
+    painter.text(
+        egui::pos2(rect.left(), rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        "SNR LOG",
+        mono(12.0),
+        M_DIM,
+    );
+    let area = egui::Rect::from_min_max(egui::pos2(rect.left() + key_w, rect.top()), rect.max);
+    painter.line_segment([area.left_bottom(), area.right_bottom()], hairline(M_LINE));
+    let bar_w = 4.0;
+    let step = bar_w + 2.0;
+    let n = ((area.width() / step).floor() as usize).max(1);
+    let shown = &snrs[snrs.len().saturating_sub(n)..];
+    if shown.is_empty() {
+        painter.text(
+            area.center(),
+            egui::Align2::CENTER_CENTER,
+            "no frames heard yet",
+            mono(11.0),
+            M_DIM,
+        );
+    }
+    // Right-aligned so the newest frame is always at the right edge.
+    let x0 = area.right() - shown.len() as f32 * step + 2.0;
+    for (i, &v) in shown.iter().enumerate() {
+        let frac = ((v - SNR_LO) / (SNR_HI - SNR_LO)).clamp(0.06, 1.0);
+        let top = area.bottom() - 1.0 - frac * (area.height() - 2.0);
+        let x = x0 + i as f32 * step;
+        let bar = egui::Rect::from_min_max(
+            egui::pos2(x, top),
+            egui::pos2(x + bar_w, area.bottom() - 1.0),
+        );
+        let c = if v < 3.0 {
+            M_RED
+        } else if v < 10.0 {
+            M_GOLD
+        } else {
+            M_GREEN
+        };
+        painter.rect_filled(bar, 0.0, c.gamma_multiply(0.85));
+    }
+    let mut tip = String::from(
+        "SNR of each frame this station decoded, oldest left, newest right. Green 10 dB and up, gold 3 to 10, red below 3 (close to the decode limit).",
+    );
+    if let (Some(lo), Some(hi), Some(last)) = (
+        shown.iter().copied().reduce(f32::min),
+        shown.iter().copied().reduce(f32::max),
+        shown.last(),
+    ) {
+        tip.push_str(&format!(
+            "\n\nLast {last:.0} dB, range {lo:.0} to {hi:.0} dB over {} frames.",
+            shown.len()
+        ));
+    }
+    hover_tip(&resp, tip);
 }
 
 /// MAIL GW dots in the modem73 palette: lit segments and their colour.
