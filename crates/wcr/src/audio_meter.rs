@@ -5,7 +5,8 @@
 //! macOS/Linux this monitor opens the capture device in shared mode. On
 //! Windows a second WASAPI capture (or even IAudioMeterInformation on the
 //! capture endpoint) glitches modem73's stream so MFSK CRC dies. We only
-//! meter the render endpoint.
+//! meter the render endpoint; the IN level comes from modem73's own capture
+//! (`audio_in_db` on the control port, #364).
 
 use crate::status::SharedStatus;
 use std::sync::Arc;

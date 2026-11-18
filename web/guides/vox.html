@@ -192,7 +192,7 @@
           </li>
           <li>
             <strong class="step-title">Turn on VOX</strong>
-            <p>On the radio, turn <strong>VOX on</strong>. Start with a medium VOX delay.</p>
+            <p>On the radio, turn <strong>VOX on</strong>, set <strong>squelch 1</strong> (not 0) and a mid <strong>VOX level</strong> (4 worked on a VR-N76). Start with a medium VOX delay. At squelch 0 the radio hears noise all the time and its VOX may not key.</p>
           </li>
           <li>
             <strong class="step-title">Run setup</strong>
@@ -212,6 +212,7 @@
       <div class="ok">
         <h2>How you know it worked</h2>
         <p>The radio’s TX LED lights for each message. Delivery ticks still work; they take a little longer because of VOX delay.</p>
+        <p><strong>The cost of squelch 1:</strong> with the squelch on, wcr only hears signals strong enough to open it. The weakest lines are lost, the start of a line can be clipped, and the busy check only sees the channel as busy while the squelch is open. Wired PTT (Digirig) or a Bluetooth radio runs at squelch 0 and has none of this; use one if you can.</p>
       </div>
 
       <p class="next">Other paths: <a href="/guides/handheld.html">handheld + Digirig</a> · <a href="/guides/hf.html">HF + CAT</a>.</p>
