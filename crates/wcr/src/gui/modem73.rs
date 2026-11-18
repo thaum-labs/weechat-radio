@@ -336,6 +336,8 @@ pub(super) struct State {
     /// Height of the STATS block under ACTIVITY last frame, so the BARS
     /// graph can take the rest of the strip.
     stats_h: f32,
+    /// Widest STATS row that cannot wrap, last frame: room for the MAIL GW key.
+    stats_row_w: f32,
     /// Q was pressed: the "Quit?" box is showing.
     quit_ask: bool,
 }
@@ -1145,45 +1147,70 @@ impl GuiApp {
             .as_ref()
             .and_then(|s| s.csma_threshold_db)
             .unwrap_or(activity_bars::DEFAULT_THRESHOLD_DB);
-        // The graph takes whatever height STATS leaves, so the strip has
-        // no empty band at the bottom.
-        let stats_h = if self.m73.stats_h > 0.0 {
-            self.m73.stats_h
-        } else {
-            70.0
-        };
-        let bars_h = ui.available_height() - stats_h - 4.0;
+        // MAIL GW key (#362): bottom-right corner, beside STATS, so the
+        // graph keeps the full width (Tobias on rc1). Only when STATS'
+        // widest row (last frame) leaves room for it; otherwise the MAIL GW
+        // dots' hover tip still explains the states.
         let show_key = self
             .status
             .as_ref()
             .is_some_and(|s| s.mode == Mode::RadioPlus && !s.mail_gateway.is_empty());
-        if show_key {
-            // MAIL GW key (#362): a small dashed box right of the graph; the
-            // graph keeps its cell size and just shows less history.
-            let full = ui.available_rect_before_wrap();
-            let wide = full.width() >= MAIL_GW_KEY_WIDE;
-            let key_w = mail_gw_key_width(ui, wide);
-            let gap = 8.0;
-            let bars_rect = egui::Rect::from_min_max(
-                full.min,
-                egui::pos2(full.right() - key_w - gap, full.bottom()),
-            );
-            let r = ui.allocate_new_ui(egui::UiBuilder::new().max_rect(bars_rect), |ui| {
-                paint_bars(ui, &self.m73.activity, threshold, bars_h);
-            });
-            let key_rect = egui::Rect::from_min_size(
-                egui::pos2(full.right() - key_w, full.top()),
-                egui::vec2(key_w, MAIL_GW_KEY_ROWS as f32 * KEY_ROW_H + 2.0 * KEY_PAD),
-            );
-            // Never taller than the graph next to it.
-            if key_rect.bottom() <= r.response.rect.bottom() + 0.5 {
-                paint_mail_gw_key(ui, key_rect, wide);
-            }
+        let full_w = ui.available_width();
+        let gap = 10.0;
+        let row_w = self.m73.stats_row_w;
+        let fits = |wide: bool| {
+            let w = mail_gw_key_width(ui, wide);
+            (row_w + gap + w <= full_w).then_some((wide, w))
+        };
+        let key = if show_key {
+            (full_w >= MAIL_GW_KEY_WIDE)
+                .then(|| fits(true))
+                .flatten()
+                .or_else(|| fits(false))
         } else {
-            paint_bars(ui, &self.m73.activity, threshold, bars_h);
+            None
+        };
+        // The graph takes whatever height STATS (or the key) leaves, so the
+        // strip has no empty band at the bottom.
+        let mut stats_h = if self.m73.stats_h > 0.0 {
+            self.m73.stats_h
+        } else {
+            70.0
+        };
+        if key.is_some() {
+            stats_h = stats_h.max(MAIL_GW_KEY_H);
         }
+        let bars_h = ui.available_height() - stats_h - 4.0;
+        paint_bars(ui, &self.m73.activity, threshold, bars_h);
         ui.add_space(4.0);
         let stats_top = ui.cursor().top();
+        match key {
+            Some((wide, key_w)) => {
+                let area = ui.available_rect_before_wrap();
+                let left = egui::Rect::from_min_max(
+                    area.min,
+                    egui::pos2(area.right() - key_w - gap, area.bottom()),
+                );
+                let mut row_w = 0.0;
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(left), |ui| {
+                    row_w = self.m73_stats(ui);
+                });
+                self.m73.stats_row_w = row_w;
+                let bottom = ui.max_rect().bottom();
+                let key_rect = egui::Rect::from_min_max(
+                    egui::pos2(area.right() - key_w, bottom - MAIL_GW_KEY_H),
+                    egui::pos2(area.right(), bottom),
+                );
+                paint_mail_gw_key(ui, key_rect, wide);
+            }
+            None => self.m73.stats_row_w = self.m73_stats(ui),
+        }
+        self.m73.stats_h = ui.cursor().top() - stats_top;
+    }
+
+    /// The STATS block under the graph. Returns the width of its widest
+    /// row that cannot wrap, so the MAIL GW key knows if it fits beside.
+    fn m73_stats(&mut self, ui: &mut egui::Ui) -> f32 {
         ui.label(text(">>> STATS", M_CYAN).size(12.0));
         let (rx, tx, letters) = self.m73_counts();
         let queue = self.status.as_ref().map(|s| s.queue_out).unwrap_or(0);
@@ -1206,9 +1233,9 @@ impl GuiApp {
             &ui.interact(r.rect, ui.id().with("m73_stats"), egui::Sense::hover()),
             "RX / TX: lines received and sent in this channel. Queue: your messages not yet delivered. Letters: lines in this channel.",
         );
+        let mut row_w = r.rect.width();
         let Some(s) = self.status.clone() else {
-            self.m73.stats_h = ui.cursor().top() - stats_top;
-            return;
+            return row_w;
         };
         let now = crate::status::unix_now_f64();
         let beacon = s.beacon_lane(now);
@@ -1218,7 +1245,7 @@ impl GuiApp {
             "DOWN" => M_GOLD,
             _ => M_MUTE,
         };
-        ui.horizontal(|ui| {
+        let hub_row = ui.horizontal(|ui| {
             ui.label(text("HUB", M_DIM).size(12.0));
             ui.label(text(hub, hub_color).size(12.0));
             ui.add_space(8.0);
@@ -1252,6 +1279,7 @@ impl GuiApp {
                 );
             }
         });
+        row_w = f32::max(row_w, hub_row.response.rect.width());
         let (_, crypto) = channel_security(&self.active_channel, Some(s.mode), &s.preset, s.hub_ok);
         ui.label(text(crypto, M_MUTE).size(11.0));
         if s.mode.uses_internet() && !s.hub_ok && !s.hub_banner.is_empty() {
@@ -1263,7 +1291,7 @@ impl GuiApp {
         if !self.error.is_empty() {
             ui.label(text(&self.error, M_GOLD).size(11.0));
         }
-        self.m73.stats_h = ui.cursor().top() - stats_top;
+        row_w
     }
 
     /// RX, TX and all lines in the open channel.
@@ -1996,6 +2024,7 @@ const MAIL_GW_KEY_WIDE: f32 = 520.0;
 const KEY_ROW_H: f32 = 13.0;
 const KEY_PAD: f32 = 4.0;
 const KEY_FONT: f32 = 10.0;
+const MAIL_GW_KEY_H: f32 = MAIL_GW_KEY_ROWS as f32 * KEY_ROW_H + 2.0 * KEY_PAD;
 const MAIL_GW_KEY_TIP: &str = "MAIL GW key\n\
 grey: Not asked yet: Auto has not yet asked which gateways hear you\n\
 magenta: Asking: Auto is asking on air which gateways hear you\n\
