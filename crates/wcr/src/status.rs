@@ -969,11 +969,8 @@ mod tests {
             ..Default::default()
         };
         s.apply_modem_audio(&idle);
-        if cfg!(windows) {
-            assert_eq!(s.audio_label, "low");
-        } else {
-            assert_eq!(s.audio_label, "—");
-        }
+        // Windows too (#364): it read "low" while capture worked.
+        assert_eq!(s.audio_label, "—");
         // modem73 reports the live level: a real label again.
         s.apply_modem_audio(&ModemStatus {
             audio_in_db: Some(-20.0),
