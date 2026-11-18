@@ -362,8 +362,10 @@ impl StatusSnapshot {
         if let Some(db) = st.audio_in_db {
             self.audio_in_db = db.max(crate::presets::AUDIO_FLOOR_DB);
         } else if cfg!(windows) && !st.channel_state.eq_ignore_ascii_case("rx") {
-            // No live capture meter on Windows (that glitched MFSK). Fall
-            // toward empty so the last decode does not leave IN stuck.
+            // Older Windows modem73 builds report no live capture level
+            // (wcr's own second capture glitched MFSK). Fall toward empty so
+            // the last decode does not leave IN stuck. Since #364 modem73
+            // reports `audio_in_db` from its own capture stream.
             self.audio_in_db = crate::presets::decay_audio_db(self.audio_in_db);
         }
         if let Some(db) = st.audio_out_db {
@@ -390,8 +392,8 @@ impl StatusSnapshot {
             (Some(a), Some(b)) => Some(a.max(b)),
             (a, b) => a.or(b),
         };
-        // The words need a live level: on Windows IN only moves on a decode,
-        // so an idle Windows station would always read "low".
+        // The words need a live level: without one IN only moves on a
+        // decode, so an idle station would always read "low".
         let live = st.audio_in_db.is_some() || self.local_in_meter;
         if !live {
             self.audio_in_word.clear();
@@ -400,9 +402,9 @@ impl StatusSnapshot {
             self.judge_input();
         }
         // Nothing measures the capture live (old modem73, and wcr's meter
-        // could not open the card): say so instead of showing -80 dB as "low".
-        let measured = live || cfg!(windows);
-        self.audio_label = if !measured {
+        // could not open the card): say so instead of showing -80 dB as "low"
+        // (#364: Windows read "low" while capture worked).
+        self.audio_label = if !live {
             "—".into()
         } else {
             label_for(&self.audio_in_word, self.audio_in_db).into()

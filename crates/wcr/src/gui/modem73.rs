@@ -1153,7 +1153,35 @@ impl GuiApp {
             70.0
         };
         let bars_h = ui.available_height() - stats_h - 4.0;
-        paint_bars(ui, &self.m73.activity, threshold, bars_h);
+        let show_key = self
+            .status
+            .as_ref()
+            .is_some_and(|s| s.mode == Mode::RadioPlus && !s.mail_gateway.is_empty());
+        if show_key {
+            // MAIL GW key (#362): a small dashed box right of the graph; the
+            // graph keeps its cell size and just shows less history.
+            let full = ui.available_rect_before_wrap();
+            let wide = full.width() >= MAIL_GW_KEY_WIDE;
+            let key_w = mail_gw_key_width(ui, wide);
+            let gap = 8.0;
+            let bars_rect = egui::Rect::from_min_max(
+                full.min,
+                egui::pos2(full.right() - key_w - gap, full.bottom()),
+            );
+            let r = ui.allocate_new_ui(egui::UiBuilder::new().max_rect(bars_rect), |ui| {
+                paint_bars(ui, &self.m73.activity, threshold, bars_h);
+            });
+            let key_rect = egui::Rect::from_min_size(
+                egui::pos2(full.right() - key_w, full.top()),
+                egui::vec2(key_w, MAIL_GW_KEY_ROWS as f32 * KEY_ROW_H + 2.0 * KEY_PAD),
+            );
+            // Never taller than the graph next to it.
+            if key_rect.bottom() <= r.response.rect.bottom() + 0.5 {
+                paint_mail_gw_key(ui, key_rect, wide);
+            }
+        } else {
+            paint_bars(ui, &self.m73.activity, threshold, bars_h);
+        }
         ui.add_space(4.0);
         let stats_top = ui.cursor().top();
         ui.label(text(">>> STATS", M_CYAN).size(12.0));
@@ -1208,18 +1236,7 @@ impl GuiApp {
             );
             if s.mode == Mode::RadioPlus && !s.mail_gateway.is_empty() {
                 ui.add_space(8.0);
-                let (lit, _) = mail_gw_stage(&s.mail_gateway);
-                let c = if lit == 0 {
-                    M_MUTE
-                } else if lit < MAIL_GW_STEPS {
-                    M_PLUS
-                } else if s.mail_gateway.starts_with(crate::mail::pick::NO_GATEWAY_HEARD)
-                    || s.mail_gateway.starts_with("Radio+")
-                {
-                    M_GOLD
-                } else {
-                    M_GREEN
-                };
+                let (lit, c) = m73_mail_gw_look(&s.mail_gateway);
                 let dots: Vec<&str> = (0..MAIL_GW_STEPS)
                     .map(|i| if i < lit { "●" } else { "·" })
                     .collect();
@@ -1950,6 +1967,111 @@ fn bar_row_height(height: f32) -> f32 {
     }
 }
 
+/// MAIL GW dots in the modem73 palette: lit segments and their colour.
+fn m73_mail_gw_look(line: &str) -> (usize, Color32) {
+    let (lit, _) = mail_gw_stage(line);
+    let c = if lit == 0 {
+        M_MUTE
+    } else if lit < MAIL_GW_STEPS {
+        M_PLUS
+    } else if line.starts_with(crate::mail::pick::NO_GATEWAY_HEARD) || line.starts_with("Radio+") {
+        M_GOLD
+    } else {
+        M_GREEN
+    };
+    (lit, c)
+}
+
+/// The MAIL GW key (#362): lit dots, colour, name, short meaning. Same
+/// states as [`mail_gw_stage`]; no new ones.
+const MAIL_GW_KEY: [(usize, Color32, &str, &str); 4] = [
+    (0, M_MUTE, "Not asked yet", "Auto has not asked"),
+    (1, M_PLUS, "Asking", "asking on air"),
+    (MAIL_GW_STEPS, M_GREEN, "Gateway ready", "mail will relay"),
+    (MAIL_GW_STEPS, M_GOLD, "No gateway", "none heard or set"),
+];
+const MAIL_GW_KEY_ROWS: usize = MAIL_GW_KEY.len();
+/// Column width from which the key also shows the short meanings.
+const MAIL_GW_KEY_WIDE: f32 = 520.0;
+const KEY_ROW_H: f32 = 13.0;
+const KEY_PAD: f32 = 4.0;
+const KEY_FONT: f32 = 10.0;
+const MAIL_GW_KEY_TIP: &str = "MAIL GW key\n\
+grey: Not asked yet: Auto has not yet asked which gateways hear you\n\
+magenta: Asking: Auto is asking on air which gateways hear you\n\
+green: Gateway ready: a gateway is in use (Auto picked it or it is typed in setup); mail will relay\n\
+gold: No gateway: none heard, or none set in setup";
+
+fn mail_gw_key_row(lit: usize, name: &str, meaning: &str, wide: bool) -> (String, String) {
+    let dots: String = (0..MAIL_GW_STEPS)
+        .map(|i| if i < lit { '●' } else { '·' })
+        .collect();
+    let words = if wide {
+        format!("{name:<13}  {meaning}")
+    } else {
+        name.to_string()
+    };
+    (dots, words)
+}
+
+/// Width of the key box: the widest row plus padding.
+fn mail_gw_key_width(ui: &egui::Ui, wide: bool) -> f32 {
+    let font = mono(KEY_FONT);
+    ui.fonts(|f| {
+        MAIL_GW_KEY
+            .iter()
+            .map(|&(lit, _, name, meaning)| {
+                let (dots, words) = mail_gw_key_row(lit, name, meaning, wide);
+                let d = f.layout_no_wrap(dots, font.clone(), M_FG).size().x;
+                let w = f.layout_no_wrap(words, font.clone(), M_FG).size().x;
+                d + 6.0 + w
+            })
+            .fold(0.0, f32::max)
+    }) + 2.0 * KEY_PAD
+}
+
+/// Paints the key in a dashed box; the full meanings are in the hover tip.
+fn paint_mail_gw_key(ui: &mut egui::Ui, rect: egui::Rect, wide: bool) {
+    let painter = ui.painter_at(rect.expand(1.0));
+    let r = rect.shrink(0.5);
+    let corners = [
+        r.left_top(),
+        r.right_top(),
+        r.right_bottom(),
+        r.left_bottom(),
+        r.left_top(),
+    ];
+    painter.extend(egui::Shape::dashed_line(
+        &corners,
+        hairline(M_LINE),
+        3.0,
+        2.0,
+    ));
+    let font = mono(KEY_FONT);
+    let dots_w = ui.fonts(|f| f.layout_no_wrap("●●●".into(), font.clone(), M_FG).size().x);
+    for (i, &(lit, color, name, meaning)) in MAIL_GW_KEY.iter().enumerate() {
+        let (dots, words) = mail_gw_key_row(lit, name, meaning, wide);
+        let y = rect.top() + KEY_PAD + KEY_ROW_H * (i as f32 + 0.5);
+        let x = rect.left() + KEY_PAD;
+        painter.text(
+            egui::pos2(x, y),
+            egui::Align2::LEFT_CENTER,
+            dots,
+            font.clone(),
+            color,
+        );
+        painter.text(
+            egui::pos2(x + dots_w + 6.0, y),
+            egui::Align2::LEFT_CENTER,
+            words,
+            font.clone(),
+            M_MUTE,
+        );
+    }
+    let resp = ui.interact(rect, ui.id().with("m73_mailgw_key"), egui::Sense::hover());
+    hover_tip(&resp, MAIL_GW_KEY_TIP);
+}
+
 /// The BARS graph: narrow pickets for full cells, `. : | #` for part-full
 /// ones, a dim gold line on the threshold row. One column per character
 /// of the pane's width.
@@ -2010,6 +2132,22 @@ fn paint_bars(ui: &mut egui::Ui, history: &activity_bars::History, threshold_db:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mail_gw_key_matches_the_live_dots() {
+        // One real status line per state; the key row must look the same.
+        let lines = [
+            "Auto: not asked yet",
+            "Auto: asking which gateways hear you…",
+            "Auto: G4ABC, link 12 dB",
+            crate::mail::pick::NO_GATEWAY_HEARD,
+        ];
+        for (line, &(lit, color, _, _)) in lines.iter().zip(MAIL_GW_KEY.iter()) {
+            assert_eq!(m73_mail_gw_look(line), (lit, color), "{line}");
+        }
+        assert_eq!(m73_mail_gw_look("G4ABC (typed in setup)").1, M_GREEN);
+        assert_eq!(m73_mail_gw_look(crate::mail::NO_GATEWAY_REASON).1, M_GOLD);
+    }
 
     #[test]
     fn modem73_unless_something_asks_for_classic() {

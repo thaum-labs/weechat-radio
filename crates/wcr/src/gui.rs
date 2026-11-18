@@ -6351,6 +6351,19 @@ impl GuiApp {
                 );
             });
         }
+        if self.path == 2 {
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(crate::setup::vox_radio_note().replace('\n', " "))
+                            .color(DIM)
+                            .font(FontId::monospace(11.0)),
+                    )
+                    .wrap(),
+                );
+            });
+        }
         if self.path == 5 {
             ui.horizontal(|ui| {
                 ui.add_space(20.0);

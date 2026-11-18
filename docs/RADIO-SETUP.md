@@ -51,7 +51,7 @@ VOX means the radio transmits when it hears sound.
 ### Steps
 
 1. Connect computer headphone-out to radio mic-in, radio speaker-out to computer mic-in.
-2. On the radio, turn **VOX on**. Start with a medium VOX delay.
+2. On the radio, turn **VOX on**, set **squelch 1** (not 0) and a mid **VOX level** (4 worked on a VR-N76). Start with a medium VOX delay. At squelch 0 the radio hears noise all the time and its VOX may not key.
 3. Run `wcr setup` and choose **Any radio with a plain audio cable (VOX)**. This selects the `vox-safe` preset: RDM-600S (robust over a speaker and mic) and a 900 ms lead so the radio is fully keyed before data starts.
 4. Start `wcr tui`. Send a short test to `#bulletin`. Tell the app the frequency on the dial: `/radio freq 144.950`. Keep radio VOX hang on the long side.
 5. If the other station still hears a clipped start, raise `modem.vox_lead_ms` in `wcr.toml` (try 1200).
@@ -59,6 +59,12 @@ VOX means the radio transmits when it hears sound.
 ### How you know it worked
 
 The radio's TX LED lights for each message. Delivery ticks still work; they just take a little longer because of VOX delay.
+
+### The cost of squelch 1
+
+With the squelch on, wcr only hears signals strong enough to open it. The weakest lines are lost, the start of a line can be clipped, and the busy check only sees the channel as busy while the squelch is open. Wired PTT (Path A, Digirig) or a Bluetooth radio runs at squelch 0 and has none of this; use one if you can.
+
+The VOX lead tone is not quieter than the data: it is a full sine at the same TX level, about 2 dB louder than the data itself. If the radio keys on data, it keys on the lead.
 
 ---
 
