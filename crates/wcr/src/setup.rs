@@ -785,11 +785,17 @@ fn start_from(previous: Option<&Config>, same_radio: bool) -> Config {
 /// at squelch 0 and VOX 1, and did at squelch 1 and VOX 4. Shown by the
 /// wizard and the app's setup, with the trade-off said plainly.
 pub fn vox_radio_note() -> &'static str {
-    "On the radio: VOX on, squelch 1 (not 0), VOX level about 4 (tested on a VR-N76).\n\
+    "On the radio: VOX on, squelch 1 (not 0), VOX level 4 (worked on a VR-N76 and a Radtel RT-900).\n\
      At squelch 0 the radio hears noise all the time and its VOX may not key.\n\
      The cost of squelch 1: wcr only hears signals strong enough to open the squelch,\n\
      so the weakest lines are lost, the start of a line can be clipped, and the busy\n\
      check only sees the channel as busy while the squelch is open.\n\
+     Keep the PC level LOW: too much drive overloads the radio's mic input and halves\n\
+     the SNR. On Windows use the Volume mixer (an RT-900 worked at system 20, MODEM73\n\
+     KISS TNC 25). Lower it step by step while the other station reports SNR; keep the\n\
+     best. Too low and VOX never keys, so go back up a step.\n\
+     Next to the PC, use low power or ferrites. If the radio transmits by itself as soon\n\
+     as the cable is plugged in, try another cable.\n\
      Wired PTT (Digirig) or a Bluetooth radio avoids this; use one if you can."
 }
 

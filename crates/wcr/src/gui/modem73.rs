@@ -921,6 +921,9 @@ impl GuiApp {
                 preset_cmd = Some(format!("/preset {next}"));
             }
         }
+        if let Some(note) = s.preset_pending_note() {
+            ui.label(RichText::new(note).color(M_GOLD).small());
+        }
         if s.mode == Mode::InternetRadio {
             if let Some(on) = tower_toggle(ui, s.tower, key_cell) {
                 tower_cmd = Some(format!("/tower {}", if on { "on" } else { "off" }));
@@ -1553,7 +1556,23 @@ impl GuiApp {
         };
         let mut prio_cmd = None;
         ui.horizontal(|ui| {
-            let r = ui.label(text(format!("{access} · {crypto}"), M_MUTE).size(11.0));
+            // The other station's callsign stands out in its own colour
+            // ("DIRECT · M7TJF only · …", #365).
+            let r = match access
+                .strip_prefix("DIRECT · ")
+                .and_then(|r| r.strip_suffix(" only"))
+            {
+                Some(call) => {
+                    let row = ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.label(text("DIRECT · ", M_MUTE).size(11.0));
+                        ui.label(text(call, M_CYAN).size(11.0).strong());
+                        ui.label(text(format!(" only · {crypto}"), M_MUTE).size(11.0));
+                    });
+                    row.response
+                }
+                None => ui.label(text(format!("{access} · {crypto}"), M_MUTE).size(11.0)),
+            };
             hover_tip(
                 &r,
                 format!("{note} Amateur radio cannot hide message text on RF; hub traffic is TLS."),
@@ -1616,7 +1635,7 @@ impl GuiApp {
                                 }
                                 let nick = text(
                                     format!("{:<10}", format!("[{}]", line.nick)),
-                                    if mine { M_FG } else { M_PEER },
+                                    if mine { M_FG } else { M_CYAN },
                                 );
                                 ui.label(if mine { nick.strong() } else { nick });
                                 let body = if in_flight { M_MUTE } else { M_FG };
@@ -1631,7 +1650,16 @@ impl GuiApp {
                                         }
                                     }
                                     None => {
-                                        ui.label(text(&line.text, body));
+                                        if let Some((m, tone)) = super::group_mark(line) {
+                                            let c = if tone == crate::chat_line::FooterTone::Missing
+                                            {
+                                                M_RED
+                                            } else {
+                                                M_GOLD
+                                            };
+                                            ui.label(text(m, c));
+                                        }
+                                        ui.label(text(super::drawable(ui, &line.text), body));
                                     }
                                 }
                                 if !line.progress.is_empty() {
@@ -1651,6 +1679,7 @@ impl GuiApp {
                             |ui| self.m73_marks(ui, line, mine, show_snr),
                         );
                     });
+                    super::group_footer_row(ui, line, M_GOLD, M_GREEN, M_RED);
                 }
             });
         if let Some(path) = open_folder_of {

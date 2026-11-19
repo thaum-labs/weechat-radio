@@ -142,6 +142,7 @@ pub(crate) fn configure_cmds(cfg_path: &Path) -> String {
          /mute -all /set irc.server.radio.tls_verify off;\
          /mute -all /set irc.server.radio.capabilities message-tags,echo-message,server-time,msgid;\
          /mute -all /set irc.server.radio.autojoin #bulletin;\
+         /mute -all /set irc.server.radio.split_msg_max_length 4000;\
          /mute -all /set irc.look.server_buffer independent;\
          /mute -all /set weechat.startup.display_logo off;\
          /mute -all /set weechat.startup.display_version off;\

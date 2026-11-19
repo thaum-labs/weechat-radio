@@ -43,6 +43,8 @@ const LINE: Color32 = Color32::from_rgb(33, 40, 64);
 const GREEN: Color32 = Color32::from_rgb(57, 255, 20);
 const AMBER: Color32 = Color32::from_rgb(255, 196, 61);
 const RED: Color32 = Color32::from_rgb(255, 77, 109);
+/// Another station's callsign where it needs to stand out (#365).
+const CALL_CYAN: Color32 = Color32::from_rgb(0, 208, 208);
 const CODE: Color32 = Color32::from_rgb(18, 18, 24);
 /// Chat input's text margin (egui's default), so the `/` list can match its box.
 const INPUT_MARGIN: egui::Margin = egui::Margin::symmetric(4.0, 2.0);
@@ -434,6 +436,8 @@ enum IrcEvent {
         tries: u32,
         /// How the receipt behind an `[ok]` came back (`rf`, `inet`, `lan`).
         via: Option<String>,
+        /// A long message: pieces on the air of all (#365).
+        parts: Option<(usize, usize)>,
     },
     /// A file transfer moved along: the bar to show on line `msgid`.
     FileProgress {
@@ -1322,9 +1326,9 @@ impl GuiApp {
             self.send_line(&text);
             return;
         }
-        for chunk in crate::proto::split_body_chunks(&text, crate::proto::MAX_BODY) {
-            self.send_line(&chunk);
-        }
+        // One line, however long: the station cuts it into tagged pieces
+        // and the chat shows it as one message with a progress bar (#365).
+        self.send_line(&text.replace(['\r', '\n'], " "));
     }
 
     fn send_cmd(&mut self, cmd: &str) {
@@ -1592,15 +1596,19 @@ impl GuiApp {
                             &notify_body(&line.text),
                         );
                     }
-                    self.chat.push(line);
+                    crate::chat_line::push_grouped(&mut self.chat, line);
                 }
                 IrcEvent::Delivery {
                     msgid,
                     state,
                     tries,
                     via,
+                    parts,
                 } => {
                     self.apply_delivery(&msgid, &state, tries);
+                    if let Some(p) = parts {
+                        crate::chat_line::apply_sending(&mut self.chat, &msgid, p);
+                    }
                     if let Some(via) = via {
                         crate::chat_line::apply_receipt_via(&mut self.chat, &msgid, &via);
                     }
@@ -2064,6 +2072,9 @@ impl eframe::App for GuiApp {
                                     preset_cmd = Some(format!("/preset {next}"));
                                 }
                             }
+                            if let Some(note) = s.preset_pending_note() {
+                                ui.label(RichText::new(note).color(ORANGE).small());
+                            }
                             if !s.builtin_tnc() && !s.modem73.is_empty() {
                                 kv(ui, "MODEM", &format!("modem73 v{}", s.modem73), DIM);
                             }
@@ -2495,15 +2506,26 @@ impl eframe::App for GuiApp {
                     self.status.as_ref().map(|s| s.hub_ok).unwrap_or(false),
                 );
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(&access)
-                            .color(if crate::slash::is_bulletin(&self.active_channel) {
-                                PURPLE
-                            } else {
-                                GREEN
-                            })
-                            .font(FontId::monospace(12.0)),
-                    );
+                    let colour = if crate::slash::is_bulletin(&self.active_channel) {
+                        PURPLE
+                    } else {
+                        GREEN
+                    };
+                    // The other station's callsign in its own colour (#365).
+                    match access.strip_prefix("DIRECT · ").and_then(|r| r.strip_suffix(" only")) {
+                        Some(call) => {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            let mono = |t: &str, c: Color32| {
+                                RichText::new(t).color(c).font(FontId::monospace(12.0))
+                            };
+                            ui.label(mono("DIRECT · ", colour));
+                            ui.label(mono(call, CALL_CYAN).strong());
+                            ui.label(mono(" only ", colour));
+                        }
+                        None => {
+                            ui.label(RichText::new(&access).color(colour).font(FontId::monospace(12.0)));
+                        }
+                    }
                     ui.label(RichText::new("·").color(DIM).monospace());
                     ui.label(
                         RichText::new(&crypto)
@@ -2710,7 +2732,7 @@ impl eframe::App for GuiApp {
                                             }
                                             ui.label(
                                                 RichText::new(format!("[{}]", line.nick))
-                                                    .color(if mine { ORANGE } else { ACCENT })
+                                                    .color(if mine { ORANGE } else { CALL_CYAN })
                                                     .monospace(),
                                             );
                                             match crate::chat_line::saved_file(&line.text) {
@@ -2733,8 +2755,18 @@ impl eframe::App for GuiApp {
                                                     }
                                                 }
                                                 None => {
+                                                    if let Some(mark) = group_mark(line) {
+                                                        ui.label(
+                                                            RichText::new(mark.0)
+                                                                .color(match mark.1 {
+                                                                    crate::chat_line::FooterTone::Missing => RED,
+                                                                    _ => AMBER,
+                                                                })
+                                                                .monospace(),
+                                                        );
+                                                    }
                                                     ui.label(
-                                                        RichText::new(&line.text)
+                                                        RichText::new(drawable(ui, &line.text))
                                                             .color(FG)
                                                             .monospace(),
                                                     );
@@ -2793,6 +2825,7 @@ impl eframe::App for GuiApp {
                                                 ));
                                             }
                                         });
+                                        group_footer_row(ui, line, AMBER, GREEN, RED);
                                     }
                                 }
                                 if let Some(path) = open_folder_of {
@@ -6931,6 +6964,7 @@ fn irc_session(
                             state,
                             tries,
                             via: crate::chat_line::delivery_via(&line),
+                            parts: crate::chat_line::delivery_parts(&line),
                         });
                     } else if let Some((from, ch)) = parse_invite(&line) {
                         let _ = events.send(IrcEvent::Invited { from, channel: ch });
@@ -6985,6 +7019,90 @@ const MARK_KEY: &[(&str, &str)] = &[
         "signal-to-noise of a radio line (/snr off hides it)",
     ),
 ];
+
+/// The footer under a long message received or sent as pieces (#365):
+/// amber while it is coming or going out, green when done, red when a
+/// piece is missing. Shared by both layouts.
+pub(crate) fn group_footer_row(
+    ui: &mut egui::Ui,
+    line: &ChatLine,
+    amber: Color32,
+    green: Color32,
+    red: Color32,
+) {
+    use crate::chat_line::FooterTone;
+    let Some((badge, footer, tone)) =
+        crate::chat_line::group_footer(line, crate::chat_parts::unix_now())
+    else {
+        return;
+    };
+    let colour = match tone {
+        FooterTone::InProgress => amber,
+        FooterTone::Done => green,
+        FooterTone::Missing => red,
+    };
+    // Under the message text, past the time and callsign columns.
+    let font = FontId::monospace(12.5);
+    let cols = if line.when.is_empty() {
+        0
+    } else {
+        line.when.chars().count() + 1
+    } + 11;
+    let indent = ui.fonts(|f| f.glyph_width(&font, 'M')) * cols as f32;
+    ui.horizontal(|ui| {
+        ui.add_space(indent);
+        let footer = drawable(ui, &footer);
+        ui.label(RichText::new(footer).color(colour).font(font))
+            .on_hover_text(format!(
+                "one long message sent as {} pieces; {badge}",
+                badge.split('/').nth(1).unwrap_or("?")
+            ));
+    });
+    if tone == FooterTone::InProgress {
+        // Repaint so "incomplete" shows when its time comes.
+        ui.ctx().request_repaint_after(Duration::from_secs(5));
+    }
+}
+
+/// `⋯` before a long message still arriving, `⚠` before one missing a
+/// piece (the agreed #365 mockup). None when nothing is pending.
+pub(crate) fn group_mark(line: &ChatLine) -> Option<(&'static str, crate::chat_line::FooterTone)> {
+    use crate::chat_line::FooterTone;
+    let (_, _, tone) = crate::chat_line::group_footer(line, crate::chat_parts::unix_now())?;
+    line.parts.as_ref()?;
+    match tone {
+        FooterTone::InProgress => Some(("⋯", tone)),
+        FooterTone::Missing => Some(("⚠", tone)),
+        FooterTone::Done => None,
+    }
+}
+
+/// Chat text the app's fonts can draw (#365). Emoji modifiers the font
+/// lacks (skin tones, variation selectors, joiners) are left out so the base
+/// emoji shows; any other character it cannot draw becomes a readable `[?]`
+/// instead of an empty box.
+pub(crate) fn drawable(ui: &egui::Ui, text: &str) -> String {
+    let font = FontId::monospace(14.0);
+    ui.fonts(|f| {
+        if text.is_ascii() || f.has_glyphs(&font, text) {
+            return text.to_string();
+        }
+        let mut out = String::with_capacity(text.len());
+        for c in text.chars() {
+            if c.is_ascii() || f.has_glyph(&font, c) {
+                out.push(c);
+            } else if c == '✓' {
+                // The font has the heavy tick but not the light one.
+                out.push('✔');
+            } else if matches!(c as u32, 0x200D | 0xFE00..=0xFE0F | 0x1F3FB..=0x1F3FF | 0xE0020..=0xE007F) {
+                // Modifier or joiner: the emoji before it still shows.
+            } else {
+                out.push_str("[?]");
+            }
+        }
+        out
+    })
+}
 
 fn mark_key(ui: &mut egui::Ui) {
     egui::Grid::new("mark_key")
@@ -7198,6 +7316,10 @@ mod tests {
             when: String::new(),
             snr: None,
             progress: String::new(),
+            piece: None,
+            parts: None,
+            sending: None,
+            piece_ids: Vec::new(),
         };
         apply_line_delivery(
             &mut line,

@@ -94,6 +94,54 @@ struct Inner {
     outbound_order: VecDeque<String>,
     /// msgid → furthest delivery state shown for it. Marks never move back.
     shown: HashMap<String, String>,
+    /// Long messages we sent as pieces (#365), by the first piece's id.
+    sent_parts: HashMap<String, SentParts>,
+    /// Piece id → (first piece's id, piece index).
+    part_of: HashMap<String, (String, usize)>,
+    sent_parts_order: VecDeque<String>,
+}
+
+/// The pieces of one long message this station sent. Their marks reach the
+/// client as one mark on the first piece's id, with `+radio/parts=k/n`: how
+/// many pieces are on the air (#365).
+#[derive(Default)]
+struct SentParts {
+    states: Vec<String>,
+    keyed: Vec<bool>,
+    tries: Vec<u32>,
+}
+
+impl SentParts {
+    fn new(n: usize) -> Self {
+        Self {
+            states: vec!["queued".into(); n],
+            keyed: vec![false; n],
+            tries: vec![0; n],
+        }
+    }
+
+    /// The message's mark: the least advanced piece's, or `failed` when a
+    /// piece failed. Delivered only when every piece is.
+    fn mark(&self) -> String {
+        if let Some(f) = self.states.iter().find(|s| s.as_str() == "failed") {
+            return f.clone();
+        }
+        self.states
+            .iter()
+            .min_by_key(|s| mark_rank(s))
+            .cloned()
+            .unwrap_or_else(|| "queued".into())
+    }
+
+    /// Pieces on the air: keyed, or already answered.
+    fn on_air(&self) -> usize {
+        let delivered = mark_rank("delivered");
+        self.keyed
+            .iter()
+            .zip(&self.states)
+            .filter(|(k, s)| **k || mark_rank(s) >= delivered)
+            .count()
+    }
 }
 
 const OFFERED_CAPS: &[&str] = &[
@@ -112,6 +160,9 @@ impl IrcServer {
                 next_id: 1,
                 clients: HashMap::new(),
                 server_name: "wcr.local".into(),
+                sent_parts: HashMap::new(),
+                part_of: HashMap::new(),
+                sent_parts_order: VecDeque::new(),
                 origin_client: None,
                 origin_target: String::new(),
                 outbound: HashMap::new(),
@@ -722,16 +773,130 @@ impl IrcServer {
         self.tagmsg_mark(msgid, state, tries, None).await;
     }
 
+    /// A long message is going out as `n` pieces; `first` is the first
+    /// piece's id (#365). Call before its first mark.
+    pub fn register_parts(&self, first: &str, n: usize) {
+        let mut g = self.inner.lock();
+        g.sent_parts.insert(first.to_string(), SentParts::new(n));
+        g.sent_parts_order.push_back(first.to_string());
+        while g.sent_parts_order.len() > 64 {
+            if let Some(old) = g.sent_parts_order.pop_front() {
+                g.sent_parts.remove(&old);
+                g.part_of.retain(|_, (f, _)| *f != old);
+            }
+        }
+    }
+
+    /// Piece `index` (0-based) of the message `first` has the id `piece`.
+    pub fn add_part(&self, first: &str, piece: &str, index: usize) {
+        let mut g = self.inner.lock();
+        if g.sent_parts.contains_key(first) {
+            g.part_of
+                .insert(piece.to_string(), (first.to_string(), index));
+        }
+    }
+
+    /// One of our pieces reached the modem: the message's bar moves on.
+    pub async fn note_part_keyed(&self, piece: &str) {
+        let first = {
+            let mut g = self.inner.lock();
+            let Some((first, i)) = g.part_of.get(piece).cloned() else {
+                return;
+            };
+            match g.sent_parts.get_mut(&first) {
+                Some(p) if i < p.keyed.len() && !p.keyed[i] => p.keyed[i] = true,
+                _ => return,
+            }
+            first
+        };
+        self.emit_parts_mark(&first, None).await;
+    }
+
+    async fn emit_parts_mark(&self, first: &str, via: Option<&str>) {
+        let (state, tries, parts) = {
+            let g = self.inner.lock();
+            let Some(p) = g.sent_parts.get(first) else {
+                return;
+            };
+            let mut state = p.mark();
+            // Marks never move back (a late [tx] after [gw]).
+            if let Some(prev) = g.shown.get(first) {
+                if mark_rank(&state) < mark_rank(prev) && state != "failed" {
+                    state = prev.clone();
+                }
+            }
+            let tries = p.tries.iter().copied().max().filter(|n| *n > 0);
+            (state, tries, (p.on_air(), p.states.len()))
+        };
+        let Some((id, target)) = self.bind_delivery(first) else {
+            return;
+        };
+        if !state.starts_with("retry") {
+            self.inner
+                .lock()
+                .shown
+                .insert(first.to_string(), state.clone());
+        }
+        self.send_mark(id, &target, first, &state, tries, via, Some(parts))
+            .await;
+    }
+
     async fn tagmsg_mark(&self, msgid: &str, state: &str, tries: Option<u32>, via: Option<&str>) {
+        // A piece of a long message: shown as the message's one mark.
+        let piece = {
+            let mut g = self.inner.lock();
+            match g.part_of.get(msgid).cloned() {
+                Some((first, i)) => {
+                    if let Some(p) = g.sent_parts.get_mut(&first) {
+                        if i < p.states.len() {
+                            if state.starts_with("retry") {
+                                p.tries[i] = p.tries[i].max(tries.unwrap_or(0));
+                            } else if mark_rank(state) >= mark_rank(&p.states[i])
+                                || state == "failed"
+                            {
+                                p.states[i] = state.to_string();
+                            }
+                            if let Some(n) = tries {
+                                p.tries[i] = p.tries[i].max(n);
+                            }
+                        }
+                    }
+                    Some(first)
+                }
+                None => None,
+            }
+        };
+        if let Some(first) = piece {
+            self.emit_parts_mark(&first, via).await;
+            return;
+        }
         let Some((id, target)) = self.bind_delivery(msgid) else {
             return;
         };
         if !self.take_mark(msgid, state) {
             return;
         }
+        self.send_mark(id, &target, msgid, state, tries, via, None)
+            .await;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn send_mark(
+        &self,
+        id: u64,
+        target: &str,
+        msgid: &str,
+        state: &str,
+        tries: Option<u32>,
+        via: Option<&str>,
+        parts: Option<(usize, usize)>,
+    ) {
         let mut tags = format!("msgid={msgid};+radio/delivery={state};+radio/msgid={msgid}");
         if let Some(n) = tries.filter(|n| *n > 0) {
             tags.push_str(&format!(";+radio/tries={n}"));
+        }
+        if let Some((k, n)) = parts {
+            tags.push_str(&format!(";+radio/parts={k}/{n}"));
         }
         if let Some(via) = via.filter(|v| !v.is_empty()) {
             tags.push_str(&format!(";+radio/via={via}"));
@@ -965,7 +1130,17 @@ fn finish_irc_line(line: &[u8]) -> String {
     while end > 0 && line[end - 1] == b'\r' {
         end -= 1;
     }
-    String::from_utf8_lossy(&line[..end]).into_owned()
+    // A line cut at the length limit can end inside a character (an
+    // emoji is 4 bytes): drop that partial character rather than show a
+    // replacement mark (#365).
+    let text = &line[..end];
+    match std::str::from_utf8(text) {
+        Ok(t) => t.to_string(),
+        Err(e) if e.error_len().is_none() => {
+            String::from_utf8_lossy(&text[..e.valid_up_to()]).into_owned()
+        }
+        Err(_) => String::from_utf8_lossy(text).into_owned(),
+    }
 }
 
 async fn discard_irc_line_remainder<R: AsyncBufReadExt + Unpin>(reader: &mut R) -> Result<()> {

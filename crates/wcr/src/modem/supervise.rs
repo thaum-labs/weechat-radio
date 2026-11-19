@@ -17,6 +17,34 @@ const STARTUP_GRACE: Duration = Duration::from_millis(400);
 pub struct ModemProcess {
     child: Child,
     log_path: PathBuf,
+    /// The preset it was started with.
+    preset: String,
+}
+
+/// The modem settings that go on modem73's command line. When any of them
+/// changes while modem73 runs, it must be restarted to apply (#365: a preset
+/// changed in the app showed in /status while modem73 still sent the old
+/// mode).
+pub fn restart_key(m: &crate::config::ModemConfig) -> String {
+    serde_json::json!([
+        m.preset,
+        m.ptt,
+        m.vox_lead_ms,
+        m.vox_tail_ms,
+        m.tx_level_db,
+        m.csma_mode,
+        m.com_port,
+        m.com_line,
+        m.cm108_gpio,
+        m.rigctl,
+        m.hamlib_model,
+        m.hamlib_device,
+        m.hamlib_baud,
+        m.audio_input,
+        m.audio_output,
+        m.binary,
+    ])
+    .to_string()
 }
 
 /// Process id of the modem73 this station started, so a stop signal can end
@@ -276,8 +304,43 @@ impl ModemProcess {
         if let Ok(mut p) = MANAGED_PID.lock() {
             *p = child.id();
         }
-        tracing::info!("started {} (log {})", binary.display(), log_path.display());
-        Ok(Self { child, log_path })
+        tracing::info!(
+            "started {} {} (log {})",
+            binary.display(),
+            args.join(" "),
+            log_path.display()
+        );
+        Ok(Self {
+            child,
+            log_path,
+            preset: preset.as_str().to_string(),
+        })
+    }
+
+    /// The preset this modem73 runs with.
+    pub fn preset(&self) -> &str {
+        &self.preset
+    }
+
+    /// End modem73 and wait until it is gone, so a new one can take its ports.
+    /// SIGTERM first so modem73 closes its audio cleanly (QA #254), then a
+    /// kill if it is still there after [`MODEM_STOP_WAIT`].
+    pub async fn stop(mut self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.child.id() {
+            // SAFETY: a plain signal to our own child process.
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGTERM);
+            }
+            if tokio::time::timeout(MODEM_STOP_WAIT, self.child.wait())
+                .await
+                .is_ok()
+            {
+                return;
+            }
+        }
+        let _ = self.child.start_kill();
+        let _ = tokio::time::timeout(MODEM_STOP_WAIT, self.child.wait()).await;
     }
 
     pub async fn wait(&mut self) -> Result<()> {

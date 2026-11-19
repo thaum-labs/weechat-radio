@@ -183,6 +183,20 @@ function lineNode(l) {
   li.dataset.seq = l.seq;
   li.append(el("span", "when", lineWhen(l.when)));
   if (!l.sys) li.append(el("span", "nick", l.nick));
+  // A long message sent as pieces (#365): one entry with a 1/3 badge and a
+  // footer, amber while coming or going out, green when done, red when a
+  // piece is missing. It turns red by itself if the rest never comes.
+  let tone = l.parts_tone, footer = l.parts_footer;
+  if (tone === "progress" && l.parts_late_at && Date.now() / 1000 >= l.parts_late_at) {
+    tone = "missing";
+    footer = l.parts_late_footer;
+  }
+  if (l.parts_badge) {
+    if (!l.mine && tone !== "done") li.append(el("span", `parts-mark ${tone}`, tone === "missing" ? "⚠" : "⋯"));
+    const badge = el("span", `parts-badge ${tone}`, l.parts_badge);
+    badge.title = "One long message, sent as pieces";
+    li.append(badge);
+  }
   li.append(textNode(l.text));
   // File transfer: a DOS-style bar such as [████░░░░] 3/15.
   if (l.progress) {
@@ -201,6 +215,7 @@ function lineNode(l) {
     const m = el("span", `marks${/\[(ok|all)/.test(l.ticks) ? " ok" : /\[no\]/.test(l.ticks) ? " no" : ""}`, marks.join(" "));
     li.append(m);
   }
+  if (footer) li.append(el("div", `parts-foot ${tone}`, footer));
   return li;
 }
 
@@ -216,6 +231,12 @@ function drawLines(jump) {
   if (!lines.length) ol.append(el("li", "sys", chat.up ? "No messages yet." : "Waiting for the station…"));
   if (jump) ol.scrollTop = ol.scrollHeight;
 }
+
+// A long message still arriving turns red by itself once its pieces stop
+// coming (#365): redraw while one is on screen.
+setInterval(() => {
+  if (document.querySelector(".lines .parts-foot.progress")) drawLines(false);
+}, 15000);
 
 function drawLine(l) {
   const ol = $("lines");

@@ -20,7 +20,16 @@ pub struct StatusSnapshot {
     pub channel: String,
     pub ptt: String,
     pub ptt_on: bool,
+    /// The preset saved in wcr.toml (what the station will run).
     pub preset: String,
+    /// The preset the running modem73 was started with (#365). Empty when
+    /// this station did not start the modem73 it talks to. When it differs
+    /// from `preset`, the change is waiting for a modem restart.
+    #[serde(default)]
+    pub preset_running: String,
+    /// A modem restart to apply a changed preset or modem setting is due.
+    #[serde(default)]
+    pub modem_restart_pending: bool,
     pub frequency: String,
     pub snr: f32,
     pub ber: f32,
@@ -314,6 +323,32 @@ impl HeardBrief {
 }
 
 impl StatusSnapshot {
+    /// Set while the saved preset (or another modem setting) is not yet the
+    /// one modem73 runs (#365): "restart to apply", with the mode it still
+    /// sends. None when what is shown is what is sent.
+    pub fn preset_pending_note(&self) -> Option<String> {
+        let differs = !self.preset_running.is_empty() && self.preset_running != self.preset;
+        if !(differs || self.modem_restart_pending) {
+            return None;
+        }
+        if differs {
+            Some(format!(
+                "restart to apply: modem73 still runs {}",
+                self.preset_running
+            ))
+        } else {
+            Some("restart to apply: modem73 restarts when the radio is idle".into())
+        }
+    }
+
+    /// The preset for `/status`: the saved one, plus the pending note.
+    pub fn preset_status(&self) -> String {
+        match self.preset_pending_note() {
+            Some(note) => format!("{} ({note})", self.preset),
+            None => self.preset.clone(),
+        }
+    }
+
     /// True when the radio's own KISS TNC does the modem work (no modem73).
     /// `tnc` alone does not say so: with Bluetooth audio it names the radio
     /// link while modem73 is the modem (QA #284).
@@ -568,6 +603,8 @@ impl Default for StatusSnapshot {
             ptt: "none".into(),
             ptt_on: false,
             preset: "vhf-fm".into(),
+            preset_running: String::new(),
+            modem_restart_pending: false,
             frequency: String::new(),
             snr: 0.0,
             ber: 0.0,
@@ -1045,5 +1082,28 @@ mod tests {
         assert_eq!(s.hold_lane(160.0).label, "retry now");
         s.set_hold_due(227, "retry", 160);
         assert_eq!(s.hold_lane(160.0).label, "retry 1:07");
+    }
+
+    #[test]
+    fn a_saved_preset_the_modem_does_not_run_says_restart_to_apply() {
+        let mut s = StatusSnapshot {
+            preset: "vhf-fm".into(),
+            preset_running: "vhf-fm".into(),
+            ..Default::default()
+        };
+        assert_eq!(s.preset_status(), "vhf-fm");
+        s.preset_running.clear();
+        assert_eq!(s.preset_status(), "vhf-fm", "unknown modem: no claim");
+        s.preset_running = "vox-safe".into();
+        assert_eq!(
+            s.preset_status(),
+            "vhf-fm (restart to apply: modem73 still runs vox-safe)"
+        );
+        s.preset_running = "vhf-fm".into();
+        s.modem_restart_pending = true;
+        assert!(s
+            .preset_pending_note()
+            .unwrap()
+            .contains("restart to apply"));
     }
 }
