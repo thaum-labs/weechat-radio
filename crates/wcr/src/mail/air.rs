@@ -78,7 +78,36 @@ pub fn mail_airtime_secs(
     // The hint's burst count is the chunk count the send log prints. Airtime
     // still uses every keyed frame, including a header that had to be sliced.
     let n = wires.len().max(1);
-    (keyed_airtime_secs(preset, lens, turnaround_ms), n)
+    (hint_airtime_secs(preset, lens, turnaround_ms), n)
+}
+
+/// Airtime for the compose hint and progress bar: modem73's real frame
+/// times on the first rung, plus the VOX lead and turnaround per frame. The
+/// radio's own TNC keeps the byte-rate estimate.
+fn hint_airtime_secs(
+    preset: Preset,
+    frame_lens: impl IntoIterator<Item = usize>,
+    turnaround_ms: u32,
+) -> f64 {
+    if preset.is_radio_tnc() {
+        return keyed_airtime_secs(preset, frame_lens, turnaround_ms);
+    }
+    let rung = mail_rung(preset, 0);
+    let per_frame = match preset {
+        Preset::VoxSafe => preset.overhead_ms() + turnaround_ms,
+        _ => turnaround_ms,
+    } as f64
+        / 1000.0;
+    let mut total = 0.0;
+    let mut n = 0usize;
+    for len in frame_lens {
+        total += rung.frame_secs(len) + per_frame;
+        n += 1;
+    }
+    if n == 0 {
+        total = rung.frame_secs(0) + per_frame;
+    }
+    total
 }
 
 pub fn burst_label(n: usize) -> String {

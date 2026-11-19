@@ -4704,7 +4704,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                         format!("preset {}", pr.as_str())
                     }
                 } else {
-                    "unknown preset. Use vhf-fm, hf-good, hf-poor, hf-weak, hf-deep, vox-safe, afsk-1200.".into()
+                    "unknown preset. Use vhf-fm, vhf-fast, hf-good, hf-poor, hf-weak, hf-deep, vox-safe, afsk-1200.".into()
                 }
             } else {
                 format!("preset {}", cfg.lock().modem.preset)
@@ -5042,7 +5042,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             let path = sp.collect::<Vec<_>>().join(" ");
             if call.is_empty() || path.is_empty() {
                 return format!(
-                    "usage: /file CALL path (in a private tab: /file path). Sends a file of at most {} to one station, on vhf-fm or afsk-1200 only. Received files are saved in {}",
+                    "usage: /file CALL path (in a private tab: /file path). Sends a file of at most {} to one station, on vhf-fm, vhf-fast or afsk-1200 only. Received files are saved in {}",
                     crate::proto::file::human_size(crate::proto::file::FILE_MAX_BYTES),
                     crate::proto::file::received_dir(&cfg.lock().store).display()
                 );

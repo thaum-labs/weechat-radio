@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "kebab-case")]
 pub enum Preset {
     VhfFm,
+    /// Strong local VHF/UHF FM links: QAM16 1/2, modem73 picks the frame size.
+    VhfFast,
     HfGood,
     HfPoor,
     HfWeak,
@@ -20,6 +22,7 @@ impl Preset {
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
             "vhf-fm" | "vhf" | "fm" => Some(Self::VhfFm),
+            "vhf-fast" | "vhffast" | "fast" => Some(Self::VhfFast),
             "hf-good" | "hfgood" => Some(Self::HfGood),
             "hf-poor" | "hfpoor" => Some(Self::HfPoor),
             "hf-weak" | "hfweak" => Some(Self::HfWeak),
@@ -33,6 +36,7 @@ impl Preset {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::VhfFm => "vhf-fm",
+            Self::VhfFast => "vhf-fast",
             Self::HfGood => "hf-good",
             Self::HfPoor => "hf-poor",
             Self::HfWeak => "hf-weak",
@@ -42,9 +46,10 @@ impl Preset {
         }
     }
 
-    pub fn all() -> [Preset; 7] {
+    pub fn all() -> [Preset; 8] {
         [
             Self::VhfFm,
+            Self::VhfFast,
             Self::HfGood,
             Self::HfPoor,
             Self::HfWeak,
@@ -57,6 +62,7 @@ impl Preset {
     pub fn description(self) -> &'static str {
         match self {
             Self::VhfFm => "VHF/UHF FM, clean local links (OFDM QPSK 1/2)",
+            Self::VhfFast => "VHF/UHF FM, strong local links (OFDM QAM16 1/2, auto frame size)",
             Self::HfGood => "Good HF SSB path (OFDM 8PSK 1/2 + postamble)",
             Self::HfPoor => "Fading HF, NVIS (ROBUST RDM-600S)",
             Self::HfWeak => "Very weak HF (RDM-300S)",
@@ -79,6 +85,7 @@ impl Preset {
     pub fn bitrate_bps(self) -> u32 {
         match self {
             Self::VhfFm => 2400,
+            Self::VhfFast => 2400,
             Self::HfGood => 2400,
             Self::HfPoor => 378,
             Self::HfWeak => 194,
@@ -92,6 +99,7 @@ impl Preset {
     pub fn payload_bytes(self) -> u32 {
         match self {
             Self::VhfFm => 512,
+            Self::VhfFast => 512,
             Self::HfGood => 512,
             Self::HfPoor => 170,
             Self::HfWeak => 170,
@@ -168,10 +176,11 @@ impl Preset {
     /// Starting index on the robustness ladder (0 = fastest).
     pub fn ladder_start(self) -> usize {
         match self {
-            Self::VhfFm | Self::HfGood | Self::Afsk1200 => 0,
-            Self::HfPoor | Self::VoxSafe => 2,
-            Self::HfWeak => 3,
-            Self::HfDeep => 4,
+            Self::VhfFast => 0,
+            Self::VhfFm | Self::HfGood | Self::Afsk1200 => 1,
+            Self::HfPoor | Self::VoxSafe => 3,
+            Self::HfWeak => 4,
+            Self::HfDeep => 5,
         }
     }
 
@@ -179,7 +188,7 @@ impl Preset {
     /// speaker and mic MFSK-32R syncs but never decodes (Tobias, v0.1.106).
     pub fn ladder_end(self) -> usize {
         match self {
-            Self::VoxSafe => 2,
+            Self::VoxSafe => 3,
             _ => Rung::COUNT - 1,
         }
     }
@@ -215,6 +224,15 @@ impl Preset {
                 "QPSK".into(),
                 "-r".into(),
                 "1/2".into(),
+                "--csma-band".into(),
+                band.into(),
+            ],
+            Self::VhfFast => vec![
+                "-m".into(),
+                "QAM16".into(),
+                "-r".into(),
+                "1/2".into(),
+                "--frame-auto".into(),
                 "--csma-band".into(),
                 band.into(),
             ],
@@ -262,6 +280,14 @@ impl Preset {
                 "csma_band": self.csma_band(),
                 "csma_enabled": true
             }),
+            Self::VhfFast => serde_json::json!({
+                "cmd": "set_config",
+                "modem_type": 0,
+                "modulation": "QAM16",
+                "code_rate": "1/2",
+                "csma_band": self.csma_band(),
+                "csma_enabled": true
+            }),
             Self::HfGood => serde_json::json!({
                 "cmd": "set_config",
                 "modem_type": 0,
@@ -298,6 +324,14 @@ impl Preset {
                 obj.insert("carrier_threshold_db".into(), serde_json::json!(db));
             }
         }
+        // Only vhf-fast lets modem73 pick the frame size. Every other preset
+        // turns it off, so leaving vhf-fast on a running modem73 resets it.
+        if let Some(obj) = v.as_object_mut() {
+            obj.insert(
+                "frame_size_auto".into(),
+                serde_json::json!(matches!(self, Self::VhfFast)),
+            );
+        }
         v
     }
 }
@@ -305,6 +339,8 @@ impl Preset {
 /// One rung on the TX robustness ladder. Lower index = faster, needs more SNR.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rung {
+    /// vhf-fast only: no preset starts here except vhf-fast.
+    OfdmQam16Half,
     OfdmQpskHalf,
     Rdm1200S,
     Rdm600S,
@@ -313,30 +349,33 @@ pub enum Rung {
 }
 
 impl Rung {
-    pub const COUNT: usize = 5;
+    pub const COUNT: usize = 6;
 
     pub fn from_index(i: usize) -> Self {
         match i.min(Self::COUNT - 1) {
-            0 => Self::OfdmQpskHalf,
-            1 => Self::Rdm1200S,
-            2 => Self::Rdm600S,
-            3 => Self::Rdm300S,
+            0 => Self::OfdmQam16Half,
+            1 => Self::OfdmQpskHalf,
+            2 => Self::Rdm1200S,
+            3 => Self::Rdm600S,
+            4 => Self::Rdm300S,
             _ => Self::Mfsk32R,
         }
     }
 
     pub fn index(self) -> usize {
         match self {
-            Self::OfdmQpskHalf => 0,
-            Self::Rdm1200S => 1,
-            Self::Rdm600S => 2,
-            Self::Rdm300S => 3,
-            Self::Mfsk32R => 4,
+            Self::OfdmQam16Half => 0,
+            Self::OfdmQpskHalf => 1,
+            Self::Rdm1200S => 2,
+            Self::Rdm600S => 3,
+            Self::Rdm300S => 4,
+            Self::Mfsk32R => 5,
         }
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::OfdmQam16Half => "QAM16 1/2",
             Self::OfdmQpskHalf => "QPSK 1/2",
             Self::Rdm1200S => "RDM-1200S",
             Self::Rdm600S => "RDM-600S",
@@ -347,25 +386,53 @@ impl Rung {
 
     pub fn payload_bytes(self) -> u32 {
         match self {
-            Self::OfdmQpskHalf => 512,
+            Self::OfdmQam16Half | Self::OfdmQpskHalf => 512,
             Self::Rdm1200S | Self::Rdm600S | Self::Rdm300S => 170,
             Self::Mfsk32R => 55,
+        }
+    }
+
+    /// Seconds modem73 keys one frame of `len` bytes on this rung, from
+    /// modem73's own frame maths (v2.5.0). Every frame takes its full time
+    /// however little it carries. For the airtime hint only; the air queue
+    /// keeps its own estimate.
+    pub fn frame_secs(self, len: usize) -> f64 {
+        // OFDM: 41/300 s per symbol, 3 sync symbols plus the data symbols.
+        const OFDM_SYM: f64 = 41.0 / 300.0;
+        // ROBUST: 960 samples at 48 kHz per symbol, 5 sync + rows.
+        const RDM_SYM: f64 = 0.02;
+        match self {
+            // frame auto: short frame (256 B, 4 symbols) when it fits.
+            Self::OfdmQam16Half if len + 2 <= 256 => OFDM_SYM * 7.0,
+            Self::OfdmQam16Half | Self::OfdmQpskHalf => OFDM_SYM * 19.0,
+            Self::Rdm1200S => RDM_SYM * 94.0,
+            Self::Rdm600S => RDM_SYM * 182.0,
+            Self::Rdm300S => RDM_SYM * 354.0,
+            // 138 symbols of 1536 samples.
+            Self::Mfsk32R => 138.0 * 1536.0 / 48_000.0,
         }
     }
 
     /// Highest (most robust) rung whose PHY MTU can carry `frame_len` bytes.
     pub fn max_for_size(frame_len: usize) -> usize {
         if frame_len <= 55 {
-            4
+            5
         } else if frame_len <= 170 {
-            3
+            4
         } else {
-            0
+            1
         }
     }
 
     pub fn control_config(self) -> serde_json::Value {
-        match self {
+        let mut v = match self {
+            Self::OfdmQam16Half => serde_json::json!({
+                "cmd": "set_config",
+                "modem_type": 0,
+                "modulation": "QAM16",
+                "code_rate": "1/2",
+                "csma_enabled": true
+            }),
             Self::OfdmQpskHalf => serde_json::json!({
                 "cmd": "set_config",
                 "modem_type": 0,
@@ -397,7 +464,19 @@ impl Rung {
                 "mfsk_mode": 3,
                 "csma_enabled": true
             }),
+        };
+        // modem73 keeps frame_size_auto across set_config calls. Only the
+        // QAM16 rung uses it (short frames for lines and receipts, normal for
+        // mail); every other rung turns it off so a vhf-fast fallback keys the
+        // same fixed frames as vhf-fm and the HF presets.
+        if let Some(obj) = v.as_object_mut() {
+            let auto = matches!(self, Self::OfdmQam16Half);
+            obj.insert("frame_size_auto".into(), serde_json::json!(auto));
+            if matches!(self, Self::OfdmQam16Half | Self::OfdmQpskHalf) {
+                obj.insert("frame_size".into(), serde_json::json!(1));
+            }
         }
+        v
     }
 }
 
@@ -489,9 +568,98 @@ mod tests {
 
     #[test]
     fn mfsk_gated_by_frame_size() {
-        assert_eq!(Rung::max_for_size(40), 4);
-        assert_eq!(Rung::max_for_size(80), 3);
-        assert_eq!(Rung::max_for_size(200), 0);
+        assert_eq!(Rung::max_for_size(40), 5);
+        assert_eq!(Rung::max_for_size(80), 4);
+        assert_eq!(Rung::max_for_size(200), 1);
+        assert_eq!(Rung::from_index(1), Rung::OfdmQpskHalf);
+    }
+
+    /// Adding the QAM16 rung on top must leave every other preset keying the
+    /// same mode on every retry as before (v1.0.20-rc6 ladder).
+    #[test]
+    fn older_presets_keep_their_ladder() {
+        let old = |p: Preset, stored: usize, retries: u32, len: usize| -> &'static str {
+            // v1.0.20-rc6 ladder, by hand: QPSK, 1200S, 600S, 300S, MFSK.
+            let names = ["QPSK 1/2", "RDM-1200S", "RDM-600S", "RDM-300S", "MFSK-32R"];
+            let start_end = match p {
+                Preset::VhfFm | Preset::HfGood | Preset::Afsk1200 => (0, 4),
+                Preset::HfPoor => (2, 4),
+                Preset::VoxSafe => (2, 2),
+                Preset::HfWeak => (3, 4),
+                Preset::HfDeep => (4, 4),
+                Preset::VhfFast => unreachable!(),
+            };
+            let max = if len <= 55 {
+                4
+            } else if len <= 170 {
+                3
+            } else {
+                0
+            };
+            let i = (stored.min(4).max(start_end.0) + retries as usize)
+                .min(start_end.1)
+                .min(max);
+            names[i]
+        };
+        for p in Preset::all().into_iter().filter(|p| *p != Preset::VhfFast) {
+            for stored_old in 0..5usize {
+                for retries in 0..5u32 {
+                    for len in [40usize, 120, 300] {
+                        let got = rung_for(p, stored_old + 1, retries, len);
+                        assert_eq!(
+                            got.as_str(),
+                            old(p, stored_old, retries, len),
+                            "{} stored {stored_old} retries {retries} len {len}",
+                            p.as_str()
+                        );
+                    }
+                }
+            }
+            assert_ne!(Rung::from_index(p.ladder_start()), Rung::OfdmQam16Half);
+        }
+    }
+
+    #[test]
+    fn vhf_fast_starts_on_qam16_and_falls_back_to_qpsk() {
+        let p = Preset::VhfFast;
+        assert_eq!(Preset::parse("vhf-fast"), Some(p));
+        assert!(!p.is_hf());
+        assert!(!p.is_radio_tnc());
+        assert_eq!(rung_for(p, 0, 0, 200), Rung::OfdmQam16Half);
+        assert_eq!(rung_for(p, 0, 1, 200), Rung::OfdmQpskHalf);
+        assert_eq!(rung_for(p, 0, 3, 200), Rung::OfdmQpskHalf);
+        assert_eq!(rung_for(p, 0, 2, 40), Rung::Rdm1200S);
+        let args = p.modem73_args();
+        assert!(args.windows(2).any(|w| w[0] == "-m" && w[1] == "QAM16"));
+        assert!(args.iter().any(|a| a == "--frame-auto"));
+        let v = p.control_config();
+        assert_eq!(v["modulation"], "QAM16");
+        assert_eq!(v["frame_size_auto"], true);
+        // Every other preset and rung turns frame auto off again.
+        for q in Preset::all().into_iter().filter(|q| *q != p) {
+            assert_eq!(
+                q.control_config()["frame_size_auto"],
+                false,
+                "{}",
+                q.as_str()
+            );
+            assert!(!q.modem73_args().iter().any(|a| a == "--frame-auto"));
+        }
+        assert_eq!(
+            Rung::OfdmQam16Half.control_config()["frame_size_auto"],
+            true
+        );
+        for i in 1..Rung::COUNT {
+            assert_eq!(
+                Rung::from_index(i).control_config()["frame_size_auto"],
+                false
+            );
+        }
+        assert_eq!(Rung::OfdmQpskHalf.control_config()["frame_size"], 1);
+        // Short frames for a chat line, normal frames for a full one.
+        assert!(Rung::OfdmQam16Half.frame_secs(200) < 1.0);
+        assert!(Rung::OfdmQam16Half.frame_secs(400) > 2.5);
+        assert!(Rung::OfdmQpskHalf.frame_secs(40) > 2.5);
     }
 
     #[test]
@@ -524,7 +692,7 @@ mod tests {
     fn vox_safe_stays_on_rdm_600s() {
         // Over a speaker and mic MFSK-32R syncs but never decodes; RDM-600S
         // does (Tobias, v0.1.106). Retries must not step down to MFSK.
-        assert_eq!(Preset::VoxSafe.ladder_start(), 2);
+        assert_eq!(Preset::VoxSafe.ladder_start(), 3);
         assert_eq!(rung_for(Preset::VoxSafe, 0, 0, 40), Rung::Rdm600S);
         assert_eq!(rung_for(Preset::VoxSafe, 0, 3, 40), Rung::Rdm600S);
         assert_eq!(rung_for(Preset::VoxSafe, 4, 0, 40), Rung::Rdm600S);
