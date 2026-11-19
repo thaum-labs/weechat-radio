@@ -11,7 +11,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 use std::collections::VecDeque;
 use std::io::Write;
@@ -49,6 +49,10 @@ struct ChatLine {
     tries: u32,
     when: String,
     emergency: bool,
+    /// A long message received as pieces: one entry, updated in place (#365).
+    parts: Option<crate::chat_parts::Parts>,
+    /// A long message we send as pieces: pieces on the air of all.
+    sending: Option<(usize, usize)>,
 }
 
 struct Buffer {
@@ -394,6 +398,8 @@ pub async fn run(cfg: &Config) -> Result<()> {
                                     tries: 0,
                                     when: crate::store::chat_stamp(None),
                                     emergency: false,
+                                    parts: None,
+                                    sending: None,
                                 });
                                 continue;
                             }
@@ -430,6 +436,8 @@ pub async fn run(cfg: &Config) -> Result<()> {
                                             tries: 0,
                                             when: crate::store::chat_stamp(None),
                                             emergency: false,
+                                            parts: None,
+                                            sending: None,
                                         });
                                     } else {
                                         out.write_all(format!("PART {target}\r\n").as_bytes())
@@ -446,6 +454,8 @@ pub async fn run(cfg: &Config) -> Result<()> {
                                         tries: 0,
                                         when: crate::store::chat_stamp(None),
                                         emergency: false,
+                                        parts: None,
+                                        sending: None,
                                     });
                                 } else if cmd.eq_ignore_ascii_case("radio")
                                     || cmd.to_ascii_lowercase().starts_with("radio ")
@@ -475,6 +485,8 @@ pub async fn run(cfg: &Config) -> Result<()> {
                                     tries: 0,
                                     when: crate::store::chat_stamp(None),
                                     emergency: false,
+                                    parts: None,
+                                    sending: None,
                                 });
                             }
                         }
@@ -765,6 +777,8 @@ fn handle_irc(app: &mut App, line: &str) {
             tries: 0,
             when: crate::store::chat_stamp(None),
             emergency: false,
+            parts: None,
+            sending: None,
         });
         notify("WeeChat Radio", &format!("{from} invited you to {ch}"));
         return;
@@ -788,6 +802,8 @@ fn handle_irc(app: &mut App, line: &str) {
                     tries: 0,
                     when: crate::store::chat_stamp(None),
                     emergency: false,
+                    parts: None,
+                    sending: None,
                 });
             }
             return;
@@ -809,6 +825,8 @@ fn handle_irc(app: &mut App, line: &str) {
                 tries: 0,
                 when: crate::store::chat_stamp(None),
                 emergency: false,
+                parts: None,
+                sending: None,
             });
         }
         return;
@@ -820,14 +838,55 @@ fn handle_irc(app: &mut App, line: &str) {
                 app.heard.push(from.clone());
             }
             let ch = crate::slash::normalize_channel(&to);
+            // A piece of a long message joins its message's one entry
+            // (#365); other lines never land inside it.
+            let (piece, body) = match crate::chat_parts::read(&text) {
+                crate::chat_parts::Body::Piece { i, n, text } => (Some((i, n)), text.to_string()),
+                crate::chat_parts::Body::Whole(t) => (None, t.to_string()),
+            };
+            let text = body;
+            let now = crate::chat_parts::unix_now();
+            let mut parts = None;
+            if let Some((i, n)) = piece {
+                let lines = match app
+                    .buffers
+                    .iter_mut()
+                    .find(|b| b.name.eq_ignore_ascii_case(&ch))
+                {
+                    Some(b) => &mut b.lines,
+                    None => &mut app.cur_mut().lines,
+                };
+                let found = crate::chat_parts::find_group(
+                    lines
+                        .iter()
+                        .enumerate()
+                        .map(|(k, l)| (k, l.from.as_str(), l.parts.as_ref())),
+                    &from,
+                    i,
+                    n,
+                );
+                if let Some(k) = found {
+                    let entry = &mut lines[k];
+                    if let Some(p) = entry.parts.as_mut() {
+                        p.add(i, n, &text, now);
+                        entry.text = p.text();
+                    }
+                    return;
+                }
+                let mut p = crate::chat_parts::Parts::new(n, now);
+                p.add(i, n, &text, now);
+                parts = Some(p);
+            }
             let row = ChatLine {
                 from: from.clone(),
-                text: text.clone(),
+                text: parts.as_ref().map(|p| p.text()).unwrap_or_else(|| text.clone()),
                 ticks: String::new(),
                 via: irc_via(line),
                 tries: irc_tries(line),
                 when: irc_time(line),
                 emergency,
+                parts,
+                sending: None,
             };
             if let Some(buf) = app
                 .buffers
@@ -842,8 +901,9 @@ fn handle_irc(app: &mut App, line: &str) {
                 app.cur_mut().lines.push_back(row);
             }
             if should_notify(&app, &from, &text, &to) {
-                let preview = if text.len() > 120 {
-                    format!("{}…", &text[..120])
+                // Cut on a character, never inside an emoji (#365).
+                let preview = if text.chars().count() > 120 {
+                    format!("{}…", text.chars().take(120).collect::<String>())
                 } else {
                     text.clone()
                 };
@@ -857,10 +917,49 @@ fn handle_irc(app: &mut App, line: &str) {
             let tries = irc_tries(line);
             apply_own_delivery(app, state, tries);
         }
+        if let Some(p) = crate::chat_line::delivery_parts(line) {
+            let nick = app.nick.clone();
+            if let Some(l) = app
+                .buffers
+                .iter_mut()
+                .rev()
+                .flat_map(|b| b.lines.iter_mut().rev())
+                .find(|l| l.from.eq_ignore_ascii_case(&nick))
+            {
+                l.sending = Some(p);
+            }
+        }
     }
     if line.contains("Internet down") {
         app.banner = "Internet down, radio only".into();
     }
+}
+
+const TUI_AMBER: Color = Color::Rgb(255, 196, 61);
+
+/// The footer under a long message (#365), and its colour.
+fn tui_group_footer(l: &ChatLine, now: u64) -> Option<(String, Color)> {
+    use crate::chat_parts::Status;
+    if let Some(p) = &l.parts {
+        let c = match p.status(now) {
+            Status::Arriving => TUI_AMBER,
+            Status::Complete => Color::Green,
+            Status::Incomplete => Color::Red,
+        };
+        return Some((p.footer(now), c));
+    }
+    let (k, n) = l.sending?;
+    let failed = l.ticks.contains("[no]");
+    let delivered = !failed
+        && (l.ticks.contains("[ok]") || l.ticks.contains("[all]") || l.ticks.contains("VV"));
+    let (tail, c) = if failed {
+        ("  ⚠ not all pieces delivered", Color::Red)
+    } else if delivered && k >= n {
+        ("  ✓✓ delivered", Color::Green)
+    } else {
+        ("  … awaiting receipt", TUI_AMBER)
+    };
+    Some((format!("{}{tail}", crate::chat_parts::sending_line(k, n)), c))
 }
 
 fn panel<'a>(title: &'a str, meta: &'a str, app: &App) -> Block<'a> {
@@ -1105,45 +1204,80 @@ fn draw(f: &mut Frame, app: &App) {
         left[2],
     );
 
-    let chat: Vec<Line> = app
-        .cur()
-        .lines
-        .iter()
-        .map(|l| {
-            let style = if l.emergency {
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(t.fg)
-            };
-            let via = crate::store::via_bracket(&l.via);
-            let tries = crate::store::tries_bracket(l.tries);
-            Line::from(vec![
-                Span::styled(
-                    if l.when.is_empty() {
-                        String::new()
-                    } else {
-                        format!("{} ", l.when)
-                    },
-                    Style::default().fg(t.dim),
-                ),
-                Span::styled(format!("{:<8} ", l.from), Style::default().fg(t.accent)),
-                Span::styled(l.text.clone(), style),
-                Span::raw(" "),
-                Span::styled(
-                    via.to_string(),
-                    Style::default().fg(if l.via == "rf" {
-                        Color::Rgb(255, 122, 61)
-                    } else {
-                        t.accent
-                    }),
-                ),
-                Span::raw(if via.is_empty() { "" } else { " " }),
-                Span::styled(l.ticks.clone(), Style::default().fg(t.accent)),
-                Span::raw(if tries.is_empty() { "" } else { " " }),
-                Span::styled(tries, Style::default().fg(t.dim)),
-            ])
-        })
-        .collect();
+    let now = crate::chat_parts::unix_now();
+    let mut chat: Vec<Line> = Vec::new();
+    for l in app.cur().lines.iter() {
+        let style = if l.emergency {
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.fg)
+        };
+        let via = crate::store::via_bracket(&l.via);
+        let tries = crate::store::tries_bracket(l.tries);
+        let mine = l.from.eq_ignore_ascii_case(&app.nick);
+        // #365 colours: grey time, cyan callsigns, amber while a long
+        // message is coming or going out, green when done, red when a piece
+        // is missing.
+        let footer = tui_group_footer(l, now);
+        let mark = match (&l.parts, footer.as_ref().map(|f| f.1)) {
+            (Some(_), Some(c)) if c == TUI_AMBER => Some(Span::styled("⋯ ", Style::default().fg(c))),
+            (Some(_), Some(c)) if c == Color::Red => Some(Span::styled("⚠ ", Style::default().fg(c))),
+            _ => None,
+        };
+        let mut spans = vec![
+            Span::styled(
+                if l.when.is_empty() {
+                    String::new()
+                } else {
+                    format!("{} ", l.when)
+                },
+                Style::default().fg(t.dim),
+            ),
+            Span::styled(
+                format!("{:<8} ", l.from),
+                Style::default().fg(if mine { t.accent } else { Color::Cyan }),
+            ),
+        ];
+        spans.extend(mark);
+        spans.extend([
+            Span::styled(l.text.clone(), style),
+            Span::raw(" "),
+            Span::styled(
+                via.to_string(),
+                Style::default().fg(if l.via == "rf" {
+                    Color::Rgb(255, 122, 61)
+                } else {
+                    t.accent
+                }),
+            ),
+            Span::raw(if via.is_empty() { "" } else { " " }),
+            Span::styled(l.ticks.clone(), Style::default().fg(t.accent)),
+            Span::raw(if tries.is_empty() { "" } else { " " }),
+            Span::styled(tries, Style::default().fg(t.dim)),
+        ]);
+        chat.push(Line::from(spans));
+        if let Some((text, colour)) = footer {
+            chat.push(Line::from(Span::styled(
+                format!("{}{text}", " ".repeat(l.when.chars().count().min(20) + 10)),
+                Style::default().fg(colour),
+            )));
+        }
+    }
+    // Wide characters (emoji) count two columns; keep the newest lines in
+    // view, each wrapped to the panel width.
+    let inner_w = body[1].width.saturating_sub(2).max(1) as usize;
+    let inner_h = body[1].height.saturating_sub(2) as usize;
+    let mut used = 0usize;
+    let mut first = chat.len();
+    while first > 0 {
+        let h = chat[first - 1].width().max(1).div_ceil(inner_w);
+        if used + h > inner_h {
+            break;
+        }
+        used += h;
+        first -= 1;
+    }
+    let chat: Vec<Line> = chat.split_off(first);
     let hint = if app.mode_picker {
         "F2 1/2/3/4"
     } else if app.confirm_radio {
@@ -1152,7 +1286,9 @@ fn draw(f: &mut Frame, app: &App) {
         "F2 MODE"
     };
     f.render_widget(
-        Paragraph::new(chat).block(panel("TERMINAL", hint, app)),
+        Paragraph::new(chat)
+            .wrap(Wrap { trim: false })
+            .block(panel("TERMINAL", hint, app)),
         body[1],
     );
 

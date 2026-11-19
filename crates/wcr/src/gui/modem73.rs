@@ -921,6 +921,9 @@ impl GuiApp {
                 preset_cmd = Some(format!("/preset {next}"));
             }
         }
+        if let Some(note) = s.preset_pending_note() {
+            ui.label(RichText::new(note).color(M_GOLD).small());
+        }
         if s.mode == Mode::InternetRadio {
             if let Some(on) = tower_toggle(ui, s.tower, key_cell) {
                 tower_cmd = Some(format!("/tower {}", if on { "on" } else { "off" }));
@@ -1631,6 +1634,14 @@ impl GuiApp {
                                         }
                                     }
                                     None => {
+                                        if let Some((m, tone)) = super::group_mark(line) {
+                                            let c = if tone == crate::chat_line::FooterTone::Missing {
+                                                M_RED
+                                            } else {
+                                                M_GOLD
+                                            };
+                                            ui.label(text(m, c));
+                                        }
                                         ui.label(text(&line.text, body));
                                     }
                                 }
@@ -1651,6 +1662,7 @@ impl GuiApp {
                             |ui| self.m73_marks(ui, line, mine, show_snr),
                         );
                     });
+                    super::group_footer_row(ui, line, M_GOLD, M_GREEN, M_RED);
                 }
             });
         if let Some(path) = open_folder_of {

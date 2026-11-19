@@ -14,7 +14,7 @@ use crate::net::peers::DirectPeers;
 use crate::presets::{self, Preset, Rung};
 use crate::proto::frag::{self, FragAssembler};
 use crate::proto::{
-    load_or_create, split_body_chunks, Callsign, Envelope, Flags, IdentityKeys, MsgId, MsgType,
+    load_or_create, Callsign, Envelope, Flags, IdentityKeys, MsgId, MsgType,
     Priority, FLAG_GROUP, FLAG_INET_OK, FLAG_NO_INET, FLAG_REQ_ACK, FLAG_THIRD_PARTY, MAX_BODY,
 };
 use crate::relay::{self, Action, Engine};
@@ -35,6 +35,11 @@ struct Transports {
     kiss: Option<KissClient>,
     control: Option<ControlClient>,
     modem: Option<ModemProcess>,
+    /// [`crate::modem::supervise::restart_key`] of the settings `modem` was
+    /// started with.
+    modem_key: Option<String>,
+    /// A modem restart is already waiting for the radio to go idle.
+    modem_restart_queued: bool,
     air: Option<AirQueue>,
     sense: Option<Arc<ModemSense>>,
     peers: Option<mpsc::Sender<Envelope>>,
@@ -549,6 +554,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         tokio::spawn(crate::gps::run(rt.cfg.clone(), rt.snap.clone()));
     }
     tokio::spawn(range_test_loop(rt.clone()));
+    tokio::spawn(watch_config_file(rt.clone()));
 
     // Dial the hub before the radio. modem73's first open retries for up to
     // 20s, and the hello used to wait behind that.
@@ -1775,10 +1781,14 @@ async fn send_chat_lines(
         prio.default_ttl()
     };
     let max = MAX_BODY.min(cfg_g.relay.max_message_bytes.max(1));
-    let chunks = split_body_chunks(text, max);
+    // A long line goes as pieces tagged `[i/n] ` so receivers show it as one
+    // message (#365, option B); a typed tag is escaped.
+    let chunks = crate::chat_parts::split(text, max);
     if chunks.is_empty() {
         return Ok(ids);
     }
+    let mut piece_ids: Vec<MsgId> = Vec::new();
+    let pieces = chunks.len();
     for chunk in chunks {
         let seq = rt.store.next_seq(origin.as_str())?;
         let mut env = Envelope::new_msg(
@@ -1793,6 +1803,16 @@ async fn send_chat_lines(
             rt.keys.sign_envelope(&mut env)?;
         }
         rt.store.insert(&env, Delivery::Queued)?;
+        if pieces > 1 {
+            piece_ids.push(env.msg_id);
+            if piece_ids.len() == 1 {
+                // Known before the first mark goes out, so every piece's
+                // marks are shown as one mark on the first piece.
+                rt.irc.register_parts(&env.msg_id.hex(), pieces);
+            }
+            rt.irc
+                .add_part(&piece_ids[0].hex(), &env.msg_id.hex(), piece_ids.len() - 1);
+        }
         if rf_only {
             dispatch_rf_at(rt, &env, 0, Duration::ZERO, 0).await?;
         } else {
@@ -2388,6 +2408,9 @@ fn watch_keyed(rt: &Runtime, kiss: &KissClient, cancel: CancellationToken) {
                     && relay::is_own_origin(&rt.engine.our_call, &env)
                 {
                     restart_retry_timer(&rt, &env);
+                }
+                if is_line(&env) && relay::is_own_origin(&rt.engine.our_call, &env) {
+                    rt.irc.note_part_keyed(&env.msg_id.hex()).await;
                 }
                 note_exchange(&rt, Some(&env), None);
             }
@@ -4149,6 +4172,101 @@ fn note_modem73_version(rt: &Runtime, configured: &str) {
     }
 }
 
+/// True when the modem73 this station started runs with other settings than
+/// wcr.toml now holds (#365).
+fn modem_restart_due(rt: &Runtime) -> bool {
+    let want = crate::modem::supervise::restart_key(&rt.cfg.lock().modem);
+    let txp = rt.txp.lock();
+    txp.modem.is_some() && txp.modem_key.as_deref().is_some_and(|k| k != want)
+}
+
+/// Restarts the managed modem73 with the settings in wcr.toml when they
+/// changed, once nothing is on the air, so the mode shown is the mode sent
+/// (#365). Returns true when a restart is due.
+fn request_modem_restart(rt: &Runtime) -> bool {
+    let due = modem_restart_due(rt);
+    rt.snap.lock().modem_restart_pending = due;
+    if !due {
+        return false;
+    }
+    {
+        let mut txp = rt.txp.lock();
+        if txp.modem_restart_queued {
+            return true;
+        }
+        txp.modem_restart_queued = true;
+    }
+    let rt = rt.clone();
+    tokio::spawn(async move {
+        // Wait for the radio to be idle (no PTT, nothing queued) for 2 s,
+        // at most 2 minutes, so a restart never cuts a frame off.
+        let mut quiet = 0u32;
+        for _ in 0..240 {
+            let busy = {
+                let s = rt.snap.lock();
+                s.ptt_on || s.queue_air > 0
+            };
+            quiet = if busy { 0 } else { quiet + 1 };
+            if quiet >= 4 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        rt.txp.lock().modem_restart_queued = false;
+        if !modem_restart_due(&rt) {
+            rt.snap.lock().modem_restart_pending = false;
+            return;
+        }
+        let old = rt.txp.lock().modem.take();
+        let from = rt.snap.lock().preset_running.clone();
+        stop_radio(&rt);
+        if let Some(m) = old {
+            m.stop().await;
+        }
+        let to = rt.cfg.lock().modem.preset.clone();
+        let note = match start_radio(&rt).await {
+            Ok(()) => format!("modem73 restarted: {from} -> {to}"),
+            Err(e) => format!("modem73 restart for {to} failed: {e}"),
+        };
+        tracing::info!("{note}");
+        rt.irc.notice_all(&note).await;
+        rt.snap.lock().modem_restart_pending = modem_restart_due(&rt);
+    });
+    true
+}
+
+/// Picks up modem settings saved to wcr.toml by something else (the app's
+/// setup, or an edit by hand) while the station runs, and restarts modem73
+/// to apply them (#365).
+async fn watch_config_file(rt: Runtime) {
+    let path = Config::active_path();
+    let mtime = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    let mut last = mtime(&path);
+    loop {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let now = mtime(&path);
+        if now == last {
+            continue;
+        }
+        last = now;
+        let Ok(disk) = Config::load(&path) else {
+            continue;
+        };
+        let changed = {
+            let cfg = rt.cfg.lock();
+            crate::modem::supervise::restart_key(&disk.modem)
+                != crate::modem::supervise::restart_key(&cfg.modem)
+        };
+        if !changed {
+            continue;
+        }
+        tracing::info!("wcr.toml modem settings changed: preset {}", disk.modem.preset);
+        rt.cfg.lock().modem = disk.modem.clone();
+        rt.snap.lock().preset = disk.modem.preset.clone();
+        request_modem_restart(&rt);
+    }
+}
+
 async fn start_radio(rt: &Runtime) -> Result<()> {
     if rt.kiss().is_some() {
         return Ok(());
@@ -4158,6 +4276,8 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
         return Ok(());
     }
     let mut cfg = rt.cfg.lock().clone();
+    // Taken before the Bluetooth bridge fills in its own audio addresses.
+    let modem_key = crate::modem::supervise::restart_key(&cfg.modem);
     let radio_tnc = cfg.modem.uses_tnc();
     let sense = Arc::new(if radio_tnc {
         ModemSense::passive()
@@ -4338,8 +4458,10 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
 
     {
         let mut txp = rt.txp.lock();
-        if modem.is_some() {
-            txp.modem = modem;
+        if let Some(m) = modem {
+            rt.snap.lock().preset_running = m.preset().to_string();
+            txp.modem = Some(m);
+            txp.modem_key = Some(modem_key);
         }
         txp.kiss = kiss;
         txp.control = control;
@@ -4363,8 +4485,10 @@ fn stop_radio(rt: &Runtime) {
     txp.air = None;
     txp.sense = None;
     drop(txp.modem.take());
+    txp.modem_key = None;
     rt.io_swap.lock().drop_kiss = true;
     let mut s = rt.snap.lock();
+    s.preset_running.clear();
     s.tnc.clear();
     s.tnc_ok = false;
     s.channel = "idle".into();
@@ -4503,7 +4627,14 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                     cfg.lock().modem.preset = pr.as_str().into();
                     snap.lock().preset = pr.as_str().into();
                     persist_cfg(&cfg.lock());
-                    format!("preset {}", pr.as_str())
+                    if request_modem_restart(rt) {
+                        format!(
+                            "preset {}: modem73 restarts to apply it once the radio is idle",
+                            pr.as_str()
+                        )
+                    } else {
+                        format!("preset {}", pr.as_str())
+                    }
                 } else {
                     "unknown preset. Use vhf-fm, hf-good, hf-poor, hf-weak, hf-deep, vox-safe, afsk-1200.".into()
                 }
@@ -4539,7 +4670,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                 if s.deferred { "wait" } else { &s.channel },
                 if s.frequency.is_empty() { "—" } else { s.frequency.trim_end_matches(" MHz") },
                 if s.band.is_empty() { "—" } else { &s.band },
-                s.preset,
+                s.preset_status(),
                 s.snr,
                 if s.tx_rung.is_empty() { "—" } else { &s.tx_rung },
                 s.retries,

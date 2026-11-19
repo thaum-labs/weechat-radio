@@ -19,6 +19,16 @@ pub(crate) struct ChatLine {
     pub(crate) snr: Option<f32>,
     /// File transfer bar, such as `[████░░░░] 3/15`; empty for other lines.
     pub(crate) progress: String,
+    /// This line, as parsed, is piece `i` of `n` of a long message (#365).
+    /// [`push_grouped`] folds it into the message's one entry.
+    pub(crate) piece: Option<(usize, usize)>,
+    /// A long message received as pieces: one entry, updated in place.
+    pub(crate) parts: Option<crate::chat_parts::Parts>,
+    /// A long message we send as pieces: pieces on the air of all.
+    pub(crate) sending: Option<(usize, usize)>,
+    /// Ids of the later pieces folded into this entry (the first piece's id
+    /// is `msgid`), so a history replay does not add them again.
+    pub(crate) piece_ids: Vec<String>,
 }
 
 impl ChatLine {
@@ -35,6 +45,10 @@ impl ChatLine {
             when: String::new(),
             snr: None,
             progress: String::new(),
+            piece: None,
+            parts: None,
+            sending: None,
+            piece_ids: Vec::new(),
         }
     }
 
@@ -55,6 +69,10 @@ impl ChatLine {
             when: crate::store::chat_stamp(None),
             snr: None,
             progress: String::new(),
+            piece: None,
+            parts: None,
+            sending: None,
+            piece_ids: Vec::new(),
         }
     }
 }
@@ -288,6 +306,126 @@ pub(crate) fn apply_file_progress(lines: &mut [ChatLine], msgid: &str, bar: &str
     changed
 }
 
+/// Folds a parsed piece of a long message into its message's entry in
+/// `lines` (updated in place, so other lines never land inside it) and
+/// returns that entry's index. A first piece, or a piece with no open
+/// message, becomes the entry itself: `line` is turned into it and None is
+/// returned for the caller to add. Ordinary lines return None unchanged.
+pub(crate) fn group_into(lines: &mut [ChatLine], line: &mut ChatLine) -> Option<usize> {
+    let (i, n) = line.piece.take()?;
+    let now = crate::chat_parts::unix_now();
+    let found = crate::chat_parts::find_group(
+        lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.channel.eq_ignore_ascii_case(&line.channel))
+            .map(|(k, l)| (k, l.nick.as_str(), l.parts.as_ref())),
+        &line.nick,
+        i,
+        n,
+    );
+    if let Some(k) = found {
+        let entry = &mut lines[k];
+        if let Some(p) = entry.parts.as_mut() {
+            p.add(i, n, &line.text, now);
+            entry.text = p.text();
+        }
+        if entry.snr.is_none() {
+            entry.snr = line.snr;
+        }
+        if !line.msgid.is_empty() {
+            entry.piece_ids.push(line.msgid.clone());
+        }
+        return Some(k);
+    }
+    let mut parts = crate::chat_parts::Parts::new(n, now);
+    parts.add(i, n, &line.text, now);
+    line.text = parts.text();
+    line.parts = Some(parts);
+    None
+}
+
+/// Adds a parsed line to `chat`, a piece of a long message to its
+/// message's one entry. Returns the index of the entry.
+pub(crate) fn push_grouped(chat: &mut Vec<ChatLine>, mut line: ChatLine) -> usize {
+    if let Some(k) = group_into(chat, &mut line) {
+        return k;
+    }
+    chat.push(line);
+    chat.len() - 1
+}
+
+/// True when `msgid` is this line's, or one of its later pieces'.
+pub(crate) fn has_msgid(l: &ChatLine, msgid: &str) -> bool {
+    l.msgid.eq_ignore_ascii_case(msgid) || l.piece_ids.iter().any(|p| p.eq_ignore_ascii_case(msgid))
+}
+
+/// How a grouped line's footer reads, for its colour: amber while pieces
+/// are coming or going out, green when done, red when a piece is missing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FooterTone {
+    InProgress,
+    Done,
+    Missing,
+}
+
+/// The badge (`1/3`) and footer line under a long message, received or
+/// sent as pieces (#365). None for an ordinary line.
+pub(crate) fn group_footer(line: &ChatLine, now: u64) -> Option<(String, String, FooterTone)> {
+    use crate::chat_parts::Status;
+    if let Some(p) = &line.parts {
+        let tone = match p.status(now) {
+            Status::Arriving => FooterTone::InProgress,
+            Status::Complete => FooterTone::Done,
+            Status::Incomplete => FooterTone::Missing,
+        };
+        let badge = format!("{}/{}", p.received(), p.total());
+        return Some((badge, p.footer(now), tone));
+    }
+    let (k, n) = line.sending?;
+    let delivered = crate::chat_line::ticks_delivery(&line.ticks)
+        .is_some_and(|d| d == crate::store::Delivery::Delivered);
+    let failed = line.ticks.contains("[no]");
+    let tone = if failed {
+        FooterTone::Missing
+    } else if k >= n && delivered {
+        FooterTone::Done
+    } else {
+        FooterTone::InProgress
+    };
+    let tail = if failed {
+        "  ⚠ not all pieces delivered"
+    } else if delivered {
+        "  ✓✓ delivered"
+    } else {
+        "  … awaiting receipt"
+    };
+    Some((
+        format!("{k}/{n}"),
+        format!("{}{tail}", crate::chat_parts::sending_line(k, n)),
+        tone,
+    ))
+}
+
+/// `+radio/parts=k/n` on a delivery mark: k of the n pieces of our long
+/// message are on the air (#365).
+pub(crate) fn delivery_parts(line: &str) -> Option<(usize, usize)> {
+    irc_tags(line)
+        .get("radio/parts")
+        .and_then(|v| crate::chat_parts::parse_progress(v))
+}
+
+/// Notes the pieces-on-air count on our long message `msgid`.
+pub(crate) fn apply_sending(chat: &mut [ChatLine], msgid: &str, parts: (usize, usize)) {
+    if let Some(line) = chat
+        .iter_mut()
+        .rev()
+        .find(|l| !l.sys && !l.msgid.is_empty() && l.msgid.eq_ignore_ascii_case(msgid))
+    {
+        line.sending = Some(parts);
+    }
+}
+
 pub(crate) fn parse_delivery(line: &str) -> Option<(String, String, u32)> {
     let payload = irc_payload(line);
     let cmd = if let Some(rest) = payload.strip_prefix(':') {
@@ -371,7 +509,15 @@ pub(crate) fn parse_privmsg(line: &str) -> Option<ChatLine> {
     } else {
         target.to_ascii_uppercase()
     };
+    let (piece, text) = match crate::chat_parts::read(text) {
+        crate::chat_parts::Body::Piece { i, n, text } => (Some((i, n)), text),
+        crate::chat_parts::Body::Whole(t) => (None, t),
+    };
     Some(ChatLine {
+        piece,
+        parts: None,
+        sending: None,
+        piece_ids: Vec::new(),
         nick,
         text: text.to_string(),
         sys: false,

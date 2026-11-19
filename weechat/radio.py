@@ -423,12 +423,130 @@ def tagmsg_cb(data, signal, signal_data):
     return weechat.WEECHAT_RC_OK
 
 
+# Long messages arrive as pieces tagged "[1/3] " (#365). WeeChat cannot
+# change a printed line, so the pieces are held and the message is printed
+# once, whole, when the last piece is in: other traffic never lands inside
+# it. A message whose pieces stop coming is printed in red with what came.
+PART_RE = None
+INCOMPLETE_AFTER_S = 300
+_groups = {}
+
+
+def _part(text):
+    """(i, n, rest) for a "[i/n] " piece tag at the start of text, else None."""
+    import re
+    global PART_RE
+    if PART_RE is None:
+        PART_RE = re.compile(r"^\[([1-9][0-9]?)/([1-9][0-9]?)\] ")
+    m = PART_RE.match(text)
+    if not m:
+        return None
+    i, n = int(m.group(1)), int(m.group(2))
+    if n < 2 or i > n:
+        return None
+    return i, n, text[m.end():]
+
+
+def _unescape(text):
+    """A typed "[1/3] " is sent as "\\[1/3] "; show it as typed."""
+    if text.startswith("\\") and _part(text[1:].lstrip("\\")):
+        return text[1:]
+    return text
+
+
+def _joined(g):
+    out = ""
+    gap = False
+    for piece in g["got"]:
+        if piece is None:
+            if not gap:
+                out += " …"
+                gap = True
+            continue
+        if gap and not piece.startswith(" "):
+            out += " "
+        out += piece
+        gap = False
+    return _unescape(out.lstrip())
+
+
+def _group_print(key, g, complete):
+    n = len(g["got"])
+    have = sum(1 for p in g["got"] if p is not None)
+    if complete:
+        foot = "%s✓ complete · %d/%d" % (weechat.color("green"), n, n)
+    else:
+        miss = [str(k + 1) for k, p in enumerate(g["got"]) if p is None]
+        foot = "%s⚠ incomplete · %d/%d received · part%s %s missing" % (
+            weechat.color("red"), have, n, "s" if len(miss) > 1 else "", ", ".join(miss))
+    buf = _buffer_for_target(g["target"]) or _buffer_for_target(g["nick"])
+    if not buf:
+        return
+    weechat.prnt_date_tags(
+        buf, 0, "notify_message,nick_%s" % g["nick"],
+        "%s%s%s\t%s%s %s%s" % (
+            weechat.color("cyan"), g["nick"], weechat.color("reset"),
+            g["label"] + " " if g["label"] else "", _joined(g), foot, weechat.color("reset")),
+    )
+
+
+def parts_timer_cb(_data, _remaining):
+    now = time.time()
+    for key in list(_groups):
+        g = _groups[key]
+        if now - g["last"] >= INCOMPLETE_AFTER_S:
+            _group_print(key, g, False)
+            del _groups[key]
+    return weechat.WEECHAT_RC_OK
+
+
+def _hold_piece(line, head, label, body):
+    """Hold a piece; returns the line to show now ("" for none)."""
+    got = _part(body)
+    if not got:
+        return None
+    i, n, rest = got
+    try:
+        nick = head.split("PRIVMSG", 1)[0].strip().split(" ")[-1].lstrip(":").split("!")[0]
+        target = head.split("PRIVMSG", 1)[1].strip().split(" ")[0]
+    except Exception:
+        return None
+    key = (nick.upper(), target.upper(), n)
+    g = _groups.get(key)
+    if g is None or g["got"][i - 1] is not None:
+        g = {"got": [None] * n, "nick": nick, "target": target, "label": label, "last": 0}
+        _groups[key] = g
+        buf = _buffer_for_target(target) or _buffer_for_target(nick)
+        if buf:
+            weechat.prnt(buf, "%s%s⋯ %s is sending a long message (%d parts)" % (
+                weechat.prefix("network"), weechat.color("yellow"), nick, n))
+    g["got"][i - 1] = rest
+    g["last"] = time.time()
+    if all(p is not None for p in g["got"]):
+        del _groups[key]
+        foot = " %s✓ complete · %d/%d%s" % (weechat.color("green"), n, n, weechat.color("reset"))
+        return "%s :%s%s%s" % (head, label + " " if label else "", _joined(g), foot)
+    return ""
+
+
 def _via_label(via):
     return {"rf": "[rf]", "inet": "[net]", "lan": "[lan]"}.get(via, "")
 
 
 def via_mod(_data, _modifier, _modifier_data, string):
     line = string or ""
+    if " PRIVMSG " in line and " :" in line:
+        j = line.find(" :", line.find(" PRIVMSG "))
+        head, text = line[:j], line[j + 2:]
+        via = _tag_value(line, "+radio/via") or _tag_value(line, "radio/via")
+        label = _via_label(via)
+        shown = _hold_piece(line, head, label, text)
+        if shown is not None:
+            return shown
+        plain = _unescape(text)
+        if plain != text:
+            line = "%s :%s" % (head, plain)
+            string = line
     if "radio/via=" not in line:
         return string
     try:
@@ -462,6 +580,7 @@ if weechat.register(SCRIPT_NAME, SCRIPT_AUTHOR, SCRIPT_VERSION, SCRIPT_LICENSE, 
     weechat.hook_signal("*,irc_in_TAGMSG", "tagmsg_cb", "")
     weechat.hook_modifier("irc_in2_privmsg", "via_mod", "")
     weechat.hook_timer(4000, 0, 0, "timer_cb", "")
+    weechat.hook_timer(30000, 0, 0, "parts_timer_cb", "")
     weechat.hook_signal("irc_server_connected", "connected_cb", "")
     if not weechat.bar_search("radio_bar"):
         _mute("/bar add radio_bar window bottom 1 0 radio,radio_air")

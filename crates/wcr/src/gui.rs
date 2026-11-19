@@ -434,6 +434,8 @@ enum IrcEvent {
         tries: u32,
         /// How the receipt behind an `[ok]` came back (`rf`, `inet`, `lan`).
         via: Option<String>,
+        /// A long message: pieces on the air of all (#365).
+        parts: Option<(usize, usize)>,
     },
     /// A file transfer moved along: the bar to show on line `msgid`.
     FileProgress {
@@ -1322,9 +1324,9 @@ impl GuiApp {
             self.send_line(&text);
             return;
         }
-        for chunk in crate::proto::split_body_chunks(&text, crate::proto::MAX_BODY) {
-            self.send_line(&chunk);
-        }
+        // One line, however long: the station cuts it into tagged pieces
+        // and the chat shows it as one message with a progress bar (#365).
+        self.send_line(&text.replace(['\r', '\n'], " "));
     }
 
     fn send_cmd(&mut self, cmd: &str) {
@@ -1592,15 +1594,19 @@ impl GuiApp {
                             &notify_body(&line.text),
                         );
                     }
-                    self.chat.push(line);
+                    crate::chat_line::push_grouped(&mut self.chat, line);
                 }
                 IrcEvent::Delivery {
                     msgid,
                     state,
                     tries,
                     via,
+                    parts,
                 } => {
                     self.apply_delivery(&msgid, &state, tries);
+                    if let Some(p) = parts {
+                        crate::chat_line::apply_sending(&mut self.chat, &msgid, p);
+                    }
                     if let Some(via) = via {
                         crate::chat_line::apply_receipt_via(&mut self.chat, &msgid, &via);
                     }
@@ -2063,6 +2069,9 @@ impl eframe::App for GuiApp {
                                 if next != s.preset {
                                     preset_cmd = Some(format!("/preset {next}"));
                                 }
+                            }
+                            if let Some(note) = s.preset_pending_note() {
+                                ui.label(RichText::new(note).color(ORANGE).small());
                             }
                             if !s.builtin_tnc() && !s.modem73.is_empty() {
                                 kv(ui, "MODEM", &format!("modem73 v{}", s.modem73), DIM);
@@ -2733,6 +2742,16 @@ impl eframe::App for GuiApp {
                                                     }
                                                 }
                                                 None => {
+                                                    if let Some(mark) = group_mark(line) {
+                                                        ui.label(
+                                                            RichText::new(mark.0)
+                                                                .color(match mark.1 {
+                                                                    crate::chat_line::FooterTone::Missing => RED,
+                                                                    _ => AMBER,
+                                                                })
+                                                                .monospace(),
+                                                        );
+                                                    }
                                                     ui.label(
                                                         RichText::new(&line.text)
                                                             .color(FG)
@@ -2793,6 +2812,7 @@ impl eframe::App for GuiApp {
                                                 ));
                                             }
                                         });
+                                        group_footer_row(ui, line, AMBER, GREEN, RED);
                                     }
                                 }
                                 if let Some(path) = open_folder_of {
@@ -6931,6 +6951,7 @@ fn irc_session(
                             state,
                             tries,
                             via: crate::chat_line::delivery_via(&line),
+                            parts: crate::chat_line::delivery_parts(&line),
                         });
                     } else if let Some((from, ch)) = parse_invite(&line) {
                         let _ = events.send(IrcEvent::Invited { from, channel: ch });
@@ -6985,6 +7006,56 @@ const MARK_KEY: &[(&str, &str)] = &[
         "signal-to-noise of a radio line (/snr off hides it)",
     ),
 ];
+
+/// The footer under a long message received or sent as pieces (#365):
+/// amber while it is coming or going out, green when done, red when a
+/// piece is missing. Shared by both layouts.
+pub(crate) fn group_footer_row(
+    ui: &mut egui::Ui,
+    line: &ChatLine,
+    amber: Color32,
+    green: Color32,
+    red: Color32,
+) {
+    use crate::chat_line::FooterTone;
+    let Some((badge, footer, tone)) =
+        crate::chat_line::group_footer(line, crate::chat_parts::unix_now())
+    else {
+        return;
+    };
+    let colour = match tone {
+        FooterTone::InProgress => amber,
+        FooterTone::Done => green,
+        FooterTone::Missing => red,
+    };
+    ui.horizontal(|ui| {
+        ui.add_space(24.0);
+        ui.label(RichText::new(footer).color(colour).monospace().small())
+            .on_hover_text(format!(
+                "one long message sent as {} pieces; {badge}",
+                badge.split('/').nth(1).unwrap_or("?")
+            ));
+    });
+    if tone == FooterTone::InProgress {
+        // Repaint so "incomplete" shows when its time comes.
+        ui.ctx().request_repaint_after(Duration::from_secs(5));
+    }
+}
+
+/// `⋯` before a long message still arriving, `⚠` before one missing a
+/// piece (the agreed #365 mockup). None when nothing is pending.
+pub(crate) fn group_mark(line: &ChatLine) -> Option<(&'static str, crate::chat_line::FooterTone)> {
+    use crate::chat_line::FooterTone;
+    let (_, _, tone) = crate::chat_line::group_footer(line, crate::chat_parts::unix_now())?;
+    if line.parts.is_none() {
+        return None;
+    }
+    match tone {
+        FooterTone::InProgress => Some(("⋯", tone)),
+        FooterTone::Missing => Some(("⚠", tone)),
+        FooterTone::Done => None,
+    }
+}
 
 fn mark_key(ui: &mut egui::Ui) {
     egui::Grid::new("mark_key")
@@ -7198,6 +7269,10 @@ mod tests {
             when: String::new(),
             snr: None,
             progress: String::new(),
+            piece: None,
+            parts: None,
+            sending: None,
+            piece_ids: Vec::new(),
         };
         apply_line_delivery(
             &mut line,

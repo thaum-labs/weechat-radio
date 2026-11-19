@@ -44,6 +44,15 @@ pub struct LineView {
     pub snr: Option<f32>,
     /// File transfer bar, such as `[████░░░░] 3/15`; empty otherwise.
     pub progress: String,
+    /// A long message received or sent as pieces (#365): its `1/3` badge,
+    /// footer line and tone (`progress`, `done`, `missing`). Empty otherwise.
+    pub parts_badge: String,
+    pub parts_footer: String,
+    pub parts_tone: String,
+    /// While pieces are still coming: when (unix seconds) the page should
+    /// show the line as incomplete, and the footer it then reads.
+    pub parts_late_at: u64,
+    pub parts_late_footer: String,
 }
 
 struct Conv {
@@ -206,8 +215,10 @@ impl Chat {
         if !self.state.lock().up {
             return Err("the station is not running".into());
         }
-        let chunks = crate::proto::split_body_chunks(text, crate::proto::MAX_BODY);
-        for chunk in chunks {
+        // One line, however long: the station cuts it into tagged pieces
+        // and the page shows it as one message with a progress bar (#365).
+        let text = text.replace(['\r', '\n'], " ");
+        for chunk in [text] {
             let wires = crate::slash::to_wire(&chunk, &to);
             if wires.is_empty() {
                 return Err("need a channel name or callsign".into());
@@ -343,18 +354,32 @@ impl Chat {
     }
 
     /// Add a line and tell the pages.
-    fn push(&self, conv: &str, line: ChatLine) {
+    fn push(&self, conv: &str, mut line: ChatLine) {
         let v = {
             let mut st = self.state.lock();
             // History replays on every reconnect; a line seen already is skipped.
             if !line.msgid.is_empty() {
                 let dup = st.convs.iter().any(|c| {
                     c.id.eq_ignore_ascii_case(conv)
-                        && c.lines
-                            .iter()
-                            .any(|l| l.msgid.eq_ignore_ascii_case(&line.msgid))
+                        && c.lines.iter().any(|l| chat_line::has_msgid(l, &line.msgid))
                 });
                 if dup {
+                    return;
+                }
+            }
+            // A piece of a long message updates its message's line in place
+            // (#365); other lines never land inside it.
+            if line.piece.is_some() {
+                let me = st.me.clone();
+                let c = conv_mut(&mut st, conv);
+                line.channel = c.id.clone();
+                for l in c.lines.iter_mut() {
+                    l.channel = c.id.clone();
+                }
+                if let Some(k) = chat_line::group_into(c.lines.make_contiguous(), &mut line) {
+                    let v = view(&me, &c.id, c.seqs[k], &c.lines[k]);
+                    drop(st);
+                    let _ = self.events.send(json!({ "type": "line", "line": v }));
                     return;
                 }
             }
@@ -397,7 +422,14 @@ impl Chat {
         }
     }
 
-    fn mark(&self, msgid: &str, state: &str, tries: u32, via: Option<&str>) {
+    fn mark(
+        &self,
+        msgid: &str,
+        state: &str,
+        tries: u32,
+        via: Option<&str>,
+        parts: Option<(usize, usize)>,
+    ) {
         let changed: Vec<LineView> = {
             let mut st = self.state.lock();
             let me = st.me.clone();
@@ -419,6 +451,9 @@ impl Chat {
                 );
                 if let Some(via) = via {
                     chat_line::apply_receipt_via(conv.lines.make_contiguous(), msgid, via);
+                }
+                if let Some(p) = parts {
+                    chat_line::apply_sending(conv.lines.make_contiguous(), msgid, p);
                 }
                 for (j, was) in before.into_iter().enumerate() {
                     if marks(&conv.lines[j]) != was {
@@ -453,7 +488,7 @@ impl Chat {
             self.file_progress(&msgid, &bar);
         } else if let Some((msgid, state, tries)) = chat_line::parse_delivery(raw) {
             let via = chat_line::delivery_via(raw);
-            self.mark(&msgid, &state, tries, via.as_deref());
+            self.mark(&msgid, &state, tries, via.as_deref(), chat_line::delivery_parts(raw));
         } else if let Some((from, ch)) = chat_line::parse_invite(raw) {
             let ch = crate::slash::normalize_channel(&ch);
             if !crate::slash::is_bulletin(&ch) && ch.len() >= 3 {
@@ -549,11 +584,22 @@ impl Chat {
 }
 
 /// What a mark can change on a line.
-fn marks(l: &ChatLine) -> (String, String, u32, String) {
-    (l.msgid.clone(), l.ticks.clone(), l.tries, l.via.clone())
+#[allow(clippy::type_complexity)]
+fn marks(l: &ChatLine) -> (String, String, u32, String, Option<(usize, usize)>) {
+    (l.msgid.clone(), l.ticks.clone(), l.tries, l.via.clone(), l.sending)
 }
 
 fn view(me: &str, conv: &str, seq: u64, l: &ChatLine) -> LineView {
+    let now = crate::chat_parts::unix_now();
+    let footer = chat_line::group_footer(l, now);
+    let late = l
+        .parts
+        .as_ref()
+        .filter(|p| p.status(now) == crate::chat_parts::Status::Arriving)
+        .map(|p| {
+            let at = p.last_at + crate::chat_parts::INCOMPLETE_AFTER_S;
+            (at, p.footer(at))
+        });
     LineView {
         seq,
         conv: conv.to_string(),
@@ -567,6 +613,18 @@ fn view(me: &str, conv: &str, seq: u64, l: &ChatLine) -> LineView {
         when: l.when.clone(),
         snr: l.snr,
         progress: l.progress.clone(),
+        parts_badge: footer.as_ref().map(|f| f.0.clone()).unwrap_or_default(),
+        parts_footer: footer.as_ref().map(|f| f.1.clone()).unwrap_or_default(),
+        parts_tone: footer
+            .map(|f| match f.2 {
+                chat_line::FooterTone::InProgress => "progress",
+                chat_line::FooterTone::Done => "done",
+                chat_line::FooterTone::Missing => "missing",
+            })
+            .unwrap_or("")
+            .to_string(),
+        parts_late_at: late.as_ref().map(|x| x.0).unwrap_or(0),
+        parts_late_footer: late.map(|x| x.1).unwrap_or_default(),
     }
 }
 
@@ -674,6 +732,11 @@ mod tests {
                 when: v["when"].as_str().unwrap().into(),
                 snr: v["snr"].as_f64().map(|f| f as f32),
                 progress: v["progress"].as_str().unwrap_or("").into(),
+                parts_badge: v["parts_badge"].as_str().unwrap_or("").into(),
+                parts_footer: v["parts_footer"].as_str().unwrap_or("").into(),
+                parts_tone: v["parts_tone"].as_str().unwrap_or("").into(),
+                parts_late_at: v["parts_late_at"].as_u64().unwrap_or(0),
+                parts_late_footer: v["parts_late_footer"].as_str().unwrap_or("").into(),
             })
             .collect()
     }
@@ -706,6 +769,55 @@ mod tests {
         assert!(!l[0].mine);
         c.handle("@msgid=x2 :G4ABC PRIVMSG #bulletin :cq");
         assert_eq!(lines(&c, "#bulletin")[0].text, "cq");
+    }
+
+    #[test]
+    fn a_long_message_arrives_as_one_line_with_others_below_it() {
+        let c = chat();
+        let piece = |id: &str, from: &str, body: &str| {
+            format!("@msgid={id};+radio/via=rf;+radio/snr=13.0 :{from} PRIVMSG #bulletin :{body}")
+        };
+        c.handle(&piece("p1", "M7TJF", "[1/3] Sed ut perspiciatis"));
+        let l = lines(&c, "#bulletin");
+        assert_eq!(l.len(), 1);
+        assert_eq!(l[0].text, "Sed ut perspiciatis …");
+        assert_eq!(l[0].parts_badge, "1/3");
+        assert_eq!(l[0].parts_footer, "⋯ more coming · 1/3 received");
+        assert_eq!(l[0].parts_tone, "progress");
+        assert!(l[0].parts_late_footer.contains("parts 2, 3 missing"));
+        // Another station speaks between the pieces: it goes below.
+        c.handle(&piece("o1", "G4ABC", "other station chat"));
+        c.handle(&piece("p2", "M7TJF", "[2/3]  unde omnis 👍🏽"));
+        c.handle(&piece("p3", "M7TJF", "[3/3]  iste natus 👨‍👩‍👧"));
+        let l = lines(&c, "#bulletin");
+        assert_eq!(l.len(), 2, "{l:?}");
+        assert_eq!(l[0].text, "Sed ut perspiciatis unde omnis 👍🏽 iste natus 👨‍👩‍👧");
+        assert_eq!(l[0].parts_footer, "✓ complete · 3/3");
+        assert_eq!(l[0].parts_tone, "done");
+        assert_eq!(l[1].nick, "G4ABC");
+        // A history replay adds nothing.
+        c.handle(&piece("p2", "M7TJF", "[2/3]  unde omnis 👍🏽"));
+        assert_eq!(lines(&c, "#bulletin").len(), 2);
+        // A typed tag shows as typed.
+        c.handle(&piece("t1", "G4ABC", "\\[1/3] of the cake"));
+        assert_eq!(lines(&c, "#bulletin")[2].text, "[1/3] of the cake");
+    }
+
+    #[test]
+    fn a_long_message_we_send_is_one_line_with_one_mark() {
+        let c = chat();
+        let text = "word ".repeat(150);
+        c.send("#bulletin", &text).unwrap();
+        assert_eq!(lines(&c, "#bulletin").len(), 1);
+        c.handle("@msgid=f1;+radio/delivery=queued;+radio/msgid=f1;+radio/parts=0/3 TAGMSG #bulletin");
+        let l = &lines(&c, "#bulletin")[0];
+        assert_eq!(l.parts_footer, "sending 0/3  □□□  … awaiting receipt");
+        c.handle("@msgid=f1;+radio/delivery=sent;+radio/msgid=f1;+radio/parts=3/3 TAGMSG #bulletin");
+        c.handle("@msgid=f1;+radio/delivery=delivered;+radio/msgid=f1;+radio/parts=3/3 TAGMSG #bulletin");
+        let l = &lines(&c, "#bulletin")[0];
+        assert_eq!(l.ticks, "[ok]");
+        assert_eq!(l.parts_footer, "sent 3/3  ■■■  ✓✓ delivered");
+        assert_eq!(l.parts_tone, "done");
     }
 
     #[test]
