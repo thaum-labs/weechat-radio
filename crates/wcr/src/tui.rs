@@ -961,7 +961,7 @@ fn tui_group_footer(l: &ChatLine, now: u64) -> Option<(String, Color)> {
     let (tail, c) = if failed {
         ("  ⚠ not all pieces delivered", Color::Red)
     } else if delivered && k >= n {
-        ("  ✓✓ delivered", Color::Green)
+        ("  delivered", Color::Green)
     } else {
         ("  … awaiting receipt", TUI_AMBER)
     };

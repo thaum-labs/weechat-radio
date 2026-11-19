@@ -396,7 +396,7 @@ pub(crate) fn group_footer(line: &ChatLine, now: u64) -> Option<(String, String,
     let tail = if failed {
         "  ⚠ not all pieces delivered"
     } else if delivered {
-        "  ✓✓ delivered"
+        "  delivered"
     } else {
         "  … awaiting receipt"
     };

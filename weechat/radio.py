@@ -474,7 +474,7 @@ def _group_print(key, g, complete):
     n = len(g["got"])
     have = sum(1 for p in g["got"] if p is not None)
     if complete:
-        foot = "%s✓ complete · %d/%d" % (weechat.color("green"), n, n)
+        foot = "%scomplete · %d/%d" % (weechat.color("green"), n, n)
     else:
         miss = [str(k + 1) for k, p in enumerate(g["got"]) if p is None]
         foot = "%s⚠ incomplete · %d/%d received · part%s %s missing" % (
@@ -524,7 +524,7 @@ def _hold_piece(line, head, label, body):
     g["last"] = time.time()
     if all(p is not None for p in g["got"]):
         del _groups[key]
-        foot = " %s✓ complete · %d/%d%s" % (weechat.color("green"), n, n, weechat.color("reset"))
+        foot = " %scomplete · %d/%d%s" % (weechat.color("green"), n, n, weechat.color("reset"))
         return "%s :%s%s%s" % (head, label + " " if label else "", _joined(g), foot)
     return ""
 

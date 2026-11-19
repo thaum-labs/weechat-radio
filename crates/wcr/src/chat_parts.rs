@@ -288,7 +288,7 @@ impl Parts {
     pub fn footer(&self, now: u64) -> String {
         let (n, total) = (self.received(), self.total());
         match self.status(now) {
-            Status::Complete => format!("✓ complete · {total}/{total}"),
+            Status::Complete => format!("complete · {total}/{total}"),
             Status::Arriving => format!("⋯ more coming · {n}/{total} received"),
             Status::Incomplete => {
                 let miss = self.missing();
@@ -382,7 +382,7 @@ mod tests {
             assert!(parts.add(i, n, t, 0));
         }
         assert_eq!(parts.text(), LOREM);
-        assert_eq!(parts.footer(0), "✓ complete · 3/3");
+        assert_eq!(parts.footer(0), "complete · 3/3");
     }
 
     #[test]
