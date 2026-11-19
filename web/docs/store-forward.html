@@ -25,6 +25,7 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="/styles.css?v=58" />
   <link rel="stylesheet" href="/docs.css?v=6" />
+  <link rel="stylesheet" href="/docs/store-forward.css?v=1" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -76,6 +77,85 @@
       <section class="article-section" aria-labelledby="ownH">
         <h2 id="ownH">1. Your own station</h2>
         <p class="section-lead">Every line is saved on your computer before it goes on the air, and stays there until someone answers it.</p>
+        <figure class="diagram live-dgm sf-dgm sf-retry" data-live-dgm>
+          <div class="live-dgm__body">
+            <div class="live-dgm__pic">
+              <div class="dgm-wrap">
+<svg class="dgm" viewBox="0 0 440 212" role="img" aria-labelledby="sfRtT sfRtD">
+<title id="sfRtT">How your station retries a line</title>
+<desc id="sfRtD">A timeline. Your station sends the line, then sends it again after about 45 seconds, 90 seconds and 180 seconds, each time on a slower, tougher waveform. It then waits two 6-minute gaps, about 17 minutes in all, and the line shows [no]. A receipt that arrives later still turns it to [ok].</desc>
+<text class="sub" x="12" y="24">on the air · each copy slower and tougher</text>
+<text class="sub" x="430" y="24" text-anchor="end">late receipt</text>
+<g class="seg seg-sound" data-seg="w1"><path class="wire" d="M47 128 H105" /><path class="pkt" d="M47 128 H105" /></g>
+<text class="sub" x="76" y="120" text-anchor="middle">45 s</text>
+<g class="seg seg-sound" data-seg="w2"><path class="wire" d="M119 128 H177" /><path class="pkt" d="M119 128 H177" /></g>
+<text class="sub" x="148" y="120" text-anchor="middle">90 s</text>
+<g class="seg seg-sound" data-seg="w3"><path class="wire" d="M191 128 H249" /><path class="pkt" d="M191 128 H249" /></g>
+<text class="sub" x="220" y="120" text-anchor="middle">180 s</text>
+<g class="seg seg-sound" data-seg="w4"><path class="wire" d="M263 128 H325" /><path class="pkt" d="M263 128 H325" /></g>
+<text class="sub" x="294" y="120" text-anchor="middle">6 min</text>
+<g class="seg seg-sound" data-seg="w5"><path class="wire" d="M339 128 H388" /><path class="pkt" d="M339 128 H388" /></g>
+<text class="sub" x="360" y="120" text-anchor="middle">6 min</text>
+<g class="seg seg-rf" data-seg="a0"><path class="rf" d="M40 118 q4 -3.30 0 -6.60 t0 -6.60 t0 -6.60 t0 -6.60 t0 -6.60 t0 -6.60 t0 -6.60 t0 -6.60 t0 -6.60 t0 -6.60" /><path class="pkt" d="M40 118 q4 -3.30 0 -6.60 t0 -6.60 t0 -6.60 t0 -6.60 t0 -6.60 t0 -6.60 t0 -6.60 t0 -6.60 t0 -6.60 t0 -6.60" /></g>
+<g data-node="n0"><circle class="box orange" cx="40" cy="128" r="7" /></g>
+<text class="sub" x="40" y="152" text-anchor="middle">send</text>
+<g class="seg seg-rf" data-seg="a1"><path class="rf" d="M112 118 q4 -4.71 0 -9.43 t0 -9.43 t0 -9.43 t0 -9.43 t0 -9.43 t0 -9.43 t0 -9.43" /><path class="pkt" d="M112 118 q4 -4.71 0 -9.43 t0 -9.43 t0 -9.43 t0 -9.43 t0 -9.43 t0 -9.43 t0 -9.43" /></g>
+<g data-node="n1"><circle class="box orange" cx="112" cy="128" r="7" /></g>
+<text class="sub" x="112" y="152" text-anchor="middle">retry 1</text>
+<g class="seg seg-rf" data-seg="a2"><path class="rf" d="M184 118 q4 -5.50 0 -11.00 t0 -11.00 t0 -11.00 t0 -11.00 t0 -11.00 t0 -11.00" /><path class="pkt" d="M184 118 q4 -5.50 0 -11.00 t0 -11.00 t0 -11.00 t0 -11.00 t0 -11.00 t0 -11.00" /></g>
+<g data-node="n2"><circle class="box orange" cx="184" cy="128" r="7" /></g>
+<text class="sub" x="184" y="152" text-anchor="middle">retry 2</text>
+<g class="seg seg-rf" data-seg="a3"><path class="rf" d="M256 118 q4 -6.60 0 -13.20 t0 -13.20 t0 -13.20 t0 -13.20 t0 -13.20" /><path class="pkt" d="M256 118 q4 -6.60 0 -13.20 t0 -13.20 t0 -13.20 t0 -13.20 t0 -13.20" /></g>
+<g data-node="n3"><circle class="box orange" cx="256" cy="128" r="7" /></g>
+<text class="sub" x="256" y="152" text-anchor="middle">retry 3</text>
+<g data-node="n4"><circle class="box off" cx="332" cy="128" r="4" /></g>
+<g class="seg seg-rf" data-seg="ack"><path class="rf" d="M408 34 q4 5.29 0 10.57 t0 10.57 t0 10.57 t0 10.57 t0 10.57 t0 10.57 t0 10.57" /><path class="pkt" d="M408 34 q4 5.29 0 10.57 t0 10.57 t0 10.57 t0 10.57 t0 10.57 t0 10.57 t0 10.57" /></g>
+<g data-node="nno"><rect class="box off" x="388" y="114" width="40" height="28" rx="4" /><g class="slot"><text class="scr sf-wait" data-show="c1tx" x="408" y="132" text-anchor="middle">…</text><text class="scr sf-no" data-show="e-no" x="408" y="132" text-anchor="middle">[no]</text><text class="scr ok" data-show="e-ok" x="408" y="132" text-anchor="middle">[ok]</text></g></g>
+<text class="sub" x="408" y="158" text-anchor="middle">~17 min</text>
+<path class="sf-bracket" d="M40 175 V180 H408 V175" />
+<text class="sub" x="224" y="198" text-anchor="middle">about 17 minutes in all, kept through a restart</text>
+</svg>
+              </div>
+              <div class="live-status">
+                <p class="live-status__text" data-live-status aria-live="polite"></p>
+                <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
+              </div>
+            </div>
+            <div class="live-dgm__text">
+              <div class="setup-panel">
+              <h3>One line, four copies</h3>
+              <p class="setup-note">Each copy goes out on a slower, tougher waveform than the one before.</p>
+              </div>
+              <div class="app-win mode-radio">
+                <p class="app-win__bar"><span class="app-win__dot" aria-hidden="true"></span><b>G4ABC · radio · 144.950</b><span>WeeChat Radio</span></p>
+                <div class="app-win__body">
+                  <ul class="app-win__side" aria-hidden="true"><li>#bulletin</li><li class="is-active">G4DEF</li></ul>
+                  <ol class="app-win__lines" aria-label="G4ABC’s chat with G4DEF">
+                    <li data-show="c1"><time>19:02</time> <span class="nick me">[G4ABC]</span> at the club by 8? <span class="ticks"><span data-show="c1">[..]</span><span data-show="c1tx">[tx]</span><span data-show="e-no">[no]</span><span data-show="e-ok" class="tick-ok">[ok]</span></span></li>
+                  </ol>
+                  <p class="app-win__input" aria-hidden="true"><span class="app-win__sym">$</span><span class="app-win__field">message…</span><span class="app-win__send">send</span></p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <script type="application/json" data-live-steps>
+          {
+            "main": {
+              "done": "Four copies, then [no] at about 17 minutes. A late receipt still gives [ok].",
+              "steps": [
+                { "say": "You send a line. It is saved first, and shows [..] while it waits.", "show": ["c1"], "ms": 1500 },
+                { "say": "It goes on the air: [tx].", "segs": ["a0"], "on": ["n0"], "show": ["c1tx"], "ms": 1600 },
+                { "say": "No receipt. About 45 seconds later it goes again, on a slower, tougher waveform.", "segs": ["w1", "a1"], "chain": true, "on": ["n1"], "ms": 2400 },
+                { "say": "Still nothing. 90 seconds later: retry 2.", "segs": ["w2", "a2"], "chain": true, "on": ["n2"], "ms": 2200 },
+                { "say": "180 seconds later: retry 3, the last copy.", "segs": ["w3", "a3"], "chain": true, "on": ["n3"], "ms": 2200 },
+                { "say": "Then it waits two more 6-minute gaps.", "segs": ["w4", "w5"], "chain": true, "on": ["n4"], "ms": 2200 },
+                { "say": "About 17 minutes in, the line shows [no].", "on": ["nno"], "show": ["e-no"], "ms": 2000 },
+                { "say": "A receipt that arrives later still turns it to [ok].", "segs": ["ack"], "on": ["nno"], "show": ["e-ok"], "ms": 2400 }
+              ]
+            }
+          }
+          </script>
+        </figure>
         <ol class="steps">
           <li>You send a line. It is stored first, so closing the program does not lose it.</li>
           <li>If the channel is busy, the line waits for a gap (<strong>PTT</strong> shows <code>wait</code>), then goes after 15 seconds at most. Lines you send in the first 2 minutes after start wait until another station has been heard.</li>
@@ -89,6 +169,75 @@
       <section class="article-section" aria-labelledby="hopH">
         <h2 id="hopH">2. Stations in between</h2>
         <p class="section-lead">Any station on your frequency that hears your line keeps a copy and sends it on, so the other station does not have to hear you directly.</p>
+        <figure class="diagram live-dgm sf-dgm sf-hops" data-live-dgm>
+          <div class="live-dgm__body">
+            <div class="live-dgm__pic">
+              <div class="dgm-wrap">
+<svg class="dgm" viewBox="0 0 440 230" role="img" aria-labelledby="sfHpT sfHpD">
+<title id="sfHpT">A line carried by the stations in between</title>
+<desc id="sfHpD">Four stations in a row on one frequency. G4ABC and G4DEF are too far apart to hear each other. G4ABC sends with 3 hops left, M0KLM sends it on with 2, 2E0RST with 1, and G4DEF reads it with 0 left and does not send it on. The receipt comes back the same way.</desc>
+<path class="none" d="M40 38 H400" />
+<path class="cross" d="M80 34 L88 42 M88 34 L80 42" /><path class="cross" d="M352 34 L360 42 M360 34 L352 42" />
+<text class="sub sf-no" x="220" y="30" text-anchor="middle">too far to hear each other</text>
+<g class="seg seg-rf" data-seg="l1"><path class="rf" d="M49 102 Q106 54 163 102" /><path class="pkt" d="M49 102 Q106 54 163 102" /></g>
+<text class="scr sf-hop" data-show="h3" x="106" y="72" text-anchor="middle">3 left</text>
+<g class="seg seg-rf" data-seg="l2"><path class="rf" d="M169 102 Q226 54 283 102" /><path class="pkt" d="M169 102 Q226 54 283 102" /></g>
+<text class="scr sf-hop" data-show="h2" x="226" y="72" text-anchor="middle">2 left</text>
+<g class="seg seg-rf" data-seg="l3"><path class="rf" d="M289 102 Q346 54 403 102" /><path class="pkt" d="M289 102 Q346 54 403 102" /></g>
+<text class="scr sf-hop" data-show="h1" x="346" y="72" text-anchor="middle">1 left</text>
+<g data-node="a"><line class="antenna" x1="46" y1="128" x2="46" y2="106" /><circle class="antenna-tip" cx="46" cy="104" r="2.5" /><rect class="box orange" x="26" y="128" width="28" height="46" rx="4" /><circle class="led" cx="46" cy="138" r="3" /><path class="grille" d="M32 156 H48 M32 162 H48 M32 168 H48" /></g>
+<text class="on-orange" x="40" y="192" text-anchor="middle">G4ABC</text>
+<text class="sub" x="40" y="206" text-anchor="middle">you</text>
+<g data-node="b"><line class="antenna" x1="166" y1="128" x2="166" y2="106" /><circle class="antenna-tip" cx="166" cy="104" r="2.5" /><rect class="box orange" x="146" y="128" width="28" height="46" rx="4" /><circle class="led" cx="166" cy="138" r="3" /><path class="grille" d="M152 156 H168 M152 162 H168 M152 168 H168" /></g>
+<text class="on-orange" x="160" y="192" text-anchor="middle">M0KLM</text>
+<text class="sub" x="160" y="206" text-anchor="middle">in between</text>
+<g data-node="c"><line class="antenna" x1="286" y1="128" x2="286" y2="106" /><circle class="antenna-tip" cx="286" cy="104" r="2.5" /><rect class="box orange" x="266" y="128" width="28" height="46" rx="4" /><circle class="led" cx="286" cy="138" r="3" /><path class="grille" d="M272 156 H288 M272 162 H288 M272 168 H288" /></g>
+<text class="on-orange" x="280" y="192" text-anchor="middle">2E0RST</text>
+<text class="sub" x="280" y="206" text-anchor="middle">in between</text>
+<g data-node="d"><line class="antenna" x1="406" y1="128" x2="406" y2="106" /><circle class="antenna-tip" cx="406" cy="104" r="2.5" /><rect class="box orange" x="386" y="128" width="28" height="46" rx="4" /><circle class="led" cx="406" cy="138" r="3" /><path class="grille" d="M392 156 H408 M392 162 H408 M392 168 H408" /></g>
+<text class="on-orange" x="400" y="192" text-anchor="middle">G4DEF</text>
+<text class="sub" x="400" y="206" text-anchor="middle">the far end</text>
+<text class="scr sf-hop" data-show="h0" x="432" y="222" text-anchor="end">0 left, stops</text>
+</svg>
+              </div>
+              <div class="live-status">
+                <p class="live-status__text" data-live-status aria-live="polite"></p>
+                <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
+              </div>
+            </div>
+            <div class="live-dgm__text">
+              <div class="setup-panel">
+              <h3>Three hops, three legs</h3>
+              <p class="setup-note">Each station takes one off the count. At 0 the line is read, not sent on.</p>
+              </div>
+              <div class="app-win mode-radio">
+                <p class="app-win__bar"><span class="app-win__dot" aria-hidden="true"></span><b>G4ABC · radio · 144.950</b><span>WeeChat Radio</span></p>
+                <div class="app-win__body">
+                  <ul class="app-win__side" aria-hidden="true"><li>#bulletin</li><li class="is-active">G4DEF</li></ul>
+                  <ol class="app-win__lines" aria-label="G4ABC’s chat with G4DEF">
+                    <li data-show="c1"><time>17:40</time> <span class="nick me">[G4ABC]</span> at the hut by 6 <span class="ticks"><span data-show="c1">[tx]</span><span data-show="c1rl">[rl]</span><span data-show="c1ok" class="tick-ok">[ok]</span></span></li>
+                  </ol>
+                  <p class="app-win__input" aria-hidden="true"><span class="app-win__sym">$</span><span class="app-win__field">message…</span><span class="app-win__send">send</span></p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <script type="application/json" data-live-steps>
+          {
+            "main": {
+              "done": "Each station keeps a copy and sends it on. The receipt comes back the same way.",
+              "steps": [
+                { "say": "G4ABC sends a direct message to G4DEF with 3 hops left.", "segs": ["l1"], "on": ["a", "b"], "show": ["h3", "c1"], "ms": 2000 },
+                { "say": "M0KLM keeps a copy and sends it on with 2 left. G4ABC hears that: [rl].", "segs": ["l2"], "on": ["b", "c"], "show": ["h2", "c1rl"], "ms": 2300 },
+                { "say": "2E0RST sends it on with 1 left.", "segs": ["l3"], "on": ["c", "d"], "show": ["h1"], "ms": 2000 },
+                { "say": "G4DEF reads it. 0 left, so it is not sent on.", "on": ["d"], "show": ["h0"], "ms": 2000 },
+                { "say": "The receipt comes back the same way, hop by hop.", "segs": ["<l3", "<l2", "<l1"], "chain": true, "on": ["b", "c"], "ms": 3200 },
+                { "say": "The receipt reaches G4ABC: [ok].", "on": ["a"], "show": ["c1ok"], "ms": 2000 }
+              ]
+            }
+          }
+          </script>
+        </figure>
         <ul>
           <li>Each copy carries a hop count: 3 for a direct message, 4 for <code>!</code>, 5 for <code>!!</code>, 6 for <code>#bulletin</code> and groups. Each station takes one off, and at 0 it reads the line but does not send it on.</li>
           <li>A station waits a short random moment before it sends. If it hears another station send the same line first, it drops its own copy, so the channel is not flooded.</li>
@@ -101,6 +250,69 @@
       <section class="article-section" aria-labelledby="hubH">
         <h2 id="hubH">3. The hub</h2>
         <p class="section-lead">The hub is the internet side. It keeps a direct message for a short time when the other station is not connected.</p>
+        <figure class="diagram live-dgm sf-dgm sf-hub" data-live-dgm>
+          <div class="live-dgm__body">
+            <div class="live-dgm__pic">
+              <div class="dgm-wrap">
+<svg class="dgm" viewBox="0 0 440 236" role="img" aria-labelledby="sfHbT sfHbD">
+<title id="sfHbT">The hub holds a direct message</title>
+<desc id="sfHbD">G4ABC, a radio-plus station, sends a direct message on the air. A gateway hears it and hands it to the hub. G4DEF is not connected, so the hub holds the message for up to 10 minutes. When G4DEF connects, the hub delivers it.</desc>
+<g class="seg seg-rf" data-seg="rf1"><path class="rf" d="M42 112 Q94 80 146 126" /><path class="pkt" d="M42 112 Q94 80 146 126" /></g>
+<g class="seg seg-net" data-seg="n1"><path class="net" d="M164 177 H226 V98" /><path class="pkt" d="M164 177 H226 V98" /></g>
+<g class="seg seg-net" data-seg="n2"><path class="net" d="M314 98 V124 H384 V148" /><path class="pkt" d="M314 98 V124 H384 V148" /></g>
+<g data-node="abc"><line class="antenna" x1="42" y1="138" x2="42" y2="116" /><circle class="antenna-tip" cx="42" cy="114" r="2.5" /><rect class="box rplus" x="22" y="138" width="28" height="50" rx="4" /><circle class="led" cx="42" cy="148" r="3" /><path class="grille" d="M28 166 H44 M28 172 H44 M28 178 H44" /></g>
+<text class="on-rplus" x="36" y="208" text-anchor="middle">G4ABC</text>
+<text class="sub" x="36" y="222" text-anchor="middle">radio-plus</text>
+<g data-node="gw"><rect class="box gw" x="136" y="170" width="28" height="14" rx="2" /><path class="mast" d="M150 170 V134 M143 142 H157 M145 150 H155" /><circle class="antenna-tip" cx="150" cy="132" r="2.5" /></g>
+<text class="on-gw" x="150" y="208" text-anchor="middle">gateway</text>
+<text class="sub" x="150" y="222" text-anchor="middle">internet-radio</text>
+<g data-node="hub"><rect class="box hub" x="184" y="22" width="172" height="76" rx="3" /></g>
+<text class="on-hub" x="270" y="40" text-anchor="middle">hub</text>
+<rect class="sf-q" x="216" y="50" width="108" height="20" rx="2" />
+<g class="slot"><g data-show="held"><rect class="sf-held" x="219" y="53" width="40" height="14" rx="2" /><text class="sf-chip" x="239" y="64" text-anchor="middle">G4DEF</text></g><text class="sub" data-show="got" x="270" y="64" text-anchor="middle">empty</text></g>
+<text class="sub" x="270" y="88" text-anchor="middle">10 min · 32 per callsign</text>
+<g data-node="def"><rect class="box accent" x="342" y="150" width="84" height="48" rx="2" /><path class="laptop-base" d="M336 198 H432 L438 206 H330 Z" /></g>
+<g class="slot"><text class="scr-dim" data-show="c1" x="384" y="178" text-anchor="middle">offline</text><text class="scr" data-show="conn" x="384" y="178" text-anchor="middle">connected</text><text class="scr ok" data-show="got" x="384" y="178" text-anchor="middle">back at 5</text></g>
+<text class="on-hub" x="384" y="222" text-anchor="middle">G4DEF</text>
+</svg>
+              </div>
+              <div class="live-status">
+                <p class="live-status__text" data-live-status aria-live="polite"></p>
+                <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
+              </div>
+            </div>
+            <div class="live-dgm__text">
+              <div class="setup-panel">
+              <h3>Held while they are away</h3>
+              <p class="setup-note">Groups and <code>#bulletin</code> are not held: someone has to be connected to get them.</p>
+              </div>
+              <div class="app-win mode-radio-plus">
+                <p class="app-win__bar"><span class="app-win__dot" aria-hidden="true"></span><b>G4ABC · radio-plus · 144.950</b><span>WeeChat Radio</span></p>
+                <div class="app-win__body">
+                  <ul class="app-win__side" aria-hidden="true"><li>#bulletin</li><li class="is-active">G4DEF</li></ul>
+                  <ol class="app-win__lines" aria-label="G4ABC’s chat with G4DEF">
+                    <li data-show="c1"><time>16:51</time> <span class="nick me">[G4ABC]</span> back at 5 <span class="ticks"><span data-show="c1">[tx]</span><span data-show="c1gw">[gw]</span></span></li>
+                  </ol>
+                  <p class="app-win__input" aria-hidden="true"><span class="app-win__sym">$</span><span class="app-win__field">message…</span><span class="app-win__send">send</span></p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <script type="application/json" data-live-steps>
+          {
+            "main": {
+              "done": "A direct message waits on the hub for 10 minutes, and is delivered when the station connects.",
+              "steps": [
+                { "say": "G4ABC sends a direct message to G4DEF on the air: [tx].", "segs": ["rf1"], "on": ["abc", "gw"], "show": ["c1"], "ms": 2000 },
+                { "say": "A gateway hears it and hands it to the hub: [gw].", "segs": ["n1"], "on": ["gw", "hub"], "show": ["c1gw"], "ms": 2000 },
+                { "say": "G4DEF is not connected, so the hub holds it: 10 minutes, up to 32 per callsign.", "on": ["hub"], "show": ["held"], "ms": 2800 },
+                { "say": "G4DEF connects.", "on": ["def"], "show": ["conn"], "ms": 1600 },
+                { "say": "The hub delivers it straight away.", "segs": ["n2"], "on": ["hub", "def"], "show": ["got"], "ms": 2200 }
+              ]
+            }
+          }
+          </script>
+        </figure>
         <ul>
           <li>A direct message for a station that is not connected is held for <strong>10 minutes</strong>, up to <strong>32</strong> per callsign (the oldest goes first when that fills). It is delivered as soon as that station connects.</li>
           <li>Groups and <code>#bulletin</code> are not held. Someone has to be connected to get them.</li>
@@ -113,6 +325,88 @@
       <section class="article-section" aria-labelledby="mailH">
         <h2 id="mailH">4. Email</h2>
         <p class="section-lead">Email is the part that waits longest. Nothing has to be on the air at the same time as the person writing to you.</p>
+        <figure class="diagram live-dgm sf-dgm sf-mail" data-live-dgm data-setup="out">
+          <div class="setup-switch" role="group" aria-label="Direction" data-setup-switch hidden>
+            <button type="button" data-setup-btn="out" aria-pressed="true">sending</button>
+            <button type="button" data-setup-btn="in" aria-pressed="false">receiving</button>
+          </div>
+          <div class="live-dgm__body">
+            <div class="live-dgm__pic">
+              <div class="dgm-wrap">
+<svg class="dgm" viewBox="0 0 440 236" role="img" aria-labelledby="sfMlT sfMlD">
+<title id="sfMlT">Where email waits</title>
+<desc id="sfMlD">Sending: your radio-plus station sends a mail to a mail gateway in pieces. The gateway keeps the pieces it has, so a retry sends only the missing one, then posts the mail through the hub. Receiving: mail to your callsign waits in your mailbox on the hub until you ask for it with Check mail and Get.</desc>
+<g class="seg seg-rf" data-seg="rf1"><path class="rf" d="M42 112 Q118 72 196 132" /><path class="pkt" d="M42 112 Q118 72 196 132" /></g>
+<g class="seg seg-net" data-seg="n1"><path class="net" d="M214 183 H250 V58 H278" /><path class="pkt" d="M214 183 H250 V58 H278" /></g>
+<g class="seg seg-net" data-seg="n2"><path class="net" d="M384 94 V148" /><path class="pkt" d="M384 94 V148" /></g>
+<g data-node="you"><line class="antenna" x1="42" y1="138" x2="42" y2="116" /><circle class="antenna-tip" cx="42" cy="114" r="2.5" /><rect class="box rplus" x="22" y="138" width="28" height="50" rx="4" /><circle class="led" cx="42" cy="148" r="3" /><path class="grille" d="M28 166 H44 M28 172 H44 M28 178 H44" /></g>
+<text class="on-rplus" x="36" y="208" text-anchor="middle">you</text>
+<text class="sub" x="36" y="222" text-anchor="middle">radio-plus</text>
+<g data-node="gw"><rect class="box gw" x="186" y="176" width="28" height="14" rx="2" /><path class="mast" d="M200 176 V140 M193 148 H207 M195 156 H205" /><circle class="antenna-tip" cx="200" cy="138" r="2.5" /></g>
+<text class="on-gw" x="200" y="210" text-anchor="middle">mail gateway</text>
+<text class="sub" x="200" y="224" text-anchor="middle">internet-radio</text>
+<g data-node="hub"><rect class="box hub" x="280" y="24" width="144" height="70" rx="3" /></g>
+<text class="on-hub" x="352" y="42" text-anchor="middle">hub</text>
+<g data-node="mail"><rect class="box accent" x="344" y="150" width="80" height="46" rx="2" /><path class="wire" d="M370 162 H398 V184 H370 Z M370 162 L384 174 L398 162" /></g>
+<text class="sub" x="384" y="212" text-anchor="middle">email</text>
+<g data-setups="out">
+<text class="sub" x="352" y="60" text-anchor="middle">posts the mail</text>
+<text class="sub" x="74" y="152">outbox</text>
+<g class="slot"><text class="scr" data-show="o-tx" x="74" y="170">[tx]</text><text class="scr ok" data-show="o-gw" x="74" y="170">[gw]</text><text class="scr ok" data-show="o-sent" x="74" y="170">Sent</text></g>
+<g class="slot"><g data-show="lost"><path class="cross" d="M120 92 L128 100 M128 92 L120 100" /><text class="sub sf-no" x="124" y="78" text-anchor="middle">piece 2 lost</text></g><text class="sub" data-show="g2" x="124" y="78" text-anchor="middle">only piece 2 again</text></g>
+<rect class="sf-q" x="264" y="174" width="20" height="18" rx="2" />
+<rect class="sf-piece" data-show="g1" x="264" y="174" width="20" height="18" rx="2" />
+<text class="sf-chip" x="274" y="187" text-anchor="middle">1</text>
+<rect class="sf-q" x="288" y="174" width="20" height="18" rx="2" />
+<rect class="sf-piece" data-show="g2" x="288" y="174" width="20" height="18" rx="2" />
+<text class="sf-chip" x="298" y="187" text-anchor="middle">2</text>
+<rect class="sf-q" x="312" y="174" width="20" height="18" rx="2" />
+<rect class="sf-piece" data-show="g3" x="312" y="174" width="20" height="18" rx="2" />
+<text class="sf-chip" x="322" y="187" text-anchor="middle">3</text>
+<text class="sub" x="298" y="210" text-anchor="middle">kept here</text>
+</g>
+<g data-setups="in" class="is-off">
+<text class="sub" x="352" y="60" text-anchor="middle">your mailbox</text>
+<text class="scr ok" data-show="box1" x="352" y="80" text-anchor="middle">1 mail waiting</text>
+<text class="sub" x="74" y="152">inbox</text>
+<g class="slot"><text class="scr" data-show="list" x="74" y="170">Photos · 4 kB</text><text class="scr ok" data-show="got" x="74" y="170">Photos · in</text></g>
+<text class="sub" x="124" y="78" text-anchor="middle">quiet until you ask</text>
+</g>
+</svg>
+              </div>
+              <div class="live-status">
+                <p class="live-status__text" data-live-status aria-live="polite"></p>
+                <button type="button" class="btn-replay" data-live-replay hidden>Replay</button>
+              </div>
+            </div>
+            <div class="live-dgm__text">
+              <div class="setup-panel" data-setup-panel="out">
+                <h3>Sending: the gateway keeps the pieces</h3>
+                <p class="setup-note">A retry sends only the missing pieces. With Auto on, if that gateway does not answer, the mail moves to the next gateway heard.</p>
+              </div>
+              <div class="setup-panel" data-setup-panel="in">
+                <h3>Receiving: the hub keeps the mail</h3>
+                <p class="setup-note">Mail to your callsign stays in your mailbox on the hub until your station fetches it. Nothing is sent over the air unless you ask for it.</p>
+              </div>
+            </div>
+          </div>
+          <script type="application/json" data-live-steps>
+          {
+            "out": { "done": "The gateway keeps the pieces it has. A retry sends only what is missing.", "steps": [
+              { "say": "The mail leaves your Outbox in pieces: [tx]. Pieces 1 and 3 arrive, piece 2 is lost.", "segs": ["rf1"], "on": ["you", "gw"], "show": ["o-tx", "g1", "g3", "lost"], "ms": 2600 },
+              { "say": "The gateway keeps what it has. The retry sends only piece 2.", "segs": ["rf1"], "on": ["you", "gw"], "show": ["g2"], "ms": 2400 },
+              { "say": "With every piece in, the outbox shows [gw] and the gateway posts the mail through the hub.", "segs": ["n1"], "on": ["gw", "hub"], "show": ["o-gw"], "ms": 2200 },
+              { "say": "The hub sends it on as email, and the outbox says Sent.", "segs": ["n2"], "on": ["hub", "mail"], "show": ["o-sent"], "ms": 2200 }
+            ] },
+            "in": { "done": "Mail waits on the hub until you fetch it. Nothing goes on the air unless you ask.", "steps": [
+              { "say": "Mail to your callsign reaches the hub.", "segs": ["<n2"], "on": ["mail", "hub"], "show": ["box1"], "ms": 2000 },
+              { "say": "It waits in your mailbox. Nothing goes on the air.", "on": ["hub"], "ms": 2400 },
+              { "say": "You tap Check mail. The list comes back over the air: subject and size.", "segs": ["rf1", "n1", "<n1", "<rf1"], "chain": true, "on": ["you", "gw"], "show": ["list"], "ms": 4000 },
+              { "say": "Get brings that one mail in.", "segs": ["rf1", "n1", "<n1", "<rf1"], "chain": true, "on": ["you", "gw"], "show": ["got"], "ms": 4000 }
+            ] }
+          }
+          </script>
+        </figure>
         <ul>
           <li><strong>Sending from Radio+:</strong> the mail sits in your Outbox and goes to a mail gateway in pieces. The gateway keeps the pieces it has, so a retry sends only the missing ones. When it has them all it posts the mail through the hub. With Auto on, if that gateway does not answer, the mail moves to the next gateway heard.</li>
           <li><strong>Receiving:</strong> mail to your callsign stays in your mailbox on the hub until your station fetches it. On Radio+, <strong>Check mail</strong> brings the list of waiting mail (subject and size) over the air, and <strong>Get</strong> brings one mail in. Nothing is sent over the air unless you ask for it.</li>
@@ -149,5 +443,6 @@
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=15"></script>
   <script src="/articles.js?v=9"></script>
+  <script src="/live-dgm.js?v=3"></script>
 </body>
 </html>
