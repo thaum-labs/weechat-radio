@@ -804,7 +804,7 @@ mod tests {
         let l = lines(&c, "#bulletin");
         assert_eq!(l.len(), 2, "{l:?}");
         assert_eq!(l[0].text, "Sed ut perspiciatis unde omnis 👍🏽 iste natus 👨‍👩‍👧");
-        assert_eq!(l[0].parts_footer, "✓ complete · 3/3");
+        assert_eq!(l[0].parts_footer, "complete · 3/3");
         assert_eq!(l[0].parts_tone, "done");
         assert_eq!(l[1].nick, "G4ABC");
         // A history replay adds nothing.
@@ -834,7 +834,7 @@ mod tests {
         );
         let l = &lines(&c, "#bulletin")[0];
         assert_eq!(l.ticks, "[ok]");
-        assert_eq!(l.parts_footer, "sent 3/3  ■■■  ✓✓ delivered");
+        assert_eq!(l.parts_footer, "sent 3/3  ■■■  delivered");
         assert_eq!(l.parts_tone, "done");
     }
 
