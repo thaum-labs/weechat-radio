@@ -33,7 +33,7 @@ const DONE_TTL: Duration = Duration::from_secs(60 * 60);
 
 /// Presets that may carry files: the VHF/UHF FM ones.
 pub fn preset_allows(preset: Preset) -> bool {
-    matches!(preset, Preset::VhfFm | Preset::Afsk1200)
+    matches!(preset, Preset::VhfFm | Preset::VhfFast | Preset::Afsk1200)
 }
 
 /// Why this file cannot be sent, in plain words. `None` means it can.
@@ -46,7 +46,7 @@ pub fn refusal(preset: Preset, uses_radio: bool, target: &str, len: usize) -> Op
     }
     if !preset_allows(preset) {
         return Some(format!(
-            "files go on VHF/UHF only (vhf-fm or afsk-1200); this station is on {}",
+            "files go on VHF/UHF only (vhf-fm, vhf-fast or afsk-1200); this station is on {}",
             preset.as_str()
         ));
     }

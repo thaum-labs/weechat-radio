@@ -49,6 +49,10 @@ const PRESET_ARGS: &[Arg] = &[
         hint: "VHF/UHF FM, clean local links",
     },
     Arg {
+        value: "vhf-fast",
+        hint: "VHF/UHF FM, strong local links (QAM16)",
+    },
+    Arg {
         value: "hf-good",
         hint: "Good HF SSB path",
     },
@@ -210,7 +214,7 @@ const COMMANDS: &[Cmd] = &[
     },
     Cmd {
         name: "preset",
-        usage: "/preset vhf-fm|hf-good|hf-poor|hf-weak|hf-deep|vox-safe|afsk-1200",
+        usage: "/preset vhf-fm|vhf-fast|hf-good|hf-poor|hf-weak|hf-deep|vox-safe|afsk-1200",
         summary: "Modem waveform",
         args: PRESET_ARGS,
         send_bare: false,
