@@ -2488,22 +2488,23 @@ impl eframe::App for GuiApp {
                     self.open_direct(&peer);
                 }
                 let in_direct = crate::chat_line::is_direct(&self.active_channel);
-                let (access, crypto) = channel_security(
+                let (_, crypto) = channel_security(
                     &self.active_channel,
                     self.status.as_ref().map(|s| s.mode),
                     self.status.as_ref().map(|s| s.preset.as_str()).unwrap_or(""),
                     self.status.as_ref().map(|s| s.hub_ok).unwrap_or(false),
                 );
+                let access_color = if crate::slash::is_bulletin(&self.active_channel) {
+                    PURPLE
+                } else {
+                    GREEN
+                };
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(&access)
-                            .color(if crate::slash::is_bulletin(&self.active_channel) {
-                                PURPLE
-                            } else {
-                                GREEN
-                            })
-                            .font(FontId::monospace(12.0)),
-                    );
+                    ui.label(paint_runs(
+                        &access_runs(&self.active_channel),
+                        access_color,
+                        12.0,
+                    ));
                     ui.label(RichText::new("·").color(DIM).monospace());
                     ui.label(
                         RichText::new(&crypto)
@@ -7072,19 +7073,79 @@ fn hub_row(mode: Mode, hub_ok: bool) -> (&'static str, Color32) {
     }
 }
 
+/// One run of the channel status line. A direct chat's callsign, including a
+/// suffix such as `M7TJF/M`, is its own run and is painted in [`ACCENT`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct StatusRun {
+    text: String,
+    callsign: bool,
+}
+
+impl StatusRun {
+    fn plain(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            callsign: false,
+        }
+    }
+
+    fn callsign(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            callsign: true,
+        }
+    }
+}
+
+/// Access phrase, split so only the direct-chat callsign is marked.
+fn access_runs(channel: &str) -> Vec<StatusRun> {
+    if crate::slash::is_bulletin(channel) {
+        vec![StatusRun::plain("PUBLIC")]
+    } else if crate::chat_line::is_direct(channel) {
+        vec![
+            StatusRun::plain("DIRECT · "),
+            StatusRun::callsign(channel),
+            StatusRun::plain(" only"),
+        ]
+    } else {
+        vec![StatusRun::plain("CLOSED · invite only")]
+    }
+}
+
+/// Colour for one status run. The callsign uses the theme accent (the same
+/// blue as the station CALL row). Everything else keeps `base`, which is
+/// green or purple in the classic window and grey in the modem73 window.
+fn status_run_color(callsign: bool, base: Color32) -> Color32 {
+    if callsign {
+        ACCENT
+    } else {
+        base
+    }
+}
+
+fn paint_runs(runs: &[StatusRun], base: Color32, size: f32) -> egui::text::LayoutJob {
+    let font = FontId::monospace(size);
+    let mut job = egui::text::LayoutJob::default();
+    for run in runs {
+        job.append(
+            &run.text,
+            0.0,
+            egui::TextFormat::simple(font.clone(), status_run_color(run.callsign, base)),
+        );
+    }
+    job
+}
+
 fn channel_security(
     channel: &str,
     mode: Option<Mode>,
     preset: &str,
     hub_ok: bool,
 ) -> (String, String) {
-    let access = if crate::slash::is_bulletin(channel) {
-        "PUBLIC".to_string()
-    } else if crate::chat_line::is_direct(channel) {
-        format!("DIRECT · {channel} only")
-    } else {
-        "CLOSED · invite only".to_string()
-    };
+    let access = access_runs(channel)
+        .into_iter()
+        .map(|run| run.text)
+        .collect::<String>();
     let signed = mode.map(|m| m.uses_internet()).unwrap_or(false);
     let unsigned_hf = matches!(preset, "hf-poor" | "hf-weak" | "hf-deep");
     let mut bits = Vec::new();
@@ -7156,6 +7217,60 @@ mod tests {
         assert_eq!(hub_row(Mode::Internet, false), ("DOWN", ORANGE));
         assert_eq!(hub_row(Mode::InternetRadio, false), ("DOWN", ORANGE));
         assert_eq!(hub_row(Mode::InternetRadio, true), ("UP", GREEN));
+    }
+
+    #[test]
+    fn direct_status_line_marks_only_the_callsign() {
+        let (access, crypto) = channel_security("M7TJF", Some(Mode::Radio), "vhf-fm", false);
+        assert_eq!(access, "DIRECT · M7TJF only");
+        assert_eq!(crypto, "identity UNSIGNED · hub OFF · RF plaintext");
+        assert_eq!(
+            format!("{access} · {crypto}"),
+            "DIRECT · M7TJF only · identity UNSIGNED · hub OFF · RF plaintext"
+        );
+        let runs = access_runs("M7TJF");
+        assert_eq!(
+            runs.iter().map(|run| run.text.as_str()).collect::<String>(),
+            access
+        );
+        let marked: Vec<_> = runs
+            .iter()
+            .filter(|run| run.callsign)
+            .map(|run| run.text.as_str())
+            .collect();
+        assert_eq!(marked, ["M7TJF"]);
+        assert_eq!(status_run_color(true, DIM), ACCENT);
+        assert_eq!(status_run_color(false, DIM), DIM);
+        assert_eq!(status_run_color(false, GREEN), GREEN);
+        assert_ne!(ACCENT, DIM);
+        assert_ne!(ACCENT, GREEN);
+        assert_ne!(ACCENT, ORANGE);
+
+        let suffixed = access_runs("M7TJF/M");
+        assert_eq!(
+            suffixed
+                .iter()
+                .filter(|run| run.callsign)
+                .map(|run| run.text.as_str())
+                .collect::<Vec<_>>(),
+            ["M7TJF/M"]
+        );
+        assert_eq!(
+            channel_security("M7TJF/M", None, "hf-poor", false).0,
+            "DIRECT · M7TJF/M only"
+        );
+        assert!(channel_security("M7TJF/M", None, "hf-poor", false)
+            .1
+            .contains("RF plaintext (unsigned HF)"));
+
+        for channel in ["#bulletin", "#ops", "&group", ""] {
+            assert!(
+                access_runs(channel).iter().all(|run| !run.callsign),
+                "{channel}"
+            );
+        }
+        assert_eq!(access_runs("#bulletin")[0].text, "PUBLIC");
+        assert_eq!(access_runs("#ops")[0].text, "CLOSED · invite only");
     }
 
     #[test]

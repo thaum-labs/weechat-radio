@@ -1535,7 +1535,7 @@ impl GuiApp {
             self.open_direct(&peer);
         }
         let in_direct = crate::chat_line::is_direct(&self.active_channel);
-        let (access, crypto) = channel_security(
+        let (_, crypto) = channel_security(
             &self.active_channel,
             self.status.as_ref().map(|s| s.mode),
             self.status
@@ -1551,9 +1551,11 @@ impl GuiApp {
         } else {
             "Closed channels are invite lists."
         };
+        let mut runs = access_runs(&self.active_channel);
+        runs.push(StatusRun::plain(format!(" · {crypto}")));
         let mut prio_cmd = None;
         ui.horizontal(|ui| {
-            let r = ui.label(text(format!("{access} · {crypto}"), M_MUTE).size(11.0));
+            let r = ui.label(paint_runs(&runs, M_MUTE, 11.0));
             hover_tip(
                 &r,
                 format!("{note} Amateur radio cannot hide message text on RF; hub traffic is TLS."),
