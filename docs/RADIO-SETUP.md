@@ -46,15 +46,16 @@ VOX means the radio transmits when it hears sound.
 
 - Any radio that can key on VOX (voice-operated transmit)
 - A 3.5 mm audio cable from the computer sound card to the radio mic/speaker
-- Volume set so the radio just keys on data tones, not on room noise
+- PC audio kept low: loud enough for the radio to key on data tones, and not so loud that it overloads the mic
 
 ### Steps
 
 1. Connect computer headphone-out to radio mic-in, radio speaker-out to computer mic-in.
-2. On the radio, turn **VOX on**, set **squelch 1** (not 0) and a mid **VOX level** (4 worked on a VR-N76). Start with a medium VOX delay. At squelch 0 the radio hears noise all the time and its VOX may not key.
-3. Run `wcr setup` and choose **Any radio with a plain audio cable (VOX)**. This selects the `vox-safe` preset: RDM-600S (robust over a speaker and mic) and a 900 ms lead so the radio is fully keyed before data starts.
-4. Start `wcr tui`. Send a short test to `#bulletin`. Tell the app the frequency on the dial: `/radio freq 144.950`. Keep radio VOX hang on the long side.
-5. If the other station still hears a clipped start, raise `modem.vox_lead_ms` in `wcr.toml` (try 1200).
+2. Set the radio. Turn **VOX on**. Set **squelch 1** (not 0: at 0 the radio hears noise all the time and VOX may not key), **VOX level 4**, and a medium VOX delay or a longer hang. Squelch 1 and VOX level 4 worked on a VR-N76 and a Radtel RT-900. With squelch above 0, the modem only hears signals strong enough to open the squelch.
+3. Keep the PC level low. Too much drive overloads the radio's mic input and roughly halves the SNR the other station hears: about 5 dB when the level is high, about 10 dB at the right level. On Windows, open **Settings → System → Sound → Volume mixer**. Set the main system **Volume** and the per-app **MODEM73 KISS TNC** slider. The output device must be the USB sound card. A start that worked on an RT-900: system volume **20**, MODEM73 KISS TNC **25**. Lower the level a step at a time and watch the SNR the other station reports. Keep the setting with the highest SNR. If you go too low, VOX will not key (no TX LED, and the message sits waiting and retries). Go back up a step.
+4. Run `wcr setup` and choose **Any radio with a plain audio cable (VOX)**. This selects the `vox-safe` preset: RDM-600S (robust over a speaker and mic) and a 900 ms lead so the radio is fully keyed before data starts. `vox-safe` stays the default. A radio that keys reliably on VOX can try `vhf-fm`: on an RT-900, at the same levels, `vhf-fm` was heard at about 10 dB and `vox-safe` at about 7.5 dB.
+5. Start `wcr tui`. Send a short test to `#bulletin`. Tell the app the frequency on the dial: `/radio freq 144.950`. Keep radio VOX hang on the long side.
+6. If the other station still hears a clipped start, raise `modem.vox_lead_ms` in `wcr.toml` (try 1200).
 
 ### How you know it worked
 

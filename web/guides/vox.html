@@ -76,8 +76,8 @@
             </li>
             <li>
               <svg class="card-ico" aria-hidden="true"><use href="#ico-sound" /></svg>
-              <strong>Volume set</strong>
-              <span>So the radio keys on data tones, not on room noise.</span>
+              <strong>PC level kept low</strong>
+              <span>Loud enough to key on data tones. Too loud overloads the radio mic.</span>
             </li>
           </ul>
         <figure class="diagram live-dgm live-dgm--wide" data-live-dgm>
@@ -191,12 +191,19 @@
             <p>Connect computer headphone-out to radio mic-in, and radio speaker-out to computer mic-in.</p>
           </li>
           <li>
-            <strong class="step-title">Turn on VOX</strong>
-            <p>On the radio, turn <strong>VOX on</strong>, set <strong>squelch 1</strong> (not 0) and a mid <strong>VOX level</strong> (4 worked on a VR-N76). Start with a medium VOX delay. At squelch 0 the radio hears noise all the time and its VOX may not key.</p>
+            <strong class="step-title">Set the radio</strong>
+            <p>Turn <strong>VOX on</strong>. Set <strong>squelch 1</strong> (not 0: at 0 the radio hears noise all the time and VOX may not key), <strong>VOX level 4</strong>, and a medium VOX delay or a longer hang. Squelch 1 and VOX level 4 worked on a VR-N76 and a Radtel RT-900.</p>
+            <p>With squelch above 0, the modem only hears signals strong enough to open the squelch.</p>
+          </li>
+          <li>
+            <strong class="step-title">Keep the PC level low</strong>
+            <p>With a VOX cable, keep the computer’s output low. Too much drive overloads the radio’s mic input and roughly halves the SNR the other station hears: about 5&nbsp;dB when the level is high, about 10&nbsp;dB at the right level.</p>
+            <p>On Windows, open <strong>Settings → System → Sound → Volume mixer</strong>. Set the main system <strong>Volume</strong> and the per-app <strong>MODEM73 KISS TNC</strong> slider. The output device must be the USB sound card. A start that worked on an RT-900: system volume <strong>20</strong>, MODEM73 KISS TNC <strong>25</strong>.</p>
+            <p>Lower the level a step at a time and watch the SNR the other station reports. Keep the setting with the highest SNR. If you go too low, VOX will not key (no TX LED, and the message sits waiting and retries). Go back up a step.</p>
           </li>
           <li>
             <strong class="step-title">Run setup</strong>
-            <p>Run <code>wcr setup</code> and choose <strong>Any radio with a plain audio cable (VOX)</strong>. This selects the <code>vox-safe</code> preset: RDM-600S (robust over a speaker and mic) and a 900 ms lead so the radio is fully keyed before data starts.</p>
+            <p>Run <code>wcr setup</code> and choose <strong>Any radio with a plain audio cable (VOX)</strong>. This selects the <code>vox-safe</code> preset: RDM-600S (robust over a speaker and mic) and a 900 ms lead so the radio is fully keyed before data starts. <code>vox-safe</code> stays the default. A radio that keys reliably on VOX can try <code>vhf-fm</code>: on an RT-900, at the same levels, <code>vhf-fm</code> was heard at about 10&nbsp;dB and <code>vox-safe</code> at about 7.5&nbsp;dB.</p>
           </li>
           <li>
             <strong class="step-title">Send a test</strong>
