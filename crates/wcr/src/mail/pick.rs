@@ -57,13 +57,13 @@ const HUB_WINDOW_MIN_SECS: f64 = 2.0;
 
 /// Airtime of one full frame at the preset's starting rung.
 fn frame_secs(preset: Preset) -> f64 {
-    let mtu = Rung::from_index(preset.ladder_start()).payload_bytes() as usize;
+    let mtu = Rung::from_index(preset.ladder_start()).mail_mtu() as usize;
     keyed_airtime_secs(preset, std::iter::once(mtu), TURNAROUND_ALLOW_MS)
 }
 
 /// The frames a gateway reply keys, as the gateway builds them.
 pub fn reply_frames(nonce: &str, meta: &MailMeta, payload: &str, preset: Preset) -> Vec<Vec<u8>> {
-    let mtu = super::air::mail_rung(preset, 0).payload_bytes() as usize;
+    let mtu = super::air::mail_rung(preset, 0).mail_mtu() as usize;
     let wire = MailWire {
         op: MailOp::GwReply,
         mail_id: nonce.to_string(),

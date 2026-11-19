@@ -392,6 +392,16 @@ impl Rung {
         }
     }
 
+    /// Largest mail frame for this rung. On QAM16 a mail frame that fits
+    /// modem73's short frame (256 B less its 2-byte length) keys in ~1 s
+    /// instead of 2.6 s, so mail is cut to that. Chat keeps `payload_bytes`.
+    pub fn mail_mtu(self) -> u32 {
+        match self {
+            Self::OfdmQam16Half => 254,
+            _ => self.payload_bytes(),
+        }
+    }
+
     /// Seconds modem73 keys one frame of `len` bytes on this rung, from
     /// modem73's own frame maths (v2.5.0). Every frame takes its full time
     /// however little it carries. For the airtime hint only; the air queue
