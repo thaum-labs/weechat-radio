@@ -7110,7 +7110,8 @@ pub(crate) fn group_footer_width(ui: &egui::Ui, line: &ChatLine, font: &FontId) 
 }
 
 /// The short progress beside a long message's marks: `■□ 1/2` going out,
-/// `✓✓ 2/2` delivered, `⋯ 2/3` arriving, `✓ 3/3` complete, `⚠ 2/3` when a
+/// `2/2` delivered, `⋯ 2/3` arriving, `3/3` complete (no tick, Tobias: the
+/// marks already say it), `⚠ 2/3` when a
 /// piece is missing or undelivered.
 pub(crate) fn group_short(line: &ChatLine, tone: crate::chat_line::FooterTone) -> String {
     use crate::chat_line::FooterTone;
@@ -7118,7 +7119,7 @@ pub(crate) fn group_short(line: &ChatLine, tone: crate::chat_line::FooterTone) -
         let (k, n) = (p.received(), p.total());
         return match tone {
             FooterTone::InProgress => format!("⋯ {k}/{n}"),
-            FooterTone::Done => format!("✓ {n}/{n}"),
+            FooterTone::Done => format!("{n}/{n}"),
             FooterTone::Missing => format!("⚠ {k}/{n}"),
         };
     }
@@ -7128,7 +7129,7 @@ pub(crate) fn group_short(line: &ChatLine, tone: crate::chat_line::FooterTone) -
     let k = k.min(n);
     match tone {
         FooterTone::Missing => format!("⚠ {k}/{n}"),
-        FooterTone::Done => format!("✓✓ {n}/{n}"),
+        FooterTone::Done => format!("{n}/{n}"),
         FooterTone::InProgress => {
             let bar: String = (0..n.min(20))
                 .map(|i| if i < k { '■' } else { '□' })
