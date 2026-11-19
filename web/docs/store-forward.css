@@ -1,0 +1,18 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Store and forward page: diagram pieces the shared kit lacks (see docs.css). */
+
+/* a mark or note that something failed: [no], a lost piece, can't hear */
+svg.dgm .sf-no { fill: var(--emergency); }
+/* hops left on each leg */
+.live-dgm svg.dgm .sf-hop { font-size: 11px; fill: var(--orange); }
+/* the whole retry time, under the timeline */
+svg.dgm .sf-bracket { fill: none; stroke: var(--dim); stroke-width: 1; }
+/* an empty place where something waits: the hub's queue, the gateway's pieces */
+svg.dgm .sf-q { fill: none; stroke: var(--line); stroke-dasharray: 3 3; }
+/* a message held on the hub, a piece kept at the gateway */
+svg.dgm .sf-held { fill: rgba(0, 229, 255, 0.16); stroke: var(--mode-internet); }
+svg.dgm .sf-piece { fill: rgba(57, 255, 20, 0.16); stroke: var(--mode-internet-radio); }
+.live-dgm svg.dgm .sf-chip { font-size: 10px; fill: var(--fg); }
+
+/* One chat line per diagram, so the chat window needs less height than the kit's default. */
+.page-panel .sf-dgm .app-win__lines { min-height: 4.2em; }
