@@ -211,12 +211,19 @@ function lineNode(l) {
   if (l.mine && l.tries > 1) marks.push(`[x${l.tries}]`);
   if (!l.mine && l.via) marks.push(`[${route}]`);
   if (!l.mine && l.snr !== null && l.snr !== undefined) marks.push(`${Math.round(l.snr)} dB`);
-  if (marks.length) {
-    const m = el("span", `marks${/\[(ok|all)/.test(l.ticks) ? " ok" : /\[no\]/.test(l.ticks) ? " no" : ""}`, marks.join(" "));
+  const m = marks.length
+    ? el("span", `marks${/\[(ok|all)/.test(l.ticks) ? " ok" : /\[no\]/.test(l.ticks) ? " no" : ""}`, marks.join(" "))
+    : null;
+  if (footer) {
+    // A long message (#365, Tobias's pick B for rc5): its marks and
+    // progress on one right-aligned row under the text, the same on a phone.
+    const row = el("div", "status-row");
+    if (m) row.append(m);
+    row.append(el("span", `parts-foot ${tone}`, footer.trim()));
+    li.append(row);
+  } else if (m) {
     li.append(m);
   }
-  // #365 rc4: on the same row as the [rf] / [tx] marks, just after them.
-  if (footer) li.append(el("span", `parts-foot ${tone}`, footer.trim()));
   return li;
 }
 

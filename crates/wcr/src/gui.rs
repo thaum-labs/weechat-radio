@@ -7083,10 +7083,13 @@ pub(crate) fn group_footer_label(
         FooterTone::Done => tones[1],
         FooterTone::Missing => tones[2],
     };
-    let footer = drawable(ui, footer.trim());
-    ui.label(RichText::new(footer).color(colour).font(font))
+    // Short form beside the marks, full words on hover (Tobias's pick C
+    // for rc5).
+    let short = drawable(ui, &group_short(line, tone));
+    ui.label(RichText::new(short).color(colour).font(font))
         .on_hover_text(format!(
-            "one long message sent as {} pieces; {badge}",
+            "{}\none long message sent as {} pieces; {badge}",
+            footer.trim(),
             badge.split('/').nth(1).unwrap_or("?")
         ));
     if tone == FooterTone::InProgress {
@@ -7098,12 +7101,41 @@ pub(crate) fn group_footer_label(
 /// How wide [`group_footer_label`] draws for `line`, with its gap; 0 for an
 /// ordinary line.
 pub(crate) fn group_footer_width(ui: &egui::Ui, line: &ChatLine, font: &FontId) -> f32 {
-    let Some((_, footer, _)) = crate::chat_line::group_footer(line, crate::chat_parts::unix_now())
+    let Some((_, _, tone)) = crate::chat_line::group_footer(line, crate::chat_parts::unix_now())
     else {
         return 0.0;
     };
     let w = ui.fonts(|f| f.glyph_width(font, 'M'));
-    (footer.trim().chars().count() as f32 + 1.0) * w + ui.spacing().item_spacing.x
+    (group_short(line, tone).chars().count() as f32 + 1.0) * w + ui.spacing().item_spacing.x
+}
+
+/// The short progress beside a long message's marks: `■□ 1/2` going out,
+/// `✓✓ 2/2` delivered, `⋯ 2/3` arriving, `✓ 3/3` complete, `⚠ 2/3` when a
+/// piece is missing or undelivered.
+pub(crate) fn group_short(line: &ChatLine, tone: crate::chat_line::FooterTone) -> String {
+    use crate::chat_line::FooterTone;
+    if let Some(p) = &line.parts {
+        let (k, n) = (p.received(), p.total());
+        return match tone {
+            FooterTone::InProgress => format!("⋯ {k}/{n}"),
+            FooterTone::Done => format!("✓ {n}/{n}"),
+            FooterTone::Missing => format!("⚠ {k}/{n}"),
+        };
+    }
+    let Some((k, n)) = line.sending else {
+        return String::new();
+    };
+    let k = k.min(n);
+    match tone {
+        FooterTone::Missing => format!("⚠ {k}/{n}"),
+        FooterTone::Done => format!("✓✓ {n}/{n}"),
+        FooterTone::InProgress => {
+            let bar: String = (0..n.min(20))
+                .map(|i| if i < k { '■' } else { '□' })
+                .collect();
+            format!("{bar} {k}/{n}")
+        }
+    }
 }
 
 /// Rows the chat input grows to before it scrolls inside (#365 rc4: "about
