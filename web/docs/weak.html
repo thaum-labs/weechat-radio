@@ -176,6 +176,39 @@
         <p>The receiver hears all of these at once. You can send <code>hf-weak</code> while they are still set to <code>hf-poor</code>.</p>
       </section>
 
+      <section class="article-section" aria-labelledby="speedH">
+        <h2 id="speedH">How fast is it?</h2>
+        <p class="section-lead">About as fast as a dial-up modem from the 1980s. The radio channel is the same width as a phone line, but far noisier.</p>
+        <p><strong>Speed</strong> is the modem's own rate after error correction. You get about a third to a half of it, because every frame takes its full time even when it is nearly empty, and every line waits for a receipt.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Preset</th><th>Speed</th><th>Line + receipt</th><th>1 KB mail</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>vhf-fast</code></td><td>2,100–3,200 bps<br><small>like a 2400 modem</small></td><td>~3 s</td><td>~9 s</td></tr>
+              <tr><td><code>hf-good</code></td><td>2,400 bps<br><small>like a 2400 modem</small></td><td>~7 s</td><td>~17 s</td></tr>
+              <tr><td><code>vhf-fm</code></td><td>1,580 bps<br><small>like a 1200 modem</small></td><td>~6 s</td><td>~17 s</td></tr>
+              <tr><td><code>afsk-1200</code></td><td>1,200 bps<br><small>like a 1200 modem</small></td><td>~4 s</td><td>~18 s</td></tr>
+              <tr><td><code>hf-poor</code></td><td>378 bps<br><small>like a 300 modem</small></td><td>~8 s</td><td>~1 min</td></tr>
+              <tr><td><code>vox-safe</code></td><td>378 bps<br><small>like a 300 modem</small></td><td>~11 s</td><td>~1.2 min</td></tr>
+              <tr><td><code>hf-weak</code></td><td>194 bps<br><small>slower than any modem</small></td><td>~15 s</td><td>~1.7 min</td></tr>
+              <tr><td><code>hf-deep</code></td><td>99 bps<br><small>like a teletype</small></td><td>~20 s</td><td>short only</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>A 100-character line, on a clear channel with the first try getting through. Retries and a busy channel add to it.</p>
+        <h3>Why it can't go faster on HF</h3>
+        <p>A late dial-up modem had a clean wire with no fading and both ends talking at once. On HF the signal is often only just above the noise and fades several times a second, and the radio has to stop, turn round and listen for every receipt. The HF presets are already close to what that noise allows.</p>
+        <h3>Faster on VHF/UHF: <code>vhf-fast</code></h3>
+        <p>A strong local FM signal has no hiss, so it can carry a denser waveform. <code>vhf-fast</code> sends QAM16 instead of <code>vhf-fm</code>'s QPSK, and the modem picks a 1&nbsp;s short frame for lines, receipts and mail pieces instead of a 2.6&nbsp;s one. If a receipt is missed it drops back to QPSK, so near the edge of range it is no worse than <code>vhf-fm</code>.</p>
+        <ul>
+          <li><strong>Needs a radio with real PTT:</strong> a Digirig, CM108 sound card or CAT. It is not offered on Bluetooth radios (the radio's audio codec breaks dense modes), and it is not for VOX (VOX clips the start of every short frame).</li>
+          <li><strong>Only the sender needs it.</strong> A station on <code>vhf-fm</code> hears <code>vhf-fast</code> lines, as long as the signal is strong.</li>
+          <li><strong>2 m and 70 cm FM.</strong> Not for HF: QAM16 falls apart with fading.</li>
+        </ul>
+      </section>
+
       <section class="article-section" aria-labelledby="doesH">
         <h2 id="doesH">What the program does for you</h2>
         <ol>

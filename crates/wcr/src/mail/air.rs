@@ -40,7 +40,7 @@ pub struct AirtimeMail<'a> {
 }
 
 fn plan_limit(preset: Preset) -> usize {
-    (Rung::from_index(preset.ladder_start()).payload_bytes() as usize).min(crate::proto::MAX_BODY)
+    (Rung::from_index(preset.ladder_start()).mail_mtu() as usize).min(crate::proto::MAX_BODY)
 }
 
 /// Chunk at the preset's ladder-start payload. A later retry uses a slower
@@ -603,7 +603,7 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow, gateway_cs: &str) -> Result<()> {
     let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor);
     let vox = cfg.modem.is_vox();
     let rung = mail_rung(preset, row.retries);
-    let mtu = rung.payload_bytes() as usize;
+    let mtu = rung.mail_mtu() as usize;
     let frame_secs = keyed_airtime_secs(preset, std::iter::once(mtu), cfg.rf.turnaround_ms);
     if let Some(wait) = busy_hold(ctx, &row.id, frame_secs) {
         hold_send(ctx, &row.id, wait);
@@ -933,7 +933,7 @@ async fn send_control(ctx: &TxCtx, op: MailOp, mut meta: MailMeta, payload: &str
     let id = proto::compute_mail_id(&meta.from, &meta.to, &meta.subject, &payload, false);
     let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor);
     let rung = mail_rung(preset, 0);
-    let mtu = rung.payload_bytes() as usize;
+    let mtu = rung.mail_mtu() as usize;
     let mut wires = proto::chunk_to_limit(&id, &meta, &payload, mtu.min(crate::proto::MAX_BODY));
     for w in &mut wires {
         w.op = op;
@@ -1297,7 +1297,7 @@ fn arm_quiet(ctx: &TxCtx, asm: &Assembler) {
     };
     let cfg = ctx.cfg.lock().clone();
     let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor);
-    let mtu = Rung::from_index(preset.ladder_start()).payload_bytes() as usize;
+    let mtu = Rung::from_index(preset.ladder_start()).mail_mtu() as usize;
     let frame = keyed_airtime_secs(preset, std::iter::once(mtu), cfg.rf.turnaround_ms);
     // A sender held up mid-burst must not have its next chunks keyed over.
     let gap = gateway::quiet_gap_heard_secs(frame, asm.rx_spacing) + asm.tail_wait_secs(frame);
@@ -1949,7 +1949,7 @@ async fn reply_chunks(
     let cfg = ctx.cfg.lock().clone();
     let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor);
     let rung = mail_rung(preset, 0);
-    let mtu = rung.payload_bytes() as usize;
+    let mtu = rung.mail_mtu() as usize;
     // The wire id is the mail id. Leaving it out of the JSON keeps a
     // CompleteAck inside one hf-poor frame. The receiver copies it back.
     let mut on_air = meta.clone();
@@ -2216,7 +2216,7 @@ async fn start_ask(ctx: &TxCtx) {
     };
     let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor);
     let rung = mail_rung(preset, 0);
-    let mtu = rung.payload_bytes() as usize;
+    let mtu = rung.mail_mtu() as usize;
     let mut frames = Vec::new();
     for mut w in proto::chunk_to_limit(&nonce, &meta, &body, mtu.min(crate::proto::MAX_BODY)) {
         w.op = MailOp::GwAsk;
@@ -2600,6 +2600,28 @@ mod tests {
             gateway: "GATEWAY",
             ack: true,
         }
+    }
+
+    /// vhf-fast cuts mail to fit modem73's ~1 s short QAM16 frame, so a
+    /// 1 KB mail is about twice as fast as on vhf-fm.
+    #[test]
+    fn vhf_fast_mail_fits_short_frames() {
+        let body = spaced_body(1024);
+        let mail = sample_mail(&body);
+        let id = "ab".repeat(32);
+        for w in plan_mail_wires(Preset::VhfFast, &id, &mail) {
+            for f in proto::frames_for_mtu(&proto::encode_chunk(&w), plan_limit(Preset::VhfFast))
+                .unwrap()
+            {
+                assert!(f.len() <= 254, "{}", f.len());
+            }
+        }
+        let (fast, _) = mail_airtime_secs(Preset::VhfFast, &mail, 250);
+        let (fm, _) = mail_airtime_secs(Preset::VhfFm, &mail, 250);
+        assert!(fast < fm * 0.6, "vhf-fast {fast:.1}s vs vhf-fm {fm:.1}s");
+        // Every other preset still cuts mail at its rung's payload.
+        assert_eq!(plan_limit(Preset::VhfFm), 300);
+        assert_eq!(plan_limit(Preset::HfPoor), 170);
     }
 
     #[test]
