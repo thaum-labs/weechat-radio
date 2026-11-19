@@ -879,7 +879,10 @@ fn handle_irc(app: &mut App, line: &str) {
             }
             let row = ChatLine {
                 from: from.clone(),
-                text: parts.as_ref().map(|p| p.text()).unwrap_or_else(|| text.clone()),
+                text: parts
+                    .as_ref()
+                    .map(|p| p.text())
+                    .unwrap_or_else(|| text.clone()),
                 ticks: String::new(),
                 via: irc_via(line),
                 tries: irc_tries(line),
@@ -959,7 +962,10 @@ fn tui_group_footer(l: &ChatLine, now: u64) -> Option<(String, Color)> {
     } else {
         ("  … awaiting receipt", TUI_AMBER)
     };
-    Some((format!("{}{tail}", crate::chat_parts::sending_line(k, n)), c))
+    Some((
+        format!("{}{tail}", crate::chat_parts::sending_line(k, n)),
+        c,
+    ))
 }
 
 fn panel<'a>(title: &'a str, meta: &'a str, app: &App) -> Block<'a> {
@@ -1220,8 +1226,12 @@ fn draw(f: &mut Frame, app: &App) {
         // is missing.
         let footer = tui_group_footer(l, now);
         let mark = match (&l.parts, footer.as_ref().map(|f| f.1)) {
-            (Some(_), Some(c)) if c == TUI_AMBER => Some(Span::styled("⋯ ", Style::default().fg(c))),
-            (Some(_), Some(c)) if c == Color::Red => Some(Span::styled("⚠ ", Style::default().fg(c))),
+            (Some(_), Some(c)) if c == TUI_AMBER => {
+                Some(Span::styled("⋯ ", Style::default().fg(c)))
+            }
+            (Some(_), Some(c)) if c == Color::Red => {
+                Some(Span::styled("⚠ ", Style::default().fg(c)))
+            }
             _ => None,
         };
         let mut spans = vec![

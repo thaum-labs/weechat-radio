@@ -184,6 +184,46 @@ async fn wait_radio(ports: &[u16]) {
     panic!("radio modems never reported a level");
 }
 
+fn internet_cfg(callsign: &str, home: &Path, hub_ws: &str, irc: u16, status: u16) -> Config {
+    let mut cfg = base_cfg(callsign, home, Mode::Internet);
+    cfg.hub.url = hub_ws.into();
+    cfg.irc.bind = format!("127.0.0.1:{irc}");
+    cfg.status.bind = format!("127.0.0.1:{status}");
+    cfg.normalize();
+    cfg
+}
+
+async fn start_hub() -> u16 {
+    let hub_port = reserve_ports(1).await[0];
+    let hub_bind = format!("127.0.0.1:{hub_port}");
+    let store = std::sync::Arc::new(wcr::store::Store::open_memory().unwrap());
+    let tel = std::sync::Arc::new(wcr::telemetry::TelemetryDb::open_memory().unwrap());
+    let keys = wcr::proto::IdentityKeys::generate();
+    tokio::spawn(async move {
+        let _ = wcr::net::run_hub(&hub_bind, store, tel, keys).await;
+    });
+    wait_tcp(hub_port, 15).await;
+    hub_port
+}
+
+async fn wait_hub_ok(ports: &[u16]) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    while tokio::time::Instant::now() < deadline {
+        let mut ok = true;
+        for p in ports {
+            let up = status_json(*p)
+                .await
+                .and_then(|v| v.get("hub_ok").and_then(|x| x.as_bool()))
+                .unwrap_or(false);
+            ok &= up;
+        }
+        if ok {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+    panic!("hub_ok never came up (ports {ports:?})");
+}
 
 /// The station tags a long line and splits it; the far end joins the pieces
 /// back into exactly what was typed, emoji included.
@@ -204,7 +244,9 @@ async fn a_long_emoji_line_crosses_the_air_as_tagged_pieces_with_one_mark() {
         let irc_p = ports[i * 2];
         let status_p = ports[i * 2 + 1];
         let cfg = radio_cfg(call, &home, kiss, ctrl, irc_p, status_p);
-        nodes.push(tokio::spawn(async move { wcr::node::run_node(cfg, false).await }));
+        nodes.push(tokio::spawn(async move {
+            wcr::node::run_node(cfg, false).await
+        }));
         irc.push(irc_p);
         status.push(status_p);
     }
@@ -213,9 +255,13 @@ async fn a_long_emoji_line_crosses_the_air_as_tagged_pieces_with_one_mark() {
     }
     wait_radio(&status).await;
 
-    let mut sender = TcpStream::connect(format!("127.0.0.1:{}", irc[0])).await.unwrap();
+    let mut sender = TcpStream::connect(format!("127.0.0.1:{}", irc[0]))
+        .await
+        .unwrap();
     irc_register(&mut sender, "G4AAA").await;
-    let mut receiver = TcpStream::connect(format!("127.0.0.1:{}", irc[1])).await.unwrap();
+    let mut receiver = TcpStream::connect(format!("127.0.0.1:{}", irc[1]))
+        .await
+        .unwrap();
     irc_register(&mut receiver, "M0BBB").await;
     tokio::time::sleep(Duration::from_millis(300)).await;
 
@@ -240,7 +286,11 @@ async fn a_long_emoji_line_crosses_the_air_as_tagged_pieces_with_one_mark() {
 
     let mut recv_reader = tokio::io::BufReader::new(&mut receiver);
     let got = read_lines_until(&mut recv_reader, 90, |lines| {
-        let bodies: Vec<&str> = lines.iter().filter_map(|l| privmsg(l)).map(|p| p.2).collect();
+        let bodies: Vec<&str> = lines
+            .iter()
+            .filter_map(|l| privmsg(l))
+            .map(|p| p.2)
+            .collect();
         let pieces: Vec<&str> = bodies
             .iter()
             .copied()
@@ -258,7 +308,10 @@ async fn a_long_emoji_line_crosses_the_air_as_tagged_pieces_with_one_mark() {
         .filter_map(|l| privmsg(l))
         .map(|p| p.2.to_string())
         .collect();
-    assert!(bodies.iter().any(|b| b == short), "short emoji line lost or changed: {bodies:?}");
+    assert!(
+        bodies.iter().any(|b| b == short),
+        "short emoji line lost or changed: {bodies:?}"
+    );
     let pieces: Vec<&String> = bodies
         .iter()
         .filter(|b| wcr::chat_parts::parse(b).is_some())
@@ -268,7 +321,12 @@ async fn a_long_emoji_line_crosses_the_air_as_tagged_pieces_with_one_mark() {
     assert_eq!(pieces.len(), n, "{bodies:?}");
     let mut parts = wcr::chat_parts::Parts::new(n, 0);
     for p in &pieces {
-        assert!(p.len() <= wcr::proto::MAX_BODY, "piece over {} bytes: {}", wcr::proto::MAX_BODY, p.len());
+        assert!(
+            p.len() <= wcr::proto::MAX_BODY,
+            "piece over {} bytes: {}",
+            wcr::proto::MAX_BODY,
+            p.len()
+        );
         assert!(!p.contains('\u{FFFD}'), "a character was cut in half: {p}");
         let (i, n, text) = wcr::chat_parts::parse(p).unwrap();
         assert!(parts.add(i, n, text, 0), "piece {i}/{n} twice");
@@ -285,7 +343,10 @@ async fn a_long_emoji_line_crosses_the_air_as_tagged_pieces_with_one_mark() {
             .any(|l| l.contains(&want) && l.contains("+radio/delivery=delivered"))
     })
     .await;
-    let part_marks: Vec<&String> = marks.iter().filter(|l| l.contains("+radio/parts=")).collect();
+    let part_marks: Vec<&String> = marks
+        .iter()
+        .filter(|l| l.contains("+radio/parts="))
+        .collect();
     assert!(
         part_marks
             .iter()
@@ -298,6 +359,75 @@ async fn a_long_emoji_line_crosses_the_air_as_tagged_pieces_with_one_mark() {
         .map(|r| r.split([';', ' ']).next().unwrap_or(""))
         .collect();
     assert_eq!(ids.len(), 1, "marks for more than one id: {part_marks:?}");
+    for node in nodes {
+        node.abort();
+    }
+}
+
+/// The same over the hub: emoji and the piece tags arrive unchanged.
+#[tokio::test]
+async fn a_long_emoji_line_crosses_the_hub_unchanged() {
+    let hub_port = start_hub().await;
+    let hub_ws = format!("ws://127.0.0.1:{hub_port}/ws");
+    let ports = reserve_ports(4).await;
+    let mut nodes = Vec::new();
+    for (i, call) in ["G4AAA", "M0BBB"].into_iter().enumerate() {
+        let cfg = internet_cfg(
+            call,
+            &scratch(call),
+            &hub_ws,
+            ports[i * 2],
+            ports[i * 2 + 1],
+        );
+        nodes.push(tokio::spawn(async move {
+            wcr::node::run_node(cfg, false).await
+        }));
+    }
+    wait_tcp(ports[0], 20).await;
+    wait_tcp(ports[2], 20).await;
+    wait_hub_ok(&[ports[1], ports[3]]).await;
+    let mut sender = TcpStream::connect(format!("127.0.0.1:{}", ports[0]))
+        .await
+        .unwrap();
+    irc_register(&mut sender, "G4AAA").await;
+    let mut receiver = TcpStream::connect(format!("127.0.0.1:{}", ports[2]))
+        .await
+        .unwrap();
+    irc_register(&mut receiver, "M0BBB").await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let long = format!("hub test {} end 73 📻", "👍🏽 👨‍👩‍👧 ✅ ".repeat(30));
+    sender
+        .write_all(format!("PRIVMSG M0BBB :{long}\r\n").as_bytes())
+        .await
+        .unwrap();
+    let mut recv_reader = tokio::io::BufReader::new(&mut receiver);
+    let got = read_lines_until(&mut recv_reader, 30, |lines| {
+        let pieces: Vec<&str> = lines
+            .iter()
+            .filter_map(|l| privmsg(l))
+            .map(|p| p.2)
+            .filter(|b| wcr::chat_parts::parse(b).is_some())
+            .collect();
+        pieces
+            .first()
+            .and_then(|b| wcr::chat_parts::parse(b))
+            .is_some_and(|(_, n, _)| pieces.len() >= n)
+    })
+    .await;
+    let pieces: Vec<String> = got
+        .iter()
+        .filter_map(|l| privmsg(l))
+        .map(|p| p.2.to_string())
+        .filter(|b| wcr::chat_parts::parse(b).is_some())
+        .collect();
+    assert!(pieces.len() >= 2, "{got:?}");
+    let n = wcr::chat_parts::parse(&pieces[0]).unwrap().1;
+    let mut parts = wcr::chat_parts::Parts::new(n, 0);
+    for p in &pieces {
+        let (i, n, text) = wcr::chat_parts::parse(p).unwrap();
+        parts.add(i, n, text, 0);
+    }
+    assert_eq!(parts.text(), long);
     for node in nodes {
         node.abort();
     }

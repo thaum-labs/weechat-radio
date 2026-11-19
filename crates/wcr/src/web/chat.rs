@@ -488,7 +488,13 @@ impl Chat {
             self.file_progress(&msgid, &bar);
         } else if let Some((msgid, state, tries)) = chat_line::parse_delivery(raw) {
             let via = chat_line::delivery_via(raw);
-            self.mark(&msgid, &state, tries, via.as_deref(), chat_line::delivery_parts(raw));
+            self.mark(
+                &msgid,
+                &state,
+                tries,
+                via.as_deref(),
+                chat_line::delivery_parts(raw),
+            );
         } else if let Some((from, ch)) = chat_line::parse_invite(raw) {
             let ch = crate::slash::normalize_channel(&ch);
             if !crate::slash::is_bulletin(&ch) && ch.len() >= 3 {
@@ -586,7 +592,13 @@ impl Chat {
 /// What a mark can change on a line.
 #[allow(clippy::type_complexity)]
 fn marks(l: &ChatLine) -> (String, String, u32, String, Option<(usize, usize)>) {
-    (l.msgid.clone(), l.ticks.clone(), l.tries, l.via.clone(), l.sending)
+    (
+        l.msgid.clone(),
+        l.ticks.clone(),
+        l.tries,
+        l.via.clone(),
+        l.sending,
+    )
 }
 
 fn view(me: &str, conv: &str, seq: u64, l: &ChatLine) -> LineView {
@@ -809,11 +821,17 @@ mod tests {
         let text = "word ".repeat(150);
         c.send("#bulletin", &text).unwrap();
         assert_eq!(lines(&c, "#bulletin").len(), 1);
-        c.handle("@msgid=f1;+radio/delivery=queued;+radio/msgid=f1;+radio/parts=0/3 TAGMSG #bulletin");
+        c.handle(
+            "@msgid=f1;+radio/delivery=queued;+radio/msgid=f1;+radio/parts=0/3 TAGMSG #bulletin",
+        );
         let l = &lines(&c, "#bulletin")[0];
         assert_eq!(l.parts_footer, "sending 0/3  □□□  … awaiting receipt");
-        c.handle("@msgid=f1;+radio/delivery=sent;+radio/msgid=f1;+radio/parts=3/3 TAGMSG #bulletin");
-        c.handle("@msgid=f1;+radio/delivery=delivered;+radio/msgid=f1;+radio/parts=3/3 TAGMSG #bulletin");
+        c.handle(
+            "@msgid=f1;+radio/delivery=sent;+radio/msgid=f1;+radio/parts=3/3 TAGMSG #bulletin",
+        );
+        c.handle(
+            "@msgid=f1;+radio/delivery=delivered;+radio/msgid=f1;+radio/parts=3/3 TAGMSG #bulletin",
+        );
         let l = &lines(&c, "#bulletin")[0];
         assert_eq!(l.ticks, "[ok]");
         assert_eq!(l.parts_footer, "sent 3/3  ■■■  ✓✓ delivered");

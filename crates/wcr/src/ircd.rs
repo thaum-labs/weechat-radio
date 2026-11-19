@@ -1130,7 +1130,17 @@ fn finish_irc_line(line: &[u8]) -> String {
     while end > 0 && line[end - 1] == b'\r' {
         end -= 1;
     }
-    String::from_utf8_lossy(&line[..end]).into_owned()
+    // A line cut at the length limit can end inside a character (an
+    // emoji is 4 bytes): drop that partial character rather than show a
+    // replacement mark (#365).
+    let text = &line[..end];
+    match std::str::from_utf8(text) {
+        Ok(t) => t.to_string(),
+        Err(e) if e.error_len().is_none() => {
+            String::from_utf8_lossy(&text[..e.valid_up_to()]).into_owned()
+        }
+        Err(_) => String::from_utf8_lossy(text).into_owned(),
+    }
 }
 
 async fn discard_irc_line_remainder<R: AsyncBufReadExt + Unpin>(reader: &mut R) -> Result<()> {

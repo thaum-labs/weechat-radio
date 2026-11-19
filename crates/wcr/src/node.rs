@@ -14,8 +14,8 @@ use crate::net::peers::DirectPeers;
 use crate::presets::{self, Preset, Rung};
 use crate::proto::frag::{self, FragAssembler};
 use crate::proto::{
-    load_or_create, Callsign, Envelope, Flags, IdentityKeys, MsgId, MsgType,
-    Priority, FLAG_GROUP, FLAG_INET_OK, FLAG_NO_INET, FLAG_REQ_ACK, FLAG_THIRD_PARTY, MAX_BODY,
+    load_or_create, Callsign, Envelope, Flags, IdentityKeys, MsgId, MsgType, Priority, FLAG_GROUP,
+    FLAG_INET_OK, FLAG_NO_INET, FLAG_REQ_ACK, FLAG_THIRD_PARTY, MAX_BODY,
 };
 use crate::relay::{self, Action, Engine};
 use crate::status::{self, SharedStatus};
@@ -4260,7 +4260,10 @@ async fn watch_config_file(rt: Runtime) {
         if !changed {
             continue;
         }
-        tracing::info!("wcr.toml modem settings changed: preset {}", disk.modem.preset);
+        tracing::info!(
+            "wcr.toml modem settings changed: preset {}",
+            disk.modem.preset
+        );
         rt.cfg.lock().modem = disk.modem.clone();
         rt.snap.lock().preset = disk.modem.preset.clone();
         request_modem_restart(&rt);

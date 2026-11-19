@@ -1086,9 +1086,11 @@ mod tests {
 
     #[test]
     fn a_saved_preset_the_modem_does_not_run_says_restart_to_apply() {
-        let mut s = StatusSnapshot::default();
-        s.preset = "vhf-fm".into();
-        s.preset_running = "vhf-fm".into();
+        let mut s = StatusSnapshot {
+            preset: "vhf-fm".into(),
+            preset_running: "vhf-fm".into(),
+            ..Default::default()
+        };
         assert_eq!(s.preset_status(), "vhf-fm");
         s.preset_running.clear();
         assert_eq!(s.preset_status(), "vhf-fm", "unknown modem: no claim");
@@ -1099,6 +1101,9 @@ mod tests {
         );
         s.preset_running = "vhf-fm".into();
         s.modem_restart_pending = true;
-        assert!(s.preset_pending_note().unwrap().contains("restart to apply"));
+        assert!(s
+            .preset_pending_note()
+            .unwrap()
+            .contains("restart to apply"));
     }
 }

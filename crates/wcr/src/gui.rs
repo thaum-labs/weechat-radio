@@ -43,6 +43,8 @@ const LINE: Color32 = Color32::from_rgb(33, 40, 64);
 const GREEN: Color32 = Color32::from_rgb(57, 255, 20);
 const AMBER: Color32 = Color32::from_rgb(255, 196, 61);
 const RED: Color32 = Color32::from_rgb(255, 77, 109);
+/// Another station's callsign where it needs to stand out (#365).
+const CALL_CYAN: Color32 = Color32::from_rgb(0, 208, 208);
 const CODE: Color32 = Color32::from_rgb(18, 18, 24);
 /// Chat input's text margin (egui's default), so the `/` list can match its box.
 const INPUT_MARGIN: egui::Margin = egui::Margin::symmetric(4.0, 2.0);
@@ -2504,15 +2506,26 @@ impl eframe::App for GuiApp {
                     self.status.as_ref().map(|s| s.hub_ok).unwrap_or(false),
                 );
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(&access)
-                            .color(if crate::slash::is_bulletin(&self.active_channel) {
-                                PURPLE
-                            } else {
-                                GREEN
-                            })
-                            .font(FontId::monospace(12.0)),
-                    );
+                    let colour = if crate::slash::is_bulletin(&self.active_channel) {
+                        PURPLE
+                    } else {
+                        GREEN
+                    };
+                    // The other station's callsign in its own colour (#365).
+                    match access.strip_prefix("DIRECT · ").and_then(|r| r.strip_suffix(" only")) {
+                        Some(call) => {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            let mono = |t: &str, c: Color32| {
+                                RichText::new(t).color(c).font(FontId::monospace(12.0))
+                            };
+                            ui.label(mono("DIRECT · ", colour));
+                            ui.label(mono(call, CALL_CYAN).strong());
+                            ui.label(mono(" only ", colour));
+                        }
+                        None => {
+                            ui.label(RichText::new(&access).color(colour).font(FontId::monospace(12.0)));
+                        }
+                    }
                     ui.label(RichText::new("·").color(DIM).monospace());
                     ui.label(
                         RichText::new(&crypto)
@@ -2719,7 +2732,7 @@ impl eframe::App for GuiApp {
                                             }
                                             ui.label(
                                                 RichText::new(format!("[{}]", line.nick))
-                                                    .color(if mine { ORANGE } else { ACCENT })
+                                                    .color(if mine { ORANGE } else { CALL_CYAN })
                                                     .monospace(),
                                             );
                                             match crate::chat_line::saved_file(&line.text) {
@@ -2753,7 +2766,7 @@ impl eframe::App for GuiApp {
                                                         );
                                                     }
                                                     ui.label(
-                                                        RichText::new(&line.text)
+                                                        RichText::new(drawable(ui, &line.text))
                                                             .color(FG)
                                                             .monospace(),
                                                     );
@@ -7028,9 +7041,18 @@ pub(crate) fn group_footer_row(
         FooterTone::Done => green,
         FooterTone::Missing => red,
     };
+    // Under the message text, past the time and callsign columns.
+    let font = FontId::monospace(12.5);
+    let cols = if line.when.is_empty() {
+        0
+    } else {
+        line.when.chars().count() + 1
+    } + 11;
+    let indent = ui.fonts(|f| f.glyph_width(&font, 'M')) * cols as f32;
     ui.horizontal(|ui| {
-        ui.add_space(24.0);
-        ui.label(RichText::new(footer).color(colour).monospace().small())
+        ui.add_space(indent);
+        let footer = drawable(ui, &footer);
+        ui.label(RichText::new(footer).color(colour).font(font))
             .on_hover_text(format!(
                 "one long message sent as {} pieces; {badge}",
                 badge.split('/').nth(1).unwrap_or("?")
@@ -7047,14 +7069,39 @@ pub(crate) fn group_footer_row(
 pub(crate) fn group_mark(line: &ChatLine) -> Option<(&'static str, crate::chat_line::FooterTone)> {
     use crate::chat_line::FooterTone;
     let (_, _, tone) = crate::chat_line::group_footer(line, crate::chat_parts::unix_now())?;
-    if line.parts.is_none() {
-        return None;
-    }
+    line.parts.as_ref()?;
     match tone {
         FooterTone::InProgress => Some(("⋯", tone)),
         FooterTone::Missing => Some(("⚠", tone)),
         FooterTone::Done => None,
     }
+}
+
+/// Chat text the app's fonts can draw (#365). Emoji modifiers the font
+/// lacks (skin tones, variation selectors, joiners) are left out so the base
+/// emoji shows; any other character it cannot draw becomes a readable `[?]`
+/// instead of an empty box.
+pub(crate) fn drawable(ui: &egui::Ui, text: &str) -> String {
+    let font = FontId::monospace(14.0);
+    ui.fonts(|f| {
+        if text.is_ascii() || f.has_glyphs(&font, text) {
+            return text.to_string();
+        }
+        let mut out = String::with_capacity(text.len());
+        for c in text.chars() {
+            if c.is_ascii() || f.has_glyph(&font, c) {
+                out.push(c);
+            } else if c == '✓' {
+                // The font has the heavy tick but not the light one.
+                out.push('✔');
+            } else if matches!(c as u32, 0x200D | 0xFE00..=0xFE0F | 0x1F3FB..=0x1F3FF | 0xE0020..=0xE007F) {
+                // Modifier or joiner: the emoji before it still shows.
+            } else {
+                out.push_str("[?]");
+            }
+        }
+        out
+    })
 }
 
 fn mark_key(ui: &mut egui::Ui) {

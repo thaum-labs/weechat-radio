@@ -35,7 +35,10 @@ pub fn parse(body: &str) -> Option<(usize, usize, &str)> {
     let close = rest.find("] ")?;
     let (a, b) = rest[..close].split_once('/')?;
     let num = |s: &str| -> Option<usize> {
-        if s.is_empty() || s.len() > 2 || s.starts_with('0') || !s.bytes().all(|c| c.is_ascii_digit())
+        if s.is_empty()
+            || s.len() > 2
+            || s.starts_with('0')
+            || !s.bytes().all(|c| c.is_ascii_digit())
         {
             return None;
         }
@@ -396,7 +399,10 @@ mod tests {
         for typed in ["[1/3] of the cake", "\\[2/2] x", "\\\\[1/2] y"] {
             let sent = split(typed, 300);
             assert_eq!(sent.len(), 1);
-            assert!(parse(&sent[0]).is_none(), "{typed} must not read as a piece");
+            assert!(
+                parse(&sent[0]).is_none(),
+                "{typed} must not read as a piece"
+            );
             assert_eq!(read(&sent[0]), Body::Whole(typed));
         }
         // Not tag-like: left alone.
@@ -431,8 +437,14 @@ mod tests {
                 // or modifier, and never ends on a joiner.
                 let first = t.chars().next().unwrap();
                 assert!(!first.is_whitespace());
-                assert!(!sticks_to_previous(first), "max {max}: piece starts with {first:?}");
-                assert!(!t.ends_with('\u{200D}'), "max {max}: piece ends on a joiner");
+                assert!(
+                    !sticks_to_previous(first),
+                    "max {max}: piece starts with {first:?}"
+                );
+                assert!(
+                    !t.ends_with('\u{200D}'),
+                    "max {max}: piece ends on a joiner"
+                );
                 parts.add(i, n, t, 0);
             }
             assert_eq!(parts.text(), line, "max {max}");

@@ -323,9 +323,24 @@ impl ModemProcess {
     }
 
     /// End modem73 and wait until it is gone, so a new one can take its ports.
+    /// SIGTERM first so modem73 closes its audio cleanly (QA #254), then a
+    /// kill if it is still there after [`MODEM_STOP_WAIT`].
     pub async fn stop(mut self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.child.id() {
+            // SAFETY: a plain signal to our own child process.
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGTERM);
+            }
+            if tokio::time::timeout(MODEM_STOP_WAIT, self.child.wait())
+                .await
+                .is_ok()
+            {
+                return;
+            }
+        }
         let _ = self.child.start_kill();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), self.child.wait()).await;
+        let _ = tokio::time::timeout(MODEM_STOP_WAIT, self.child.wait()).await;
     }
 
     pub async fn wait(&mut self) -> Result<()> {
