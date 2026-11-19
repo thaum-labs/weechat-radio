@@ -4569,9 +4569,10 @@ impl GuiApp {
 
     /// New rows for the all-traffic monitor, while it is open (#243).
     fn poll_traffic(&mut self) {
-        if self.center != CenterView::Traffic
-            || self.last_traffic_poll.elapsed() < Duration::from_secs(2)
-        {
+        // The modem73 layout's SIGNAL column graphs the SNR of frames heard,
+        // so it keeps the traffic list fresh on every tab.
+        let wanted = self.center == CenterView::Traffic || self.layout == modem73::Layout::Modem73;
+        if !wanted || self.last_traffic_poll.elapsed() < Duration::from_secs(2) {
             return;
         }
         self.last_traffic_poll = Instant::now();
