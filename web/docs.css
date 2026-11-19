@@ -1003,3 +1003,23 @@ body.cmp-page .page-panel { min-width: 0; }
   font-size: 14px;
 }
 .article-nextlink { margin-left: auto; text-align: right; }
+
+/* --- airtime: frame timelines on the Weak signals page ------------------- */
+
+.frames, .airtime { margin: 10px 0 14px; display: grid; gap: 10px; }
+.at-title { margin: 8px 0 0; font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
+.at-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 10px; font-size: 12px; color: var(--dim); margin-bottom: 4px; }
+.at-head strong { color: var(--fg); font-weight: 500; }
+.at-track, .fr-track { position: relative; height: 18px; background: rgba(125, 155, 255, 0.06); border: 1px solid var(--line); }
+.at-f { position: absolute; top: 2px; bottom: 2px; display: inline-block; }
+.at-tx { background: var(--accent); }
+.at-rx { background: var(--mode-internet-radio); }
+.at-axis { position: relative; height: 16px; font-size: 11px; color: var(--dim); margin-top: -4px; }
+.at-axis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.at-axis span:first-child { transform: none; }
+.at-axis span:last-child { transform: translateX(-100%); }
+.at-key { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 4px 0 0; font-size: 12px; color: var(--dim); }
+.at-key .at-f { position: static; width: 14px; height: 10px; }
+.fr-frame { position: absolute; top: 2px; bottom: 2px; left: 2px; border: 1px dashed var(--accent); }
+.fr-frame b { display: block; height: 100%; background: var(--accent); }
+.at-key span { display: inline-flex; align-items: center; gap: 6px; }

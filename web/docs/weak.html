@@ -24,7 +24,7 @@
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="stylesheet" href="/styles.css?v=58" />
-  <link rel="stylesheet" href="/docs.css?v=5" />
+  <link rel="stylesheet" href="/docs.css?v=6" />
 </head>
 <body class="page-doc">
   <div id="scan"></div>
@@ -59,11 +59,6 @@
       <p class="crumb"><a href="/docs.html">docs</a> › <a href="/docs.html#signals-and-modes">Signals and modes</a> › <span aria-current="page">Weak signals</span></p>
       <h1><span class="who">weechat-radio</span><span class="sym">:$</span> Weak signals</h1>
       <p class="lead">Chat still works when the path is noisy, fading, or barely above the noise. You pick a slower preset. The program retries and steps down if the other station does not acknowledge.</p>
-
-      <div class="warn-box">
-        <h2>Upgrade every station first</h2>
-        <p>This build of <code>wcr</code> (v1.0.16) speaks protocol version 2, and so does the hub. Older nodes speak a different packet layout. Version 1 frames are still decoded, but every station that wants to talk on radio with this hub should run this build.</p>
-      </div>
 
       <div class="pair">
         <section class="article-section article-section--first" aria-labelledby="needH">
@@ -201,7 +196,54 @@
         <h3>Why it can't go faster on HF</h3>
         <p>A late dial-up modem had a clean wire with no fading and both ends talking at once. On HF the signal is often only just above the noise and fades several times a second, and the radio has to stop, turn round and listen for every receipt. The HF presets are already close to what that noise allows.</p>
         <h3>Faster on VHF/UHF: <code>vhf-fast</code></h3>
-        <p>A strong local FM signal has no hiss, so it can carry a denser waveform. <code>vhf-fast</code> sends QAM16 instead of <code>vhf-fm</code>'s QPSK, and the modem picks a 1&nbsp;s short frame for lines, receipts and mail pieces instead of a 2.6&nbsp;s one. If a receipt is missed it drops back to QPSK, so near the edge of range it is no worse than <code>vhf-fm</code>.</p>
+        <p>A strong local FM signal has no hiss, so it can carry a denser waveform. If a receipt is missed it drops back to QPSK, so near the edge of range it is no worse than <code>vhf-fm</code>.</p>
+        <h3>How the frames make it faster</h3>
+        <p>The modem sends in fixed-size frames, and a frame takes its full time on air even when it is half empty. <code>vhf-fm</code> has one size: 512 bytes in 2.6&nbsp;s. <code>vhf-fast</code> packs four bits into each symbol instead of two (QAM16 instead of QPSK), and lets the modem pick a short frame when the data fits: 256 bytes in under 1&nbsp;s.</p>
+        <div class="frames" aria-label="One 200-byte chat line in each kind of frame">
+          <div class="fr-row">
+            <div class="at-head"><code>vhf-fm</code><span>512-byte frame, 2.6 s, 39% used by a chat line</span></div>
+            <div class="fr-track"><div class="fr-frame" style="width:86.6%"><b style="width:39%"></b></div></div>
+          </div>
+          <div class="fr-row">
+            <div class="at-head"><code>vhf-fast</code><span>256-byte short frame, 0.96 s, 78% used</span></div>
+            <div class="fr-track"><div class="fr-frame" style="width:31.9%"><b style="width:78%"></b></div></div>
+          </div>
+        </div>
+        <p>Every line waits for a receipt, and a 1&nbsp;KB mail goes in several pieces, so the shorter frame pays off each time. On the same scale:</p>
+        <div class="airtime">
+          <p class="at-title">One chat line and its receipt</p>
+            <div class="at-row">
+              <div class="at-head"><code>vhf-fm</code><span>line + receipt · <strong>5.4 s</strong></span></div>
+              <div class="at-track" role="img" aria-label="vhf-fm: line + receipt, 5.4 seconds"><i class="at-f at-tx" style="left:0.00%;width:14.43%"></i><i class="at-f at-rx" style="left:15.82%;width:14.43%"></i></div>
+            </div>
+            <div class="at-row">
+              <div class="at-head"><code>vhf-fast</code><span>line + receipt · <strong>2.2 s</strong></span></div>
+              <div class="at-track" role="img" aria-label="vhf-fast: line + receipt, 2.2 seconds"><i class="at-f at-tx" style="left:0.00%;width:5.32%"></i><i class="at-f at-rx" style="left:6.71%;width:5.32%"></i></div>
+            </div>
+          <p class="at-title">A 1 KB mail</p>
+            <div class="at-row">
+              <div class="at-head"><code>vhf-fm</code><span>6 frames · <strong>16.8 s</strong></span></div>
+              <div class="at-track" role="img" aria-label="vhf-fm: 6 frames, 16.8 seconds"><i class="at-f at-tx" style="left:0.00%;width:14.43%"></i><i class="at-f at-tx" style="left:15.82%;width:14.43%"></i><i class="at-f at-tx" style="left:31.63%;width:14.43%"></i><i class="at-f at-tx" style="left:47.45%;width:14.43%"></i><i class="at-f at-tx" style="left:63.27%;width:14.43%"></i><i class="at-f at-tx" style="left:79.08%;width:14.43%"></i></div>
+            </div>
+            <div class="at-row">
+              <div class="at-head"><code>vhf-fast</code><span>7 short frames · <strong>8.2 s</strong></span></div>
+              <div class="at-track" role="img" aria-label="vhf-fast: 7 short frames, 8.2 seconds"><i class="at-f at-tx" style="left:0.00%;width:5.32%"></i><i class="at-f at-tx" style="left:6.71%;width:5.32%"></i><i class="at-f at-tx" style="left:13.41%;width:5.32%"></i><i class="at-f at-tx" style="left:20.12%;width:5.32%"></i><i class="at-f at-tx" style="left:26.82%;width:5.32%"></i><i class="at-f at-tx" style="left:33.53%;width:5.32%"></i><i class="at-f at-tx" style="left:40.23%;width:5.32%"></i></div>
+            </div>
+          <div class="at-axis" aria-hidden="true"><span style="left:0.00%">0 s</span><span style="left:16.67%">3 s</span><span style="left:33.33%">6 s</span><span style="left:50.00%">9 s</span><span style="left:66.67%">12 s</span><span style="left:83.33%">15 s</span><span style="left:100.00%">18 s</span></div>
+          <p class="at-key"><span><i class="at-f at-tx"></i> your station sends</span> <span><i class="at-f at-rx"></i> the receipt comes back</span></p>
+        </div>
+        <p>Plus a short wait for a clear channel before each send. If a receipt is missed, <code>vhf-fast</code> sends again as <code>vhf-fm</code> would.</p>
+        <h3>How strong the signal needs to be</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Preset</th><th>Mode</th><th>Needs about</th><th>On FM that means</th></tr></thead>
+            <tbody>
+              <tr><td><code>vhf-fm</code></td><td>QPSK 1/2</td><td>3 dB SNR</td><td>Works with some hiss on the signal</td></tr>
+              <tr><td><code>vhf-fast</code></td><td>QAM16 1/2</td><td>9 dB SNR</td><td>No hiss at all (full quieting)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>These are textbook figures for a steady signal. A simple check: if every line on <code>vhf-fm</code> gets <code>[ok]</code> first time and the received SNR stays at 10&nbsp;dB or more, try <code>vhf-fast</code>. If lines start to need a second try, go back.</p>
         <ul>
           <li><strong>Needs a radio with real PTT:</strong> a Digirig, CM108 sound card or CAT. It is not offered on Bluetooth radios (the radio's audio codec breaks dense modes), and it is not for VOX (VOX clips the start of every short frame).</li>
           <li><strong>Only the sender needs it.</strong> A station on <code>vhf-fm</code> hears <code>vhf-fast</code> lines, as long as the signal is strong.</li>
