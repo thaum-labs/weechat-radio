@@ -319,8 +319,10 @@ pub async fn run(cfg: &Config) -> Result<()> {
             handle_irc(&mut app, &line);
         }
         while let Ok(snap) = rx_st.try_recv() {
-            if !snap.preset.is_empty() {
-                if let Some(p) = Preset::parse(&snap.preset) {
+            // The preset modem73 really runs (#365 rc4); the station's
+            // "restarting modem…" / "now running" notices say when it moves.
+            if !snap.preset_live().is_empty() {
+                if let Some(p) = Preset::parse(snap.preset_live()) {
                     app.preset = p;
                 }
             }
@@ -940,7 +942,8 @@ fn handle_irc(app: &mut App, line: &str) {
 
 const TUI_AMBER: Color = Color::Rgb(255, 196, 61);
 
-/// The footer under a long message (#365), and its colour.
+/// The progress of a long message (#365), and its colour; shown after
+/// the line's marks since rc4.
 fn tui_group_footer(l: &ChatLine, now: u64) -> Option<(String, Color)> {
     use crate::chat_parts::Status;
     if let Some(p) = &l.parts {
@@ -1265,13 +1268,15 @@ fn draw(f: &mut Frame, app: &App) {
             Span::raw(if tries.is_empty() { "" } else { " " }),
             Span::styled(tries, Style::default().fg(t.dim)),
         ]);
-        chat.push(Line::from(spans));
+        // On the marks line, after them (#365 rc4), not on a line of its own.
         if let Some((text, colour)) = footer {
-            chat.push(Line::from(Span::styled(
-                format!("{}{text}", " ".repeat(l.when.chars().count().min(20) + 10)),
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                text.trim().to_string(),
                 Style::default().fg(colour),
-            )));
+            ));
         }
+        chat.push(Line::from(spans));
     }
     // Wide characters (emoji) count two columns; keep the newest lines in
     // view, each wrapped to the panel width.
@@ -1347,7 +1352,7 @@ fn draw(f: &mut Frame, app: &App) {
                 "freq",
                 snap.map(|s| {
                     if s.freq_khz == 0 {
-                        s.preset.clone()
+                        s.preset_live().to_string()
                     } else {
                         format!(
                             "{} {} ({})",

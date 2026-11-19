@@ -27,9 +27,14 @@ pub struct StatusSnapshot {
     /// from `preset`, the change is waiting for a modem restart.
     #[serde(default)]
     pub preset_running: String,
-    /// A modem restart to apply a changed preset or modem setting is due.
+    /// A modem restart to apply a changed preset or modem setting is due
+    /// or under way.
     #[serde(default)]
     pub modem_restart_pending: bool,
+    /// Why the automatic modem restart failed (#365 rc4). Empty when it did
+    /// not fail; only then is the operator asked to stop and start.
+    #[serde(default)]
+    pub modem_restart_failed: String,
     pub frequency: String,
     pub snr: f32,
     pub ber: f32,
@@ -323,29 +328,40 @@ impl HeardBrief {
 }
 
 impl StatusSnapshot {
-    /// Set while the saved preset (or another modem setting) is not yet the
-    /// one modem73 runs (#365): "restart to apply", with the mode it still
-    /// sends. None when what is shown is what is sent.
+    /// What the preset line says while a changed preset is not yet live
+    /// (#365 rc4): "restarting modem…" while the station restarts modem73
+    /// itself, "stop and start to apply" only when that restart failed.
+    /// None when the preset shown is the preset running.
     pub fn preset_pending_note(&self) -> Option<String> {
-        let differs = !self.preset_running.is_empty() && self.preset_running != self.preset;
-        if !(differs || self.modem_restart_pending) {
-            return None;
+        if !self.modem_restart_failed.is_empty() {
+            return Some("modem restart failed: stop and start to apply".into());
         }
-        if differs {
-            Some(format!(
-                "restart to apply: modem73 still runs {}",
-                self.preset_running
-            ))
+        let differs = !self.preset_running.is_empty() && self.preset_running != self.preset;
+        (differs || self.modem_restart_pending).then(|| "restarting modem…".into())
+    }
+
+    /// The preset modem73 really runs: the one it was started (or last set)
+    /// with, else the saved one when the station has not said.
+    pub fn preset_live(&self) -> &str {
+        if self.preset_running.is_empty() {
+            &self.preset
         } else {
-            Some("restart to apply: modem73 restarts when the radio is idle".into())
+            &self.preset_running
         }
     }
 
-    /// The preset for `/status`: the saved one, plus the pending note.
+    /// The preset for `/status`: the one really running, and while a change
+    /// waits, the one it is moving to (#365 rc4).
     pub fn preset_status(&self) -> String {
+        let live = self.preset_live();
+        let to = &self.preset;
         match self.preset_pending_note() {
-            Some(note) => format!("{} ({note})", self.preset),
-            None => self.preset.clone(),
+            None => live.to_string(),
+            Some(note) if live == to => format!("{live} ({note})"),
+            Some(_) if !self.modem_restart_failed.is_empty() => {
+                format!("{live} (modem restart failed: stop and start to apply {to})")
+            }
+            Some(_) => format!("{live} (restarting modem for {to}…)"),
         }
     }
 
@@ -605,6 +621,7 @@ impl Default for StatusSnapshot {
             preset: "vhf-fm".into(),
             preset_running: String::new(),
             modem_restart_pending: false,
+            modem_restart_failed: String::new(),
             frequency: String::new(),
             snr: 0.0,
             ber: 0.0,
@@ -1085,25 +1102,33 @@ mod tests {
     }
 
     #[test]
-    fn a_saved_preset_the_modem_does_not_run_says_restart_to_apply() {
+    fn status_reports_the_preset_really_running() {
         let mut s = StatusSnapshot {
             preset: "vhf-fm".into(),
             preset_running: "vhf-fm".into(),
             ..Default::default()
         };
         assert_eq!(s.preset_status(), "vhf-fm");
+        assert_eq!(s.preset_pending_note(), None);
         s.preset_running.clear();
-        assert_eq!(s.preset_status(), "vhf-fm", "unknown modem: no claim");
+        assert_eq!(s.preset_status(), "vhf-fm", "unknown modem: the saved one");
         s.preset_running = "vox-safe".into();
-        assert_eq!(
-            s.preset_status(),
-            "vhf-fm (restart to apply: modem73 still runs vox-safe)"
-        );
-        s.preset_running = "vhf-fm".into();
         s.modem_restart_pending = true;
+        assert_eq!(s.preset_live(), "vox-safe");
+        assert_eq!(s.preset_status(), "vox-safe (restarting modem for vhf-fm…)");
+        // Stopped for the restart: nothing running yet, still restarting.
+        s.preset_running.clear();
+        assert_eq!(s.preset_status(), "vhf-fm (restarting modem…)");
+        // Restarted: what is shown is what runs, no note.
+        s.preset_running = "vhf-fm".into();
+        s.modem_restart_pending = false;
+        assert_eq!(s.preset_status(), "vhf-fm");
+        // Only a failed restart asks for a stop and start.
+        s.preset_running = "vox-safe".into();
+        s.modem_restart_failed = "port in use".into();
         assert!(s
             .preset_pending_note()
             .unwrap()
-            .contains("restart to apply"));
+            .contains("stop and start to apply"));
     }
 }

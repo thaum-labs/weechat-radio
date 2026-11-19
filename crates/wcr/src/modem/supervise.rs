@@ -47,6 +47,38 @@ pub fn restart_key(m: &crate::config::ModemConfig) -> String {
     .to_string()
 }
 
+/// True when `after` differs from `before` only in settings the running
+/// station applies by itself, with a modem73 restart (the [`restart_key`]
+/// ones): the app then says "restarting modem…" instead of asking for a
+/// stop and start (#365 rc4).
+pub fn only_restart_settings_differ(
+    before: &crate::config::Config,
+    after: &crate::config::Config,
+) -> bool {
+    let mut a = after.clone();
+    let (m, b) = (&mut a.modem, &before.modem);
+    m.preset.clone_from(&b.preset);
+    m.ptt.clone_from(&b.ptt);
+    m.vox_lead_ms = b.vox_lead_ms;
+    m.vox_tail_ms = b.vox_tail_ms;
+    m.tx_level_db = b.tx_level_db;
+    m.csma_mode.clone_from(&b.csma_mode);
+    m.com_port.clone_from(&b.com_port);
+    m.com_line.clone_from(&b.com_line);
+    m.cm108_gpio.clone_from(&b.cm108_gpio);
+    m.rigctl.clone_from(&b.rigctl);
+    m.hamlib_model.clone_from(&b.hamlib_model);
+    m.hamlib_device.clone_from(&b.hamlib_device);
+    m.hamlib_baud.clone_from(&b.hamlib_baud);
+    m.audio_input.clone_from(&b.audio_input);
+    m.audio_output.clone_from(&b.audio_output);
+    m.binary.clone_from(&b.binary);
+    let same = |x: &crate::config::Config, y: &crate::config::Config| {
+        toml::to_string(x).ok() == toml::to_string(y).ok()
+    };
+    same(&a, before) && !same(after, before)
+}
+
 /// Process id of the modem73 this station started, so a stop signal can end
 /// it too (QA v0.1.104: stopping `wcr node` left modem73 running).
 static MANAGED_PID: Mutex<Option<u32>> = Mutex::new(None);
