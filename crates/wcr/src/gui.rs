@@ -23,6 +23,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
+mod emoji_names;
 mod modem73;
 mod software;
 
@@ -926,6 +927,7 @@ impl GuiApp {
         }
         let path = Config::active_path();
         let before = std::fs::read_to_string(&path).unwrap_or_default();
+        let before_cfg = Config::load(&path).ok();
         self.save_setup();
         if !self.error.is_empty() {
             return;
@@ -933,7 +935,19 @@ impl GuiApp {
         self.show_setup = false;
         let changed = std::fs::read_to_string(&path).unwrap_or_default() != before;
         if changed && self.status.is_some() {
-            self.error = "Setup saved. Stop and start the station to use the new settings.".into();
+            // A preset or other modem setting: the station restarts modem73
+            // by itself once the radio is idle (#365 rc4).
+            let modem_only = before_cfg
+                .zip(Config::load(&path).ok())
+                .is_some_and(|(b, a)| {
+                    crate::modem::supervise::only_restart_settings_differ(&b, &a)
+                });
+            self.error = if modem_only {
+                "Setup saved. Restarting modem… the new settings apply once the radio is idle."
+                    .into()
+            } else {
+                "Setup saved. Stop and start the station to use the new settings.".into()
+            };
         }
     }
 
@@ -1317,13 +1331,14 @@ impl GuiApp {
     }
 
     fn send_chat(&mut self) {
-        let text = self.draft.trim().to_string();
+        // The box shows emoji as :names:; what goes out is the emoji (#365 rc4).
+        let text = emoji_names::from_names(self.draft.trim());
         if text.is_empty() {
             return;
         }
         self.draft.clear();
         if text.starts_with('/') {
-            self.send_line(&text);
+            self.send_line(&text.replace(['\r', '\n'], " "));
             return;
         }
         // One line, however long: the station cuts it into tagged pieces
@@ -1854,7 +1869,9 @@ impl eframe::App for GuiApp {
         let palette_open = !suggestions.is_empty();
         if self.configured() {
             ctx.input_mut(|i| {
-                enter = i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
+                // Shift+Enter is a new line in the chat box (#365 rc4).
+                enter =
+                    !i.modifiers.shift && i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
                 if palette_open {
                     down = i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
                     up = i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
@@ -2660,22 +2677,36 @@ impl eframe::App for GuiApp {
                 let mut input_rect: Option<egui::Rect> = None;
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                     ui.add_space(6.0);
-                    ui.horizontal(|ui| {
+                    // As tall as the text in the box (#365 rc4), so a row
+                    // laid out bottom-up is not cut off below.
+                    let row_h = chat_input_height(
+                        ui,
+                        &self.draft,
+                        ui.available_width() - 110.0,
+                        &FontId::monospace(14.0),
+                    )
+                    .max(28.0);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), row_h),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
                         ui.label(
                             RichText::new("$")
                                 .color(ACCENT)
                                 .font(FontId::monospace(14.0)),
                         );
-                        let resp = ui.add(
-                            egui::TextEdit::singleline(&mut self.draft)
-                                .desired_width(ui.available_width() - 90.0)
-                                .hint_text(placeholder(if in_direct {
-                                    "direct message, or /commands"
-                                } else {
-                                    "message in this channel, or /join /invite /part"
-                                }))
-                                .margin(INPUT_MARGIN)
-                                .font(FontId::monospace(14.0)),
+                        let width = ui.available_width() - 90.0;
+                        let resp = chat_input(
+                            ui,
+                            &mut self.draft,
+                            width,
+                            placeholder(if in_direct {
+                                "direct message, or /commands"
+                            } else {
+                                "message in this channel, or /join /invite /part"
+                            }),
+                            FontId::monospace(14.0),
+                            true,
                         );
                         if enter {
                             resp.request_focus();
@@ -2701,7 +2732,11 @@ impl eframe::App for GuiApp {
                         egui::ScrollArea::vertical()
                             .stick_to_bottom(true)
                             .auto_shrink([false, false])
+                            // A drag selects text (#365 rc4); the wheel and
+                            // the bar scroll.
+                            .drag_to_scroll(false)
                             .show(ui, |ui| {
+                                ui.style_mut().interaction.selectable_labels = true;
                                 let show_snr =
                                     self.status.as_ref().map(|s| s.show_snr).unwrap_or(true);
                                 let mut open_folder_of: Option<String> = None;
@@ -2766,7 +2801,7 @@ impl eframe::App for GuiApp {
                                                         );
                                                     }
                                                     ui.label(
-                                                        RichText::new(drawable(ui, &line.text))
+                                                        RichText::new(shown_text(ui, &line.text))
                                                             .color(FG)
                                                             .monospace(),
                                                     );
@@ -2824,8 +2859,14 @@ impl eframe::App for GuiApp {
                                                     if line.tries == 1 { "" } else { "s" }
                                                 ));
                                             }
+                                            // On the marks line, after them (#365 rc4).
+                                            group_footer_label(
+                                                ui,
+                                                line,
+                                                [AMBER, GREEN, RED],
+                                                FontId::monospace(13.0),
+                                            );
                                         });
-                                        group_footer_row(ui, line, AMBER, GREEN, RED);
                                     }
                                 }
                                 if let Some(path) = open_folder_of {
@@ -7020,15 +7061,16 @@ const MARK_KEY: &[(&str, &str)] = &[
     ),
 ];
 
-/// The footer under a long message received or sent as pieces (#365):
+/// The progress of a long message received or sent as pieces (#365):
 /// amber while it is coming or going out, green when done, red when a
-/// piece is missing. Shared by both layouts.
-pub(crate) fn group_footer_row(
+/// piece is missing. Since rc4 it sits on the line's own marks row, next to
+/// `[tx]` / `[ok]` / `[rf]`, not on a line of its own. Shared by both
+/// layouts; `tones` is amber, green, red.
+pub(crate) fn group_footer_label(
     ui: &mut egui::Ui,
     line: &ChatLine,
-    amber: Color32,
-    green: Color32,
-    red: Color32,
+    tones: [Color32; 3],
+    font: FontId,
 ) {
     use crate::chat_line::FooterTone;
     let Some((badge, footer, tone)) =
@@ -7037,31 +7079,122 @@ pub(crate) fn group_footer_row(
         return;
     };
     let colour = match tone {
-        FooterTone::InProgress => amber,
-        FooterTone::Done => green,
-        FooterTone::Missing => red,
+        FooterTone::InProgress => tones[0],
+        FooterTone::Done => tones[1],
+        FooterTone::Missing => tones[2],
     };
-    // Under the message text, past the time and callsign columns.
-    let font = FontId::monospace(12.5);
-    let cols = if line.when.is_empty() {
-        0
-    } else {
-        line.when.chars().count() + 1
-    } + 11;
-    let indent = ui.fonts(|f| f.glyph_width(&font, 'M')) * cols as f32;
-    ui.horizontal(|ui| {
-        ui.add_space(indent);
-        let footer = drawable(ui, &footer);
-        ui.label(RichText::new(footer).color(colour).font(font))
-            .on_hover_text(format!(
-                "one long message sent as {} pieces; {badge}",
-                badge.split('/').nth(1).unwrap_or("?")
-            ));
-    });
+    let footer = drawable(ui, footer.trim());
+    ui.label(RichText::new(footer).color(colour).font(font))
+        .on_hover_text(format!(
+            "one long message sent as {} pieces; {badge}",
+            badge.split('/').nth(1).unwrap_or("?")
+        ));
     if tone == FooterTone::InProgress {
         // Repaint so "incomplete" shows when its time comes.
         ui.ctx().request_repaint_after(Duration::from_secs(5));
     }
+}
+
+/// How wide [`group_footer_label`] draws for `line`, with its gap; 0 for an
+/// ordinary line.
+pub(crate) fn group_footer_width(ui: &egui::Ui, line: &ChatLine, font: &FontId) -> f32 {
+    let Some((_, footer, _)) = crate::chat_line::group_footer(line, crate::chat_parts::unix_now())
+    else {
+        return 0.0;
+    };
+    let w = ui.fonts(|f| f.glyph_width(font, 'M'));
+    (footer.trim().chars().count() as f32 + 1.0) * w + ui.spacing().item_spacing.x
+}
+
+/// Rows the chat input grows to before it scrolls inside (#365 rc4: "about
+/// 4 to 6 lines").
+const INPUT_MAX_ROWS: usize = 5;
+
+/// The chat input box (#365 rc4): one line that grows with the text up to
+/// [`INPUT_MAX_ROWS`], then scrolls inside, so a long paste can be read
+/// before it goes. Enter sends (the app takes plain Enter before this box
+/// sees it); Shift+Enter starts a new line, which goes as a space. Emoji
+/// typed or pasted show as `:names:` like the chat log, and go back to
+/// real emoji when sent.
+pub(crate) fn chat_input(
+    ui: &mut egui::Ui,
+    draft: &mut String,
+    width: f32,
+    hint: impl Into<egui::WidgetText>,
+    font: FontId,
+    frame: bool,
+) -> egui::Response {
+    let id = egui::Id::new("chat_input");
+    let row_h = ui.fonts(|f| f.row_height(&font));
+    let max_h = row_h * INPUT_MAX_ROWS as f32 + 2.0 * INPUT_MARGIN.top + 2.0;
+    let tall = chat_input_rows(ui, draft, width, &font) > INPUT_MAX_ROWS;
+    let edit = egui::TextEdit::multiline(draft)
+        .id(id)
+        .desired_rows(1)
+        .desired_width(width)
+        .return_key(egui::KeyboardShortcut::new(
+            egui::Modifiers::SHIFT,
+            egui::Key::Enter,
+        ))
+        .hint_text(hint)
+        .margin(INPUT_MARGIN)
+        .frame(frame)
+        .font(font);
+    // Past INPUT_MAX_ROWS the box stops growing and scrolls inside.
+    let resp = if tall {
+        egui::ScrollArea::vertical()
+            .id_salt("chat_input_scroll")
+            .max_height(max_h)
+            .min_scrolled_height(max_h)
+            .stick_to_bottom(true)
+            .show(ui, |ui| ui.add(edit))
+            .inner
+    } else {
+        ui.add(edit)
+    };
+    if resp.changed() && !draft.is_ascii() {
+        match egui::TextEdit::load_state(ui.ctx(), id) {
+            Some(mut st) => {
+                let at = st
+                    .cursor
+                    .char_range()
+                    .map(|r| r.primary.index)
+                    .unwrap_or_else(|| draft.chars().count());
+                let at = emoji_names::names_in_draft(draft, at);
+                st.cursor.set_char_range(Some(egui::text::CCursorRange::one(
+                    egui::text::CCursor::new(at),
+                )));
+                st.store(ui.ctx(), id);
+            }
+            None => *draft = emoji_names::to_names(draft),
+        }
+    }
+    resp
+}
+
+/// The height [`chat_input`] takes for `draft` at `width`: one row, growing
+/// with the text to [`INPUT_MAX_ROWS`].
+pub(crate) fn chat_input_height(ui: &egui::Ui, draft: &str, width: f32, font: &FontId) -> f32 {
+    let rows = chat_input_rows(ui, draft, width, font).min(INPUT_MAX_ROWS);
+    rows as f32 * ui.fonts(|f| f.row_height(font)) + 2.0 * INPUT_MARGIN.top + 4.0
+}
+
+/// Wrapped rows of `draft` in the chat input at `width`.
+fn chat_input_rows(ui: &egui::Ui, draft: &str, width: f32, font: &FontId) -> usize {
+    let wrap = (width - 2.0 * INPUT_MARGIN.left).max(40.0);
+    ui.fonts(|f| {
+        f.layout(draft.to_string(), font.clone(), Color32::WHITE, wrap)
+            .rows
+            .len()
+            .max(1)
+    })
+}
+
+/// Chat text as the desktop app shows it: emoji as `:names:` (#365 rc4,
+/// Tobias: always the named form here; on air and in the database they stay
+/// emoji), then anything else the font cannot draw made readable.
+pub(crate) fn shown_text(ui: &egui::Ui, text: &str) -> String {
+    drawable(ui, &emoji_names::to_names(text))
 }
 
 /// `⋯` before a long message still arriving, `⚠` before one missing a

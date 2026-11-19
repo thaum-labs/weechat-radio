@@ -4172,12 +4172,32 @@ fn note_modem73_version(rt: &Runtime, configured: &str) {
     }
 }
 
-/// True when the modem73 this station started runs with other settings than
-/// wcr.toml now holds (#365).
+/// True when the modem73 this station talks to runs with other settings than
+/// wcr.toml now holds (#365). Covers a modem73 this station started and one
+/// it found already running (rc4: that one used to be left on the old mode).
 fn modem_restart_due(rt: &Runtime) -> bool {
     let want = crate::modem::supervise::restart_key(&rt.cfg.lock().modem);
     let txp = rt.txp.lock();
-    txp.modem.is_some() && txp.modem_key.as_deref().is_some_and(|k| k != want)
+    txp.modem_key.as_deref().is_some_and(|k| k != want)
+}
+
+/// Puts the saved preset, PTT and audio devices on a modem73 this station
+/// did not start, over its control port: the same settings start_radio
+/// gives it (#365 rc4). It cannot be restarted from here.
+async fn apply_modem_settings(c: &ControlClient, cfg: &crate::config::ModemConfig) -> Result<()> {
+    if let Some(p) = Preset::parse(&cfg.preset) {
+        c.set_config(p.control_config()).await?;
+    }
+    c.apply_ptt(&cfg.ptt, cfg).await?;
+    if !cfg.audio_input.is_empty() {
+        c.set_config(serde_json::json!({"capture_device": cfg.audio_input}))
+            .await?;
+    }
+    if !cfg.audio_output.is_empty() {
+        c.set_config(serde_json::json!({"playback_device": cfg.audio_output}))
+            .await?;
+    }
+    Ok(())
 }
 
 /// Restarts the managed modem73 with the settings in wcr.toml when they
@@ -4185,7 +4205,13 @@ fn modem_restart_due(rt: &Runtime) -> bool {
 /// (#365). Returns true when a restart is due.
 fn request_modem_restart(rt: &Runtime) -> bool {
     let due = modem_restart_due(rt);
-    rt.snap.lock().modem_restart_pending = due;
+    {
+        let mut s = rt.snap.lock();
+        s.modem_restart_pending = due;
+        if due {
+            s.modem_restart_failed.clear();
+        }
+    }
     if !due {
         return false;
     }
@@ -4217,20 +4243,50 @@ fn request_modem_restart(rt: &Runtime) -> bool {
             rt.snap.lock().modem_restart_pending = false;
             return;
         }
-        let old = rt.txp.lock().modem.take();
-        let from = rt.snap.lock().preset_running.clone();
-        stop_radio(&rt);
-        if let Some(m) = old {
-            m.stop().await;
-        }
+        let from = rt.snap.lock().preset_live().to_string();
         let to = rt.cfg.lock().modem.preset.clone();
-        let note = match start_radio(&rt).await {
-            Ok(()) => format!("modem73 restarted: {from} -> {to}"),
-            Err(e) => format!("modem73 restart for {to} failed: {e}"),
+        rt.irc
+            .notice_all(&format!("restarting modem… ({from} -> {to})"))
+            .await;
+        let managed = rt.txp.lock().modem.is_some();
+        let done = if managed {
+            let old = rt.txp.lock().modem.take();
+            stop_radio(&rt);
+            if let Some(m) = old {
+                m.stop().await;
+            }
+            start_radio(&rt).await.map(|()| "restarted")
+        } else {
+            // A modem73 this station found running: set it over its
+            // control port instead.
+            let control = rt.txp.lock().control.clone();
+            let modem = rt.cfg.lock().modem.clone();
+            match control {
+                Some(c) => apply_modem_settings(&c, &modem).await.map(|()| {
+                    let mut txp = rt.txp.lock();
+                    txp.modem_key = Some(crate::modem::supervise::restart_key(&modem));
+                    rt.snap.lock().preset_running = modem.preset.clone();
+                    "set over its control port"
+                }),
+                None => Err(crate::error::Error::Modem(
+                    "no control port to reach modem73".into(),
+                )),
+            }
+        };
+        let note = match done {
+            // The words the operator asked for (#365 rc4).
+            Ok(how) => format!("now running {to} (modem73 {how})"),
+            Err(e) => {
+                rt.snap.lock().modem_restart_failed = e.to_string();
+                format!(
+                    "modem restart for {to} failed: {e}. Stop and start the station to apply it."
+                )
+            }
         };
         tracing::info!("{note}");
         rt.irc.notice_all(&note).await;
-        rt.snap.lock().modem_restart_pending = modem_restart_due(&rt);
+        let still = modem_restart_due(&rt);
+        rt.snap.lock().modem_restart_pending = still;
     });
     true
 }
@@ -4289,6 +4345,8 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
     });
     let cancel = CancellationToken::new();
     let mut modem = None;
+    // The preset put on modem73 over its control port at start.
+    let mut preset_set: Option<String> = None;
     let mut control = None;
     let kiss;
     let kiss_rx;
@@ -4376,7 +4434,9 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
         let ctrl_addr = format!("{}:{}", cfg.modem.host, cfg.modem.control_port);
         if let Ok((c, mut ev)) = connect_control_retry(&ctrl_addr).await {
             if let Some(p) = Preset::parse(&cfg.modem.preset) {
-                let _ = c.set_config(p.control_config()).await;
+                if c.set_config(p.control_config()).await.is_ok() {
+                    preset_set = Some(p.as_str().to_string());
+                }
             }
             let _ = c.apply_ptt(&cfg.modem.ptt, &cfg.modem).await;
             if !cfg.modem.audio_input.is_empty() {
@@ -4464,6 +4524,11 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
         if let Some(m) = modem {
             rt.snap.lock().preset_running = m.preset().to_string();
             txp.modem = Some(m);
+            txp.modem_key = Some(modem_key);
+        } else if let (Some(p), Some(_)) = (preset_set, &control) {
+            // A modem73 found running: it got the preset over its control
+            // port, and a later change goes the same way (#365 rc4).
+            rt.snap.lock().preset_running = p;
             txp.modem_key = Some(modem_key);
         }
         txp.kiss = kiss;
@@ -4632,7 +4697,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                     persist_cfg(&cfg.lock());
                     if request_modem_restart(rt) {
                         format!(
-                            "preset {}: modem73 restarts to apply it once the radio is idle",
+                            "preset {}: restarting modem… (once the radio is idle)",
                             pr.as_str()
                         )
                     } else {

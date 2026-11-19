@@ -59,6 +59,8 @@ zeroize.workspace = true
 hostname.workspace = true
 notify-rust = "4.11"
 eframe = { version = "0.29", optional = true }
+# Emoji shown as :shortcode: names in the desktop app (#365).
+emojis = { version = "0.9", optional = true }
 open = { version = "5", optional = true }
 tray-icon = { version = "0.19", optional = true }
 tokio-util = { version = "0.7", features = ["codec", "rt"] }
@@ -107,7 +109,7 @@ winresource = "0.1"
 
 [features]
 default = ["desktop", "setup-probe"]
-desktop = ["dep:eframe", "dep:open", "dep:tray-icon", "dep:gtk"]
+desktop = ["dep:eframe", "dep:open", "dep:tray-icon", "dep:gtk", "dep:emojis"]
 setup-probe = ["dep:cpal", "dep:serialport", "dep:alsa"]
 
 [[test]]

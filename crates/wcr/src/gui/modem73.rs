@@ -1361,35 +1361,48 @@ impl GuiApp {
                     egui::Frame::none()
                         .inner_margin(egui::Margin::symmetric(PAD, 6.0))
                         .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(text("$", M_DIM).size(14.0));
-                                let resp = ui.add(
-                                    egui::TextEdit::singleline(&mut self.draft)
-                                        .frame(false)
-                                        .desired_width(ui.available_width() - 80.0)
-                                        .hint_text(
-                                            RichText::new(if in_direct {
-                                                "direct message, or /commands"
-                                            } else {
-                                                "message in this channel, or /join /invite /part"
-                                            })
-                                            .color(M_DIM),
+                            // As tall as the text in the box (#365 rc4).
+                            let row_h = super::chat_input_height(
+                                ui,
+                                &self.draft,
+                                ui.available_width() - 100.0,
+                                &mono(14.0),
+                            )
+                            .max(24.0);
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(ui.available_width(), row_h),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.label(text("$", M_DIM).size(14.0));
+                                    let width = ui.available_width() - 80.0;
+                                    let resp = super::chat_input(
+                                        ui,
+                                        &mut self.draft,
+                                        width,
+                                        RichText::new(if in_direct {
+                                            "direct message, or /commands"
+                                        } else {
+                                            "message in this channel, or /join /invite /part"
+                                        })
+                                        .color(M_DIM),
+                                        mono(14.0),
+                                        false,
+                                    );
+                                    if enter {
+                                        resp.request_focus();
+                                    }
+                                    input_rect = Some(resp.rect + INPUT_MARGIN);
+                                    if ui
+                                        .add(
+                                            flat_btn("SEND", M_FG).min_size(egui::vec2(64.0, 24.0)),
                                         )
-                                        .margin(INPUT_MARGIN)
-                                        .font(mono(14.0)),
-                                );
-                                if enter {
-                                    resp.request_focus();
-                                }
-                                input_rect = Some(resp.rect + INPUT_MARGIN);
-                                if ui
-                                    .add(flat_btn("SEND", M_FG).min_size(egui::vec2(64.0, 24.0)))
-                                    .clicked()
-                                {
-                                    self.send_chat();
-                                    resp.request_focus();
-                                }
-                            });
+                                        .clicked()
+                                    {
+                                        self.send_chat();
+                                        resp.request_focus();
+                                    }
+                                },
+                            );
                         });
                     rule(ui);
                     ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
@@ -1610,8 +1623,10 @@ impl GuiApp {
         egui::ScrollArea::vertical()
             .stick_to_bottom(true)
             .auto_shrink([false, false])
+            // A drag selects text (#365 rc4); the wheel and the bar scroll.
+            .drag_to_scroll(false)
             .show(ui, |ui| {
-                let marks_w = 120.0;
+                ui.style_mut().interaction.selectable_labels = true;
                 for line in &self.chat {
                     if !line.channel.is_empty() && !line.channel.eq_ignore_ascii_case(&active) {
                         continue;
@@ -1622,6 +1637,9 @@ impl GuiApp {
                     }
                     let mine = line.nick.eq_ignore_ascii_case(&self.callsign);
                     let in_flight = mine && line.ticks.contains("[tx]");
+                    // The marks column, wider on a long message so its
+                    // progress sits on the same line as [tx] / [rf] (#365 rc4).
+                    let marks_w = 120.0 + super::group_footer_width(ui, line, &mono(13.0));
                     let left_w =
                         (ui.available_width() - marks_w - 2.0 * ui.spacing().item_spacing.x - 4.0)
                             .max(80.0);
@@ -1659,7 +1677,7 @@ impl GuiApp {
                                             };
                                             ui.label(text(m, c));
                                         }
-                                        ui.label(text(super::drawable(ui, &line.text), body));
+                                        ui.label(text(super::shown_text(ui, &line.text), body));
                                     }
                                 }
                                 if !line.progress.is_empty() {
@@ -1676,10 +1694,17 @@ impl GuiApp {
                         ui.allocate_ui_with_layout(
                             egui::vec2(marks_w, 18.0),
                             egui::Layout::right_to_left(egui::Align::Min),
-                            |ui| self.m73_marks(ui, line, mine, show_snr),
+                            |ui| {
+                                self.m73_marks(ui, line, mine, show_snr);
+                                super::group_footer_label(
+                                    ui,
+                                    line,
+                                    [M_GOLD, M_GREEN, M_RED],
+                                    mono(13.0),
+                                );
+                            },
                         );
                     });
-                    super::group_footer_row(ui, line, M_GOLD, M_GREEN, M_RED);
                 }
             });
         if let Some(path) = open_folder_of {

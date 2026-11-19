@@ -215,7 +215,8 @@ function lineNode(l) {
     const m = el("span", `marks${/\[(ok|all)/.test(l.ticks) ? " ok" : /\[no\]/.test(l.ticks) ? " no" : ""}`, marks.join(" "));
     li.append(m);
   }
-  if (footer) li.append(el("div", `parts-foot ${tone}`, footer));
+  // #365 rc4: on the same row as the [rf] / [tx] marks, just after them.
+  if (footer) li.append(el("span", `parts-foot ${tone}`, footer.trim()));
   return li;
 }
 

@@ -109,12 +109,14 @@ function drawStatus(d) {
     // #334: the dial shows here even while the radio is not ready.
     if (s.frequency) facts.push(["dial", `${s.frequency}${s.band ? ` · ${s.band}` : ""}${s.freq_source === "rig" ? " (CAT)" : ""}`]);
     if (s.preset) {
-      // #365: never show a saved preset as live while modem73 still runs the old one.
-      const stale = s.preset_running && s.preset_running !== s.preset;
-      const pending = stale
-        ? ` · restart to apply: modem73 still runs ${s.preset_running}`
-        : s.modem_restart_pending ? " · restart to apply" : "";
-      facts.push(["preset", `${s.preset}${s.tx_rung ? ` · now ${s.tx_rung}` : ""}${pending}`]);
+      // #365 rc4: show the preset modem73 really runs. The station restarts
+      // modem73 itself; only a failed restart asks for a stop and start.
+      const live = s.preset_running || s.preset;
+      const moving = live !== s.preset ? ` for ${s.preset}` : "";
+      const pending = s.modem_restart_failed
+        ? ` · modem restart failed: stop and start to apply${moving ? ` ${s.preset}` : ""}`
+        : (moving || s.modem_restart_pending) ? ` · restarting modem${moving}…` : "";
+      facts.push(["preset", `${live}${s.tx_rung ? ` · now ${s.tx_rung}` : ""}${pending}`]);
     }
     const modem = s.tnc || (s.modem73 ? `modem73 ${s.modem73}` : "");
     if (modem) facts.push(["modem", modem]);
