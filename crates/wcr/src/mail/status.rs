@@ -47,6 +47,19 @@ pub struct MailView {
     /// one is the gateway in use (#275).
     #[serde(default)]
     pub via: Vec<Via>,
+    /// The file carried in the mail, taken out of `row.body`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<FileView>,
+}
+
+/// A mail's attached file, for the mail windows.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct FileView {
+    pub name: String,
+    pub size: usize,
+    /// Where a received file was saved (empty for mail we sent).
+    #[serde(default)]
+    pub path: String,
 }
 
 /// `online` is false when the last delivery check could not reach the hub.
@@ -344,6 +357,7 @@ mod tests {
     #[test]
     fn a_view_reads_back_as_a_plain_row() {
         let view = MailView {
+            file: None,
             row: row("sent", "delivered"),
             status: mail_status(&row("sent", "delivered"), &[], 0, true),
             hops: vec![hop("sent", 7)],

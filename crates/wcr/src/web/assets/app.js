@@ -574,6 +574,21 @@ function drawMail(m) {
     .sort((a, b) => a.ts - b.ts);
   $("mv-hops").replaceChildren(...steps.map((h) => el("li", "", `${clock(h.ts)} ${h.text}`)));
   $("mv-body").textContent = m.body || "";
+  const f = m.file;
+  $("mv-file").hidden = !f;
+  if (f) {
+    const label = `📎 ${f.name} (${(f.size / 1024).toFixed(1)} KB)`;
+    if (f.path) {
+      const a = document.createElement("a");
+      a.href = `/api/chat/received?path=${encodeURIComponent(f.path)}`;
+      a.textContent = label;
+      a.title = "Download this file from the station";
+      a.setAttribute("download", "");
+      $("mv-file").replaceChildren(a);
+    } else {
+      $("mv-file").textContent = label;
+    }
+  }
   $("mail-retry").hidden = !st.retry;
   $("mail-reply").hidden = m.folder !== "inbox";
 }
@@ -614,15 +629,52 @@ function newMail(to, subject) {
   $("m-subject").value = subject || "";
   $("m-body").value = "";
   $("m-note").textContent = "";
+  mailFile = null;
+  $("m-file").textContent = "";
   (to ? $("m-body") : $("m-to")).focus();
 }
 $("new-mail").onclick = () => newMail("", "");
+
+// One file for the mail. A big picture is shrunk here in the browser (phone
+// photo formats work); the station checks the size and the preset.
+let mailFile = null;
+$("m-attach").onclick = () => $("m-attach-file").click();
+$("m-attach-file").onchange = async () => {
+  let f = $("m-attach-file").files[0];
+  $("m-attach-file").value = "";
+  if (!f) return;
+  let name = f.name;
+  let note = "";
+  try {
+    if (f.type.startsWith("image/") && f.size > PICTURE_MAX) {
+      const s = await shrinkPicture(f, PICTURE_MAX);
+      note = ` shrunk to ${s.w}×${s.h}`;
+      name = name.replace(/\.[^.]*$/, "") + ".jpg";
+      f = s.blob;
+    }
+  } catch (err) {
+    $("m-file").textContent = err.message;
+    return;
+  }
+  if (f.size > PICTURE_MAX) {
+    mailFile = null;
+    $("m-file").textContent = `${name} is ${(f.size / 1024).toFixed(1)} KB; files up to 8 KB can go with a mail.`;
+    return;
+  }
+  const buf = new Uint8Array(await f.arrayBuffer());
+  let bin = "";
+  for (const b of buf) bin += String.fromCharCode(b);
+  mailFile = { name, data: btoa(bin) };
+  $("m-file").textContent = `📎 ${name} (${(f.size / 1024).toFixed(1)} KB)${note}`;
+};
 $("m-cancel").onclick = () => { $("mail-form").hidden = true; };
 $("mail-form").onsubmit = async (e) => {
   e.preventDefault();
   $("m-note").textContent = "Sending…";
   try {
-    await post("/api/mail/send", { to: $("m-to").value.trim(), subject: $("m-subject").value, body: $("m-body").value });
+    const send = { to: $("m-to").value.trim(), subject: $("m-subject").value, body: $("m-body").value };
+    if (mailFile) Object.assign(send, { file_name: mailFile.name, file_data: mailFile.data });
+    await post("/api/mail/send", send);
     $("mail-form").hidden = true;
     $("folder").value = "outbox";
     loadMail();

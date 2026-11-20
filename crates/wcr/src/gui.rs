@@ -732,6 +732,8 @@ struct GuiApp {
     mail_to: String,
     mail_subject: String,
     mail_body: String,
+    /// A file dropped on the Email screen, ready to go with the next mail.
+    mail_file: Option<crate::mail::attach::Attachment>,
     mail_hold: bool,
     mail_send: Option<MailSend>,
     mail_toast: String,
@@ -870,6 +872,7 @@ impl GuiApp {
             mail_to: String::new(),
             mail_subject: String::new(),
             mail_body: String::new(),
+            mail_file: None,
             mail_hold: false,
             mail_send: None,
             mail_toast: String::new(),
@@ -1361,10 +1364,16 @@ impl GuiApp {
                 .filter_map(|f| f.path.clone())
                 .collect()
         });
+        let email = self.center == CenterView::Email;
         let direct =
             !self.active_channel.is_empty() && !self.active_channel.starts_with(['#', '&']);
         if hovering {
-            let text = if direct {
+            let text = if email {
+                format!(
+                    "drop to attach to this mail (pictures shrink to {})",
+                    crate::proto::file::human_size(crate::mail::attach::ATTACH_MAX_BYTES)
+                )
+            } else if direct {
                 format!(
                     "drop to send to {} (up to {}, VHF/UHF only; pictures shrink to fit, vhf-fast)",
                     self.active_channel.to_ascii_uppercase(),
@@ -1388,12 +1397,52 @@ impl GuiApp {
             );
         }
         for path in dropped {
+            if email {
+                self.attach_mail_file(&path);
+                continue;
+            }
             if !direct {
                 self.error =
                     "Files go in a direct chat: open one, then drop the file there.".into();
                 continue;
             }
             self.send_line(&format!("/file {}", path.display()));
+        }
+    }
+
+    /// Read a file dropped on the Email screen and get it ready to send:
+    /// a picture is shrunk to fit, other files must already fit.
+    fn attach_mail_file(&mut self, path: &std::path::Path) {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let too_big = std::fs::metadata(path)
+            .map(|m| m.len() as usize > crate::proto::file::PICTURE_SOURCE_MAX)
+            .unwrap_or(false);
+        let read = if too_big {
+            Err(format!("{name} is too big to attach."))
+        } else {
+            std::fs::read(path).map_err(|e| format!("Could not read {name}: {e}"))
+        };
+        match read.and_then(|d| crate::mail::attach::prepare(&name, d).map_err(|e| e.plain())) {
+            Ok((file, note)) => {
+                self.mail_toast = note.unwrap_or_default();
+                self.mail_toast_warn = false;
+                self.mail_file = Some(file);
+            }
+            Err(e) => {
+                self.mail_toast = e;
+                self.mail_toast_warn = true;
+            }
+        }
+    }
+
+    /// The mail body as it goes: the message, plus the attached file.
+    fn mail_full_body(&self) -> String {
+        match &self.mail_file {
+            Some(f) => crate::mail::attach::join(self.mail_body.trim(), f),
+            None => self.mail_body.trim().to_string(),
         }
     }
 
@@ -4928,6 +4977,7 @@ impl GuiApp {
                 self.mail_to.clear();
                 self.mail_subject.clear();
                 self.mail_body.clear();
+                self.mail_file = None;
                 self.mail_folder = "sent".into();
             }
         }
@@ -5390,14 +5440,42 @@ impl GuiApp {
                 .desired_rows(5)
                 .font(FontId::monospace(13.0)),
         );
-        let bytes = self.mail_body.trim().len();
+        let mut drop_file = false;
+        match &self.mail_file {
+            Some(f) => {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(crate::mail::attach::summary(f))
+                            .color(FG)
+                            .monospace(),
+                    );
+                    drop_file = ui.add(hair_btn("remove", PURPLE)).clicked();
+                });
+            }
+            None => {
+                ui.label(
+                    RichText::new(format!(
+                        "Drag a file onto this window to attach it (up to {}, pictures are shrunk; over the radio on vhf-fast only)",
+                        crate::proto::file::human_size(crate::mail::attach::ATTACH_MAX_BYTES)
+                    ))
+                    .color(DIM)
+                    .small()
+                    .monospace(),
+                );
+            }
+        }
+        if drop_file && !self.mail_hold {
+            self.mail_file = None;
+        }
+        let full_body = self.mail_full_body();
+        let bytes = full_body.len();
         let from = crate::mail::wcr_address(&self.callsign);
         let gateway = self.mail_gateway_for_airtime();
         let preview = crate::mail::AirtimeMail {
             from: &from,
             to: self.mail_to.trim(),
             subject: self.mail_subject.trim(),
-            body: self.mail_body.trim(),
+            body: &full_body,
             gateway: &gateway,
             ack: matches!(crate::mail::gateway_path(mode), crate::mail::SendPath::Rf),
         };
@@ -5552,6 +5630,22 @@ impl GuiApp {
         }
         ui.add_space(4.0);
         ui.add(egui::Label::new(RichText::new(&row.body).color(FG).monospace()).wrap());
+        if let Some(f) = &open.file {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                let line = format!("📎 {} ({})", f.name, crate::proto::file::human_size(f.size));
+                ui.label(RichText::new(line).color(ACCENT).monospace());
+                if !f.path.is_empty() && ui.add(hair_btn("open folder", PURPLE)).clicked() {
+                    let dir = std::path::Path::new(&f.path)
+                        .parent()
+                        .map(std::path::Path::to_path_buf)
+                        .unwrap_or_default();
+                    if let Err(e) = open::that(&dir) {
+                        self.error = format!("Could not open {}: {e}", dir.display());
+                    }
+                }
+            });
+        }
     }
 
     /// Retry a Failed mail and follow it in the send window, as a new send is.
@@ -5607,12 +5701,12 @@ impl GuiApp {
         let hub = matches!(crate::mail::gateway_path(mode), crate::mail::SendPath::Hub);
         let from = crate::mail::wcr_address(&self.callsign);
         let gateway = self.mail_gateway_for_airtime();
-        let body = self.mail_body.trim();
+        let full_body = self.mail_full_body();
         let preview = crate::mail::AirtimeMail {
             from: &from,
             to: confirm.to.trim(),
             subject: confirm.subject.trim(),
-            body,
+            body: &full_body,
             gateway: &gateway,
             ack: !hub,
         };
@@ -5707,7 +5801,7 @@ impl GuiApp {
                                 &serde_json::json!({
                                     "to": self.mail_to,
                                     "subject": self.mail_subject,
-                                    "body": self.mail_body,
+                                    "body": self.mail_full_body(),
                                 })
                                 .to_string(),
                             ),

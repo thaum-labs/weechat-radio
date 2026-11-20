@@ -975,6 +975,37 @@ struct ReceivedMail {
     text: Option<String>,
     #[serde(default)]
     headers: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    attachments: Vec<ReceivedFile>,
+}
+
+/// One file on a received email, as Resend lists it.
+#[derive(Debug, Default, Deserialize)]
+struct ReceivedFile {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    filename: String,
+    #[serde(default)]
+    size: u64,
+    #[serde(default)]
+    content_type: String,
+    #[serde(default)]
+    content_disposition: Option<String>,
+}
+
+impl ReceivedFile {
+    /// A picture inside the mail's HTML (a logo in a signature): never sent.
+    fn inline(&self) -> bool {
+        self.content_disposition.as_deref() == Some("inline")
+    }
+
+    /// Worth fetching: it fits, or it is a picture we can shrink.
+    fn worth_fetching(&self) -> bool {
+        self.size as usize <= crate::mail::attach::ATTACH_MAX_BYTES
+            || (self.content_type.starts_with("image/")
+                && self.size as usize <= crate::proto::file::PICTURE_SOURCE_MAX)
+    }
 }
 
 /// Resend signs with Svix. `secret` is the webhook signing secret (`whsec_…`).
@@ -1067,6 +1098,7 @@ pub async fn resend_webhook(
         mail.subject
     };
     let text = trim_body(mail.text.as_deref().unwrap_or("")).unwrap_or_default();
+    let text = with_received_files(&event.data.email_id, text, &mail.attachments).await;
     let to_joined = to_list.join(", ");
     let copy_header = mail
         .headers
@@ -1140,6 +1172,94 @@ async fn fetch_received(email_id: &str) -> Result<ReceivedMail> {
     serde_json::from_value(v).map_err(|e| Error::Net(e.to_string()))
 }
 
+/// The mail text with the first file that can go over the radio carried
+/// in it (pictures shrunk to fit), and the other files named so the person
+/// knows they exist. Pictures inside the HTML (logos) are left out.
+async fn with_received_files(email_id: &str, text: String, files: &[ReceivedFile]) -> String {
+    let mut kept = None;
+    let mut left = Vec::new();
+    for f in files.iter().filter(|f| !f.inline()) {
+        if kept.is_none() && f.worth_fetching() {
+            if let Ok(data) = fetch_received_file(email_id, &f.id).await {
+                let name = f.filename.clone();
+                let ready =
+                    tokio::task::spawn_blocking(move || crate::mail::attach::prepare(&name, data))
+                        .await;
+                if let Ok(Ok((file, _))) = ready {
+                    kept = Some(file);
+                    continue;
+                }
+            }
+        }
+        left.push(format!(
+            "{} ({})",
+            f.filename,
+            crate::proto::file::human_size(f.size as usize)
+        ));
+    }
+    received_text(text, kept, &left)
+}
+
+fn received_text(
+    mut text: String,
+    kept: Option<crate::mail::attach::Attachment>,
+    left: &[String],
+) -> String {
+    if !left.is_empty() {
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        text.push_str(&format!("Not sent over the radio: {}", left.join(", ")));
+    }
+    match kept {
+        Some(f) => crate::mail::attach::join(&text, &f),
+        None => text,
+    }
+}
+
+/// One file of a received email: Resend gives a short-lived download link.
+async fn fetch_received_file(email_id: &str, file_id: &str) -> Result<Vec<u8>> {
+    if email_id.is_empty() || email_id.contains('/') || file_id.is_empty() || file_id.contains('/')
+    {
+        return Err(Error::protocol("missing attachment id"));
+    }
+    let key = std::env::var("RESEND_API_KEY")
+        .map_err(|_| Error::config("RESEND_API_KEY is not set on the hub"))?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| Error::Net(e.to_string()))?;
+    let v: Value = client
+        .get(format!(
+            "https://api.resend.com/emails/receiving/{email_id}/attachments/{file_id}"
+        ))
+        .bearer_auth(key)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| Error::Net(e.to_string()))?
+        .json()
+        .await
+        .map_err(|e| Error::Net(e.to_string()))?;
+    let url = v
+        .get("download_url")
+        .and_then(|u| u.as_str())
+        .ok_or_else(|| Error::Net("Resend gave no download link".into()))?;
+    let bytes = client
+        .get(url)
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| Error::Net(e.to_string()))?
+        .bytes()
+        .await
+        .map_err(|e| Error::Net(e.to_string()))?;
+    if bytes.len() > crate::proto::file::PICTURE_SOURCE_MAX {
+        return Err(Error::protocol("attachment too big"));
+    }
+    Ok(bytes.to_vec())
+}
+
 /// `GET /emails/{id}` on Resend. Returns its `last_event`, for example
 /// `sent`, `delivered`, `delivery_delayed` or `bounced`.
 async fn resend_last_event(resend_id: &str) -> Result<String> {
@@ -1173,6 +1293,38 @@ async fn resend_last_event(resend_id: &str) -> Result<String> {
         .to_string())
 }
 
+/// The Resend `POST /emails` body. A file carried in the mail text (see
+/// [`crate::mail::attach`]) goes out as a real attachment.
+fn resend_payload(
+    from: &str,
+    to: &str,
+    subject: &str,
+    text: &str,
+    bcc: Option<&str>,
+    mark_copy: bool,
+) -> Value {
+    let (text, file) = crate::mail::attach::split(text);
+    let mut payload = json!({
+        "from": from,
+        "to": [to],
+        "subject": subject,
+        "text": text,
+    });
+    if let Some(f) = file {
+        payload["attachments"] = json!([{
+            "filename": f.name,
+            "content": base64::engine::general_purpose::STANDARD.encode(&f.data),
+        }]);
+    }
+    if let Some(b) = bcc {
+        payload["bcc"] = json!([b]);
+    }
+    if mark_copy || bcc.is_some() {
+        payload["headers"] = json!({ WCR_COPY_HEADER: "1" });
+    }
+    payload
+}
+
 async fn resend_send(
     from: &str,
     to: &str,
@@ -1183,18 +1335,7 @@ async fn resend_send(
 ) -> Result<String> {
     let key = std::env::var("RESEND_API_KEY")
         .map_err(|_| Error::config("RESEND_API_KEY is not set on the hub"))?;
-    let mut payload = json!({
-        "from": from,
-        "to": [to],
-        "subject": subject,
-        "text": text,
-    });
-    if let Some(b) = bcc {
-        payload["bcc"] = json!([b]);
-    }
-    if mark_copy || bcc.is_some() {
-        payload["headers"] = json!({ WCR_COPY_HEADER: "1" });
-    }
+    let payload = resend_payload(from, to, subject, text, bcc, mark_copy);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
@@ -1230,6 +1371,67 @@ mod tests {
             "whsec_{}",
             base64::engine::general_purpose::STANDARD.encode(b"test-secret-that-is-long-enough")
         )
+    }
+
+    #[test]
+    fn received_files_are_carried_or_named() {
+        let f = crate::mail::attach::Attachment {
+            name: "a.csv".into(),
+            data: b"1,2".to_vec(),
+        };
+        let out = received_text(
+            "Hello".into(),
+            Some(f.clone()),
+            &["big.pdf (2.0 MB)".into()],
+        );
+        let (text, got) = crate::mail::attach::split(&out);
+        assert_eq!(text, "Hello\n\nNot sent over the radio: big.pdf (2.0 MB)");
+        assert_eq!(got.unwrap(), f);
+        assert_eq!(received_text("Hi".into(), None, &[]), "Hi");
+        let logo: ReceivedFile = serde_json::from_str(
+            r#"{"id":"1","filename":"logo.png","size":900,"content_type":"image/png","content_disposition":"inline"}"#,
+        )
+        .unwrap();
+        assert!(logo.inline());
+        let photo: ReceivedFile = serde_json::from_str(
+            r#"{"id":"2","filename":"p.jpg","size":3000000,"content_type":"image/jpeg","content_disposition":null}"#,
+        )
+        .unwrap();
+        assert!(!photo.inline() && photo.worth_fetching());
+        let pdf: ReceivedFile = serde_json::from_str(
+            r#"{"id":"3","filename":"x.pdf","size":3000000,"content_type":"application/pdf"}"#,
+        )
+        .unwrap();
+        assert!(!pdf.worth_fetching());
+    }
+
+    #[test]
+    fn a_file_in_the_mail_goes_to_resend_as_an_attachment() {
+        let file = crate::mail::attach::Attachment {
+            name: "log.csv".into(),
+            data: b"a,b\n1,2\n".to_vec(),
+        };
+        let body = crate::mail::attach::join("Here is the log.", &file);
+        let p = resend_payload(
+            "m7snd@mail.weechatradio.com",
+            "x@example.com",
+            "log",
+            &body,
+            None,
+            false,
+        );
+        assert_eq!(p["text"], "Here is the log.");
+        assert_eq!(p["attachments"][0]["filename"], "log.csv");
+        assert_eq!(p["attachments"][0]["content"], "YSxiCjEsMgo=");
+        let plain = resend_payload(
+            "a@mail.weechatradio.com",
+            "x@example.com",
+            "s",
+            "hi",
+            None,
+            false,
+        );
+        assert!(plain.get("attachments").is_none());
     }
 
     #[test]
