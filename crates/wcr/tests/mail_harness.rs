@@ -2061,12 +2061,20 @@ async fn a_mail_with_a_file_reaches_the_hub_whole() {
 /// no frame is wider than modem73's normal frame, and the hub gets the
 /// file whole, once.
 async fn big_mail_goes_through(file_kb: usize, limit_secs: u64) {
-    big_mail_over(file_kb, limit_secs, Arc::new(|_, _, _| false), 3).await;
+    big_mail_over(file_kb, limit_secs, Arc::new(|_, _, _| false), 3, "base").await;
 }
 
 /// [`big_mail_goes_through`] over a link that drops what `drop_rx` says;
 /// `resent` data frames may go twice.
-async fn big_mail_over(file_kb: usize, limit_secs: u64, drop_rx: LinkDrop, resent: u64) {
+/// `duty` is `[rf] duty`: a handheld must rest between blocks (the row
+/// says `resting:N` meanwhile), a base never does (QA #365 rc11).
+async fn big_mail_over(
+    file_kb: usize,
+    limit_secs: u64,
+    drop_rx: LinkDrop,
+    resent: u64,
+    duty: &'static str,
+) {
     let pair = Pair::start_tweaked(
         TimedOpts {
             frame_ms: 60,
@@ -2079,9 +2087,10 @@ async fn big_mail_over(file_kb: usize, limit_secs: u64, drop_rx: LinkDrop, resen
         },
         drop_rx,
         Duration::ZERO,
-        |_, cfg| {
+        move |_, cfg| {
             cfg.modem.preset = "vhf-fast".into();
             cfg.rf.frequency_khz = 145_500;
+            cfg.rf.duty = duty.into();
         },
     )
     .await;
@@ -2103,6 +2112,7 @@ async fn big_mail_over(file_kb: usize, limit_secs: u64, drop_rx: LinkDrop, resen
     let id = pair.compose(&body).await;
     let deadline = Instant::now() + Duration::from_secs(limit_secs);
     let mut seen = Vec::new();
+    let mut rested = false;
     let mut row = None;
     while Instant::now() < deadline {
         let v: Option<serde_json::Value> = async {
@@ -2122,6 +2132,10 @@ async fn big_mail_over(file_kb: usize, limit_secs: u64, drop_rx: LinkDrop, resen
             if seen.last() != Some(&keyed) {
                 seen.push(keyed);
             }
+            rested |= v
+                .get("detail")
+                .and_then(|d| d.as_str())
+                .is_some_and(|d| d.starts_with("resting:"));
             let state = v.get("state").and_then(|s| s.as_str()).unwrap_or("");
             if state == "sent" || state == "failed" {
                 row = Some(v);
@@ -2178,8 +2192,13 @@ async fn big_mail_over(file_kb: usize, limit_secs: u64, drop_rx: LinkDrop, resen
         data_frames <= chunks + resent,
         "{file_kb} KB: {data_frames} data frames for {chunks} chunks"
     );
+    assert_eq!(
+        rested,
+        duty != "base",
+        "{file_kb} KB on {duty}: rested {rested}"
+    );
     eprintln!(
-        "{file_kb} KB: {chunks} chunks, {data_frames} data frames, {:.0} s",
+        "{file_kb} KB on {duty}: {chunks} chunks, {data_frames} data frames, {:.0} s",
         took.as_secs_f64()
     );
 }
@@ -2214,8 +2233,16 @@ async fn a_big_mail_resends_only_the_chunks_a_block_lost() {
             && lost_c.lock().unwrap().insert(idx)
     });
     // 64 KB: about 96 chunks over three blocks, four of them lost once.
-    big_mail_over(64, 600, drop_rx, 6).await;
+    big_mail_over(64, 600, drop_rx, 6, "base").await;
     assert!(lost.lock().unwrap().len() >= 3);
+}
+
+/// QA #365 rc11: on a handheld (the default) the radio rests between the
+/// blocks of a big mail, and the row says so while it does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_handheld_rests_between_blocks_of_a_big_mail() {
+    let _hang = watchdog(TEST_LIMIT);
+    big_mail_over(64, 600, Arc::new(|_, _, _| false), 3, "handheld").await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

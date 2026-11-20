@@ -423,6 +423,9 @@ async fn setting(State(web): State<Web>, Json(b): Json<SettingBody>) -> Response
     if b.what == "file_send" {
         return set_file_send(&web, &b.value);
     }
+    if b.what == "duty" {
+        return set_duty(&web, &b.value);
+    }
     if b.what == "freq" {
         return set_dial(&web, &b.value);
     }
@@ -536,6 +539,28 @@ fn set_file_send(web: &Web, value: &str) -> Response {
     let _ = web.chat.radio_setting("file_send", &v);
     web.station
         .note(&format!("file send set to {v} on the web page"));
+    Json(json!({ "ok": true })).into_response()
+}
+
+/// Save the radio type (QA #365) in wcr.toml and, when the station runs,
+/// use it now. Saved while stopped too.
+fn set_duty(web: &Web, value: &str) -> Response {
+    let bad = |e: String| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response();
+    let mut cfg = match Config::load(&web.cfg_path) {
+        Ok(c) => c,
+        Err(e) => return bad(e.to_string()),
+    };
+    if let Err(e) = cfg.rf.set_duty(value) {
+        return bad(e);
+    }
+    if let Err(e) = cfg.save(&web.cfg_path) {
+        return bad(e.to_string());
+    }
+    let v = cfg.rf.duty.clone();
+    // Not an error while stopped: the saved value is used at the next Start.
+    let _ = web.chat.radio_setting("duty", &v);
+    web.station
+        .note(&format!("radio type set to {v} on the web page"));
     Json(json!({ "ok": true })).into_response()
 }
 
@@ -695,8 +720,11 @@ async fn gateway(State(web): State<Web>) -> Json<Value> {
     let gateway_mode = cfg.as_ref().map(|c| c.gateway.mode_name());
     // How a chat file goes out (QA #365), from wcr.toml.
     let file_send = cfg.as_ref().map(|c| c.rf.file_send.clone());
+    // Radio type for rests between long TX (QA #365), from wcr.toml.
+    let duty = cfg.as_ref().map(|c| c.rf.duty.clone());
     Json(json!({
         "file_send": file_send,
+        "duty": duty,
         "frequency": frequency,
         "mail_gateway": mail_gateway,
         "gateway_mode": gateway_mode,
@@ -843,7 +871,7 @@ fn received_file(dir: &Path, path: &Path) -> Option<(String, Vec<u8>)> {
     Some((name, std::fs::read(&path).ok()?))
 }
 
-/// A small file from the page for a direct chat (4 KB max, VHF/UHF only).
+/// A small file from the page for a direct chat (4 KB, a picture 8 KB; VHF/UHF only).
 async fn chat_file(State(web): State<Web>, Json(b): Json<FileBody>) -> Response {
     use base64::Engine as _;
     let Ok(data) = base64::engine::general_purpose::STANDARD.decode(b.data.trim()) else {

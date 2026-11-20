@@ -202,6 +202,27 @@ pub fn send_step(v: &SendView<'_>) -> SendStep {
             false,
             false,
         ),
+        // Between two blocks of a big mail, by `[rf] duty` (QA #365).
+        "tx" | "queued" if v.detail.starts_with(super::air::RESTING) => {
+            let secs = v.detail[super::air::RESTING.len()..]
+                .parse::<u32>()
+                .unwrap_or(0);
+            let have = got_count(v.got).min(v.chunks);
+            let part = if v.chunks > 0 {
+                have as f32 / v.chunks as f32
+            } else {
+                0.0
+            };
+            step(
+                0.05 + 0.75 * part,
+                format!(
+                    "Resting the radio {secs} s so it does not overheat. The gateway has {have} of {} chunks…",
+                    v.chunks
+                ),
+                false,
+                false,
+            )
+        }
         "tx" | "queued" if v.keyed > 0 && v.chunks > 0 => {
             // A big mail (QA #365): the bar steps chunk by chunk as each
             // frame keys, and the gateway's count follows each block.
@@ -341,6 +362,20 @@ mod tests {
         assert!(order[6].done && order[6].ok);
         assert_eq!(order[6].label, "Success: delivered.");
         assert!(!order[5].done);
+    }
+
+    /// QA #365 rc11: between two blocks the window says the radio rests.
+    #[test]
+    fn a_resting_radio_says_so() {
+        let mut v = view("tx", "0,1", "");
+        v.detail = "resting:20";
+        v.keyed = 2;
+        let s = send_step(&v);
+        assert_eq!(
+            s.label,
+            "Resting the radio 20 s so it does not overheat. The gateway has 2 of 4 chunks…"
+        );
+        assert!(!s.done);
     }
 
     /// QA #365: a big mail's bar steps chunk by chunk, never 0 to 100 %.

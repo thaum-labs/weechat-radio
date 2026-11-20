@@ -516,6 +516,16 @@ impl MailStore {
         Ok(())
     }
 
+    /// The row's detail alone: "resting:N" while a big mail rests the radio
+    /// between blocks (QA #365), empty again when the next block goes.
+    pub fn set_detail(&self, id: &str, detail: &str) -> Result<()> {
+        self.conn.lock().execute(
+            "UPDATE mail SET detail = ?2 WHERE id = ?1",
+            params![id, detail],
+        )?;
+        Ok(())
+    }
+
     pub fn set_chunks(&self, id: &str, chunks: u32) -> Result<()> {
         self.conn.lock().execute(
             "UPDATE mail SET chunks = ?2 WHERE id = ?1",

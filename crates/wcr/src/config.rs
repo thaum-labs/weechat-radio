@@ -677,10 +677,39 @@ pub struct RfConfig {
     /// `pieces` sends one piece at a time, each with its own receipt (for a
     /// weak link); `auto` (default) is burst on vhf-fast, pieces elsewhere.
     pub file_send: String,
+    /// What the radio can take of long TX (QA #365 rc11: an uncooled RT-900
+    /// faded from ~10 dB to ~4.7 dB during a 128 KB mail). `handheld`
+    /// (default) rests the radio 20 s after each ~2 min mail block,
+    /// `mobile` 10 s, `base` (a cooled rig) not at all.
+    pub duty: String,
 }
 
 /// The `[rf] file_send` choices, in the order the pickers show them.
 pub const FILE_SEND_CHOICES: [&str; 3] = ["auto", "burst", "pieces"];
+
+/// The `[rf] duty` choices, in the order the pickers show them.
+pub const DUTY_CHOICES: [&str; 3] = ["handheld", "mobile", "base"];
+
+/// Rest after each ~2 min block of TX for a `[rf] duty` word. Anything not
+/// mobile or base rests like a handheld, the safe side.
+pub fn duty_rest_secs(duty: &str) -> u32 {
+    match duty.trim().to_ascii_lowercase().as_str() {
+        "base" => 0,
+        "mobile" => 10,
+        _ => 20,
+    }
+}
+
+/// What a `[rf] duty` word does, for pickers, `/duty` and help.
+pub fn duty_help(duty: &str) -> String {
+    match duty_rest_secs(duty) {
+        0 => "base: no rests, for a cooled rig".into(),
+        s => format!(
+            "{}: {s} s rest after each 2 min block of mail TX, so the radio does not heat-fade",
+            if s == 10 { "mobile" } else { "handheld" }
+        ),
+    }
+}
 
 impl RfConfig {
     /// A chat file on `preset` goes as one burst.
@@ -700,6 +729,21 @@ impl RfConfig {
         }
         self.file_send = v;
         Ok(())
+    }
+
+    /// Set `duty` from a picker or `/duty`.
+    pub fn set_duty(&mut self, value: &str) -> std::result::Result<(), String> {
+        let v = value.trim().to_ascii_lowercase();
+        if !DUTY_CHOICES.contains(&v.as_str()) {
+            return Err(format!("duty is handheld, mobile or base, not {value}"));
+        }
+        self.duty = v;
+        Ok(())
+    }
+
+    /// Seconds to rest the radio after each block of mail TX.
+    pub fn rest_secs(&self) -> u32 {
+        duty_rest_secs(&self.duty)
     }
 
     /// `auto (burst)`: the setting, and what it means on `preset`.
@@ -738,6 +782,7 @@ impl Default for RfConfig {
             frequency_khz: 0,
             auto_report: true,
             file_send: "auto".into(),
+            duty: "handheld".into(),
         }
     }
 }
@@ -1126,6 +1171,22 @@ mod tests {
         let c: Config = toml::from_str("[rf]\nmax_retries = 3\n").unwrap();
         assert_eq!(c.rf.file_send, "auto");
         assert_eq!(c.rf.file_send_word(Preset::VhfFast), "auto (burst)");
+    }
+
+    #[test]
+    fn duty_rests_a_handheld_unless_set() {
+        let mut rf = RfConfig::default();
+        assert_eq!(rf.duty, "handheld");
+        assert_eq!(rf.rest_secs(), 20);
+        rf.set_duty(" Mobile ").unwrap();
+        assert_eq!(rf.rest_secs(), 10);
+        rf.set_duty("base").unwrap();
+        assert_eq!(rf.rest_secs(), 0);
+        assert!(rf.set_duty("hot").is_err());
+        // An older wcr.toml without the key rests like a handheld.
+        let c: Config = toml::from_str("[rf]\nmax_retries = 3\n").unwrap();
+        assert_eq!(c.rf.duty, "handheld");
+        assert!(duty_help("base").contains("no rests"));
     }
 
     #[test]

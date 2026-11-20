@@ -921,7 +921,7 @@ impl GuiApp {
                 preset_cmd = Some(format!("/preset {next}"));
             }
         }
-        let file_cmd = file_send_row(ui, &s, key_cell);
+        let file_cmd = file_send_row(ui, &s, key_cell).or(duty_row(ui, &s, key_cell));
         if let Some(note) = s.preset_pending_note() {
             ui.label(RichText::new(note).color(M_GOLD).small());
         }

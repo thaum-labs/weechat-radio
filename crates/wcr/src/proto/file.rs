@@ -280,8 +280,15 @@ pub fn split(file_id: u32, name: &str, data: &[u8], limit: usize) -> Result<Vec<
 /// sense, the receipt's turnaround and the air queue waiting for it. QA's
 /// rc10 run on vhf-fast: 16 pieces with no retry took about 8 min.
 pub const PIECE_GAP_SECS: f64 = 25.0;
-/// A burst receiver reports this long after the last piece it heard.
-pub const BURST_QUIET_SECS: f64 = 6.0;
+/// A burst receiver reports this long after the last piece it heard, when
+/// that was not the file's last piece (which ends every burst). Long enough
+/// to ride out a sender's pauses inside one burst: rc11's Pi 3 keyed 38
+/// pieces in groups of four with gaps of 6 to 13 s, and a 6 s wait reported
+/// in the middle of the burst (QA #365).
+pub const BURST_QUIET_SECS: f64 = 15.0;
+/// A burst receiver reports this long after hearing the file's last piece,
+/// or a piece of a file it already has whole.
+pub const REPORT_SOON_SECS: f64 = 1.0;
 
 /// Pieces a `len`-byte file is cut into for a body limit of `limit`.
 pub fn piece_count(len: usize, limit: usize) -> usize {
@@ -312,7 +319,7 @@ pub fn send_secs(preset: Preset, len: usize, burst: bool) -> f64 {
             crate::presets::airtime_secs(preset, report, 0),
         )
     };
-    pieces * frame + BURST_QUIET_SECS + short
+    pieces * frame + REPORT_SOON_SECS + short
 }
 
 /// Rough airtime for sending `len` bytes with this preset: every piece plus
@@ -531,6 +538,12 @@ impl Assembler {
             count,
             held,
         }
+    }
+
+    /// The whole file from `origin` is here and saved.
+    pub fn is_done(&self, origin: &str, file_id: u32) -> bool {
+        self.done
+            .contains_key(&(origin.to_ascii_uppercase(), file_id))
     }
 
     /// May a retry of this piece be answered with a receipt? Not the last

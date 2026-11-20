@@ -1730,6 +1730,7 @@ impl GuiApp {
                     parts,
                 } => {
                     self.apply_delivery(&msgid, &state, tries);
+                    crate::chat_line::drop_file_send_notice(&mut self.chat, &msgid, &state);
                     if let Some(p) = parts {
                         crate::chat_line::apply_sending(&mut self.chat, &msgid, p);
                     }
@@ -1817,6 +1818,12 @@ impl GuiApp {
 
     fn direct_unread_total(&self) -> u32 {
         self.direct_unread.values().sum()
+    }
+
+    /// Rest between mail blocks by the station's `[rf] duty` (QA #365); a
+    /// handheld's until the station says.
+    fn rest_secs(&self) -> u32 {
+        crate::config::duty_rest_secs(self.status.as_ref().map_or("", |s| s.duty.as_str()))
     }
 
     fn apply_delivery(&mut self, msgid: &str, state: &str, tries: u32) {
@@ -2201,6 +2208,9 @@ impl eframe::App for GuiApp {
                                 }
                             }
                             file_cmd = file_send_row(ui, s, station_key);
+                            if let Some(c) = duty_row(ui, s, station_key) {
+                                file_cmd = Some(c);
+                            }
                             if let Some(note) = s.preset_pending_note() {
                                 ui.label(RichText::new(note).color(ORANGE).small());
                             }
@@ -3925,6 +3935,48 @@ fn file_send_row(ui: &mut egui::Ui, s: &StatusSnapshot, key: KeyFn) -> Option<St
     chosen
 }
 
+/// The RADIO row (QA #365): handheld, mobile or base, for rests between
+/// long blocks of TX. Off on a hardware TNC. Returns the command to send.
+fn duty_row(ui: &mut egui::Ui, s: &StatusSnapshot, key: KeyFn) -> Option<String> {
+    if !s.tnc.is_empty() {
+        return None;
+    }
+    let mut rf = crate::config::RfConfig::default();
+    if !s.duty.is_empty() {
+        let _ = rf.set_duty(&s.duty);
+    }
+    let mut chosen = None;
+    let inner = ui.horizontal(|ui| {
+        key(ui, "RADIO");
+        let w = ui.available_width();
+        egui::ComboBox::from_id_salt("duty_pick")
+            .selected_text(RichText::new(&rf.duty).color(PURPLE).monospace())
+            .width(w)
+            .truncate()
+            .show_ui(ui, |ui| {
+                ui.set_min_width(w.max(160.0));
+                for c in crate::config::DUTY_CHOICES {
+                    let row = ui
+                        .selectable_label(rf.duty == c, RichText::new(c).color(PURPLE).monospace());
+                    hover_tip(&row, &crate::config::duty_help(c));
+                    if row.clicked() && rf.duty != c {
+                        chosen = Some(format!("/duty {c}"));
+                    }
+                }
+            });
+    });
+    let resp = ui.interact(
+        inner.response.rect,
+        ui.id().with("duty_row"),
+        egui::Sense::hover(),
+    );
+    hover_tip(
+        &resp,
+        "Radio type. A handheld rests 20 s after each 2 min block of mail TX so it does not heat-fade, a mobile 10 s, a base not at all. Saved in wcr.toml as [rf] duty.",
+    );
+    chosen
+}
+
 fn preset_pick(ui: &mut egui::Ui, current: &str, key: KeyFn) -> Option<String> {
     let mut chosen = None;
     ui.horizontal(|ui| {
@@ -5612,7 +5664,7 @@ impl GuiApp {
             match &self.mail_hint_cache {
                 Some((k, h)) if *k == key => h.clone(),
                 _ => {
-                    let h = crate::mail::hint_line(&preview, mode, preset, 250);
+                    let h = crate::mail::hint_line(&preview, mode, preset, 250, self.rest_secs());
                     self.mail_hint_cache = Some((key, h.clone()));
                     h
                 }
@@ -5799,7 +5851,7 @@ impl GuiApp {
             gateway: &gateway,
             ack: row.ack,
         };
-        let (secs, _) = crate::mail::airtime_parts(&preview, preset, 250);
+        let (secs, _) = crate::mail::airtime_parts(&preview, preset, 250, self.rest_secs());
         self.mail_toast.clear();
         self.mail_send = Some(MailSend {
             id: row.id.clone(),
@@ -5842,7 +5894,7 @@ impl GuiApp {
             gateway: &gateway,
             ack: !hub,
         };
-        let (secs, bursts) = crate::mail::airtime_parts(&preview, preset, 250);
+        let (secs, bursts) = crate::mail::airtime_parts(&preview, preset, 250, self.rest_secs());
         let freq = self
             .status
             .as_ref()

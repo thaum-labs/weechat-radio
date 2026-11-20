@@ -125,11 +125,25 @@ function onEvent(ev) {
       drawConvs();
     }
     if (l.conv === chat.active) drawLine(l);
+    clearFileNote(l);
   } else if (ev.type === "gone") {
     forget(ev.conv);
   } else if (ev.type === "notice") {
     $("chat-note").textContent = ev.text;
   }
+}
+
+// The "sending NAME to CALL: … [ok] on the file line means …" note goes
+// once that file line shows [ok] or [no] (QA #365 rc11).
+function clearFileNote(l) {
+  if (!l.mine || !l.ticks || !/\[(ok|all|no)/.test(l.ticks)) return;
+  if (!(l.text || "").startsWith("📎 ")) return;
+  const cut = l.text.lastIndexOf(" (");
+  if (cut < 3) return;
+  const name = l.text.slice(3, cut);
+  const note = $("chat-note");
+  const t = note.textContent || "";
+  if (t.startsWith(`sending ${name} to `) && t.includes("on the file line means")) note.textContent = "";
 }
 
 function drawConvs() {
@@ -303,6 +317,13 @@ function forget(id) {
   }
 }
 
+// Files go to one station only: the button shows in direct chats. Also
+// on load, when the page comes back to the direct chat it last showed.
+function drawAttach() {
+  const id = chat.active;
+  $("attach").hidden = id.startsWith("#") || id.startsWith("&");
+}
+
 function openConv(id) {
   chat.active = id;
   chat.unread.delete(id);
@@ -310,8 +331,7 @@ function openConv(id) {
   drawRemove();
   document.body.classList.add("in-conv");
   $("chat-note").textContent = "";
-  // Files go to one station only: the button shows in direct chats.
-  $("attach").hidden = id.startsWith("#") || id.startsWith("&");
+  drawAttach();
   drawConvs();
   drawLines(true);
   try { localStorage.setItem("wcr-conv", id); } catch (_) { /* private mode */ }
@@ -507,6 +527,9 @@ function sendBar(m) {
   if (m.state !== "tx" && m.state !== "queued") return null;
   const have = String(m.got || "").split(",").filter((x) => /^\d+$/.test(x.trim())).length;
   const keyed = Math.min(m.chunks, m.keyed || 0);
+  // Between two blocks by [rf] duty: the radio rests so it does not overheat.
+  const rest = /^resting:(\d+)/.exec(m.detail || "");
+  if (rest) return cssBar(have / m.chunks, `Resting radio ${rest[1]} s, gateway has ${have}/${m.chunks}`);
   if (keyed > have) {
     return cssBar(keyed / m.chunks, `${keyed}/${m.chunks} sent, gateway has ${have}`);
   }
@@ -877,6 +900,7 @@ try {
   $("conv-title").textContent = chat.active;
 } catch (_) { /* private mode */ }
 drawRemove();
+drawAttach();
 connect();
 loadStations();
 let first = "chat";

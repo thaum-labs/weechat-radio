@@ -510,6 +510,7 @@ function draw(d) {
   drawMailGateway(d.mail_gateway, s);
   drawGatewayMode(d.gateway_mode, d.mail_gateway, s);
   drawFileSend(d.file_send, s);
+  drawDuty(d.duty, s);
   drawRadio(running, s);
   drawLists(d);
   drawDiagnostics(d);
@@ -786,6 +787,44 @@ $("filesend-save").addEventListener("click", async () => {
     const d = await r.json().catch(() => ({}));
     $("action").textContent = r.ok ? `File send saved: ${value}.` : d.error || "could not save file send";
     if (r.ok) filesendEdited = false;
+  } finally {
+    setTimeout(poll, 500);
+  }
+});
+
+// Radio type (#365): rests between long blocks of TX so an uncooled
+// handheld does not heat-fade. Saved in wcr.toml as [rf] duty.
+let dutyEdited = false;
+const DUTY_HOW = {
+  handheld: "Handheld: the radio rests 20 s after each 2 min block of mail TX, so it does not overheat.",
+  mobile: "Mobile: the radio rests 10 s after each 2 min block of mail TX.",
+  base: "Base: no rests, for a cooled rig.",
+};
+
+function drawDuty(saved, s) {
+  const box = $("duty-box");
+  box.hidden = !saved;
+  if (box.hidden) return;
+  if (!dutyEdited) $("duty-pick").value = s.duty || saved;
+  $("duty-how").textContent = DUTY_HOW[$("duty-pick").value] || "";
+}
+
+$("duty-pick").addEventListener("change", () => {
+  dutyEdited = true;
+  $("duty-how").textContent = DUTY_HOW[$("duty-pick").value] || "";
+});
+$("duty-save").addEventListener("click", async () => {
+  const value = $("duty-pick").value;
+  $("action").textContent = "Saving radio type…";
+  try {
+    const r = await fetch("/api/station/setting", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ what: "duty", value }),
+    });
+    const d = await r.json().catch(() => ({}));
+    $("action").textContent = r.ok ? `Radio type saved: ${value}.` : d.error || "could not save radio type";
+    if (r.ok) dutyEdited = false;
   } finally {
     setTimeout(poll, 500);
   }

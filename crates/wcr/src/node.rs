@@ -85,6 +85,8 @@ struct Runtime {
     burst_sends: Arc<Mutex<HashMap<u32, BurstSend>>>,
     /// Burst files coming in: (sender, file id) → the pending report's turn.
     burst_rx: Arc<Mutex<HashMap<(String, u32), u64>>>,
+    /// The file report last queued per (sender, file), replaced by a newer one.
+    burst_reports: Arc<Mutex<HashMap<(String, u32), MsgId>>>,
     last_rx_snr: Arc<Mutex<Option<f32>>>,
     radio_lock: Arc<tokio::sync::Mutex<()>>,
     /// One ACK key at a time. The air queue is paused while it runs.
@@ -396,6 +398,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         s.tower = cfg.gateway.show_tower(cfg.mode);
         s.gateway_mode = Runtime::gateway_mode_word(&cfg);
         s.file_send = cfg.rf.file_send.clone();
+        s.duty = cfg.rf.duty.clone();
     }
 
     // Bind chat and status before opening the store. A locked SQLite (old
@@ -530,6 +533,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         file_sends: Arc::new(Mutex::new(crate::proto::file::Outgoing::new())),
         burst_sends: Arc::new(Mutex::new(HashMap::new())),
         burst_rx: Arc::new(Mutex::new(HashMap::new())),
+        burst_reports: Arc::new(Mutex::new(HashMap::new())),
         range_test: Arc::new(Mutex::new(crate::range_test::RangeTest::new())),
         last_rx_snr,
         radio_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -1990,18 +1994,25 @@ async fn send_file(rt: &Runtime, target: &str, path: &str) -> Result<String> {
         for env in &burst_envs {
             rt.store.set_delivery(&env.msg_id, Delivery::Sent)?;
         }
-        let keyed = key_file_burst(rt, &burst_envs, 0, 0, count as u8).await?;
-        hold_burst_pieces(rt, &burst_envs, keyed);
+        // In the table before keying: the watcher marks the end of the
+        // burst on it once modem73 has keyed the last frame.
         rt.burst_sends.lock().insert(
             id,
             BurstSend {
                 dest: dest.to_string(),
-                pieces: burst_envs,
+                pieces: burst_envs.clone(),
                 tries: 0,
-                quiet_until: std::time::Instant::now()
-                    + Duration::from_secs_f64(keyed + crate::proto::file::BURST_QUIET_SECS),
+                quiet_until: std::time::Instant::now() + BURST_ON_AIR_MAX,
             },
         );
+        let keyed = match key_file_burst(rt, &burst_envs, 0, 0, count as u8, id).await {
+            Ok(secs) => secs,
+            Err(e) => {
+                rt.burst_sends.lock().remove(&id);
+                return Err(e);
+            }
+        };
+        hold_burst_pieces(rt, &burst_envs, keyed);
     }
     let secs = crate::proto::file::send_secs(preset, data.len(), burst);
     let how = if burst {
@@ -2049,9 +2060,16 @@ struct BurstSend {
     pieces: Vec<Envelope>,
     /// Bursts of missing pieces sent again so far.
     tries: u32,
-    /// The burst on the air now, and the far end's quiet wait, end here.
+    /// The burst on the air now ends here. Until the watcher sees modem73
+    /// key its last frame this is [`BURST_ON_AIR_MAX`] away, so a report
+    /// heard while the burst is still going (or still queued) never starts
+    /// a resend (QA #365 rc11: a 30-piece resend went out after a newer
+    /// report and the 12-piece one).
     quiet_until: std::time::Instant,
 }
+
+/// Longest a burst counts as on the air before its end is seen.
+const BURST_ON_AIR_MAX: Duration = Duration::from_secs(3600);
 
 /// Bursts of missing pieces before the rest goes piece by piece, each on
 /// its own retry timer.
@@ -2067,6 +2085,7 @@ async fn key_file_burst(
     tries: u32,
     have: u8,
     count: u8,
+    file_id: u32,
 ) -> Result<f64> {
     let cfg = rt.cfg.lock().clone();
     let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::VhfFm);
@@ -2138,7 +2157,14 @@ async fn key_file_burst(
         let dest = last.dest.to_string();
         tokio::spawn(async move {
             watch_burst_tx(&rt, before, n, &line, &dest, have, count, secs).await;
+            // Keyed (or the watch gave up): reports from now on are about
+            // this burst.
+            if let Some(b) = rt.burst_sends.lock().get_mut(&file_id) {
+                b.quiet_until = std::time::Instant::now();
+            }
         });
+    } else if let Some(b) = rt.burst_sends.lock().get_mut(&file_id) {
+        b.quiet_until = std::time::Instant::now() + Duration::from_secs_f64(secs);
     }
     Ok(secs)
 }
@@ -2312,7 +2338,17 @@ async fn on_file_report(rt: &Runtime, env: &Envelope, report: crate::proto::file
             &format!("resend:{gone}"),
         )
         .await;
-    match key_file_burst(rt, &missing, tries + 1, have, count).await {
+    // A burst still waiting in the air queue is older than this report:
+    // only what is missing now goes (QA #365 rc11). Its id is the file
+    // line's, the last frame of every burst.
+    if let Some(air) = rt.air() {
+        air.cancel(line);
+    }
+    if let Some(b) = rt.burst_sends.lock().get_mut(&report.file_id) {
+        b.tries = tries + 1;
+        b.quiet_until = std::time::Instant::now() + BURST_ON_AIR_MAX;
+    }
+    match key_file_burst(rt, &missing, tries + 1, have, count, report.file_id).await {
         Ok(secs) => {
             // The last piece waits too, so it does not go alone meanwhile.
             let mut held = missing.clone();
@@ -2322,11 +2358,6 @@ async fn on_file_report(rt: &Runtime, env: &Envelope, report: crate::proto::file
                 }
             }
             hold_burst_pieces(rt, &held, secs);
-            if let Some(b) = rt.burst_sends.lock().get_mut(&report.file_id) {
-                b.tries = tries + 1;
-                b.quiet_until = std::time::Instant::now()
-                    + Duration::from_secs_f64(secs + crate::proto::file::BURST_QUIET_SECS);
-            }
         }
         Err(e) => tracing::warn!("file burst to {dest}: resend failed: {e}"),
     }
@@ -2343,11 +2374,11 @@ fn arm_burst_report(rt: &Runtime, from: &str, file_id: u32, count: u8, soon: boo
         *n = n.wrapping_add(1);
         *n
     };
-    let wait = if soon {
-        Duration::from_millis(500)
+    let wait = Duration::from_secs_f64(if soon {
+        crate::proto::file::REPORT_SOON_SECS
     } else {
-        Duration::from_secs_f64(crate::proto::file::BURST_QUIET_SECS)
-    };
+        crate::proto::file::BURST_QUIET_SECS
+    });
     let rt = rt.clone();
     tokio::spawn(async move {
         tokio::time::sleep(wait).await;
@@ -2385,6 +2416,16 @@ async fn send_file_report(rt: &Runtime, to: &str, file_id: u32, count: u8) -> Re
         report.held.len(),
         report.count
     );
+    // One report per file waits to go: a newer one replaces it, so the
+    // sender never hears an old "3 missing" after the file is whole (QA
+    // #365 rc11).
+    let older = rt
+        .burst_reports
+        .lock()
+        .insert((to.to_ascii_uppercase(), file_id), env.msg_id);
+    if let (Some(old), Some(air)) = (older, rt.air()) {
+        air.cancel(old);
+    }
     dispatch_rf_at(rt, &env, 0, Duration::ZERO, 0).await?;
     Ok(())
 }
@@ -3938,7 +3979,10 @@ async fn maybe_answer_retry(rt: &Runtime, env: &Envelope, medium: &str, snr: Opt
     if env.kind == MsgType::File && env.flags.burst() {
         if env.dest.as_str().eq_ignore_ascii_case(&rt.engine.our_call) {
             if let Ok(p) = crate::proto::file::Piece::decode(&env.body) {
-                arm_burst_report(rt, env.origin.as_str(), p.file_id, p.count, p.is_last());
+                // A whole file is reported at once: the sender is still
+                // resending and should stop.
+                let soon = p.is_last() || rt.files.lock().is_done(env.origin.as_str(), p.file_id);
+                arm_burst_report(rt, env.origin.as_str(), p.file_id, p.count, soon);
             }
         }
         return;
@@ -4913,6 +4957,7 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
                             *snr_slot.lock() = Some(frame.snr);
                             let mut s = snap_c.lock();
                             s.snr = frame.snr;
+                            s.snr_ts = u64::from(crate::proto::now_ts());
                             s.ber = frame.ber_pct;
                             // modem73's frame level_db is its input over the
                             // 200 ms after the decode (the hiss after the frame),
@@ -5183,13 +5228,13 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                 format!(" | gateway {}", s.gateway_mode)
             };
             format!(
-                "{} | {} | {} {} | {} | SNR {:.1} | tx {} | retry {} | audio {} | q {}/{} | occ {}% air {} | beacon {} | hold {} | relayed {} unique {} | groups {} | hub {}{}{}",
+                "{} | {} | {} {} | {} | SNR {} | tx {} | retry {} | audio {} | q {}/{} | occ {}% air {} | beacon {} | hold {} | relayed {} unique {} | groups {} | hub {}{}{}",
                 s.mode.display_name(),
                 if s.deferred { "wait" } else { &s.channel },
                 if s.frequency.is_empty() { "—" } else { s.frequency.trim_end_matches(" MHz") },
                 if s.band.is_empty() { "—" } else { &s.band },
                 s.preset_status(),
-                s.snr,
+                crate::status::snr_with_age(s.snr, s.snr_ts, u64::from(crate::proto::now_ts())),
                 if s.tx_rung.is_empty() { "—" } else { &s.tx_rung },
                 s.retries,
                 s.audio_label,
@@ -5428,6 +5473,17 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                     "one piece at a time, each with its own receipt"
                 }
             )
+        }
+        "duty" => {
+            // QA #365: rests between long blocks of TX for the radio type.
+            if let Some(v) = sp.next() {
+                if let Err(e) = cfg.lock().rf.set_duty(v) {
+                    return e;
+                }
+                snap.lock().duty = cfg.lock().rf.duty.clone();
+                persist_cfg(&cfg.lock());
+            }
+            format!("duty {}", crate::config::duty_help(&cfg.lock().rf.duty))
         }
         "tower" => {
             let mode = cfg.lock().mode;
