@@ -171,13 +171,25 @@ pub fn copy_code_digits(code: &str) -> String {
     code.chars().filter(|c| c.is_ascii_digit()).collect()
 }
 
+/// The body trimmed and checked: the text up to [`MAIL_MAX_BYTES`], plus
+/// at most one attached file up to [`super::attach::ATTACH_MAX_BYTES`].
 pub fn trim_body(body: &str) -> Result<String> {
     let t = body.trim();
-    if t.len() > MAIL_MAX_BYTES {
+    let (text, file) = super::attach::split(t);
+    if text.len() > MAIL_MAX_BYTES {
         return Err(Error::config(format!(
             "Mail is {} bytes. The limit is {MAIL_MAX_BYTES} bytes of plain text.",
-            t.len()
+            text.len()
         )));
+    }
+    if let Some(f) = file {
+        if f.data.len() > super::attach::ATTACH_MAX_BYTES {
+            return Err(Error::config(format!(
+                "The attached file is {}. The limit is {}.",
+                crate::proto::file::human_size(f.data.len()),
+                crate::proto::file::human_size(super::attach::ATTACH_MAX_BYTES)
+            )));
+        }
     }
     Ok(t.to_string())
 }

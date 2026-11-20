@@ -2011,3 +2011,40 @@ async fn auto_asks_again_after_hearing_no_gateway() {
         "{tab}"
     );
 }
+
+/// A mail carrying a file goes through the gateway untouched: the file
+/// rides in the mail text, so the gateway posts the same body and the hub
+/// can take the file out for Resend.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_mail_with_a_file_reaches_the_hub_whole() {
+    let _hang = watchdog(TEST_LIMIT);
+    let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
+    let pair = Pair::start(
+        TimedOpts {
+            frame_ms: 2_000,
+            count_tx: false,
+            collide: false,
+            csma_stuck_ms: 0,
+            rung_airtime: false,
+            noise_pct: 0,
+            rx_after_decode: false,
+        },
+        drop_rx,
+    )
+    .await;
+    let file = wcr::mail::attach::Attachment {
+        name: "log.csv".into(),
+        data: (0..1200u32).map(|i| (i % 251) as u8).collect(),
+    };
+    let body = wcr::mail::attach::join("The log from the hill.", &file);
+    let id = pair.compose(&body).await;
+    let row = pair.wait_state(&id, "sent", 220).await;
+    let posts = pair.posts.lock().unwrap().clone();
+    pair.stop();
+    assert!(row.is_some(), "the mail never reached Sent");
+    assert_eq!(posts.len(), 1, "gateway posts: {posts:?}");
+    let posted = posts[0].get("body").and_then(|x| x.as_str()).unwrap_or("");
+    let (text, got) = wcr::mail::attach::split(posted);
+    assert_eq!(text, "The log from the hill.");
+    assert_eq!(got, Some(file));
+}

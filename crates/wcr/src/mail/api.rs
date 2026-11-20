@@ -98,6 +98,11 @@ struct ComposeBody {
     to: String,
     subject: String,
     body: String,
+    /// An attached file: its name and base64 bytes.
+    #[serde(default)]
+    file_name: String,
+    #[serde(default)]
+    file_data: String,
 }
 
 async fn compose(
@@ -107,7 +112,21 @@ async fn compose(
     let h = handle(&slot)
         .await
         .map_err(|s| (s, "mail starting".into()))?;
-    match h.compose(&b.to, &b.subject, &b.body).await {
+    let file = if b.file_data.is_empty() {
+        None
+    } else {
+        use base64::Engine as _;
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(b.file_data.trim())
+            .map_err(|_| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    "the file did not arrive whole".to_string(),
+                )
+            })?;
+        Some((b.file_name.clone(), data))
+    };
+    match h.compose(&b.to, &b.subject, &b.body, file).await {
         Ok(v) => Ok(Json(v)),
         Err(e) => Err((StatusCode::BAD_REQUEST, e.to_string())),
     }

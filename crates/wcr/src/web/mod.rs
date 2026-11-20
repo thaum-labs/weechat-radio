@@ -950,7 +950,13 @@ async fn mail_open(State(web): State<Web>, Query(q): Query<IdQ>) -> Response {
 }
 
 async fn mail_send(State(web): State<Web>, Json(b): Json<Value>) -> Response {
-    let body = json!({ "to": b["to"], "subject": b["subject"], "body": b["body"] });
+    let body = json!({
+        "to": b["to"],
+        "subject": b["subject"],
+        "body": b["body"],
+        "file_name": b["file_name"],
+        "file_data": b["file_data"],
+    });
     web.local_post("/mail/compose", body).await
 }
 

@@ -3,6 +3,7 @@
 
 mod air;
 mod api;
+pub mod attach;
 mod gateway;
 mod hub;
 mod lease;
@@ -29,7 +30,7 @@ pub fn airtime_parts(mail: &AirtimeMail<'_>, preset: Preset, turnaround_ms: u32)
 }
 use parking_lot::Mutex;
 use serde_json::{json, Value};
-pub use status::{mail_status, MailStatus, MailView};
+pub use status::{mail_status, FileView, MailStatus, MailView};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -362,10 +363,33 @@ impl MailHandle {
         })
     }
 
-    pub async fn compose(&self, to: &str, subject: &str, body: &str) -> Result<Value> {
+    /// Queue a mail. `file` (name, bytes) is attached: a picture is shrunk
+    /// to fit, any other file must be up to [`attach::ATTACH_MAX_BYTES`].
+    pub async fn compose(
+        &self,
+        to: &str,
+        subject: &str,
+        body: &str,
+        file: Option<(String, Vec<u8>)>,
+    ) -> Result<Value> {
         proto::validate_internet_addr(to)?;
-        let body = proto::trim_body(body)?;
         let cfg = self.cfg.lock().clone();
+        let mut note = None;
+        let body = match file {
+            Some((name, data)) => {
+                let (f, n) = attach::prepare(&name, data)?;
+                note = n;
+                attach::join(body, &f)
+            }
+            None => body.to_string(),
+        };
+        let body = proto::trim_body(&body)?;
+        // The desktop app sends the file already in the body.
+        if attach::split(&body).1.is_some() {
+            if let Some(why) = attach_refusal(&cfg) {
+                return Err(Error::config(why));
+            }
+        }
         if matches!(gateway::local_send_path(cfg.mode), SendPath::Blocked) {
             return Err(Error::config(
                 "Use Internet, Internet+Radio, or Radio+ with a gateway.",
@@ -425,20 +449,36 @@ impl MailHandle {
             SendPath::Rf => "rf",
             SendPath::Blocked => "blocked",
         };
-        Ok(json!({ "id": id, "path": path, "airtime": airtime }))
+        Ok(json!({ "id": id, "path": path, "airtime": airtime, "note": note }))
     }
 
     /// The row with its status and hop times, for the local mail API.
-    pub fn view(&self, row: MailRow) -> MailView {
+    pub fn view(&self, mut row: MailRow) -> MailView {
         let hops = self.store.hops(&row.id).unwrap_or_default();
         let online = self.cfg.lock().hub.enabled() && self.store.hub_reachable();
         let now = chrono::Utc::now().timestamp();
         let via = self.store.via(&row.id).unwrap_or_default();
+        let (text, attached) = attach::split(&row.body);
+        let file = attached.map(|f| {
+            let path = if row.folder == "inbox" {
+                let dir = crate::proto::file::received_dir(&self.cfg.lock().store);
+                save_mail_file(&dir, &row.id, &f)
+            } else {
+                String::new()
+            };
+            row.body = text;
+            FileView {
+                name: f.name,
+                size: f.data.len(),
+                path,
+            }
+        });
         MailView {
             status: mail_status(&row, &hops, now, online),
             row,
             hops,
             via,
+            file,
         }
     }
 
@@ -619,6 +659,45 @@ pub fn copy_hub_unreachable(mode: Mode) -> &'static str {
     } else {
         "Copy-to needs the hub. Radio+ reaches it over this computer's internet for this one step, and it did not answer. Connect to the internet and try again."
     }
+}
+
+/// Why a file cannot go with mail from this station, or `None`. Over the
+/// radio, files go on vhf-fast only (Tobias, 2026-11-20); mail sent
+/// straight to the hub over the internet may always carry one.
+pub fn attach_refusal(cfg: &Config) -> Option<String> {
+    if !matches!(gateway::local_send_path(cfg.mode), SendPath::Rf) {
+        return None;
+    }
+    let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor);
+    (preset != Preset::VhfFast).then(|| {
+        format!(
+            "Files go with mail over the radio on vhf-fast only; this station is on {}.",
+            preset.as_str()
+        )
+    })
+}
+
+/// Save a received mail's file once, as `<dir>/mail/<id>-<name>`; the same
+/// mail opened again finds it there. Returns the path, or "" when it could
+/// not be written.
+fn save_mail_file(dir: &std::path::Path, id: &str, f: &attach::Attachment) -> String {
+    let short: String = id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(8)
+        .collect();
+    let path = dir.join("mail").join(format!("{short}-{}", f.name));
+    if !path.exists() {
+        let ok = path
+            .parent()
+            .map(std::fs::create_dir_all)
+            .transpose()
+            .and_then(|_| std::fs::write(&path, &f.data));
+        if ok.is_err() {
+            return String::new();
+        }
+    }
+    path.display().to_string()
 }
 
 #[cfg(test)]
