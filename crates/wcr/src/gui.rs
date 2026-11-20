@@ -734,6 +734,13 @@ struct GuiApp {
     mail_body: String,
     /// A file dropped on the Email screen, ready to go with the next mail.
     mail_file: Option<crate::mail::attach::Attachment>,
+    /// Why the last file dropped on the Email screen was not attached. While
+    /// it shows, Send is blocked: a mail never goes without its file
+    /// quietly (QA #365).
+    mail_file_refused: String,
+    /// The compose hint, worked out once per change: a 512 KB file makes it
+    /// too slow to work out every frame.
+    mail_hint_cache: Option<(u64, String)>,
     mail_hold: bool,
     mail_send: Option<MailSend>,
     mail_toast: String,
@@ -873,6 +880,8 @@ impl GuiApp {
             mail_subject: String::new(),
             mail_body: String::new(),
             mail_file: None,
+            mail_file_refused: String::new(),
+            mail_hint_cache: None,
             mail_hold: false,
             mail_send: None,
             mail_toast: String::new(),
@@ -1370,8 +1379,8 @@ impl GuiApp {
         if hovering {
             let text = if email {
                 format!(
-                    "drop to attach to this mail (pictures shrink to {})",
-                    crate::proto::file::human_size(crate::mail::attach::ATTACH_MAX_BYTES)
+                    "drop to attach to this mail (up to {}, pictures shrink to fit)",
+                    crate::proto::file::human_size(self.mail_attach_max())
                 )
             } else if direct {
                 format!(
@@ -1410,30 +1419,40 @@ impl GuiApp {
         }
     }
 
+    /// The attachment limit on the running preset: 512 KB on vhf-fast,
+    /// 8 KB elsewhere.
+    fn mail_attach_max(&self) -> usize {
+        let preset = self
+            .status
+            .as_ref()
+            .and_then(|s| Preset::parse(&s.preset))
+            .unwrap_or(Preset::HfPoor);
+        crate::mail::attach::max_bytes(preset)
+    }
+
     /// Read a file dropped on the Email screen and get it ready to send:
-    /// a picture is shrunk to fit, other files must already fit.
+    /// a picture is shrunk to fit, other files must already fit. A file
+    /// that does not fit clears any file attached before, and shows on the
+    /// attachment line until it is removed or another file is dropped.
     fn attach_mail_file(&mut self, path: &std::path::Path) {
+        if self.mail_hold {
+            return;
+        }
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        let too_big = std::fs::metadata(path)
-            .map(|m| m.len() as usize > crate::proto::file::PICTURE_SOURCE_MAX)
-            .unwrap_or(false);
-        let read = if too_big {
-            Err(format!("{name} is too big to attach."))
-        } else {
-            std::fs::read(path).map_err(|e| format!("Could not read {name}: {e}"))
-        };
-        match read.and_then(|d| crate::mail::attach::prepare(&name, d).map_err(|e| e.plain())) {
+        let max = self.mail_attach_max();
+        match read_mail_file(path, &name, max) {
             Ok((file, note)) => {
                 self.mail_toast = note.unwrap_or_default();
                 self.mail_toast_warn = false;
                 self.mail_file = Some(file);
+                self.mail_file_refused.clear();
             }
             Err(e) => {
-                self.mail_toast = e;
-                self.mail_toast_warn = true;
+                self.mail_file = None;
+                self.mail_file_refused = e;
             }
         }
     }
@@ -4978,6 +4997,7 @@ impl GuiApp {
                 self.mail_subject.clear();
                 self.mail_body.clear();
                 self.mail_file = None;
+                self.mail_file_refused.clear();
                 self.mail_folder = "sent".into();
             }
         }
@@ -5440,32 +5460,15 @@ impl GuiApp {
                 .desired_rows(5)
                 .font(FontId::monospace(13.0)),
         );
-        let mut drop_file = false;
-        match &self.mail_file {
-            Some(f) => {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(crate::mail::attach::summary(f))
-                            .color(FG)
-                            .monospace(),
-                    );
-                    drop_file = ui.add(hair_btn("remove", PURPLE)).clicked();
-                });
-            }
-            None => {
-                ui.label(
-                    RichText::new(format!(
-                        "Drag a file onto this window to attach it (up to {}, pictures are shrunk; over the radio on vhf-fast only)",
-                        crate::proto::file::human_size(crate::mail::attach::ATTACH_MAX_BYTES)
-                    ))
-                    .color(DIM)
-                    .small()
-                    .monospace(),
-                );
-            }
-        }
+        let drop_file = paint_attach_line(
+            ui,
+            self.mail_file.as_ref(),
+            &self.mail_file_refused,
+            self.mail_attach_max(),
+        );
         if drop_file && !self.mail_hold {
             self.mail_file = None;
+            self.mail_file_refused.clear();
         }
         let full_body = self.mail_full_body();
         let bytes = full_body.len();
@@ -5479,6 +5482,7 @@ impl GuiApp {
             gateway: &gateway,
             ack: matches!(crate::mail::gateway_path(mode), crate::mail::SendPath::Rf),
         };
+        let refused = !self.mail_file_refused.is_empty();
         let hint = if self.mail_hold {
             match crate::mail::gateway_path(mode) {
                 crate::mail::SendPath::Hub => {
@@ -5487,14 +5491,26 @@ impl GuiApp {
                 _ => "On the air — To, subject and body stay until TX finishes",
             }
             .to_string()
+        } else if refused {
+            "Remove the file that was not attached, or drop one that fits, to send".to_string()
         } else {
-            crate::mail::hint_line(&preview, mode, preset, 250)
+            let key = hint_key(&full_body, &preview, mode, preset);
+            match &self.mail_hint_cache {
+                Some((k, h)) if *k == key => h.clone(),
+                _ => {
+                    let h = crate::mail::hint_line(&preview, mode, preset, 250);
+                    self.mail_hint_cache = Some((key, h.clone()));
+                    h
+                }
+            }
         };
         // Breathing room between the message box and the Send row.
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new(hint).color(DIM).monospace());
-            if ui.add(hair_btn("Send", ORANGE)).clicked() && !self.mail_hold {
+            let color = if refused { ORANGE } else { DIM };
+            ui.label(RichText::new(hint).color(color).monospace());
+            let send = ui.add_enabled(!refused, hair_btn("Send", ORANGE));
+            if send.clicked() && !self.mail_hold && !refused {
                 self.mail_toast.clear();
                 self.mail_confirm = Some(MailConfirm {
                     kind: "send",
@@ -5794,7 +5810,8 @@ impl GuiApp {
                         }
                     } else {
                         self.mail_hold = true;
-                        if let Some(v) = mail_http(
+                        // A big file takes the station a moment to check.
+                        let sent = mail_http_wait(
                             "POST",
                             "/mail/compose",
                             Some(
@@ -5805,7 +5822,18 @@ impl GuiApp {
                                 })
                                 .to_string(),
                             ),
-                        ) {
+                            Duration::from_secs(5),
+                        );
+                        if let Err(why) = &sent {
+                            self.mail_hold = false;
+                            self.mail_toast_warn = true;
+                            self.mail_toast = if why.is_empty() {
+                                "Could not send.".into()
+                            } else {
+                                format!("Not sent: {why}")
+                            };
+                        }
+                        if let Ok(v) = sent {
                             let id = v
                                 .get("id")
                                 .and_then(|i| i.as_str())
@@ -5831,9 +5859,6 @@ impl GuiApp {
                                 },
                                 from_compose: true,
                             });
-                        } else {
-                            self.mail_hold = false;
-                            self.mail_toast = "Could not send.".into();
                         }
                     }
                     self.mail_confirm = None;
@@ -6890,6 +6915,80 @@ fn node_command() -> Command {
     }
 }
 
+/// Read a file for a mail and get it ready: a picture over `max` is shrunk,
+/// any other file must fit. The error names the file, its size and `max`.
+fn read_mail_file(
+    path: &std::path::Path,
+    name: &str,
+    max: usize,
+) -> std::result::Result<(crate::mail::attach::Attachment, Option<String>), String> {
+    let len = std::fs::metadata(path)
+        .map(|m| m.len() as usize)
+        .map_err(|e| format!("could not read {name}: {e}"))?;
+    if len > crate::proto::file::PICTURE_SOURCE_MAX {
+        return Err(crate::mail::attach::too_big_text(name, len, max));
+    }
+    let data = std::fs::read(path).map_err(|e| format!("could not read {name}: {e}"))?;
+    crate::mail::attach::prepare(name, data, max).map_err(|e| e.plain())
+}
+
+/// The attachment line on the Email screen: the file, why the last file
+/// was not attached (orange, until removed), or how to attach one. True
+/// when "remove" was pressed.
+fn paint_attach_line(
+    ui: &mut egui::Ui,
+    file: Option<&crate::mail::attach::Attachment>,
+    refused: &str,
+    max: usize,
+) -> bool {
+    let mut remove = false;
+    if !refused.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new(format!("✗ Not attached: {refused}"))
+                    .color(ORANGE)
+                    .monospace(),
+            );
+            remove = ui.add(hair_btn("remove", PURPLE)).clicked();
+        });
+    } else if let Some(f) = file {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(crate::mail::attach::summary(f))
+                    .color(FG)
+                    .monospace(),
+            );
+            remove = ui.add(hair_btn("remove", PURPLE)).clicked();
+        });
+    } else {
+        ui.label(
+            RichText::new(attach_hint(max))
+                .color(DIM)
+                .small()
+                .monospace(),
+        );
+    }
+    remove
+}
+
+/// The empty attachment line on the Email screen.
+fn attach_hint(max: usize) -> String {
+    format!(
+        "Drag a file onto this window to attach it (up to {}, pictures are shrunk; over the radio on vhf-fast only)",
+        crate::proto::file::human_size(max)
+    )
+}
+
+/// What the compose hint depends on, so it is worked out again only when
+/// one of them changes.
+fn hint_key(body: &str, mail: &crate::mail::AirtimeMail<'_>, mode: Mode, preset: Preset) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (body, mail.to, mail.subject, mail.gateway, mail.ack).hash(&mut h);
+    (mode as u8, preset.as_str()).hash(&mut h);
+    h.finish()
+}
+
 fn mail_http(method: &str, path: &str, body: Option<&str>) -> Option<serde_json::Value> {
     mail_http_wait(method, path, body, Duration::from_millis(800)).ok()
 }
@@ -7505,6 +7604,51 @@ mod tests {
         );
         assert!(crate::chat_line::is_direct("G4ABC"));
         assert!(!crate::chat_line::is_direct("#bulletin"));
+    }
+
+    /// Every piece of text painted in one frame of `paint`.
+    fn painted_text(paint: impl FnMut(&mut egui::Ui)) -> String {
+        let ctx = egui::Context::default();
+        let mut paint = paint;
+        let out = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| paint(ui));
+        });
+        let mut text = String::new();
+        for clipped in &out.shapes {
+            if let egui::Shape::Text(t) = &clipped.shape {
+                text.push_str(t.galley.text());
+                text.push('\n');
+            }
+        }
+        text
+    }
+
+    /// QA #365 BLOCKER: a refused file shows on the attachment line in the
+    /// Email popup, with its size and the limit, and no earlier file stays.
+    #[test]
+    fn a_refused_mail_file_shows_on_the_attachment_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.csv");
+        std::fs::write(&path, vec![b'1'; 9000]).unwrap();
+        let max = crate::mail::attach::ATTACH_MAX_BYTES;
+        let refused = read_mail_file(&path, "big.csv", max).unwrap_err();
+        assert!(refused.contains("big.csv is 8.8 KB"), "{refused}");
+        assert!(refused.contains("files up to 8.0 KB"), "{refused}");
+        let shown = painted_text(|ui| {
+            paint_attach_line(ui, None, &refused, max);
+        });
+        assert!(
+            shown.contains("✗ Not attached: big.csv is 8.8 KB"),
+            "{shown}"
+        );
+        assert!(shown.contains("remove"), "{shown}");
+        // The same file fits on vhf-fast and shows as attached.
+        let fast = crate::mail::attach::ATTACH_MAX_FAST_BYTES;
+        let (file, _) = read_mail_file(&path, "big.csv", fast).unwrap();
+        let shown = painted_text(|ui| {
+            paint_attach_line(ui, Some(&file), "", fast);
+        });
+        assert!(shown.contains("📎 big.csv (8.8 KB)"), "{shown}");
     }
 
     #[test]

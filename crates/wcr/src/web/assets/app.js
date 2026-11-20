@@ -367,10 +367,15 @@ $("compose").onsubmit = (e) => { e.preventDefault(); sendNow(); };
 const FILE_MAX = 4096;
 const PICTURE_MAX = 8192; // vhf-fast only
 
-// Shrink a picture in the browser until it fits: smaller, then lower JPEG
-// quality, like the station does. The browser reads phone formats (HEIC on
-// an iPhone) and turns the photo the right way up.
-async function shrinkPicture(f, max) {
+// Read a picture the person picked. createImageBitmap needs no URL; the
+// <img> fallback loads a blob: URL, which the page policy allows (QA #365).
+async function readPicture(f) {
+  if (window.createImageBitmap) {
+    try {
+      const b = await createImageBitmap(f, { imageOrientation: "from-image" });
+      return { img: b, w: b.width, h: b.height, done: () => b.close() };
+    } catch (_) { /* fall back to <img>, e.g. HEIC on older Safari */ }
+  }
   const url = URL.createObjectURL(f);
   try {
     const img = await new Promise((ok, bad) => {
@@ -379,10 +384,25 @@ async function shrinkPicture(f, max) {
       i.onerror = () => bad(new Error(`${f.name} could not be read as a picture.`));
       i.src = url;
     });
-    const w0 = img.naturalWidth, h0 = img.naturalHeight;
+    return { img, w: img.naturalWidth, h: img.naturalHeight, done: () => {} };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// Shrink a picture in the browser until it fits: smaller, then lower JPEG
+// quality, like the station does. The browser reads phone formats (HEIC on
+// an iPhone) and turns the photo the right way up.
+async function shrinkPicture(f, max) {
+  const pic = await readPicture(f);
+  try {
+    const img = pic.img;
+    const w0 = pic.w, h0 = pic.h;
     const longest = Math.max(w0, h0);
     const c = document.createElement("canvas");
-    for (let side = Math.min(longest, 640); side >= 40; side = Math.floor(side * 0.85)) {
+    // Like the station: 640 px for small limits, 1024 px for a big mail.
+    const start = max > 64 * 1024 ? 1024 : 640;
+    for (let side = Math.min(longest, start); side >= 40; side = Math.floor(side * 0.85)) {
       const k = side / longest;
       c.width = Math.max(1, Math.round(w0 * k));
       c.height = Math.max(1, Math.round(h0 * k));
@@ -394,7 +414,7 @@ async function shrinkPicture(f, max) {
     }
     throw new Error(`${f.name} would not shrink small enough to send.`);
   } finally {
-    URL.revokeObjectURL(url);
+    pic.done();
   }
 }
 
@@ -418,7 +438,8 @@ $("attach-file").onchange = async () => {
     return;
   }
   if (f.size > PICTURE_MAX || (!f.type.startsWith("image/") && f.size > FILE_MAX)) {
-    $("chat-note").textContent = `${name} is ${(f.size / 1024).toFixed(1)} KB; the limit is 4 KB.`;
+    const limit = f.type.startsWith("image/") ? "8 KB for a picture" : "4 KB (pictures 8 KB, on vhf-fast)";
+    $("chat-note").textContent = `${name} is ${(f.size / 1024).toFixed(1)} KB; the limit is ${limit}.`;
     return;
   }
   const buf = new Uint8Array(await f.arrayBuffer());
@@ -509,6 +530,10 @@ async function loadMail() {
     return;
   }
   mailRows = d.rows || [];
+  if (d.attach_max && d.attach_max !== attachMax) {
+    attachMax = d.attach_max;
+    setMailFile(mailFile, mailFileRefused);
+  }
   // Why mail cannot go (for example Radio+ with no mail gateway), or the
   // Radio+ gateway in use (#274, #275).
   const note = $("mail-note");
@@ -629,47 +654,69 @@ function newMail(to, subject) {
   $("m-subject").value = subject || "";
   $("m-body").value = "";
   $("m-note").textContent = "";
-  mailFile = null;
-  $("m-file").textContent = "";
+  setMailFile(null, "");
   (to ? $("m-body") : $("m-to")).focus();
 }
 $("new-mail").onclick = () => newMail("", "");
 
 // One file for the mail. A big picture is shrunk here in the browser (phone
-// photo formats work); the station checks the size and the preset.
+// photo formats work); the station checks the size and the preset. A file
+// that does not fit clears any file picked before and blocks Send until it
+// is removed: a mail never goes without its file quietly (QA #365).
 let mailFile = null;
+let mailFileRefused = "";
+let attachMax = 8192; // the station says: 512 KB on vhf-fast, 8 KB elsewhere
+const kb = (n) => `${(n / 1024).toFixed(1)} KB`;
+function setMailFile(file, refused, note) {
+  mailFile = file;
+  mailFileRefused = refused || "";
+  const line = $("m-file");
+  line.className = mailFileRefused ? "small warn" : "small";
+  line.textContent = mailFileRefused
+    ? `✗ Not attached: ${mailFileRefused}`
+    : file ? `📎 ${file.name} (${kb(file.size)})${note || ""}` : "";
+  $("m-remove").hidden = !mailFileRefused && !file;
+  $("m-send").disabled = !!mailFileRefused;
+  $("m-limit").textContent = `One file up to ${kb(attachMax)}; pictures are shrunk to fit. Over the radio, vhf-fast only (512 KB there, 8 KB on other presets).`;
+}
+$("m-remove").onclick = () => setMailFile(null, "");
 $("m-attach").onclick = () => $("m-attach-file").click();
 $("m-attach-file").onchange = async () => {
   let f = $("m-attach-file").files[0];
   $("m-attach-file").value = "";
   if (!f) return;
+  setMailFile(null, "");
   let name = f.name;
   let note = "";
   try {
-    if (f.type.startsWith("image/") && f.size > PICTURE_MAX) {
-      const s = await shrinkPicture(f, PICTURE_MAX);
+    if (f.type.startsWith("image/") && f.size > attachMax) {
+      const s = await shrinkPicture(f, attachMax);
       note = ` shrunk to ${s.w}×${s.h}`;
       name = name.replace(/\.[^.]*$/, "") + ".jpg";
       f = s.blob;
     }
   } catch (err) {
-    $("m-file").textContent = err.message;
+    setMailFile(null, err.message);
     return;
   }
-  if (f.size > PICTURE_MAX) {
-    mailFile = null;
-    $("m-file").textContent = `${name} is ${(f.size / 1024).toFixed(1)} KB; files up to 8 KB can go with a mail.`;
+  if (f.size > attachMax) {
+    setMailFile(null, `${name} is ${kb(f.size)}; files up to ${kb(attachMax)} can go with a mail here.`);
     return;
   }
   const buf = new Uint8Array(await f.arrayBuffer());
   let bin = "";
-  for (const b of buf) bin += String.fromCharCode(b);
-  mailFile = { name, data: btoa(bin) };
-  $("m-file").textContent = `📎 ${name} (${(f.size / 1024).toFixed(1)} KB)${note}`;
+  for (let i = 0; i < buf.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+  }
+  setMailFile({ name, size: f.size, data: btoa(bin) }, "", note);
 };
 $("m-cancel").onclick = () => { $("mail-form").hidden = true; };
 $("mail-form").onsubmit = async (e) => {
   e.preventDefault();
+  if (mailFileRefused) {
+    $("m-note").textContent = "Remove the file that was not attached, or attach one that fits, to send.";
+    return;
+  }
   $("m-note").textContent = "Sending…";
   try {
     const send = { to: $("m-to").value.trim(), subject: $("m-subject").value, body: $("m-body").value };

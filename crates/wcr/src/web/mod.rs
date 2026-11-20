@@ -299,13 +299,14 @@ async fn security_headers(request: Request<Body>, next: Next) -> Response {
     set(h, "x-frame-options", "DENY");
     set(h, "referrer-policy", "no-referrer");
     set(h, "cache-control", "no-store");
-    set(
-        h,
-        "content-security-policy",
-        "default-src 'self'; frame-ancestors 'none'; form-action 'self'",
-    );
+    set(h, "content-security-policy", CSP);
     response
 }
+
+/// The page's content policy. `img-src` allows `blob:` so the page can load
+/// a picture the person picked and shrink it before sending (QA #365).
+pub const CSP: &str =
+    "default-src 'self'; img-src 'self' blob: data:; frame-ancestors 'none'; form-action 'self'";
 
 async fn lan_only(
     State(web): State<Web>,
@@ -1303,6 +1304,38 @@ pub fn install(_cfg_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA #365: the page shrinks a picked picture by loading it from a
+    /// `blob:` URL. The served policy must allow that, and still keep
+    /// everything else to this station.
+    #[tokio::test]
+    async fn served_policy_allows_blob_pictures() {
+        let app = Router::new()
+            .route("/", axum::routing::get(|| async { "ok" }))
+            .layer(middleware::from_fn(security_headers));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        let resp = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .unwrap();
+        let csp = resp.headers()["content-security-policy"].to_str().unwrap();
+        let img = csp
+            .split(';')
+            .map(str::trim)
+            .find(|d| d.starts_with("img-src"))
+            .expect("img-src");
+        assert!(img.split(' ').any(|s| s == "blob:"), "{csp}");
+        assert!(csp.starts_with("default-src 'self';"), "{csp}");
+        assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
+    }
 
     /// The "saved to" download serves received files only.
     #[test]

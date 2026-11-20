@@ -56,7 +56,7 @@
       <ol id="lines" class="lines" aria-live="polite"></ol>
       <form id="compose" class="compose">
         <textarea id="text" rows="2" maxlength="1200" placeholder="Message" aria-label="Message"></textarea>
-        <button type="button" id="attach" class="quiet" title="Send a small file (4 KB max, VHF/UHF only)" aria-label="Send a file" hidden>File</button>
+        <button type="button" id="attach" class="quiet" title="Send a small file: up to 4 KB, pictures up to 8 KB on vhf-fast (shrunk to fit). VHF/UHF only." aria-label="Send a file" hidden>File</button>
         <input type="file" id="attach-file" hidden>
         <button type="submit" id="send" class="primary">Send</button>
       </form>
@@ -100,9 +100,10 @@
       <textarea id="m-body" rows="6"></textarea>
       <div class="row"><button type="button" id="m-attach" class="quiet">Attach file</button>
         <span id="m-file" class="small"></span>
+        <button type="button" id="m-remove" class="quiet" hidden>Remove</button>
         <input id="m-attach-file" type="file" hidden></div>
-      <p class="small dim">One file up to 8 KB; pictures are shrunk to fit. Over the radio, vhf-fast only.</p>
-      <div class="row"><button type="submit" class="primary">Send</button><button type="button" id="m-cancel" class="quiet">Cancel</button></div>
+      <p id="m-limit" class="small dim">One file up to 8 KB; pictures are shrunk to fit. Over the radio, vhf-fast only (512 KB there, 8 KB on other presets).</p>
+      <div class="row"><button type="submit" id="m-send" class="primary">Send</button><button type="button" id="m-cancel" class="quiet">Cancel</button></div>
       <p id="m-note" class="warn small note" role="status"></p>
     </form>
   </section>

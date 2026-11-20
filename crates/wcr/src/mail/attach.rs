@@ -19,8 +19,21 @@
 use crate::error::{Error, Result};
 use base64::Engine as _;
 
-/// Largest attached file (after a picture is shrunk). About 1.5 min on vhf-fast.
+/// Largest attached file (after a picture is shrunk) on every preset but
+/// vhf-fast. About 1.5 min on vhf-fast.
 pub const ATTACH_MAX_BYTES: usize = 8192;
+/// Largest attached file on vhf-fast (Tobias, QA #365): about 45 min on the
+/// air, sent in blocks with only the missing chunks sent again.
+pub const ATTACH_MAX_FAST_BYTES: usize = 512 * 1024;
+
+/// The attachment limit on `preset`: 512 KB on vhf-fast, 8 KB elsewhere.
+pub fn max_bytes(preset: crate::presets::Preset) -> usize {
+    if preset == crate::presets::Preset::VhfFast {
+        ATTACH_MAX_FAST_BYTES
+    } else {
+        ATTACH_MAX_BYTES
+    }
+}
 const START: &str = "[WCR file: ";
 const END: &str = "[WCR file end]";
 const LINE: usize = 76;
@@ -81,20 +94,21 @@ pub fn split(body: &str) -> (String, Option<Attachment>) {
     (text, Some(Attachment { name, data }))
 }
 
-/// Get a file ready to attach: a picture over the limit is shrunk and
-/// renamed `.jpg`; any other file must already fit. The `String` says what
-/// was done, for the person ("cat.jpg shrunk from 2.1 MB to 320×240").
-pub fn prepare(name: &str, data: Vec<u8>) -> Result<(Attachment, Option<String>)> {
+/// Get a file ready to attach: a picture over `max` is shrunk and renamed
+/// `.jpg`; any other file must already fit. The `String` says what was
+/// done, for the person ("cat.jpg shrunk from 2.1 MB to 320×240").
+pub fn prepare(name: &str, data: Vec<u8>, max: usize) -> Result<(Attachment, Option<String>)> {
     let name = crate::proto::file::clean_name(name);
     if data.is_empty() {
-        return Err(Error::protocol("the file is empty"));
+        return Err(Error::Msg(format!("{name} is empty")));
     }
-    if data.len() <= ATTACH_MAX_BYTES {
+    if data.len() <= max {
         return Ok((Attachment { name, data }, None));
     }
     if crate::picture::is_picture(&data) {
         let before = data.len();
-        let s = crate::picture::shrink(&data, ATTACH_MAX_BYTES).map_err(Error::protocol)?;
+        let s =
+            crate::picture::shrink(&data, max).map_err(|e| Error::Msg(format!("{name}: {e}")))?;
         let name = crate::picture::jpeg_name(&name);
         let note = format!(
             "{name} shrunk from {} to {}×{}",
@@ -104,11 +118,16 @@ pub fn prepare(name: &str, data: Vec<u8>) -> Result<(Attachment, Option<String>)
         );
         return Ok((Attachment { name, data: s.jpeg }, Some(note)));
     }
-    Err(Error::protocol(format!(
-        "{name} is {}; files up to {} can go with a mail (pictures are shrunk to fit)",
-        crate::proto::file::human_size(data.len()),
-        crate::proto::file::human_size(ATTACH_MAX_BYTES)
-    )))
+    Err(Error::Msg(too_big_text(&name, data.len(), max)))
+}
+
+/// Why a file is not attached, with its size and the limit.
+pub fn too_big_text(name: &str, len: usize, max: usize) -> String {
+    format!(
+        "{name} is {}; files up to {} can go with a mail here (pictures are shrunk to fit)",
+        crate::proto::file::human_size(len),
+        crate::proto::file::human_size(max)
+    )
 }
 
 /// A one-line stand-in for the block, for lists and previews.
@@ -176,8 +195,13 @@ mod tests {
 
     #[test]
     fn big_files_are_refused_and_big_pictures_shrink() {
-        assert!(prepare("data.csv", vec![b'1'; ATTACH_MAX_BYTES]).is_ok());
-        let err = prepare("data.csv", vec![b'1'; ATTACH_MAX_BYTES + 1]).unwrap_err();
+        assert!(prepare("data.csv", vec![b'1'; ATTACH_MAX_BYTES], ATTACH_MAX_BYTES).is_ok());
+        let err = prepare(
+            "data.csv",
+            vec![b'1'; ATTACH_MAX_BYTES + 1],
+            ATTACH_MAX_BYTES,
+        )
+        .unwrap_err();
         assert!(
             err.plain().contains("files up to 8.0 KB"),
             "{}",
@@ -190,9 +214,23 @@ mod tests {
         image::DynamicImage::ImageRgb8(img)
             .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .unwrap();
-        let (a, note) = prepare("photo.png", png).unwrap();
+        let (a, note) = prepare("photo.png", png, ATTACH_MAX_BYTES).unwrap();
         assert_eq!(a.name, "photo.jpg");
         assert!(a.data.len() <= ATTACH_MAX_BYTES);
         assert!(note.unwrap().contains("shrunk"));
+    }
+
+    #[test]
+    fn vhf_fast_takes_512_kb_and_others_8_kb() {
+        use crate::presets::Preset;
+        assert_eq!(max_bytes(Preset::VhfFast), 512 * 1024);
+        for p in [Preset::VhfFm, Preset::Afsk1200, Preset::HfPoor] {
+            assert_eq!(max_bytes(p), 8192);
+        }
+        let big = vec![b'x'; 200 * 1024];
+        assert!(prepare("log.csv", big.clone(), max_bytes(Preset::VhfFast)).is_ok());
+        let err = prepare("log.csv", big, max_bytes(Preset::VhfFm)).unwrap_err();
+        assert!(err.plain().contains("200.0 KB"), "{}", err.plain());
+        assert!(err.plain().contains("8.0 KB"), "{}", err.plain());
     }
 }

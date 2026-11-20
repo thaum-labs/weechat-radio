@@ -14,6 +14,19 @@ use std::io::Cursor;
 const START_SIDE: u32 = 640;
 /// Smallest longest side worth sending.
 const MIN_SIDE: u32 = 40;
+/// Longest side tried first when the limit is big (a 512 KB mail on
+/// vhf-fast): about 100-200 KB, 10-20 min on the air, not the whole limit.
+const BIG_START_SIDE: u32 = 1024;
+
+/// Where shrinking starts: 640 px for chat and 8 KB mail, 1024 px when the
+/// limit is over 64 KB.
+pub fn start_side(max_bytes: usize) -> u32 {
+    if max_bytes > 64 * 1024 {
+        BIG_START_SIDE
+    } else {
+        START_SIDE
+    }
+}
 /// JPEG qualities tried at each size, best first. Below ~35 the blocks
 /// show more than a smaller picture would.
 const QUALITIES: [u8; 4] = [75, 60, 45, 35];
@@ -42,7 +55,7 @@ pub struct Shrunk {
 pub fn shrink(data: &[u8], max_bytes: usize) -> Result<Shrunk, String> {
     let img = decode(data)?;
     let longest = img.width().max(img.height());
-    let mut side = longest.min(START_SIDE);
+    let mut side = longest.min(start_side(max_bytes));
     while side >= MIN_SIDE {
         let small = if side < longest {
             img.resize(side, side, image::imageops::FilterType::Triangle)

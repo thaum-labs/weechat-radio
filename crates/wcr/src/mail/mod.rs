@@ -360,11 +360,15 @@ impl MailHandle {
             "pick": self.store.pick(),
             "gateway_line": gateway_line(&cfg, &self.store.pick()),
             "block": email_block_reason(&cfg.callsign, cfg.mode, &cfg.mail.choice(), snap.hub_ok, true),
+            // The attachment limit on this preset, for the Pi page.
+            "attach_max": attach::max_bytes(Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor)),
         })
     }
 
     /// Queue a mail. `file` (name, bytes) is attached: a picture is shrunk
-    /// to fit, any other file must be up to [`attach::ATTACH_MAX_BYTES`].
+    /// to fit, any other file must be up to [`attach::max_bytes`] for the
+    /// preset. A file that cannot go refuses the whole mail: it is never
+    /// dropped quietly (QA #365).
     pub async fn compose(
         &self,
         to: &str,
@@ -374,10 +378,11 @@ impl MailHandle {
     ) -> Result<Value> {
         proto::validate_internet_addr(to)?;
         let cfg = self.cfg.lock().clone();
+        let max = attach::max_bytes(Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor));
         let mut note = None;
         let body = match file {
             Some((name, data)) => {
-                let (f, n) = attach::prepare(&name, data)?;
+                let (f, n) = attach::prepare(&name, data, max)?;
                 note = n;
                 attach::join(body, &f)
             }
@@ -385,9 +390,16 @@ impl MailHandle {
         };
         let body = proto::trim_body(&body)?;
         // The desktop app sends the file already in the body.
-        if attach::split(&body).1.is_some() {
+        if let Some(f) = attach::split(&body).1 {
             if let Some(why) = attach_refusal(&cfg) {
                 return Err(Error::config(why));
+            }
+            if f.data.len() > max {
+                return Err(Error::config(attach::too_big_text(
+                    &f.name,
+                    f.data.len(),
+                    max,
+                )));
             }
         }
         if matches!(gateway::local_send_path(cfg.mode), SendPath::Blocked) {
@@ -1007,6 +1019,55 @@ mod tests {
             snap: crate::status::new_shared(),
             keys: IdentityKeys::generate(),
         }
+    }
+
+    /// QA #365 BLOCKER: a file that is refused refuses the whole mail. The
+    /// mail is never queued without it, whether the file comes as its own
+    /// field (Pi page) or already in the body (desktop app).
+    #[tokio::test]
+    async fn a_refused_file_queues_no_mail() {
+        let h = copy_station(Mode::InternetRadio, HUB_DOWN);
+        h.cfg.lock().modem.preset = "vhf-fm".into();
+        let csv = vec![b'7'; attach::ATTACH_MAX_BYTES + 1];
+        let err = h
+            .compose(
+                "tj@example.com",
+                "log",
+                "see file",
+                Some(("log.csv".into(), csv.clone())),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.plain().contains("log.csv is 8.0 KB"), "{}", err.plain());
+        let joined = attach::join(
+            "see file",
+            &attach::Attachment {
+                name: "log.csv".into(),
+                data: csv.clone(),
+            },
+        );
+        assert!(h
+            .compose("tj@example.com", "log", &joined, None)
+            .await
+            .is_err());
+        assert!(h.store.list("outbox").unwrap().is_empty());
+
+        // The same file fits on vhf-fast (512 KB there).
+        h.cfg.lock().modem.preset = "vhf-fast".into();
+        h.compose(
+            "tj@example.com",
+            "log",
+            "see file",
+            Some(("log.csv".into(), csv)),
+        )
+        .await
+        .expect("fits on vhf-fast");
+        let rows = h.store.list("outbox").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(
+            attach::split(&rows[0].body).1.is_some(),
+            "the file went with it"
+        );
     }
 
     fn copy_state(h: &MailHandle) -> String {

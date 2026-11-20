@@ -128,7 +128,7 @@ async fn compose(
     };
     match h.compose(&b.to, &b.subject, &b.body, file).await {
         Ok(v) => Ok(Json(v)),
-        Err(e) => Err((StatusCode::BAD_REQUEST, e.to_string())),
+        Err(e) => Err((StatusCode::BAD_REQUEST, e.plain())),
     }
 }
 
