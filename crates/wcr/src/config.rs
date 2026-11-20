@@ -1064,6 +1064,23 @@ mod tests {
         assert_eq!(m.preset_refusal(Preset::HfGood), None);
     }
 
+    /// QA #365: vhf-fast worked over VOX on an RT-900, so VOX may pick it;
+    /// Bluetooth audio still refuses it.
+    #[test]
+    fn vhf_fast_is_allowed_on_vox_and_refused_on_bluetooth() {
+        use super::ModemConfig;
+        use crate::presets::Preset;
+        let mut m = ModemConfig {
+            ptt: "vox".into(),
+            ..ModemConfig::default()
+        };
+        assert!(m.is_vox());
+        assert_eq!(m.preset_refusal(Preset::VhfFast), None);
+        m.ptt = "bluetooth".into();
+        let why = m.preset_refusal(Preset::VhfFast).unwrap();
+        assert!(why.starts_with("vhf-fast does not survive"), "{why}");
+    }
+
     #[test]
     fn setup_backs_up_an_existing_config_once() {
         let dir = tempfile::tempdir().unwrap();

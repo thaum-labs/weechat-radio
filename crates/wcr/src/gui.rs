@@ -714,6 +714,9 @@ struct GuiApp {
     direct_new: String,
     /// Optimistic dial frequency until /status catches up after /qsy.
     freq_pending: Option<u32>,
+    /// A saved preset change the station is applying by restarting modem73:
+    /// when it was saved, and whether the restart was seen under way.
+    restart_watch: Option<(Instant, bool)>,
     /// Last FREQ-list row picked (keeps CB region/mode when several share a kHz).
     freq_pick_last: Option<crate::band::CallingFreq>,
     /// RX gain / TX level slider values the operator just set, shown until
@@ -868,6 +871,7 @@ impl GuiApp {
             direct_unread: HashMap::new(),
             direct_new: String::new(),
             freq_pending: None,
+            restart_watch: None,
             freq_pick_last: None,
             rx_held: None,
             help_open: false,
@@ -955,11 +959,44 @@ impl GuiApp {
                     crate::modem::supervise::only_restart_settings_differ(&b, &a)
                 });
             self.error = if modem_only {
-                "Setup saved. Restarting modem… the new settings apply once the radio is idle."
-                    .into()
+                self.restart_watch = Some((Instant::now(), false));
+                RESTARTING_NOTE.into()
             } else {
                 "Setup saved. Stop and start the station to use the new settings.".into()
             };
+        }
+    }
+
+    /// Replace "Restarting modem…" once the station says how the restart
+    /// went (QA #365): "now running <preset>" for a few seconds, or the
+    /// failure. The note never outlives the restart.
+    fn follow_modem_restart(&mut self) {
+        let Some((asked, seen)) = self.restart_watch else {
+            return;
+        };
+        if self.error != RESTARTING_NOTE && !self.error.starts_with(NOW_RUNNING) {
+            self.restart_watch = None;
+            return;
+        }
+        let Some(s) = self.status.as_ref() else {
+            return;
+        };
+        match restart_follow(s, seen, asked.elapsed()) {
+            RestartFollow::Wait { seen } => self.restart_watch = Some((asked, seen)),
+            RestartFollow::Done(text) => {
+                if self.error == RESTARTING_NOTE {
+                    self.error = text;
+                    // Clear "now running" a few seconds later.
+                    self.restart_watch = Some((Instant::now(), true));
+                } else if asked.elapsed() > Duration::from_secs(6) {
+                    self.error.clear();
+                    self.restart_watch = None;
+                }
+            }
+            RestartFollow::Failed(text) => {
+                self.error = text;
+                self.restart_watch = None;
+            }
         }
     }
 
@@ -1893,6 +1930,7 @@ impl eframe::App for GuiApp {
                 self.status = None;
             } else {
                 self.status = fetch_status();
+                self.follow_modem_restart();
                 if let (Some(pending), Some(s)) = (self.freq_pending, self.status.as_ref()) {
                     if s.freq_khz == pending {
                         self.freq_pending = None;
@@ -5068,11 +5106,7 @@ impl GuiApp {
                 } else {
                     GREEN
                 };
-                ui.label(
-                    RichText::new(crate::mail::dos_bar(step.fraction))
-                        .color(color)
-                        .monospace(),
-                );
+                solid_bar(ui, step.fraction, color);
                 ui.add_space(4.0);
                 ui.label(RichText::new(&step.label).color(FG).monospace());
                 if let Some(st) = &bad {
@@ -5149,11 +5183,7 @@ impl GuiApp {
             );
             ui.add_space(6.0);
             let color = if step.done && !step.ok { ORANGE } else { GREEN };
-            ui.label(
-                RichText::new(crate::mail::dos_bar(step.fraction))
-                    .color(color)
-                    .monospace(),
-            );
+            solid_bar(ui, step.fraction, color);
             ui.add_space(4.0);
             ui.label(RichText::new(&step.label).color(FG).monospace());
             ui.add_space(8.0);
@@ -6915,6 +6945,63 @@ fn node_command() -> Command {
     }
 }
 
+/// A progress bar as wide as the window, solid fill, with the percent at
+/// the end (QA #365: the block-character bar was short and dithered).
+fn solid_bar(ui: &mut egui::Ui, fraction: f32, color: Color32) {
+    let f = if fraction.is_finite() {
+        fraction.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    ui.horizontal(|ui| {
+        let pct = format!("{:>3}%", (f * 100.0).round() as u32);
+        let label_w = 48.0;
+        let w = (ui.available_width() - label_w).max(40.0);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 14.0), egui::Sense::hover());
+        let p = ui.painter();
+        p.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, color));
+        let mut fill = rect.shrink(2.0);
+        fill.set_width(fill.width() * f);
+        if f > 0.0 {
+            p.rect_filled(fill, 1.0, color);
+        }
+        ui.label(RichText::new(pct).color(color).monospace());
+    });
+}
+
+const RESTARTING_NOTE: &str =
+    "Setup saved. Restarting modem… the new settings apply once the radio is idle.";
+const NOW_RUNNING: &str = "Setup saved. Now running ";
+
+#[derive(Debug, PartialEq)]
+enum RestartFollow {
+    /// Still restarting (or not yet seen to start). `seen`: the restart
+    /// has shown as under way.
+    Wait {
+        seen: bool,
+    },
+    Done(String),
+    Failed(String),
+}
+
+/// Where a saved modem restart stands. Before the station shows it under
+/// way, give it 15 s: the station may not have read the new setup yet.
+fn restart_follow(s: &crate::status::StatusSnapshot, seen: bool, since: Duration) -> RestartFollow {
+    if !s.modem_restart_failed.is_empty() {
+        return RestartFollow::Failed(format!(
+            "Modem restart failed ({}). Stop and start the station to apply.",
+            s.modem_restart_failed
+        ));
+    }
+    if s.preset_pending_note().is_some() {
+        return RestartFollow::Wait { seen: true };
+    }
+    if seen || since > Duration::from_secs(15) {
+        return RestartFollow::Done(format!("{NOW_RUNNING}{}.", s.preset_live()));
+    }
+    RestartFollow::Wait { seen }
+}
+
 /// Read a file for a mail and get it ready: a picture over `max` is shrunk,
 /// any other file must fit. The error names the file, its size and `max`.
 fn read_mail_file(
@@ -7649,6 +7736,37 @@ mod tests {
             paint_attach_line(ui, Some(&file), "", fast);
         });
         assert!(shown.contains("📎 big.csv (8.8 KB)"), "{shown}");
+    }
+
+    /// QA #365: "Restarting modem…" gives way to "now running" or the failure.
+    #[test]
+    fn the_restart_note_follows_the_station() {
+        let mut s = crate::status::StatusSnapshot::default();
+        s.preset = "vhf-fast".into();
+        s.preset_running = "vhf-fm".into();
+        let quick = Duration::from_secs(1);
+        assert_eq!(
+            restart_follow(&s, false, quick),
+            RestartFollow::Wait { seen: true }
+        );
+        s.preset_running = "vhf-fast".into();
+        assert_eq!(
+            restart_follow(&s, true, quick),
+            RestartFollow::Done("Setup saved. Now running vhf-fast.".into())
+        );
+        // Not yet seen under way: wait, unless it has been a while.
+        assert_eq!(
+            restart_follow(&s, false, quick),
+            RestartFollow::Wait { seen: false }
+        );
+        assert!(matches!(
+            restart_follow(&s, false, Duration::from_secs(20)),
+            RestartFollow::Done(_)
+        ));
+        s.modem_restart_failed = "port in use".into();
+        assert!(
+            matches!(restart_follow(&s, true, quick), RestartFollow::Failed(t) if t.contains("port in use"))
+        );
     }
 
     #[test]

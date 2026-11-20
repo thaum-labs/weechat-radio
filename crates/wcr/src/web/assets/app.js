@@ -198,9 +198,10 @@ function lineNode(l) {
     li.append(badge);
   }
   li.append(textNode(l.text));
-  // File transfer: a DOS-style bar such as [████░░░░] 3/15.
+  // File transfer: a solid bar and "3/15" (the station sends "[███░░] 3/15").
   if (l.progress) {
-    const bar = el("span", "bar", l.progress);
+    const n = /(\d+)\s*\/\s*(\d+)\s*$/.exec(l.progress);
+    const bar = n ? cssBar(Number(n[1]) / Math.max(1, Number(n[2])), `${n[1]}/${n[2]}`) : el("span", "bar", l.progress);
     bar.title = l.mine ? "Pieces the far station has receipted" : "Pieces received so far";
     li.append(bar);
   }
@@ -484,20 +485,26 @@ function chip(st) {
   return c;
 }
 
-// DOS-style bar like the file bars (same as the desktop app's mail bars).
-function dosBar(fraction) {
+// A solid progress bar: a track, a fill as wide as `fraction`, and a label
+// (the percent unless given). Block characters dithered in some fonts (#365).
+function cssBar(fraction, label) {
   const f = Math.min(1, Math.max(0, Number(fraction) || 0));
-  const full = Math.floor(f * 20);
-  return `[${"█".repeat(full)}${"░".repeat(20 - full)}] ${String(Math.round(f * 100)).padStart(3)}%`;
+  const wrap = el("span", "pbar");
+  const track = el("span", "track");
+  const fill = el("span", "fill");
+  fill.style.width = `${(f * 100).toFixed(1)}%`;
+  track.append(fill);
+  wrap.append(track, el("span", "label", label === undefined ? `${Math.round(f * 100)}%` : label));
+  return wrap;
 }
 
 // How far an outgoing radio mail is: chunks the gateway has receipted.
 function sendBar(m) {
-  if (m.folder !== "outbox" || !(m.chunks > 0)) return "";
-  if (m.state === "gateway") return dosBar(1);
-  if (m.state !== "tx" && m.state !== "queued") return "";
+  if (m.folder !== "outbox" || !(m.chunks > 0)) return null;
+  if (m.state === "gateway") return cssBar(1);
+  if (m.state !== "tx" && m.state !== "queued") return null;
   const have = String(m.got || "").split(",").filter((x) => /^\d+$/.test(x.trim())).length;
-  return `${dosBar(have / m.chunks)} ${have}/${m.chunks}`;
+  return cssBar(have / m.chunks, `${Math.round((100 * have) / m.chunks)}% ${have}/${m.chunks}`);
 }
 
 // The Radio+ Get under way, or the mail it fetched (click to open).
@@ -509,12 +516,12 @@ function drawGet(get, rows) {
   if (g.state === "asking" || g.state === "receiving") {
     const part = g.state === "receiving" && g.total > 0 ? g.got / g.total : 0;
     const words = g.state === "receiving" ? `chunks ${g.got} of ${g.total}` : "asking the gateway…";
-    p.append(`Getting ${subject} `, el("span", "bar", dosBar(0.1 + 0.85 * part)), ` ${words}`);
+    p.append(`Getting ${subject} `, cssBar(0.1 + 0.85 * part), ` ${words}`);
   } else if (g.state === "fetched" && g.mail_id && rows.some((r) => r.id === g.mail_id && r.unread)) {
     const a = el("button", "quiet", "Open");
     a.type = "button";
     a.onclick = () => showMail(g.mail_id);
-    p.append(`Fetched ${subject} `, el("span", "bar", dosBar(1)), " ", a);
+    p.append(`Fetched ${subject} `, cssBar(1), " ", a);
   }
   p.hidden = !p.childNodes.length;
 }
@@ -567,7 +574,7 @@ async function loadMail() {
     const who = folder === "inbox" ? m.from_addr : `${m.to_addr}${via ? ` · via ${via.gateway}` : ""}`;
     what.append(el("span", "subject", m.subject || "(no subject)"), el("span", "who", who));
     const bar = sendBar(m);
-    if (bar) what.append(el("span", "bar", bar));
+    if (bar) what.append(bar);
     li.append(el("span", "when", clock(m.ts)), chip(m.status || {}), what);
     li.tabIndex = 0;
     li.onclick = () => showMail(m.id);
@@ -593,7 +600,10 @@ function drawMail(m) {
   p.replaceChildren(chip(st), document.createTextNode(` ${st.word || ""}`));
   if (st.reason) p.append(el("span", "dim small block", st.reason));
   const bar = sendBar(m);
-  if (bar) p.append(el("span", "bar block", bar));
+  if (bar) {
+    bar.classList.add("block");
+    p.append(bar);
+  }
   const steps = (m.hops || []).map((h) => ({ ts: h.ts, text: STAGES[h.stage] || h.stage }))
     .concat((m.via || []).map((v) => ({ ts: v.ts, text: `via gateway ${v.gateway}` })))
     .sort((a, b) => a.ts - b.ts);
