@@ -40,6 +40,9 @@ pub struct Row {
     pub id: String,
     /// Sent by this station for another (a relay), not its own (#247).
     pub relayed: bool,
+    /// Bytes of the frame on the air (0 when not known), shown beside the
+    /// SNR so file and chat rows carry frame info as mail rows do (#365).
+    pub bytes: usize,
     /// A mail receiver's answer (chunk ack, complete ack, list reply). Only
     /// used to name its sender; not sent to clients.
     #[serde(skip)]
@@ -193,6 +196,7 @@ pub fn envelope_row(env: &Envelope, dir: &'static str, via: &str, snr: Option<f3
                 format!("receipt for {}", &h[..h.len().min(8)])
             })
             .unwrap_or_default(),
+        MsgType::File => file_text(env),
         _ => text_of(env),
     };
     Row {
@@ -208,6 +212,40 @@ pub fn envelope_row(env: &Envelope, dir: &'static str, via: &str, snr: Option<f3
         id: short_id(env),
         relayed: false,
         mail_answer: false,
+        bytes: env.encode().map(|b| b.len()).unwrap_or(0),
+    }
+}
+
+/// A file frame in words: `piece 3/38 · photo.jpg · 220 B of 7.7 KB` or
+/// `report: 36/38 held` (QA #365 rc12: file rows said nothing).
+fn file_text(env: &Envelope) -> String {
+    use crate::proto::file::{human_size, Piece, Report, REPORT_VER};
+    if env.body.first() == Some(&REPORT_VER) {
+        return Report::decode(&env.body)
+            .map(|r| format!("report: {}/{} held", r.held.len(), r.count))
+            .unwrap_or_else(|_| "file report".into());
+    }
+    match Piece::decode(&env.body) {
+        Ok(p) => {
+            let name = p
+                .name
+                .as_deref()
+                .map(|n| format!(" \u{b7} {n}"))
+                .unwrap_or_default();
+            let burst = if env.flags.burst() {
+                " \u{b7} burst"
+            } else {
+                ""
+            };
+            format!(
+                "piece {}/{}{name} \u{b7} {} B of {}{burst}",
+                u16::from(p.idx) + 1,
+                p.count,
+                p.data.len(),
+                human_size(usize::from(p.total))
+            )
+        }
+        Err(_) => "file piece".into(),
     }
 }
 
@@ -267,6 +305,7 @@ pub fn mail_row(m: &crate::mail::Incoming, dir: &'static str, snr: Option<f32>) 
         id,
         relayed: false,
         mail_answer,
+        bytes: 0,
     }
 }
 

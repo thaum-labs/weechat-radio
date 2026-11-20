@@ -745,6 +745,10 @@ struct GuiApp {
     /// it shows, Send is blocked: a mail never goes without its file
     /// quietly (QA #365).
     mail_file_refused: String,
+    /// The file as dropped and the limit it was checked against: a preset
+    /// change checks it again, both ways, so Send opens up without
+    /// dropping it again (QA #365 rc12).
+    mail_file_source: Option<(std::path::PathBuf, usize)>,
     /// The compose hint, worked out once per change: a 512 KB file makes it
     /// too slow to work out every frame.
     mail_hint_cache: Option<(u64, String)>,
@@ -889,6 +893,7 @@ impl GuiApp {
             mail_body: String::new(),
             mail_file: None,
             mail_file_refused: String::new(),
+            mail_file_source: None,
             mail_hint_cache: None,
             mail_hold: false,
             mail_send: None,
@@ -1484,6 +1489,7 @@ impl GuiApp {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
         let max = self.mail_attach_max();
+        self.mail_file_source = Some((path.to_path_buf(), max));
         match read_mail_file(path, &name, max) {
             Ok((file, note)) => {
                 self.mail_toast = note.unwrap_or_default();
@@ -2865,6 +2871,7 @@ impl eframe::App for GuiApp {
                                 let show_snr =
                                     self.status.as_ref().map(|s| s.show_snr).unwrap_or(true);
                                 let mut open_folder_of: Option<String> = None;
+                                let mut cancel_file: Option<String> = None;
                                 for line in &self.chat {
                                     if !line.channel.is_empty()
                                         && !line.channel.eq_ignore_ascii_case(&active)
@@ -2943,6 +2950,14 @@ impl eframe::App for GuiApp {
                                                 } else {
                                                     "pieces received so far"
                                                 });
+                                                if file_cancellable(line, mine)
+                                                    && ui
+                                                        .add(hair_btn("Cancel", PURPLE))
+                                                        .on_hover_text(FILE_CANCEL_HINT)
+                                                        .clicked()
+                                                {
+                                                    cancel_file = Some(line.msgid.clone());
+                                                }
                                             }
                                             if !line.via.is_empty() {
                                                 ui.label(
@@ -2999,6 +3014,9 @@ impl eframe::App for GuiApp {
                                     if let Some(dir) = path.parent() {
                                         let _ = open::that(dir);
                                     }
+                                }
+                                if let Some(id) = cancel_file {
+                                    self.send_cmd(&format!("/radio filecancel {id}"));
                                 }
                             });
                     });
@@ -5152,6 +5170,7 @@ impl GuiApp {
                 self.mail_body.clear();
                 self.mail_file = None;
                 self.mail_file_refused.clear();
+                self.mail_file_source = None;
                 self.mail_folder = "sent".into();
             }
         }
@@ -5635,6 +5654,13 @@ impl GuiApp {
         if drop_file && !self.mail_hold {
             self.mail_file = None;
             self.mail_file_refused.clear();
+            self.mail_file_source = None;
+        }
+        // The preset changed since the file was dropped: check it again.
+        if let Some((path, max)) = self.mail_file_source.clone() {
+            if max != self.mail_attach_max() && !self.mail_hold {
+                self.attach_mail_file(&path);
+            }
         }
         let full_body = self.mail_full_body();
         let bytes = full_body.len();
@@ -5649,6 +5675,8 @@ impl GuiApp {
             ack: matches!(crate::mail::gateway_path(mode), crate::mail::SendPath::Rf),
         };
         let refused = !self.mail_file_refused.is_empty();
+        let missing = mail_missing_field(&self.mail_to, &self.mail_subject);
+        let blocked = refused || missing.is_some();
         let hint = if self.mail_hold {
             match crate::mail::gateway_path(mode) {
                 crate::mail::SendPath::Hub => {
@@ -5659,6 +5687,8 @@ impl GuiApp {
             .to_string()
         } else if refused {
             "Remove the file that was not attached, or drop one that fits, to send".to_string()
+        } else if let Some(why) = missing {
+            why.to_string()
         } else {
             let key = hint_key(&full_body, &preview, mode, preset);
             match &self.mail_hint_cache {
@@ -5673,10 +5703,10 @@ impl GuiApp {
         // Breathing room between the message box and the Send row.
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            let color = if refused { ORANGE } else { DIM };
+            let color = if blocked { ORANGE } else { DIM };
             ui.label(RichText::new(hint).color(color).monospace());
-            let send = ui.add_enabled(!refused, hair_btn("Send", ORANGE));
-            if send.clicked() && !self.mail_hold && !refused {
+            let send = ui.add_enabled(!blocked, hair_btn("Send", ORANGE));
+            if send.clicked() && !self.mail_hold && !blocked {
                 self.mail_toast.clear();
                 self.mail_confirm = Some(MailConfirm {
                     kind: "send",
@@ -5851,7 +5881,7 @@ impl GuiApp {
             gateway: &gateway,
             ack: row.ack,
         };
-        let (secs, _) = crate::mail::airtime_parts(&preview, preset, 250, self.rest_secs());
+        let secs = crate::mail::airtime_parts(&preview, preset, 250, self.rest_secs()).secs;
         self.mail_toast.clear();
         self.mail_send = Some(MailSend {
             id: row.id.clone(),
@@ -5894,7 +5924,7 @@ impl GuiApp {
             gateway: &gateway,
             ack: !hub,
         };
-        let (secs, bursts) = crate::mail::airtime_parts(&preview, preset, 250, self.rest_secs());
+        let est = crate::mail::airtime_parts(&preview, preset, 250, self.rest_secs());
         let freq = self
             .status
             .as_ref()
@@ -5948,7 +5978,7 @@ impl GuiApp {
                     .monospace(),
                 );
                 ui.label(
-                    RichText::new(crate::mail::confirm_air_line(secs, bursts, preset.as_str()))
+                    RichText::new(crate::mail::confirm_air_line(&est, preset.as_str()))
                         .color(FG)
                         .monospace(),
                 );
@@ -6014,7 +6044,7 @@ impl GuiApp {
                                 to: confirm.to.clone(),
                                 subject: confirm.subject.clone(),
                                 rf: path == "rf",
-                                airtime: secs,
+                                airtime: est.secs,
                                 started: Instant::now(),
                                 sent_at: None,
                                 heard: Instant::now(),
@@ -7144,6 +7174,31 @@ fn restart_follow(s: &crate::status::StatusSnapshot, seen: bool, since: Duration
 
 /// Read a file for a mail and get it ready: a picture over `max` is shrunk,
 /// any other file must fit. The error names the file, its size and `max`.
+/// Cancel on a file line (QA #365 rc13): our own file, still going.
+pub(crate) fn file_cancellable(line: &ChatLine, mine: bool) -> bool {
+    mine && !line.msgid.is_empty()
+        && !line.progress.is_empty()
+        && !crate::chat_line::file_line_settled(line)
+}
+
+pub(crate) const FILE_CANCEL_HINT: &str =
+    "Stop sending this file: nothing more goes on the air, and the line shows [no]";
+
+/// What still stops a mail from going, for the hint beside Send (QA #365
+/// rc12: Send with an empty To did nothing at all). `None`: it can go.
+fn mail_missing_field(to: &str, subject: &str) -> Option<&'static str> {
+    let to = to.trim();
+    if to.is_empty() {
+        Some("Add an email address in To to send")
+    } else if crate::mail::validate_internet_addr(to).is_err() {
+        Some("To needs a whole email address, like name@example.com")
+    } else if subject.trim().is_empty() {
+        Some("Add a subject to send")
+    } else {
+        None
+    }
+}
+
 fn read_mail_file(
     path: &std::path::Path,
     name: &str,

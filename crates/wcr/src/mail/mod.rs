@@ -19,7 +19,7 @@ use crate::modes::Mode;
 use crate::presets::Preset;
 use crate::proto::IdentityKeys;
 use crate::status::SharedStatus;
-pub use air::{confirm_air_line, AirtimeMail};
+pub use air::{confirm_air_line, AirtimeEstimate, AirtimeMail};
 pub use gateway::{local_send_path as gateway_path, state_mark, SendPath};
 pub use hub::GATEWAY_ASK_PATH;
 pub use lease::RadioPorts;
@@ -32,9 +32,8 @@ pub fn airtime_parts(
     preset: Preset,
     turnaround_ms: u32,
     rest_secs: u32,
-) -> (f64, usize) {
-    let (secs, n) = air::mail_airtime_secs(preset, mail, turnaround_ms);
-    (secs + air::rest_total_secs(preset, mail, rest_secs), n)
+) -> AirtimeEstimate {
+    air::airtime_estimate(preset, mail, turnaround_ms, rest_secs)
 }
 use parking_lot::Mutex;
 use serde_json::{json, Value};
@@ -1224,7 +1223,7 @@ mod tests {
             hint.contains("not Sent until the gateway accepts it"),
             "{hint}"
         );
-        assert!(hint.contains("bursts"), "{hint}");
+        assert!(hint.contains("frames in one burst"), "{hint}");
         let (secs, long_n) = air::mail_airtime_secs(Preset::HfPoor, &long, 250);
         let planned = air::plan_mail_wires(
             Preset::HfPoor,
@@ -1239,11 +1238,28 @@ mod tests {
         assert!(short_n >= 3, "115 B estimated {short_n} bursts");
         let one_body = "x";
         let one = hint_line(&preview(&one_body), Mode::RadioPlus, Preset::VhfFm, 250, 0);
-        assert!(one.contains("(1 burst)"), "{one}");
+        assert!(one.contains("(1 frame in one burst)"), "{one}");
         assert!(!one.contains("bursts"), "{one}");
-        let line = confirm_air_line(120.0, 23, "hf-poor");
-        assert!(line.contains("23 bursts"));
-        assert!(confirm_air_line(4.0, 1, "hf-poor").contains("(1 burst @ hf-poor)"));
+        let est = AirtimeEstimate {
+            secs: 190.0,
+            rest_secs: 20.0,
+            frames: 49,
+            bursts: 2,
+        };
+        let line = confirm_air_line(&est, "vhf-fast");
+        assert!(
+            line.contains(
+                "About 3 min 10 s on the air (49 frames in 2 bursts, incl. 20 s rest @ vhf-fast)"
+            ),
+            "{line}"
+        );
+        let small = AirtimeEstimate {
+            secs: 4.0,
+            rest_secs: 0.0,
+            frames: 1,
+            bursts: 1,
+        };
+        assert!(confirm_air_line(&small, "hf-poor").contains("(1 frame in one burst @ hf-poor)"));
         assert!(line.contains("Not Sent until the gateway accepts it"));
         assert!(air::missing_chunk_idxs(4, "0,2").is_empty() == false);
         assert_eq!(air::missing_chunk_idxs(4, "0,2"), vec![1, 3]);

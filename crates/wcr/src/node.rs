@@ -2129,6 +2129,12 @@ async fn key_file_burst(
         if n == 1 { "" } else { "s" },
         rung.as_str()
     );
+    // Every piece in one keying, VOX included (QA #365 rc12): modem73 alone
+    // keys 4 frames per transmission, and one on VOX.
+    let control = rt.control();
+    if let Some(c) = &control {
+        c.burst_begin().await;
+    }
     enqueue_rf(
         rt,
         &item_env,
@@ -2155,18 +2161,87 @@ async fn key_file_burst(
     if let Some(before) = handed_before {
         let rt = rt.clone();
         let dest = last.dest.to_string();
+        let pieces = pieces.to_vec();
         tokio::spawn(async move {
             watch_burst_tx(&rt, before, n, &line, &dest, have, count, secs).await;
+            if let Some(c) = &control {
+                c.burst_end().await;
+            }
             // Keyed (or the watch gave up): reports from now on are about
-            // this burst.
+            // this burst, and the pieces' retry clock starts now, not when
+            // the burst was queued, so no piece goes again before the
+            // report could come (the [x2] on a first-try file, QA #365 rc12).
             if let Some(b) = rt.burst_sends.lock().get_mut(&file_id) {
                 b.quiet_until = std::time::Instant::now();
             }
+            if rt.burst_sends.lock().contains_key(&file_id) {
+                let open: Vec<Envelope> = pieces
+                    .into_iter()
+                    .filter(|p| {
+                        rt.store.delivery_of(&p.msg_id).ok().flatten() != Some(Delivery::Delivered)
+                    })
+                    .collect();
+                hold_burst_pieces(&rt, &open, 0.0);
+            }
         });
-    } else if let Some(b) = rt.burst_sends.lock().get_mut(&file_id) {
-        b.quiet_until = std::time::Instant::now() + Duration::from_secs_f64(secs);
+    } else {
+        if let Some(c) = &control {
+            c.burst_end().await;
+        }
+        if let Some(b) = rt.burst_sends.lock().get_mut(&file_id) {
+            b.quiet_until = std::time::Instant::now() + Duration::from_secs_f64(secs);
+        }
     }
     Ok(secs)
+}
+
+/// Cancel a file we are sending (QA #365 rc13): its pieces leave the air
+/// queue and stop retrying, frames already handed to modem73 are dropped
+/// (the one on the air ends), and the file line shows [no].
+async fn cancel_file_send(rt: &Runtime, line: &str) -> String {
+    let ids = rt.file_sends.lock().cancel(line);
+    if ids.is_empty() {
+        return format!("no file {line} is being sent");
+    }
+    let mut ids: Vec<MsgId> = ids.iter().filter_map(|h| MsgId::parse_hex(h)).collect();
+    rt.burst_sends.lock().retain(|_, b| {
+        let mine = b
+            .pieces
+            .last()
+            .is_some_and(|p| p.msg_id.hex().eq_ignore_ascii_case(line));
+        if mine {
+            ids.extend(b.pieces.iter().map(|p| p.msg_id));
+        }
+        !mine
+    });
+    ids.sort_by_key(|id| id.hex());
+    ids.dedup();
+    let mut stopped = 0;
+    for id in &ids {
+        if let Some(air) = rt.air() {
+            air.cancel(*id);
+        }
+        if rt.store.delivery_of(id).ok().flatten() != Some(Delivery::Delivered) {
+            let _ = rt.store.set_delivery(id, Delivery::Failed);
+            let hops = rt
+                .store
+                .get(id)
+                .ok()
+                .flatten()
+                .map_or(0, |m| m.env.hops_left);
+            let _ = rt.store.set_hold(id, 0, hops);
+            stopped += 1;
+        }
+    }
+    let dropped = match rt.control() {
+        Some(c) => c.clear_tx_queue().await.unwrap_or(0),
+        None => 0,
+    };
+    tracing::info!(
+        "file {line} cancelled: {stopped} piece(s) stopped, {dropped} dropped at the modem"
+    );
+    rt.irc.tagmsg_delivery(line, "failed").await;
+    format!("file cancelled: {stopped} piece(s) not sent")
 }
 
 /// The file line's bar steps up one piece at a time as modem73 keys each
@@ -2451,6 +2526,14 @@ async fn on_file_piece(rt: &Runtime, env: &Envelope, medium: &str, snr: Option<f
     let from = env.origin.to_string();
     let (file_id, count, total) = (piece.file_id, piece.count, piece.total);
     let is_last = piece.is_last();
+    // One journal line per piece heard (QA #365 rc12: the Pi logged none).
+    tracing::info!(
+        "file piece {}/{count} from {from} (file {file_id:08x}, {} B{}{})",
+        u16::from(piece.idx) + 1,
+        piece.data.len(),
+        snr.map(|s| format!(", {s:.0} dB")).unwrap_or_default(),
+        if env.flags.burst() { ", burst" } else { "" }
+    );
     // A burst (QA #365) is answered once, with a report, not per piece.
     let burst = env.flags.burst();
     // The "receiving" line's id: stable per sender and file.
@@ -5297,6 +5380,13 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             let max = cfg.lock().rf.max_retries;
             let (o, h) = store.queue_depth(&our, max).unwrap_or((0, 0));
             format!("outbound {o} hold {h}")
+        }
+        "filecancel" => {
+            let line = sp.next().unwrap_or("").trim().to_ascii_lowercase();
+            if line.is_empty() {
+                return "usage: /radio filecancel <file line id>".into();
+            }
+            cancel_file_send(rt, &line).await
         }
         "flush" => {
             let our = cfg.lock().callsign.clone();

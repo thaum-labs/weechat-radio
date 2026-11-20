@@ -156,6 +156,34 @@ pub(crate) fn apply_delivery_to(
     }
 }
 
+/// The file bar once its line is [ok] or failed: the burst step
+/// ("burst keyed, waiting for report") goes, so it never reads as still
+/// waiting next to [ok] (QA #365 rc12). [ok] shows the bar full.
+pub(crate) fn settle_file_progress(progress: &str, state: &str) -> String {
+    let bar = progress.split(" · ").next().unwrap_or("").trim();
+    if bar.is_empty() {
+        return String::new();
+    }
+    if state == "delivered" {
+        let count = bar
+            .rsplit_once(' ')
+            .and_then(|(_, n)| n.split_once('/'))
+            .and_then(|(_, c)| c.trim().parse::<u8>().ok());
+        if let Some(c) = count {
+            return format!("{} · complete", crate::proto::file::progress_bar(c, c));
+        }
+    }
+    bar.to_string()
+}
+
+/// A line that is [ok], [all] or [no] keeps its settled bar: a step that
+/// was on its way when the receipt came does not bring "waiting" back.
+pub(crate) fn file_line_settled(line: &ChatLine) -> bool {
+    matches!(line.ticks.as_str(), "[ok]" | "[all]" | "[no]")
+        || line.ticks.ends_with(" [ok]")
+        || line.ticks.ends_with(" [all]")
+}
+
 pub(crate) fn apply_line_delivery(
     line: &mut ChatLine,
     ticks: &str,
@@ -163,6 +191,9 @@ pub(crate) fn apply_line_delivery(
     tries: u32,
     state: &str,
 ) {
+    if matches!(state, "delivered" | "failed") && !line.progress.is_empty() {
+        line.progress = settle_file_progress(&line.progress, state);
+    }
     if state == "relayed" {
         if line.ticks.contains("[no]") || line.ticks.contains("[rl]") {
             return;
@@ -322,6 +353,9 @@ pub(crate) fn apply_file_progress(lines: &mut [ChatLine], msgid: &str, bar: &str
         .iter_mut()
         .filter(|l| l.msgid.eq_ignore_ascii_case(msgid))
     {
+        if file_line_settled(l) {
+            continue;
+        }
         if l.progress != bar {
             l.progress = bar.to_string();
             changed = true;
@@ -648,6 +682,32 @@ mod file_tests {
         let mut chat = vec![notice("car.jpg"), chat.pop().unwrap()];
         drop_file_send_notice(&mut chat, "ab12", "failed");
         assert_eq!(chat.len(), 1);
+    }
+
+    #[test]
+    fn a_settled_file_line_drops_the_burst_step() {
+        let waiting = "[████████████████████] 38/38 · burst keyed, waiting for report";
+        assert_eq!(
+            settle_file_progress(waiting, "delivered"),
+            "[████████████████████] 38/38 · complete"
+        );
+        let part = "[██████░░░░░░░░░░░░░░] 12/38 · 26 missing, resending";
+        assert_eq!(
+            settle_file_progress(part, "failed"),
+            "[██████░░░░░░░░░░░░░░] 12/38"
+        );
+        let mut lines = vec![ChatLine::user("M7TJF", "📎 a.jpg (7.7 KB)", "PI")];
+        lines[0].msgid = "ab12".into();
+        lines[0].progress = waiting.into();
+        apply_delivery_to(&mut lines, "M7TJF", "ab12", "delivered", 0);
+        assert!(
+            lines[0].progress.ends_with("· complete"),
+            "{}",
+            lines[0].progress
+        );
+        // A step still on its way when the receipt came is not shown.
+        assert!(!apply_file_progress(&mut lines, "ab12", waiting));
+        assert!(lines[0].progress.ends_with("· complete"));
     }
 
     #[test]
