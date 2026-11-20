@@ -25,6 +25,7 @@ pub fn router(slot: MailSlot) -> Router {
         .route("/mail/compose", post(compose))
         .route("/mail/delete", post(delete_one))
         .route("/mail/retry", post(retry_one))
+        .route("/mail/cancel", post(cancel_one))
         .route("/mail/check", post(check))
         .route("/mail/get", post(get_msgs))
         .route("/mail/copy", post(copy_set))
@@ -128,7 +129,7 @@ async fn compose(
     };
     match h.compose(&b.to, &b.subject, &b.body, file).await {
         Ok(v) => Ok(Json(v)),
-        Err(e) => Err((StatusCode::BAD_REQUEST, e.to_string())),
+        Err(e) => Err((StatusCode::BAD_REQUEST, e.plain())),
     }
 }
 
@@ -155,6 +156,16 @@ async fn retry_one(
 ) -> Result<Json<Value>, StatusCode> {
     let h = handle(&slot).await?;
     let ok = h.retry(&b.id).await.map_err(store_err)?;
+    Ok(Json(json!({ "ok": ok })))
+}
+
+/// Stop a mail mid-send (QA #365).
+async fn cancel_one(
+    axum::Extension(slot): axum::Extension<MailSlot>,
+    Json(b): Json<IdBody>,
+) -> Result<Json<Value>, StatusCode> {
+    let h = handle(&slot).await?;
+    let ok = h.cancel(&b.id).map_err(store_err)?;
     Ok(Json(json!({ "ok": ok })))
 }
 

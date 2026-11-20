@@ -586,6 +586,10 @@ struct MailSend {
     /// Last time the station answered about this mail.
     heard: Instant,
     row: Option<crate::mail::MailRow>,
+    /// Chunks keyed on the air so far (big mail, live from the station).
+    keyed: u32,
+    /// Cancel was pressed; the station is told once.
+    cancelled: bool,
     step: crate::mail::SendStep,
     /// A send from compose clears To, subject and body once it succeeds; a
     /// Retry of an older mail leaves compose alone.
@@ -714,6 +718,9 @@ struct GuiApp {
     direct_new: String,
     /// Optimistic dial frequency until /status catches up after /qsy.
     freq_pending: Option<u32>,
+    /// A saved preset change the station is applying by restarting modem73:
+    /// when it was saved, and whether the restart was seen under way.
+    restart_watch: Option<(Instant, bool)>,
     /// Last FREQ-list row picked (keeps CB region/mode when several share a kHz).
     freq_pick_last: Option<crate::band::CallingFreq>,
     /// RX gain / TX level slider values the operator just set, shown until
@@ -734,6 +741,13 @@ struct GuiApp {
     mail_body: String,
     /// A file dropped on the Email screen, ready to go with the next mail.
     mail_file: Option<crate::mail::attach::Attachment>,
+    /// Why the last file dropped on the Email screen was not attached. While
+    /// it shows, Send is blocked: a mail never goes without its file
+    /// quietly (QA #365).
+    mail_file_refused: String,
+    /// The compose hint, worked out once per change: a 512 KB file makes it
+    /// too slow to work out every frame.
+    mail_hint_cache: Option<(u64, String)>,
     mail_hold: bool,
     mail_send: Option<MailSend>,
     mail_toast: String,
@@ -861,6 +875,7 @@ impl GuiApp {
             direct_unread: HashMap::new(),
             direct_new: String::new(),
             freq_pending: None,
+            restart_watch: None,
             freq_pick_last: None,
             rx_held: None,
             help_open: false,
@@ -873,6 +888,8 @@ impl GuiApp {
             mail_subject: String::new(),
             mail_body: String::new(),
             mail_file: None,
+            mail_file_refused: String::new(),
+            mail_hint_cache: None,
             mail_hold: false,
             mail_send: None,
             mail_toast: String::new(),
@@ -946,11 +963,44 @@ impl GuiApp {
                     crate::modem::supervise::only_restart_settings_differ(&b, &a)
                 });
             self.error = if modem_only {
-                "Setup saved. Restarting modem… the new settings apply once the radio is idle."
-                    .into()
+                self.restart_watch = Some((Instant::now(), false));
+                RESTARTING_NOTE.into()
             } else {
                 "Setup saved. Stop and start the station to use the new settings.".into()
             };
+        }
+    }
+
+    /// Replace "Restarting modem…" once the station says how the restart
+    /// went (QA #365): "now running <preset>" for a few seconds, or the
+    /// failure. The note never outlives the restart.
+    fn follow_modem_restart(&mut self) {
+        let Some((asked, seen)) = self.restart_watch else {
+            return;
+        };
+        if self.error != RESTARTING_NOTE && !self.error.starts_with(NOW_RUNNING) {
+            self.restart_watch = None;
+            return;
+        }
+        let Some(s) = self.status.as_ref() else {
+            return;
+        };
+        match restart_follow(s, seen, asked.elapsed()) {
+            RestartFollow::Wait { seen } => self.restart_watch = Some((asked, seen)),
+            RestartFollow::Done(text) => {
+                if self.error == RESTARTING_NOTE {
+                    self.error = text;
+                    // Clear "now running" a few seconds later.
+                    self.restart_watch = Some((Instant::now(), true));
+                } else if asked.elapsed() > Duration::from_secs(6) {
+                    self.error.clear();
+                    self.restart_watch = None;
+                }
+            }
+            RestartFollow::Failed(text) => {
+                self.error = text;
+                self.restart_watch = None;
+            }
         }
     }
 
@@ -1370,8 +1420,8 @@ impl GuiApp {
         if hovering {
             let text = if email {
                 format!(
-                    "drop to attach to this mail (pictures shrink to {})",
-                    crate::proto::file::human_size(crate::mail::attach::ATTACH_MAX_BYTES)
+                    "drop to attach to this mail (up to {}, pictures shrink to fit)",
+                    crate::proto::file::human_size(self.mail_attach_max())
                 )
             } else if direct {
                 format!(
@@ -1410,30 +1460,40 @@ impl GuiApp {
         }
     }
 
+    /// The attachment limit on the running preset: 512 KB on vhf-fast,
+    /// 8 KB elsewhere.
+    fn mail_attach_max(&self) -> usize {
+        let preset = self
+            .status
+            .as_ref()
+            .and_then(|s| Preset::parse(&s.preset))
+            .unwrap_or(Preset::HfPoor);
+        crate::mail::attach::max_bytes(preset)
+    }
+
     /// Read a file dropped on the Email screen and get it ready to send:
-    /// a picture is shrunk to fit, other files must already fit.
+    /// a picture is shrunk to fit, other files must already fit. A file
+    /// that does not fit clears any file attached before, and shows on the
+    /// attachment line until it is removed or another file is dropped.
     fn attach_mail_file(&mut self, path: &std::path::Path) {
+        if self.mail_hold {
+            return;
+        }
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        let too_big = std::fs::metadata(path)
-            .map(|m| m.len() as usize > crate::proto::file::PICTURE_SOURCE_MAX)
-            .unwrap_or(false);
-        let read = if too_big {
-            Err(format!("{name} is too big to attach."))
-        } else {
-            std::fs::read(path).map_err(|e| format!("Could not read {name}: {e}"))
-        };
-        match read.and_then(|d| crate::mail::attach::prepare(&name, d).map_err(|e| e.plain())) {
+        let max = self.mail_attach_max();
+        match read_mail_file(path, &name, max) {
             Ok((file, note)) => {
                 self.mail_toast = note.unwrap_or_default();
                 self.mail_toast_warn = false;
                 self.mail_file = Some(file);
+                self.mail_file_refused.clear();
             }
             Err(e) => {
-                self.mail_toast = e;
-                self.mail_toast_warn = true;
+                self.mail_file = None;
+                self.mail_file_refused = e;
             }
         }
     }
@@ -1874,6 +1934,7 @@ impl eframe::App for GuiApp {
                 self.status = None;
             } else {
                 self.status = fetch_status();
+                self.follow_modem_restart();
                 if let (Some(pending), Some(s)) = (self.freq_pending, self.status.as_ref()) {
                     if s.freq_khz == pending {
                         self.freq_pending = None;
@@ -2077,6 +2138,7 @@ impl eframe::App for GuiApp {
                         ui.add_space(8.0);
                         let mut mode_cmd = None;
                         let mut preset_cmd = None;
+                        let mut file_cmd = None;
                         let mut freq_cmd = None;
                         let mut tower_cmd = None;
                         let mut level_cmd = None;
@@ -2138,6 +2200,7 @@ impl eframe::App for GuiApp {
                                     preset_cmd = Some(format!("/preset {next}"));
                                 }
                             }
+                            file_cmd = file_send_row(ui, s, station_key);
                             if let Some(note) = s.preset_pending_note() {
                                 ui.label(RichText::new(note).color(ORANGE).small());
                             }
@@ -2298,6 +2361,9 @@ impl eframe::App for GuiApp {
                             self.send_cmd(&cmd);
                         }
                         if let Some(cmd) = preset_cmd {
+                            self.send_cmd(&cmd);
+                        }
+                        if let Some(cmd) = file_cmd {
                             self.send_cmd(&cmd);
                         }
                         if let Some(cmd) = level_cmd {
@@ -3806,6 +3872,59 @@ fn tower_toggle(ui: &mut egui::Ui, on: bool, key: KeyFn) -> Option<bool> {
     flipped
 }
 
+/// The FILES row (QA #365): how a file in a direct chat goes out. Shown
+/// on the presets that carry files. Returns the command to send.
+fn file_send_row(ui: &mut egui::Ui, s: &StatusSnapshot, key: KeyFn) -> Option<String> {
+    let preset = Preset::parse(&s.preset)?;
+    if !s.tnc.is_empty() || !crate::proto::file::preset_allows(preset) {
+        return None;
+    }
+    let mut rf = crate::config::RfConfig::default();
+    if !s.file_send.is_empty() {
+        let _ = rf.set_file_send(&s.file_send);
+    }
+    let current = rf.file_send_word(preset);
+    let mut chosen = None;
+    let inner = ui.horizontal(|ui| {
+        key(ui, "FILES");
+        let w = ui.available_width();
+        egui::ComboBox::from_id_salt("file_send_pick")
+            .selected_text(RichText::new(&current).color(PURPLE).monospace())
+            .width(w)
+            .truncate()
+            .show_ui(ui, |ui| {
+                ui.set_min_width(w.max(160.0));
+                for c in crate::config::FILE_SEND_CHOICES {
+                    let row = ui.selectable_label(
+                        rf.file_send == c,
+                        RichText::new(c).color(PURPLE).monospace(),
+                    );
+                    hover_tip(
+                        &row,
+                        match c {
+                            "auto" => "Burst on vhf-fast, piece by piece on vhf-fm and afsk-1200.",
+                            "burst" => "Every piece back to back, then the far end says once what it lacks and only that goes again. For a strong link.",
+                            _ => "One piece at a time, each with its own receipt. Slower; for a weak or marginal link.",
+                        },
+                    );
+                    if row.clicked() && rf.file_send != c {
+                        chosen = Some(format!("/filesend {c}"));
+                    }
+                }
+            });
+    });
+    let resp = ui.interact(
+        inner.response.rect,
+        ui.id().with("file_send_row"),
+        egui::Sense::hover(),
+    );
+    hover_tip(
+        &resp,
+        "How a file in a direct chat goes out. Saved in wcr.toml as [rf] file_send.",
+    );
+    chosen
+}
+
 fn preset_pick(ui: &mut egui::Ui, current: &str, key: KeyFn) -> Option<String> {
     let mut chosen = None;
     ui.horizontal(|ui| {
@@ -4916,6 +5035,7 @@ impl GuiApp {
         if let Some(send) = self.mail_send.as_mut() {
             if !send.step.done {
                 if let Some(v) = mail_http("GET", &format!("/mail/open?id={}", send.id), None) {
+                    send.keyed = v.get("keyed").and_then(|k| k.as_u64()).unwrap_or(0) as u32;
                     if let Ok(row) = serde_json::from_value::<crate::mail::MailRow>(v) {
                         send.heard = Instant::now();
                         if row.state == "sent" && send.sent_at.is_none() {
@@ -4967,6 +5087,7 @@ impl GuiApp {
                     .sent_at
                     .map(|t| t.elapsed().as_secs_f64())
                     .unwrap_or(0.0),
+                keyed: send.keyed,
             })
         };
         let fraction = next.fraction.max(send.step.fraction);
@@ -4978,6 +5099,7 @@ impl GuiApp {
                 self.mail_subject.clear();
                 self.mail_body.clear();
                 self.mail_file = None;
+                self.mail_file_refused.clear();
                 self.mail_folder = "sent".into();
             }
         }
@@ -5020,6 +5142,8 @@ impl GuiApp {
         ctx.memory_mut(|m| m.stop_text_input());
         let mut close = false;
         let mut resend = false;
+        let mut cancel = false;
+        let can_cancel = send.rf && !send.cancelled;
         let title = match &bad {
             Some(st) => st.label.clone(),
             None if step.done && step.ok => "Success".into(),
@@ -5048,11 +5172,7 @@ impl GuiApp {
                 } else {
                     GREEN
                 };
-                ui.label(
-                    RichText::new(crate::mail::dos_bar(step.fraction))
-                        .color(color)
-                        .monospace(),
-                );
+                solid_bar(ui, step.fraction, color);
                 ui.add_space(4.0);
                 ui.label(RichText::new(&step.label).color(FG).monospace());
                 if let Some(st) = &bad {
@@ -5078,8 +5198,26 @@ impl GuiApp {
                             .small()
                             .monospace(),
                     );
+                    // QA #365: a long send (big mail on vhf-fast) can stop.
+                    if can_cancel {
+                        ui.add_space(6.0);
+                        if ui.add(hair_btn("Cancel", ORANGE)).clicked() {
+                            cancel = true;
+                        }
+                    }
                 }
             });
+        if cancel {
+            if let Some(send) = self.mail_send.as_mut() {
+                send.cancelled = true;
+                let _ = mail_http(
+                    "POST",
+                    "/mail/cancel",
+                    Some(&serde_json::json!({ "id": send.id }).to_string()),
+                );
+                send.step.label = "Cancelling…".into();
+            }
+        }
         if resend {
             if let Some(row) = self.mail_send.take().and_then(|s| s.row) {
                 self.mail_to = row.to_addr;
@@ -5129,11 +5267,7 @@ impl GuiApp {
             );
             ui.add_space(6.0);
             let color = if step.done && !step.ok { ORANGE } else { GREEN };
-            ui.label(
-                RichText::new(crate::mail::dos_bar(step.fraction))
-                    .color(color)
-                    .monospace(),
-            );
+            solid_bar(ui, step.fraction, color);
             ui.add_space(4.0);
             ui.label(RichText::new(&step.label).color(FG).monospace());
             ui.add_space(8.0);
@@ -5440,32 +5574,15 @@ impl GuiApp {
                 .desired_rows(5)
                 .font(FontId::monospace(13.0)),
         );
-        let mut drop_file = false;
-        match &self.mail_file {
-            Some(f) => {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(crate::mail::attach::summary(f))
-                            .color(FG)
-                            .monospace(),
-                    );
-                    drop_file = ui.add(hair_btn("remove", PURPLE)).clicked();
-                });
-            }
-            None => {
-                ui.label(
-                    RichText::new(format!(
-                        "Drag a file onto this window to attach it (up to {}, pictures are shrunk; over the radio on vhf-fast only)",
-                        crate::proto::file::human_size(crate::mail::attach::ATTACH_MAX_BYTES)
-                    ))
-                    .color(DIM)
-                    .small()
-                    .monospace(),
-                );
-            }
-        }
+        let drop_file = paint_attach_line(
+            ui,
+            self.mail_file.as_ref(),
+            &self.mail_file_refused,
+            self.mail_attach_max(),
+        );
         if drop_file && !self.mail_hold {
             self.mail_file = None;
+            self.mail_file_refused.clear();
         }
         let full_body = self.mail_full_body();
         let bytes = full_body.len();
@@ -5479,6 +5596,7 @@ impl GuiApp {
             gateway: &gateway,
             ack: matches!(crate::mail::gateway_path(mode), crate::mail::SendPath::Rf),
         };
+        let refused = !self.mail_file_refused.is_empty();
         let hint = if self.mail_hold {
             match crate::mail::gateway_path(mode) {
                 crate::mail::SendPath::Hub => {
@@ -5487,14 +5605,26 @@ impl GuiApp {
                 _ => "On the air — To, subject and body stay until TX finishes",
             }
             .to_string()
+        } else if refused {
+            "Remove the file that was not attached, or drop one that fits, to send".to_string()
         } else {
-            crate::mail::hint_line(&preview, mode, preset, 250)
+            let key = hint_key(&full_body, &preview, mode, preset);
+            match &self.mail_hint_cache {
+                Some((k, h)) if *k == key => h.clone(),
+                _ => {
+                    let h = crate::mail::hint_line(&preview, mode, preset, 250);
+                    self.mail_hint_cache = Some((key, h.clone()));
+                    h
+                }
+            }
         };
         // Breathing room between the message box and the Send row.
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new(hint).color(DIM).monospace());
-            if ui.add(hair_btn("Send", ORANGE)).clicked() && !self.mail_hold {
+            let color = if refused { ORANGE } else { DIM };
+            ui.label(RichText::new(hint).color(color).monospace());
+            let send = ui.add_enabled(!refused, hair_btn("Send", ORANGE));
+            if send.clicked() && !self.mail_hold && !refused {
                 self.mail_toast.clear();
                 self.mail_confirm = Some(MailConfirm {
                     kind: "send",
@@ -5681,6 +5811,8 @@ impl GuiApp {
             sent_at: None,
             heard: Instant::now(),
             row: None,
+            keyed: 0,
+            cancelled: false,
             step: crate::mail::SendStep {
                 fraction: 0.0,
                 label: "Starting…".into(),
@@ -5794,7 +5926,8 @@ impl GuiApp {
                         }
                     } else {
                         self.mail_hold = true;
-                        if let Some(v) = mail_http(
+                        // A big file takes the station a moment to check.
+                        let sent = mail_http_wait(
                             "POST",
                             "/mail/compose",
                             Some(
@@ -5805,7 +5938,18 @@ impl GuiApp {
                                 })
                                 .to_string(),
                             ),
-                        ) {
+                            Duration::from_secs(5),
+                        );
+                        if let Err(why) = &sent {
+                            self.mail_hold = false;
+                            self.mail_toast_warn = true;
+                            self.mail_toast = if why.is_empty() {
+                                "Could not send.".into()
+                            } else {
+                                format!("Not sent: {why}")
+                            };
+                        }
+                        if let Ok(v) = sent {
                             let id = v
                                 .get("id")
                                 .and_then(|i| i.as_str())
@@ -5823,6 +5967,8 @@ impl GuiApp {
                                 sent_at: None,
                                 heard: Instant::now(),
                                 row: None,
+                                keyed: 0,
+                                cancelled: false,
                                 step: crate::mail::SendStep {
                                     fraction: 0.0,
                                     label: "Starting…".into(),
@@ -5831,9 +5977,6 @@ impl GuiApp {
                                 },
                                 from_compose: true,
                             });
-                        } else {
-                            self.mail_hold = false;
-                            self.mail_toast = "Could not send.".into();
                         }
                     }
                     self.mail_confirm = None;
@@ -6890,6 +7033,137 @@ fn node_command() -> Command {
     }
 }
 
+/// A progress bar as wide as the window, solid fill, with the percent at
+/// the end (QA #365: the block-character bar was short and dithered).
+fn solid_bar(ui: &mut egui::Ui, fraction: f32, color: Color32) {
+    let f = if fraction.is_finite() {
+        fraction.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    ui.horizontal(|ui| {
+        let pct = format!("{:>3}%", (f * 100.0).round() as u32);
+        let label_w = 48.0;
+        let w = (ui.available_width() - label_w).max(40.0);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 14.0), egui::Sense::hover());
+        let p = ui.painter();
+        p.rect_stroke(rect, 2.0, egui::Stroke::new(1.0_f32, color));
+        let mut fill = rect.shrink(2.0);
+        fill.set_width(fill.width() * f);
+        if f > 0.0 {
+            p.rect_filled(fill, 1.0, color);
+        }
+        ui.label(RichText::new(pct).color(color).monospace());
+    });
+}
+
+const RESTARTING_NOTE: &str =
+    "Setup saved. Restarting modem… the new settings apply once the radio is idle.";
+const NOW_RUNNING: &str = "Setup saved. Now running ";
+
+#[derive(Debug, PartialEq)]
+enum RestartFollow {
+    /// Still restarting (or not yet seen to start). `seen`: the restart
+    /// has shown as under way.
+    Wait {
+        seen: bool,
+    },
+    Done(String),
+    Failed(String),
+}
+
+/// Where a saved modem restart stands. Before the station shows it under
+/// way, give it 15 s: the station may not have read the new setup yet.
+fn restart_follow(s: &crate::status::StatusSnapshot, seen: bool, since: Duration) -> RestartFollow {
+    if !s.modem_restart_failed.is_empty() {
+        return RestartFollow::Failed(format!(
+            "Modem restart failed ({}). Stop and start the station to apply.",
+            s.modem_restart_failed
+        ));
+    }
+    if s.preset_pending_note().is_some() {
+        return RestartFollow::Wait { seen: true };
+    }
+    if seen || since > Duration::from_secs(15) {
+        return RestartFollow::Done(format!("{NOW_RUNNING}{}.", s.preset_live()));
+    }
+    RestartFollow::Wait { seen }
+}
+
+/// Read a file for a mail and get it ready: a picture over `max` is shrunk,
+/// any other file must fit. The error names the file, its size and `max`.
+fn read_mail_file(
+    path: &std::path::Path,
+    name: &str,
+    max: usize,
+) -> std::result::Result<(crate::mail::attach::Attachment, Option<String>), String> {
+    let len = std::fs::metadata(path)
+        .map(|m| m.len() as usize)
+        .map_err(|e| format!("could not read {name}: {e}"))?;
+    if len > crate::proto::file::PICTURE_SOURCE_MAX {
+        return Err(crate::mail::attach::too_big_text(name, len, max));
+    }
+    let data = std::fs::read(path).map_err(|e| format!("could not read {name}: {e}"))?;
+    crate::mail::attach::prepare(name, data, max).map_err(|e| e.plain())
+}
+
+/// The attachment line on the Email screen: the file, why the last file
+/// was not attached (orange, until removed), or how to attach one. True
+/// when "remove" was pressed.
+fn paint_attach_line(
+    ui: &mut egui::Ui,
+    file: Option<&crate::mail::attach::Attachment>,
+    refused: &str,
+    max: usize,
+) -> bool {
+    let mut remove = false;
+    if !refused.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new(format!("✗ Not attached: {refused}"))
+                    .color(ORANGE)
+                    .monospace(),
+            );
+            remove = ui.add(hair_btn("remove", PURPLE)).clicked();
+        });
+    } else if let Some(f) = file {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(crate::mail::attach::summary(f))
+                    .color(FG)
+                    .monospace(),
+            );
+            remove = ui.add(hair_btn("remove", PURPLE)).clicked();
+        });
+    } else {
+        ui.label(
+            RichText::new(attach_hint(max))
+                .color(DIM)
+                .small()
+                .monospace(),
+        );
+    }
+    remove
+}
+
+/// The empty attachment line on the Email screen.
+fn attach_hint(max: usize) -> String {
+    format!(
+        "Drag a file onto this window to attach it (up to {}, pictures are shrunk; over the radio on vhf-fast only)",
+        crate::proto::file::human_size(max)
+    )
+}
+
+/// What the compose hint depends on, so it is worked out again only when
+/// one of them changes.
+fn hint_key(body: &str, mail: &crate::mail::AirtimeMail<'_>, mode: Mode, preset: Preset) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (body, mail.to, mail.subject, mail.gateway, mail.ack).hash(&mut h);
+    (mode as u8, preset.as_str()).hash(&mut h);
+    h.finish()
+}
+
 fn mail_http(method: &str, path: &str, body: Option<&str>) -> Option<serde_json::Value> {
     mail_http_wait(method, path, body, Duration::from_millis(800)).ok()
 }
@@ -7505,6 +7779,84 @@ mod tests {
         );
         assert!(crate::chat_line::is_direct("G4ABC"));
         assert!(!crate::chat_line::is_direct("#bulletin"));
+    }
+
+    /// Every piece of text painted in one frame of `paint`.
+    fn painted_text(paint: impl FnMut(&mut egui::Ui)) -> String {
+        let ctx = egui::Context::default();
+        let mut paint = paint;
+        let out = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| paint(ui));
+        });
+        let mut text = String::new();
+        for clipped in &out.shapes {
+            if let egui::Shape::Text(t) = &clipped.shape {
+                text.push_str(t.galley.text());
+                text.push('\n');
+            }
+        }
+        text
+    }
+
+    /// QA #365 BLOCKER: a refused file shows on the attachment line in the
+    /// Email popup, with its size and the limit, and no earlier file stays.
+    #[test]
+    fn a_refused_mail_file_shows_on_the_attachment_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.csv");
+        std::fs::write(&path, vec![b'1'; 9000]).unwrap();
+        let max = crate::mail::attach::ATTACH_MAX_BYTES;
+        let refused = read_mail_file(&path, "big.csv", max).unwrap_err();
+        assert!(refused.contains("big.csv is 8.8 KB"), "{refused}");
+        assert!(refused.contains("files up to 8.0 KB"), "{refused}");
+        let shown = painted_text(|ui| {
+            paint_attach_line(ui, None, &refused, max);
+        });
+        assert!(
+            shown.contains("✗ Not attached: big.csv is 8.8 KB"),
+            "{shown}"
+        );
+        assert!(shown.contains("remove"), "{shown}");
+        // The same file fits on vhf-fast and shows as attached.
+        let fast = crate::mail::attach::ATTACH_MAX_FAST_BYTES;
+        let (file, _) = read_mail_file(&path, "big.csv", fast).unwrap();
+        let shown = painted_text(|ui| {
+            paint_attach_line(ui, Some(&file), "", fast);
+        });
+        assert!(shown.contains("📎 big.csv (8.8 KB)"), "{shown}");
+    }
+
+    /// QA #365: "Restarting modem…" gives way to "now running" or the failure.
+    #[test]
+    fn the_restart_note_follows_the_station() {
+        let mut s = crate::status::StatusSnapshot {
+            preset: "vhf-fast".into(),
+            preset_running: "vhf-fm".into(),
+            ..Default::default()
+        };
+        let quick = Duration::from_secs(1);
+        assert_eq!(
+            restart_follow(&s, false, quick),
+            RestartFollow::Wait { seen: true }
+        );
+        s.preset_running = "vhf-fast".into();
+        assert_eq!(
+            restart_follow(&s, true, quick),
+            RestartFollow::Done("Setup saved. Now running vhf-fast.".into())
+        );
+        // Not yet seen under way: wait, unless it has been a while.
+        assert_eq!(
+            restart_follow(&s, false, quick),
+            RestartFollow::Wait { seen: false }
+        );
+        assert!(matches!(
+            restart_follow(&s, false, Duration::from_secs(20)),
+            RestartFollow::Done(_)
+        ));
+        s.modem_restart_failed = "port in use".into();
+        assert!(
+            matches!(restart_follow(&s, true, quick), RestartFollow::Failed(t) if t.contains("port in use"))
+        );
     }
 
     #[test]

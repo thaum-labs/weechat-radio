@@ -42,6 +42,8 @@ pub const NO_GATEWAY_SET: &str =
 pub const NONE_HEARD_TEXT: &str = "No mail gateway heard. No internet-radio station on this frequency and preset answered. Retry later, or type a gateway callsign in setup.";
 pub const RADIO_NOT_RUNNING: &str = "Radio is not running.";
 pub const GATEWAY_NOT_ACCEPTED: &str = "Gateway has the message, but it was not accepted.";
+pub const CANCELLED: &str =
+    "Cancelled. The gateway forgets the part it has after 30 min; Retry sends it again.";
 pub const TX_STUCK: &str = "Timed out while transmitting. The message stayed at tx.";
 /// Set at start on mail an earlier run was still sending (QA #241).
 pub const STOPPED_MID_SEND: &str = "The station stopped before this mail was confirmed, so it may or may not have arrived. Retry sends it again: a gateway that already has it only confirms it.";

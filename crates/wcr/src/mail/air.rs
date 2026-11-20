@@ -39,8 +39,48 @@ pub struct AirtimeMail<'a> {
     pub ack: bool,
 }
 
-fn plan_limit(preset: Preset) -> usize {
+/// A mail body bigger than this on vhf-fast is a big mail (QA #365, files
+/// up to 512 KB): it goes in normal 2.6 s QAM16 frames of up to 1 KB, about
+/// twice the bytes per second of 1 s short frames, in blocks of about two
+/// minutes, each followed by [`MailOp::BurstEnd`] and the gateway's report.
+/// Smaller mail and other presets go exactly as before.
+pub const BIG_MAIL_BODY: usize = 16 * 1024;
+/// Longest block of a big mail, keyed in one go.
+const BLOCK_SECS: f64 = 120.0;
+/// Frames handed to the modem ahead of the one on the air while a big
+/// mail is fed frame by frame (for progress and Cancel).
+const FEED_AHEAD: u64 = 3;
+/// Between two blocks: the lease's quiet wait and the mode change.
+const LEASE_SETUP_SECS: f64 = 3.0;
+/// A gateway drops a part-received mail after this long with no new chunk.
+pub const PARTIAL_MAIL_TTL: Duration = Duration::from_secs(30 * 60);
+
+/// A big mail: vhf-fast and a body over [`BIG_MAIL_BODY`].
+pub fn is_big_mail(preset: Preset, body_len: usize) -> bool {
+    preset == Preset::VhfFast && body_len > BIG_MAIL_BODY
+}
+
+/// The widest frame this rung keys for a mail. A big mail fills normal
+/// QAM16 frames; a retry on a slower rung slices its chunks as before.
+fn rung_mtu(rung: Rung, big: bool) -> usize {
+    if big && rung == Rung::OfdmQam16Half {
+        proto::MAX_CHUNK
+    } else {
+        rung.mail_mtu() as usize
+    }
+}
+
+fn plan_limit(preset: Preset, body_len: usize) -> usize {
+    if is_big_mail(preset, body_len) {
+        return proto::MAX_CHUNK;
+    }
     (Rung::from_index(preset.ladder_start()).mail_mtu() as usize).min(crate::proto::MAX_BODY)
+}
+
+/// Chunks in one block of a big mail: about [`BLOCK_SECS`] of frames.
+pub fn block_chunks(preset: Preset) -> usize {
+    let frame = mail_rung(preset, 0).frame_secs(proto::MAX_CHUNK);
+    ((BLOCK_SECS / frame.max(0.1)) as usize).clamp(8, proto::MAIL_BLOCK_CHUNKS)
 }
 
 /// Chunk at the preset's ladder-start payload. A later retry uses a slower
@@ -57,7 +97,7 @@ pub(super) fn plan_mail_wires(preset: Preset, id: &str, mail: &AirtimeMail<'_>) 
         ack: mail.ack,
         ..MailMeta::default()
     };
-    proto::chunk_to_limit(id, &meta, mail.body, plan_limit(preset))
+    proto::chunk_to_limit(id, &meta, mail.body, plan_limit(preset, mail.body.len()))
 }
 
 pub fn mail_airtime_secs(
@@ -68,7 +108,7 @@ pub fn mail_airtime_secs(
     // A real mail id is 64 hex chars, and the first chunk carries the header.
     let id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let wires = plan_mail_wires(preset, id, mail);
-    let mtu = plan_limit(preset);
+    let mtu = plan_limit(preset, mail.body.len());
     let mut lens = Vec::new();
     for w in &wires {
         if let Ok(parts) = proto::frames_for_mtu(&proto::encode_chunk(w), mtu) {
@@ -78,7 +118,18 @@ pub fn mail_airtime_secs(
     // The hint's burst count is the chunk count the send log prints. Airtime
     // still uses every keyed frame, including a header that had to be sliced.
     let n = wires.len().max(1);
-    (hint_airtime_secs(preset, lens, turnaround_ms), n)
+    let mut secs = hint_airtime_secs(preset, lens, turnaround_ms);
+    if is_big_mail(preset, mail.body.len()) {
+        secs += n.div_ceil(block_chunks(preset)) as f64 * block_gap_secs(preset, turnaround_ms);
+    }
+    (secs, n)
+}
+
+/// What each block of a big mail adds: its end marker, the gateway's quiet
+/// gap, hub-free reply setup and report frame, and the next lease.
+fn block_gap_secs(preset: Preset, turnaround_ms: u32) -> f64 {
+    let short = mail_rung(preset, 0).frame_secs(0) + f64::from(turnaround_ms) / 1000.0;
+    short + gateway::quiet_gap_secs(short) + gateway::REPLY_SETUP_SECS + short + LEASE_SETUP_SECS
 }
 
 /// Airtime for the compose hint and progress bar: modem73's real frame
@@ -119,11 +170,16 @@ pub fn burst_label(n: usize) -> String {
 }
 
 /// Airtime of the frames actually keyed, including preset overhead.
+/// vhf-fast counts modem73's real frame times (QA #365: its 2400 bps guess
+/// was 12% fast for short frames and 30% slow for normal ones).
 pub fn keyed_airtime_secs(
     preset: Preset,
     frame_lens: impl IntoIterator<Item = usize>,
     turnaround_ms: u32,
 ) -> f64 {
+    if preset == Preset::VhfFast {
+        return hint_airtime_secs(preset, frame_lens, turnaround_ms);
+    }
     let mut bytes = 0usize;
     let mut n = 0usize;
     for len in frame_lens {
@@ -220,6 +276,9 @@ struct TxCtx {
     /// The gateway the last Check mail or Get went to: its answer has no
     /// sender callsign on it.
     ctl_gw: Mutex<String>,
+    /// Big mail: chunks the gateway held when the last block keyed. A
+    /// report with more moves on to the next block without using a retry.
+    block_base: Mutex<HashMap<String, u32>>,
 }
 
 struct Assembler {
@@ -243,6 +302,9 @@ struct Assembler {
     /// Weakest SNR of the frames since the last finished message. A gateway
     /// ask can span several frames on a slow preset.
     run_snr: Option<f32>,
+    /// Buckets whose sender keyed [`MailOp::BurstEnd`] after its last chunk:
+    /// no tail to wait for, report now.
+    ended: std::collections::HashSet<String>,
 }
 
 impl Assembler {
@@ -259,6 +321,24 @@ impl Assembler {
             last_rx: None,
             rx_spacing: 0.0,
             run_snr: None,
+            ended: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Forget mail that stopped arriving [`PARTIAL_MAIL_TTL`] ago: a big
+    /// mail cancelled or cut off mid-send does not stay in memory.
+    fn prune(&mut self) {
+        let stale: Vec<String> = self
+            .fresh
+            .iter()
+            .filter(|(_, t)| t.elapsed() > PARTIAL_MAIL_TTL)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in stale {
+            tracing::info!("mail {key} dropped: nothing new for 30 min");
+            self.buckets.remove(&key);
+            self.fresh.remove(&key);
+            self.ended.remove(&key);
         }
     }
 
@@ -286,6 +366,7 @@ impl Assembler {
         self.buckets
             .iter()
             .filter(|(key, _)| key.starts_with("Data:") || key.starts_with("VoxData:"))
+            .filter(|(key, _)| !self.ended.contains(*key))
             .filter_map(|(key, slot)| {
                 let count = slot.values().map(|w| w.count).min()?;
                 let highest = *slot.keys().filter(|i| **i < count).max()?;
@@ -329,6 +410,7 @@ pub(super) fn spawn(
         ask_nonce: Mutex::new(String::new()),
         heard_gw: Mutex::new(Vec::new()),
         ctl_gw: Mutex::new(String::new()),
+        block_base: Mutex::new(HashMap::new()),
         after_ask: Mutex::new(Vec::new()),
         ask_tried: Mutex::new(0),
         tried: Mutex::new(HashMap::new()),
@@ -454,6 +536,11 @@ async fn dispatch(ctx: &TxCtx, asm: &mut Assembler, cmd: MailCmd) {
             }
         }
         MailCmd::TxStuck { id, gen } => on_tx_stuck(ctx, &id, gen),
+        MailCmd::NextBlock { id } => {
+            if let Err(e) = next_block(ctx, &id).await {
+                tracing::warn!("mail next block {id}: {e}");
+            }
+        }
         MailCmd::Quiet { gen } => on_quiet(ctx, asm, gen).await,
     }
 }
@@ -603,7 +690,8 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow, gateway_cs: &str) -> Result<()> {
     let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor);
     let vox = cfg.modem.is_vox();
     let rung = mail_rung(preset, row.retries);
-    let mtu = rung.mail_mtu() as usize;
+    let big = is_big_mail(preset, row.body.len());
+    let mtu = rung_mtu(rung, big);
     let frame_secs = keyed_airtime_secs(preset, std::iter::once(mtu), cfg.rf.turnaround_ms);
     if let Some(wait) = busy_hold(ctx, &row.id, frame_secs) {
         hold_send(ctx, &row.id, wait);
@@ -624,10 +712,21 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow, gateway_cs: &str) -> Result<()> {
         ctx.store.set_chunks(&row.id, total)?;
     }
     let total = if row.chunks == 0 { total } else { row.chunks };
-    let missing = missing_chunk_idxs(total, &row.got);
+    let missing: std::collections::HashSet<u16> =
+        missing_chunk_idxs(total, &row.got).into_iter().collect();
     let probe = gateway::probe_only(row.retries, !row.got.trim().is_empty(), missing.len());
+    // A big mail keys one block of its missing chunks per lease, lowest first.
+    let block = if big {
+        block_chunks(preset)
+    } else {
+        usize::MAX
+    };
     let mut chunks = Vec::new();
-    for w in wires_all.iter().filter(|w| missing.contains(&w.idx)) {
+    for w in wires_all
+        .iter()
+        .filter(|w| missing.contains(&w.idx))
+        .take(block)
+    {
         chunks.push((w.idx, proto::frames_for_mtu(&proto::encode_chunk(w), mtu)?));
     }
     if probe {
@@ -676,11 +775,21 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow, gateway_cs: &str) -> Result<()> {
                 ..KeyPlan::default()
             };
         }
-        let still = missing_chunk_idxs(total, &now.got);
+        let still: std::collections::HashSet<u16> =
+            missing_chunk_idxs(total, &now.got).into_iter().collect();
         let mut keyed = KeyPlan::default();
         for (idx, frames) in chunks.iter().filter(|(i, _)| still.contains(i)) {
             keyed.chunks.push(*idx);
             keyed.frames.extend(frames.iter().cloned());
+            keyed.frame_chunk.extend(frames.iter().map(|_| *idx));
+        }
+        // A big mail ends each block with "report now", so the gateway does
+        // not wait for chunks this block never had.
+        if big && !keyed.frames.is_empty() {
+            keyed
+                .frames
+                .push(burst_end_frame(&id, keyed.chunks.last().copied(), total));
+            keyed.frame_chunk.push(u16::MAX);
         }
         // On air only once this try really keys: a held or empty try stays
         // Queued, and the `air` hop gets this try's time.
@@ -690,6 +799,7 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow, gateway_cs: &str) -> Result<()> {
         }
         keyed
     };
+    let have_before = missing_chunk_idxs(total, "").len() as u32 - missing.len() as u32;
     let keyed = match burst(
         ctx,
         &plan,
@@ -698,10 +808,15 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow, gateway_cs: &str) -> Result<()> {
         vox,
         cfg.modem.vox_lead_ms,
         cfg.modem.vox_tail_ms,
+        big.then_some(row.id.as_str()),
     )
     .await
     {
         Ok(keyed) => keyed,
+        Err(_) if ctx.store.cancel_requested(&row.id) => {
+            silence_wait(ctx, &row.id);
+            return Ok(());
+        }
         Err(e) => {
             tracing::warn!("mail key {} failed: {e}", row.id);
             if let Some(text) = gateway::radio_down_text(&e.to_string()) {
@@ -760,6 +875,15 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow, gateway_cs: &str) -> Result<()> {
             keyed.chunks.first().map(|i| i + 1).unwrap_or(1),
             gateway::mail_try_label(row.retries, cap)
         );
+    } else if big {
+        tracing::info!(
+            "mail keyed {} to {gateway_cs} (block of {} chunks from {}, {} of {total} at the gateway before, {})",
+            row.id,
+            keyed.chunks.len(),
+            keyed.chunks.first().map(|i| i + 1).unwrap_or(1),
+            have_before,
+            gateway::mail_try_label(row.retries, cap)
+        );
     } else {
         tracing::info!(
             "mail keyed {} to {gateway_cs} ({} chunks, {})",
@@ -767,6 +891,9 @@ async fn rf_send(ctx: &TxCtx, row: &MailRow, gateway_cs: &str) -> Result<()> {
             keyed.chunks.len(),
             gateway::mail_try_label(row.retries, cap)
         );
+    }
+    if big {
+        ctx.block_base.lock().insert(row.id.clone(), have_before);
     }
     let airtime = keyed_airtime_secs(
         preset,
@@ -911,6 +1038,20 @@ async fn on_ack_wait(ctx: &TxCtx, id: &str, gen: u64) -> Result<()> {
     }
 }
 
+/// The next block of a big mail, to the gateway the last block went to.
+async fn next_block(ctx: &TxCtx, id: &str) -> Result<()> {
+    let Some(row) = ctx.store.get(id)? else {
+        return Ok(());
+    };
+    if gateway::is_finished(&row.state) || row.folder != "outbox" {
+        return Ok(());
+    }
+    match ctx.store.via(id)?.pop().map(|v| v.gateway) {
+        Some(gw) => rf_send(ctx, &row, &gw).await,
+        None => send_one(ctx, id).await,
+    }
+}
+
 async fn send_control(ctx: &TxCtx, op: MailOp, mut meta: MailMeta, payload: &str) -> Result<()> {
     let cfg = ctx.cfg.lock().clone();
     if cfg.mode != Mode::RadioPlus {
@@ -950,6 +1091,7 @@ async fn send_control(ctx: &TxCtx, op: MailOp, mut meta: MailMeta, payload: &str
         cfg.modem.is_vox(),
         cfg.modem.vox_lead_ms,
         cfg.modem.vox_tail_ms,
+        None,
     )
     .await
     .map(|_| ())
@@ -971,6 +1113,8 @@ impl Drop for ClearKeying {
 struct KeyPlan {
     chunks: Vec<u16>,
     frames: Vec<Vec<u8>>,
+    /// The chunk each frame carries (`u16::MAX` for a block's end marker).
+    frame_chunk: Vec<u16>,
     /// Keyed nothing: another station is sending mail. Try again after this
     /// many seconds.
     held: Option<f64>,
@@ -981,6 +1125,7 @@ impl KeyPlan {
         move || KeyPlan {
             chunks: Vec::new(),
             frames: frames.clone(),
+            frame_chunk: Vec::new(),
             held: None,
         }
     }
@@ -989,6 +1134,9 @@ impl KeyPlan {
 /// Borrow the modem and key `plan()`. The plan is taken after the channel
 /// is idle and chat has drained, so a resend keys only what is still missing
 /// at that moment. An empty plan keys nothing and leaves the mode alone.
+/// `feed`, a big mail's id, hands frames to the modem a few at a time so
+/// the send bar moves frame by frame and Cancel stops it (QA #365).
+#[allow(clippy::too_many_arguments)]
 async fn burst(
     ctx: &TxCtx,
     plan: &(dyn Fn() -> KeyPlan + Send + Sync),
@@ -997,6 +1145,7 @@ async fn burst(
     vox: bool,
     lead_ms: u32,
     tail_ms: u32,
+    feed: Option<&str>,
 ) -> Result<KeyPlan> {
     ctx.keying.store(true, Ordering::Release);
     ctx.snap.lock().mail_lease = true;
@@ -1016,6 +1165,7 @@ async fn burst(
     let mut snapshot = None;
     let mut mode_set = false;
     let mut before = 0u64;
+    let mut fed_out = false;
     let mut keyed = KeyPlan::default();
     let result = async {
         for step in lease::lease_sequence() {
@@ -1065,13 +1215,21 @@ async fn burst(
                         tokio::time::sleep(Duration::from_millis(u64::from(lead_ms))).await;
                     }
                 }
-                "send_frames" => {
-                    for frame in &keyed.frames {
-                        kiss.send(frame).await?;
+                "send_frames" => match (feed, &ports.control) {
+                    (Some(id), Some(c)) => {
+                        fed_out =
+                            feed_frames(ctx, &kiss, c, &keyed, id, preset, turnaround_ms).await?;
                     }
-                }
+                    _ => {
+                        for frame in &keyed.frames {
+                            kiss.send(frame).await?;
+                        }
+                    }
+                },
                 "drain_after" => {
-                    if let Some(c) = &ports.control {
+                    if fed_out {
+                        // Every frame was seen leave the modem.
+                    } else if let Some(c) = &ports.control {
                         let target = lease::drain_target_after(before, keyed.frames.len() as u64);
                         let airtime = keyed_airtime_secs(
                             preset,
@@ -1115,6 +1273,90 @@ async fn burst(
     result.map(|()| keyed)
 }
 
+/// The marker after a block of a big mail: chunk `last` of `total` was the
+/// last one keyed. The gateway reports at once instead of waiting out the
+/// time the rest of the mail would take.
+fn burst_end_frame(id: &str, last: Option<u16>, total: u32) -> Vec<u8> {
+    proto::encode_chunk(&MailWire {
+        op: MailOp::BurstEnd,
+        mail_id: id.to_string(),
+        idx: last.unwrap_or(0),
+        count: total.min(u32::from(u16::MAX)) as u16,
+        meta: MailMeta::default(),
+        payload: String::new(),
+    })
+}
+
+/// Hand a big mail's frames to the modem [`FEED_AHEAD`] ahead of the one on
+/// the air, noting each chunk as it goes out and stopping on Cancel. True
+/// when every frame was seen leave the modem; false when this modem73 does
+/// not report its queue (then the rest went in one go, as before).
+async fn feed_frames(
+    ctx: &TxCtx,
+    kiss: &crate::modem::KissClient,
+    control: &crate::modem::ControlClient,
+    plan: &KeyPlan,
+    id: &str,
+    preset: Preset,
+    turnaround_ms: u32,
+) -> Result<bool> {
+    let total = plan.frames.len() as u64;
+    let note = |from: u64, to: u64| {
+        for i in from..to {
+            match plan.frame_chunk.get(i as usize) {
+                Some(&c) if c != u16::MAX => ctx.store.note_chunk_keyed(id, c),
+                _ => {}
+            }
+        }
+    };
+    let frame = keyed_airtime_secs(preset, std::iter::once(proto::MAX_CHUNK), turnaround_ms);
+    let stall = Duration::from_secs_f64((frame * 4.0).max(30.0));
+    let mut sent = 0u64;
+    let mut done = 0u64;
+    let mut moved = std::time::Instant::now();
+    loop {
+        if ctx.store.cancel_requested(id) {
+            tracing::info!("mail {id} cancelled after {done} of {total} frames");
+            return Err(Error::Msg("cancelled".into()));
+        }
+        let st = control.get_status().await.ok();
+        let Some(queue) = st.as_ref().and_then(|s| s.tx_queue) else {
+            for f in &plan.frames[sent as usize..] {
+                kiss.send(f).await?;
+            }
+            note(0, total);
+            return Ok(false);
+        };
+        let on_air = st
+            .as_ref()
+            .is_some_and(|s| s.ptt_on || s.channel_state.trim().eq_ignore_ascii_case("tx"));
+        let now_done = sent.saturating_sub(queue + u64::from(on_air)).max(done);
+        if now_done > done {
+            note(done, now_done);
+            done = now_done;
+            moved = std::time::Instant::now();
+        }
+        if done >= total {
+            return Ok(true);
+        }
+        if moved.elapsed() > stall {
+            tracing::warn!(
+                "mail {id}: modem stopped taking frames ({done} of {total}); handing over the rest"
+            );
+            for f in &plan.frames[sent as usize..] {
+                kiss.send(f).await?;
+            }
+            note(done, total);
+            return Ok(false);
+        }
+        while sent < total && sent - done <= FEED_AHEAD {
+            kiss.send(&plan.frames[sent as usize]).await?;
+            sent += 1;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
 async fn on_incoming(
     ctx: &TxCtx,
     asm: &mut Assembler,
@@ -1123,6 +1365,7 @@ async fn on_incoming(
     snr: Option<f32>,
 ) {
     let gateway = ctx.cfg.lock().mode == Mode::InternetRadio;
+    asm.prune();
     if let Some(s) = snr {
         asm.run_snr = Some(asm.run_snr.map_or(s, |r| r.min(s)));
     }
@@ -1146,6 +1389,19 @@ async fn on_incoming(
         }
         return;
     };
+    if wire.op == MailOp::BurstEnd {
+        // The sender's block is over: report on this mail once quiet.
+        for op in ["Data", "VoxData"] {
+            let key = format!("{op}:{}", wire.mail_id);
+            if asm.buckets.contains_key(&key) {
+                asm.ended.insert(key);
+            }
+        }
+        if gateway {
+            arm_quiet(ctx, asm);
+        }
+        return;
+    }
     remember_party(asm, &wire);
     log_chunk(ctx, asm, &wire);
     let gateway_reply = gateway
@@ -1251,8 +1507,10 @@ fn absorb(asm: &mut Assembler, wire: MailWire) -> Absorb {
     let key = format!("{:?}:{}", wire.op, wire.mail_id);
     let slot = asm.buckets.entry(key.clone()).or_default();
     if !slot.contains_key(&wire.idx) {
-        asm.fresh.insert(key, std::time::Instant::now());
+        asm.fresh.insert(key.clone(), std::time::Instant::now());
     }
+    // A chunk after the end marker: the sender is keying again.
+    asm.ended.remove(&key);
     match proto::put_chunk(slot, wire) {
         proto::ChunkPut::Rejected => Absorb::Rejected {
             mail_id,
@@ -1341,8 +1599,12 @@ async fn on_quiet(ctx: &TxCtx, asm: &mut Assembler, gen: u64) {
             tracing::warn!("mail ack {mail_id}: {e}");
         }
     }
+    for key in &completed {
+        asm.ended.remove(&format!("Data:{key}"));
+        asm.ended.remove(&format!("VoxData:{key}"));
+    }
     for report in pending_have_reports(asm, &completed) {
-        let payload = proto::have_bitmap(report.count, &report.indexes);
+        let payload = proto::have_report(report.count, &report.indexes);
         let meta = MailMeta {
             dest: report.origin,
             ids: vec![report.mail_id.clone()],
@@ -1484,6 +1746,17 @@ fn log_chunk(ctx: &TxCtx, asm: &Assembler, wire: &MailWire) {
         wire.idx + 1,
         wire.count
     );
+    // The gateway's pages show the mail coming in, chunk by chunk.
+    let slot = asm.buckets.get(&format!("{:?}:{}", wire.op, wire.mail_id));
+    let held = slot.map(|b| b.len()).unwrap_or(0)
+        + usize::from(!slot.is_some_and(|b| b.contains_key(&wire.idx)));
+    ctx.store.set_relay_rx(Some(super::store::RelayRx {
+        from: origin,
+        mail_id: wire.mail_id.clone(),
+        have: held as u32,
+        total: u32::from(wire.count),
+        at: chrono::Utc::now().timestamp(),
+    }));
 }
 
 async fn apply_mail(
@@ -1536,24 +1809,33 @@ async fn apply_mail(
             } else {
                 return Ok(());
             };
-            let mut have = 0u32;
-            let mut total = 0u32;
-            for idx in &indexes {
-                if let Some((h, t)) = ctx.store.note_chunk(&id, *idx)? {
-                    have = h;
-                    total = t;
-                }
-            }
+            let (have, total) = ctx.store.note_chunks(&id, &indexes)?.unwrap_or((0, 0));
             let Some(row) = ctx.store.get(&id)? else {
                 return Ok(());
             };
             if row.state == "sent" || row.state == "failed" {
                 return Ok(());
             }
+            let base = ctx.block_base.lock().get(&id).copied();
             if total > 0 && have >= total {
                 ctx.store.set_outcome(&id, "outbox", "gateway", "")?;
+                ctx.block_base.lock().remove(&id);
                 tracing::info!("mail at gateway {id}");
                 arm_wait(ctx, &id, Duration::from_secs(45));
+            } else if let Some(base) = base.filter(|b| !during_burst && have > *b) {
+                // A big mail's block got through (some or all of it): the
+                // next block goes now, without using up a retry.
+                tracing::info!(
+                    "mail {id}: gateway has {have}/{total} (+{}), next block",
+                    have - base
+                );
+                ctx.block_base.lock().remove(&id);
+                silence_wait(ctx, &id);
+                let tx = ctx.cmd_tx.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    let _ = tx.send(MailCmd::NextBlock { id }).await;
+                });
             } else if !indexes.is_empty()
                 && gateway::progress_ack_retries(during_burst, have, total)
             {
@@ -1971,6 +2253,7 @@ async fn reply_chunks(
         cfg.modem.is_vox(),
         cfg.modem.vox_lead_ms,
         cfg.modem.vox_tail_ms,
+        None,
     )
     .await
     .map(|_| ())
@@ -2233,6 +2516,7 @@ async fn start_ask(ctx: &TxCtx) {
         cfg.modem.is_vox(),
         cfg.modem.vox_lead_ms,
         cfg.modem.vox_tail_ms,
+        None,
     )
     .await;
     if let Err(e) = keyed {
@@ -2497,6 +2781,7 @@ async fn send_gw_reply(ctx: &TxCtx, to: &str, nonce: &str, snr: Option<f32>) -> 
         cfg.modem.is_vox(),
         cfg.modem.vox_lead_ms,
         cfg.modem.vox_tail_ms,
+        None,
     )
     .await?;
     tracing::info!("mail gateway reply keyed to {to} ({payload})");
@@ -2602,6 +2887,64 @@ mod tests {
         }
     }
 
+    /// QA #365: the airtime shown for a big file is honest. Each chunk is
+    /// one 2.6 s QAM16 normal frame, plus a few seconds per two-minute block
+    /// for the gateway's report. 512 KB is about half an hour.
+    #[test]
+    fn big_mail_airtime_at_32_128_and_512_kb() {
+        let mut last = 0.0;
+        for kb in [32usize, 128, 512] {
+            let file = crate::mail::attach::Attachment {
+                name: "f.bin".into(),
+                data: vec![0x5a; kb * 1024],
+            };
+            let body = crate::mail::attach::join("data", &file);
+            let mail = sample_mail(&body);
+            let (secs, chunks) = mail_airtime_secs(Preset::VhfFast, &mail, 0);
+            let frame = Rung::OfdmQam16Half.frame_secs(proto::MAX_CHUNK);
+            let floor = chunks as f64 * frame;
+            let blocks = chunks.div_ceil(block_chunks(Preset::VhfFast)) as f64;
+            assert!(
+                secs > floor && secs < floor + blocks * 20.0,
+                "{kb} KB: {secs:.0} s"
+            );
+            assert!(secs > last);
+            last = secs;
+            let id = "ab".repeat(32);
+            for w in plan_mail_wires(Preset::VhfFast, &id, &mail) {
+                assert!(proto::encode_chunk(&w).len() <= proto::MAX_CHUNK);
+            }
+            if kb == 512 {
+                assert!(
+                    (25.0 * 60.0..45.0 * 60.0).contains(&secs),
+                    "{:.1} min",
+                    secs / 60.0
+                );
+            }
+        }
+        // Small mail and other presets plan exactly as before.
+        assert!(!is_big_mail(Preset::VhfFast, BIG_MAIL_BODY));
+        assert!(!is_big_mail(Preset::VhfFm, 600 * 1024));
+    }
+
+    /// A part-received mail is forgotten after 30 min with nothing new.
+    #[test]
+    fn a_gateway_forgets_a_mail_that_stopped_arriving() {
+        let mut asm = Assembler::new();
+        let old = std::time::Instant::now().checked_sub(PARTIAL_MAIL_TTL + Duration::from_secs(1));
+        let Some(old) = old else {
+            return;
+        };
+        asm.buckets.insert("Data:a".into(), HashMap::new());
+        asm.fresh.insert("Data:a".into(), old);
+        asm.ended.insert("Data:a".into());
+        asm.buckets.insert("Data:b".into(), HashMap::new());
+        asm.fresh.insert("Data:b".into(), std::time::Instant::now());
+        asm.prune();
+        assert!(!asm.buckets.contains_key("Data:a") && !asm.ended.contains("Data:a"));
+        assert!(asm.buckets.contains_key("Data:b"));
+    }
+
     /// vhf-fast cuts mail to fit modem73's ~1 s short QAM16 frame, so a
     /// 1 KB mail is about twice as fast as on vhf-fm.
     #[test]
@@ -2610,8 +2953,9 @@ mod tests {
         let mail = sample_mail(&body);
         let id = "ab".repeat(32);
         for w in plan_mail_wires(Preset::VhfFast, &id, &mail) {
-            for f in proto::frames_for_mtu(&proto::encode_chunk(&w), plan_limit(Preset::VhfFast))
-                .unwrap()
+            for f in
+                proto::frames_for_mtu(&proto::encode_chunk(&w), plan_limit(Preset::VhfFast, 1024))
+                    .unwrap()
             {
                 assert!(f.len() <= 254, "{}", f.len());
             }
@@ -2620,8 +2964,8 @@ mod tests {
         let (fm, _) = mail_airtime_secs(Preset::VhfFm, &mail, 250);
         assert!(fast < fm * 0.6, "vhf-fast {fast:.1}s vs vhf-fm {fm:.1}s");
         // Every other preset still cuts mail at its rung's payload.
-        assert_eq!(plan_limit(Preset::VhfFm), 300);
-        assert_eq!(plan_limit(Preset::HfPoor), 170);
+        assert_eq!(plan_limit(Preset::VhfFm, 1024), 300);
+        assert_eq!(plan_limit(Preset::HfPoor, 1024), 170);
     }
 
     #[test]
@@ -2638,7 +2982,7 @@ mod tests {
         let (_, hinted) = mail_airtime_secs(Preset::HfPoor, &mail, 250);
         assert_eq!(hinted, first.len());
         let trap = mail_rung(Preset::HfPoor, 2).payload_bytes() as usize;
-        assert!(trap < plan_limit(Preset::HfPoor));
+        assert!(trap < plan_limit(Preset::HfPoor, 1024));
         let meta = MailMeta {
             from: mail.from.into(),
             to: mail.to.into(),

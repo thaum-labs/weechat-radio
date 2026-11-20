@@ -197,6 +197,26 @@ const COMMANDS: &[Cmd] = &[
         send_bare: false,
     },
     Cmd {
+        name: "filesend",
+        usage: "/filesend auto|burst|pieces",
+        summary: "How a file in a direct chat goes out",
+        args: &[
+            Arg {
+                value: "auto",
+                hint: "Burst on vhf-fast, pieces elsewhere",
+            },
+            Arg {
+                value: "burst",
+                hint: "Every piece back to back, one report",
+            },
+            Arg {
+                value: "pieces",
+                hint: "One piece at a time, weak links",
+            },
+        ],
+        send_bare: true,
+    },
+    Cmd {
         name: "gateway",
         usage: "/gateway chat-and-mail|mail-only",
         summary: "What this gateway keys for other stations (internet-radio)",

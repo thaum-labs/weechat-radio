@@ -198,9 +198,11 @@ function lineNode(l) {
     li.append(badge);
   }
   li.append(textNode(l.text));
-  // File transfer: a DOS-style bar such as [████░░░░] 3/15.
+  // File transfer: a solid bar and "3/15" (the station sends "[███░░] 3/15").
   if (l.progress) {
-    const bar = el("span", "bar", l.progress);
+    // "[bar] 6/16" or, for a burst (#365), "[bar] 6/16 · 2 missing, resending".
+    const n = /(\d+)\s*\/\s*(\d+)\s*(?:·\s*(.*))?$/.exec(l.progress);
+    const bar = n ? cssBar(Number(n[1]) / Math.max(1, Number(n[2])), `${n[1]}/${n[2]}${n[3] ? ` ${n[3]}` : ""}`) : el("span", "bar", l.progress);
     bar.title = l.mine ? "Pieces the far station has receipted" : "Pieces received so far";
     li.append(bar);
   }
@@ -367,10 +369,15 @@ $("compose").onsubmit = (e) => { e.preventDefault(); sendNow(); };
 const FILE_MAX = 4096;
 const PICTURE_MAX = 8192; // vhf-fast only
 
-// Shrink a picture in the browser until it fits: smaller, then lower JPEG
-// quality, like the station does. The browser reads phone formats (HEIC on
-// an iPhone) and turns the photo the right way up.
-async function shrinkPicture(f, max) {
+// Read a picture the person picked. createImageBitmap needs no URL; the
+// <img> fallback loads a blob: URL, which the page policy allows (QA #365).
+async function readPicture(f) {
+  if (window.createImageBitmap) {
+    try {
+      const b = await createImageBitmap(f, { imageOrientation: "from-image" });
+      return { img: b, w: b.width, h: b.height, done: () => b.close() };
+    } catch (_) { /* fall back to <img>, e.g. HEIC on older Safari */ }
+  }
   const url = URL.createObjectURL(f);
   try {
     const img = await new Promise((ok, bad) => {
@@ -379,10 +386,25 @@ async function shrinkPicture(f, max) {
       i.onerror = () => bad(new Error(`${f.name} could not be read as a picture.`));
       i.src = url;
     });
-    const w0 = img.naturalWidth, h0 = img.naturalHeight;
+    return { img, w: img.naturalWidth, h: img.naturalHeight, done: () => {} };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// Shrink a picture in the browser until it fits: smaller, then lower JPEG
+// quality, like the station does. The browser reads phone formats (HEIC on
+// an iPhone) and turns the photo the right way up.
+async function shrinkPicture(f, max) {
+  const pic = await readPicture(f);
+  try {
+    const img = pic.img;
+    const w0 = pic.w, h0 = pic.h;
     const longest = Math.max(w0, h0);
     const c = document.createElement("canvas");
-    for (let side = Math.min(longest, 640); side >= 40; side = Math.floor(side * 0.85)) {
+    // Like the station: 640 px for small limits, 1024 px for a big mail.
+    const start = max > 64 * 1024 ? 1024 : 640;
+    for (let side = Math.min(longest, start); side >= 40; side = Math.floor(side * 0.85)) {
       const k = side / longest;
       c.width = Math.max(1, Math.round(w0 * k));
       c.height = Math.max(1, Math.round(h0 * k));
@@ -394,7 +416,7 @@ async function shrinkPicture(f, max) {
     }
     throw new Error(`${f.name} would not shrink small enough to send.`);
   } finally {
-    URL.revokeObjectURL(url);
+    pic.done();
   }
 }
 
@@ -418,7 +440,8 @@ $("attach-file").onchange = async () => {
     return;
   }
   if (f.size > PICTURE_MAX || (!f.type.startsWith("image/") && f.size > FILE_MAX)) {
-    $("chat-note").textContent = `${name} is ${(f.size / 1024).toFixed(1)} KB; the limit is 4 KB.`;
+    const limit = f.type.startsWith("image/") ? "8 KB for a picture" : "4 KB (pictures 8 KB, on vhf-fast)";
+    $("chat-note").textContent = `${name} is ${(f.size / 1024).toFixed(1)} KB; the limit is ${limit}.`;
     return;
   }
   const buf = new Uint8Array(await f.arrayBuffer());
@@ -463,20 +486,36 @@ function chip(st) {
   return c;
 }
 
-// DOS-style bar like the file bars (same as the desktop app's mail bars).
-function dosBar(fraction) {
+// A solid progress bar: a track, a fill as wide as `fraction`, and a label
+// (the percent unless given). Block characters dithered in some fonts (#365).
+function cssBar(fraction, label) {
   const f = Math.min(1, Math.max(0, Number(fraction) || 0));
-  const full = Math.floor(f * 20);
-  return `[${"█".repeat(full)}${"░".repeat(20 - full)}] ${String(Math.round(f * 100)).padStart(3)}%`;
+  const wrap = el("span", "pbar");
+  const track = el("span", "track");
+  const fill = el("span", "fill");
+  fill.style.width = `${(f * 100).toFixed(1)}%`;
+  track.append(fill);
+  wrap.append(track, el("span", "label", label === undefined ? `${Math.round(f * 100)}%` : label));
+  return wrap;
 }
 
-// How far an outgoing radio mail is: chunks the gateway has receipted.
+// How far an outgoing radio mail is: chunks the gateway has receipted, and
+// for a big mail the chunks keyed so far, frame by frame (#365).
 function sendBar(m) {
-  if (m.folder !== "outbox" || !(m.chunks > 0)) return "";
-  if (m.state === "gateway") return dosBar(1);
-  if (m.state !== "tx" && m.state !== "queued") return "";
+  if (m.folder !== "outbox" || !(m.chunks > 0)) return null;
+  if (m.state === "gateway") return cssBar(1);
+  if (m.state !== "tx" && m.state !== "queued") return null;
   const have = String(m.got || "").split(",").filter((x) => /^\d+$/.test(x.trim())).length;
-  return `${dosBar(have / m.chunks)} ${have}/${m.chunks}`;
+  const keyed = Math.min(m.chunks, m.keyed || 0);
+  if (keyed > have) {
+    return cssBar(keyed / m.chunks, `${keyed}/${m.chunks} sent, gateway has ${have}`);
+  }
+  return cssBar(have / m.chunks, `${Math.round((100 * have) / m.chunks)}% ${have}/${m.chunks}`);
+}
+
+// A radio mail still on its way can be stopped (#365).
+function cancellable(m) {
+  return m.folder === "outbox" && m.ack && ["queued", "tx", "locating"].includes(m.state);
 }
 
 // The Radio+ Get under way, or the mail it fetched (click to open).
@@ -488,12 +527,12 @@ function drawGet(get, rows) {
   if (g.state === "asking" || g.state === "receiving") {
     const part = g.state === "receiving" && g.total > 0 ? g.got / g.total : 0;
     const words = g.state === "receiving" ? `chunks ${g.got} of ${g.total}` : "asking the gateway…";
-    p.append(`Getting ${subject} `, el("span", "bar", dosBar(0.1 + 0.85 * part)), ` ${words}`);
+    p.append(`Getting ${subject} `, cssBar(0.1 + 0.85 * part), ` ${words}`);
   } else if (g.state === "fetched" && g.mail_id && rows.some((r) => r.id === g.mail_id && r.unread)) {
     const a = el("button", "quiet", "Open");
     a.type = "button";
     a.onclick = () => showMail(g.mail_id);
-    p.append(`Fetched ${subject} `, el("span", "bar", dosBar(1)), " ", a);
+    p.append(`Fetched ${subject} `, cssBar(1), " ", a);
   }
   p.hidden = !p.childNodes.length;
 }
@@ -509,10 +548,17 @@ async function loadMail() {
     return;
   }
   mailRows = d.rows || [];
+  if (d.attach_max && d.attach_max !== attachMax) {
+    attachMax = d.attach_max;
+    setMailFile(mailFile, mailFileRefused);
+  }
   // Why mail cannot go (for example Radio+ with no mail gateway), or the
   // Radio+ gateway in use (#274, #275).
   const note = $("mail-note");
-  note.textContent = d.block || (d.gateway_line ? `Mail gateway: ${d.gateway_line}` : "");
+  // A gateway shows a mail coming in over the radio, chunk by chunk (#365).
+  const rx = d.receiving;
+  const rxLine = rx ? `Receiving mail from ${rx.from}: chunk ${rx.have} of ${rx.total}` : "";
+  note.textContent = d.block || [d.gateway_line ? `Mail gateway: ${d.gateway_line}` : "", rxLine].filter(Boolean).join(" · ");
   note.className = d.block ? "small warn" : "small dim";
   note.hidden = !note.textContent;
   drawGet(folder === "inbox" ? d.get : null, mailRows);
@@ -542,7 +588,7 @@ async function loadMail() {
     const who = folder === "inbox" ? m.from_addr : `${m.to_addr}${via ? ` · via ${via.gateway}` : ""}`;
     what.append(el("span", "subject", m.subject || "(no subject)"), el("span", "who", who));
     const bar = sendBar(m);
-    if (bar) what.append(el("span", "bar", bar));
+    if (bar) what.append(bar);
     li.append(el("span", "when", clock(m.ts)), chip(m.status || {}), what);
     li.tabIndex = 0;
     li.onclick = () => showMail(m.id);
@@ -568,7 +614,10 @@ function drawMail(m) {
   p.replaceChildren(chip(st), document.createTextNode(` ${st.word || ""}`));
   if (st.reason) p.append(el("span", "dim small block", st.reason));
   const bar = sendBar(m);
-  if (bar) p.append(el("span", "bar block", bar));
+  if (bar) {
+    bar.classList.add("block");
+    p.append(bar);
+  }
   const steps = (m.hops || []).map((h) => ({ ts: h.ts, text: STAGES[h.stage] || h.stage }))
     .concat((m.via || []).map((v) => ({ ts: v.ts, text: `via gateway ${v.gateway}` })))
     .sort((a, b) => a.ts - b.ts);
@@ -590,6 +639,7 @@ function drawMail(m) {
     }
   }
   $("mail-retry").hidden = !st.retry;
+  $("mail-stop").hidden = !cancellable(m);
   $("mail-reply").hidden = m.folder !== "inbox";
 }
 
@@ -606,6 +656,13 @@ $("mail-close").onclick = () => { openMail = null; $("mail-view").hidden = true;
 $("mail-retry").onclick = async () => {
   if (!openMail) return;
   try { await post("/api/mail/retry", { id: openMail.id }); } catch (err) { alert(err.message); }
+  loadMail();
+};
+$("mail-stop").onclick = async () => {
+  if (!openMail) return;
+  $("mail-stop").disabled = true;
+  try { await post("/api/mail/cancel", { id: openMail.id }); } catch (err) { alert(err.message); }
+  $("mail-stop").disabled = false;
   loadMail();
 };
 $("mail-reply").onclick = () => {
@@ -629,47 +686,69 @@ function newMail(to, subject) {
   $("m-subject").value = subject || "";
   $("m-body").value = "";
   $("m-note").textContent = "";
-  mailFile = null;
-  $("m-file").textContent = "";
+  setMailFile(null, "");
   (to ? $("m-body") : $("m-to")).focus();
 }
 $("new-mail").onclick = () => newMail("", "");
 
 // One file for the mail. A big picture is shrunk here in the browser (phone
-// photo formats work); the station checks the size and the preset.
+// photo formats work); the station checks the size and the preset. A file
+// that does not fit clears any file picked before and blocks Send until it
+// is removed: a mail never goes without its file quietly (QA #365).
 let mailFile = null;
+let mailFileRefused = "";
+let attachMax = 8192; // the station says: 512 KB on vhf-fast, 8 KB elsewhere
+const kb = (n) => `${(n / 1024).toFixed(1)} KB`;
+function setMailFile(file, refused, note) {
+  mailFile = file;
+  mailFileRefused = refused || "";
+  const line = $("m-file");
+  line.className = mailFileRefused ? "small warn" : "small";
+  line.textContent = mailFileRefused
+    ? `✗ Not attached: ${mailFileRefused}`
+    : file ? `📎 ${file.name} (${kb(file.size)})${note || ""}` : "";
+  $("m-remove").hidden = !mailFileRefused && !file;
+  $("m-send").disabled = !!mailFileRefused;
+  $("m-limit").textContent = `One file up to ${kb(attachMax)}; pictures are shrunk to fit. Over the radio, vhf-fast only (512 KB there, 8 KB on other presets).`;
+}
+$("m-remove").onclick = () => setMailFile(null, "");
 $("m-attach").onclick = () => $("m-attach-file").click();
 $("m-attach-file").onchange = async () => {
   let f = $("m-attach-file").files[0];
   $("m-attach-file").value = "";
   if (!f) return;
+  setMailFile(null, "");
   let name = f.name;
   let note = "";
   try {
-    if (f.type.startsWith("image/") && f.size > PICTURE_MAX) {
-      const s = await shrinkPicture(f, PICTURE_MAX);
+    if (f.type.startsWith("image/") && f.size > attachMax) {
+      const s = await shrinkPicture(f, attachMax);
       note = ` shrunk to ${s.w}×${s.h}`;
       name = name.replace(/\.[^.]*$/, "") + ".jpg";
       f = s.blob;
     }
   } catch (err) {
-    $("m-file").textContent = err.message;
+    setMailFile(null, err.message);
     return;
   }
-  if (f.size > PICTURE_MAX) {
-    mailFile = null;
-    $("m-file").textContent = `${name} is ${(f.size / 1024).toFixed(1)} KB; files up to 8 KB can go with a mail.`;
+  if (f.size > attachMax) {
+    setMailFile(null, `${name} is ${kb(f.size)}; files up to ${kb(attachMax)} can go with a mail here.`);
     return;
   }
   const buf = new Uint8Array(await f.arrayBuffer());
   let bin = "";
-  for (const b of buf) bin += String.fromCharCode(b);
-  mailFile = { name, data: btoa(bin) };
-  $("m-file").textContent = `📎 ${name} (${(f.size / 1024).toFixed(1)} KB)${note}`;
+  for (let i = 0; i < buf.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+  }
+  setMailFile({ name, size: f.size, data: btoa(bin) }, "", note);
 };
 $("m-cancel").onclick = () => { $("mail-form").hidden = true; };
 $("mail-form").onsubmit = async (e) => {
   e.preventDefault();
+  if (mailFileRefused) {
+    $("m-note").textContent = "Remove the file that was not attached, or attach one that fits, to send.";
+    return;
+  }
   $("m-note").textContent = "Sending…";
   try {
     const send = { to: $("m-to").value.trim(), subject: $("m-subject").value, body: $("m-body").value };

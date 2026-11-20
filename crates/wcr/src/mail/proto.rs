@@ -2,7 +2,6 @@
 //! Internet mail on the air (`WCRM` chunks). Independent of chat bodies.
 
 use crate::error::{Error, Result};
-use crate::proto::MAX_BODY;
 use serde::{Deserialize, Serialize};
 
 pub const MAIL_MAX_BYTES: usize = 4096;
@@ -24,7 +23,21 @@ pub enum MailOp {
     GwAsk = 8,
     /// A gateway's answer to `GwAsk`, in the slot the hub gave it.
     GwReply = 9,
+    /// "This block of a big mail is over: report now" (QA #365). The sender
+    /// keys it after each block of [`MAIL_BLOCK_CHUNKS`]. Older stations do
+    /// not know it and skip it.
+    BurstEnd = 10,
 }
+
+/// Most chunks in one block of a big mail. A big mail goes in blocks, each
+/// followed by [`MailOp::BurstEnd`] and the gateway's have-report, so a long
+/// send (a 512 KB file on vhf-fast) never keys for more than about two
+/// minutes at a time and a lost link costs one block, not the mail.
+pub const MAIL_BLOCK_CHUNKS: usize = 128;
+
+/// Widest mail chunk: one normal QAM16 frame (1024 bytes less modem73's 2).
+/// Only a big mail on vhf-fast uses more than [`crate::proto::MAX_BODY`].
+pub const MAX_CHUNK: usize = 1022;
 
 impl MailOp {
     fn from_u8(v: u8) -> Option<Self> {
@@ -39,6 +52,7 @@ impl MailOp {
             7 => Some(Self::CompleteAck),
             8 => Some(Self::GwAsk),
             9 => Some(Self::GwReply),
+            10 => Some(Self::BurstEnd),
             _ => None,
         }
     }
@@ -172,7 +186,9 @@ pub fn copy_code_digits(code: &str) -> String {
 }
 
 /// The body trimmed and checked: the text up to [`MAIL_MAX_BYTES`], plus
-/// at most one attached file up to [`super::attach::ATTACH_MAX_BYTES`].
+/// at most one attached file up to [`super::attach::ATTACH_MAX_FAST_BYTES`],
+/// the most any preset sends. The sending station holds its own preset's
+/// limit ([`super::attach::max_bytes`]).
 pub fn trim_body(body: &str) -> Result<String> {
     let t = body.trim();
     let (text, file) = super::attach::split(t);
@@ -183,11 +199,11 @@ pub fn trim_body(body: &str) -> Result<String> {
         )));
     }
     if let Some(f) = file {
-        if f.data.len() > super::attach::ATTACH_MAX_BYTES {
+        if f.data.len() > super::attach::ATTACH_MAX_FAST_BYTES {
             return Err(Error::config(format!(
                 "The attached file is {}. The limit is {}.",
                 crate::proto::file::human_size(f.data.len()),
-                crate::proto::file::human_size(super::attach::ATTACH_MAX_BYTES)
+                crate::proto::file::human_size(super::attach::ATTACH_MAX_FAST_BYTES)
             )));
         }
     }
@@ -323,6 +339,30 @@ pub fn chunk_acceptable(idx: u16, count: u16) -> bool {
     count > 0 && idx < count
 }
 
+/// Chunks a whole-mail bitmap covers: 64 hex characters, as before.
+pub const HAVE_WINDOW: u16 = 256;
+
+/// The have-report for `total` chunks. Up to [`HAVE_WINDOW`] chunks it is
+/// the whole-mail bitmap every station knows ([`have_bitmap`]). A bigger
+/// mail gets a window: `w:<total>:<start>:<hex>`, where every chunk below
+/// `start` (the first one missing) is held and the hex is the bitmap of the
+/// next [`HAVE_WINDOW`] chunks. It stays one frame however big the mail.
+pub fn have_report(total: u16, indexes: &[u16]) -> String {
+    if total <= HAVE_WINDOW {
+        return have_bitmap(total, indexes);
+    }
+    let held: std::collections::HashSet<u16> = indexes.iter().copied().collect();
+    let start = (0..total).find(|i| !held.contains(i)).unwrap_or(total);
+    let mut bits = vec![0u8; usize::from(HAVE_WINDOW / 8)];
+    for &idx in indexes {
+        if idx >= start && idx - start < HAVE_WINDOW && idx < total {
+            let off = idx - start;
+            bits[usize::from(off / 8)] |= 1 << (off % 8);
+        }
+    }
+    format!("w:{total}:{start}:{}", hex::encode(bits))
+}
+
 /// `b:<total>:<hex>` lists the chunk indexes already stored for that total.
 /// Bit 0 of the first byte is index 0. A comma list of 46 indexes does not
 /// fit one hf-poor frame; the bitmap does.
@@ -339,12 +379,32 @@ pub fn have_bitmap(total: u16, indexes: &[u16]) -> String {
     format!("b:{total}:{}", hex::encode(bits))
 }
 
-/// `None` when `body` is a single chunk index, not a have-report.
+/// `None` when `body` is a single chunk index, not a have-report. Reads
+/// both forms of [`have_report`]: the whole bitmap and the window.
 pub fn parse_have_bitmap(body: &str) -> Option<(u16, Vec<u16>)> {
-    let rest = body.trim().strip_prefix("b:")?;
+    let body = body.trim();
+    if let Some(rest) = body.strip_prefix("w:") {
+        let mut parts = rest.splitn(3, ':');
+        let total: u16 = parts.next()?.parse().ok()?;
+        let start: u16 = parts.next()?.parse().ok()?;
+        let (_, window) = parse_bits(total.checked_sub(start)?.max(1), parts.next()?, 64)?;
+        if total == 0 || start > total {
+            return None;
+        }
+        let mut out: Vec<u16> = (0..start).collect();
+        out.extend(window.into_iter().map(|i| i + start).filter(|i| *i < total));
+        return Some((total, out));
+    }
+    let rest = body.strip_prefix("b:")?;
     let (total_s, hexpart) = rest.split_once(':')?;
     let total: u16 = total_s.parse().ok()?;
-    if total == 0 || hexpart.is_empty() || hexpart.len() > 64 || hexpart.len() % 2 != 0 {
+    // An older gateway sends a big mail's report as one long bitmap.
+    parse_bits(total, hexpart, 8192)
+}
+
+/// The indexes set in `hexpart` below `total`.
+fn parse_bits(total: u16, hexpart: &str, max_hex: usize) -> Option<(u16, Vec<u16>)> {
+    if total == 0 || hexpart.is_empty() || hexpart.len() > max_hex || !hexpart.len().is_multiple_of(2) {
         return None;
     }
     if !hexpart.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -475,7 +535,23 @@ pub fn try_decode(payload: &[u8]) -> Option<Incoming> {
 
 /// Split `body` so each encoded WCRM chunk is at most `limit` bytes (and `MAX_BODY`).
 pub fn chunk_to_limit(mail_id: &str, meta: &MailMeta, body: &str, limit: usize) -> Vec<MailWire> {
-    let limit = limit.clamp(1, MAX_BODY);
+    let wires = chunk_reserving(mail_id, meta, body, limit, 999);
+    if wires.len() <= 999 {
+        return wires;
+    }
+    // A big mail (a 512 KB file) runs to thousands of chunks: reserve five
+    // digits, or every frame comes out two bytes too wide and is sliced.
+    chunk_reserving(mail_id, meta, body, limit, u16::MAX)
+}
+
+fn chunk_reserving(
+    mail_id: &str,
+    meta: &MailMeta,
+    body: &str,
+    limit: usize,
+    reserve: u16,
+) -> Vec<MailWire> {
+    let limit = limit.clamp(1, MAX_CHUNK);
     let op = if meta.ack {
         MailOp::VoxData
     } else {
@@ -497,8 +573,8 @@ pub fn chunk_to_limit(mail_id: &str, meta: &MailMeta, body: &str, limit: usize) 
             encode_chunk(&MailWire {
                 op,
                 mail_id: mail_id.to_string(),
-                idx: 999,
-                count: 999,
+                idx: reserve,
+                count: reserve,
                 meta: meta_now.clone(),
                 payload: p.to_string(),
             })
@@ -642,6 +718,56 @@ pub fn frames_for_mtu(wire: &[u8], mtu: usize) -> Result<Vec<Vec<u8>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA #365: a 512 KB file runs to hundreds of chunks. The gateway's
+    /// report still fits one short frame and round-trips.
+    #[test]
+    fn a_have_report_for_a_big_mail_fits_one_frame() {
+        let total = 767u16;
+        // Everything below 300 held, then every other chunk of the next 100.
+        let mut held: Vec<u16> = (0..300).collect();
+        held.extend((301..400).step_by(2));
+        let report = have_report(total, &held);
+        assert!(report.starts_with("w:767:300:"), "{report}");
+        assert!(report.len() < 200, "{}", report.len());
+        let (t, mut got) = parse_have_bitmap(&report).expect("window");
+        got.sort();
+        assert_eq!(t, total);
+        assert_eq!(got, held);
+        // A small mail keeps the bitmap every gateway already sends.
+        let small = have_report(46, &[0, 1, 45]);
+        assert!(small.starts_with("b:"));
+        assert_eq!(parse_have_bitmap(&small), Some((46, vec![0, 1, 45])));
+        // An older gateway's whole-mail bitmap for a big mail still reads.
+        let old = have_bitmap(767, &[0, 766]);
+        assert_eq!(parse_have_bitmap(&old), Some((767, vec![0, 766])));
+        assert!(parse_have_bitmap("w:767:800:00").is_none());
+    }
+
+    /// More than 999 chunks: the plan reserves room for the longer count,
+    /// so no chunk comes out wider than the frame.
+    #[test]
+    fn a_mail_of_thousands_of_chunks_keeps_every_chunk_inside_the_limit() {
+        let id = "ab".repeat(32);
+        let meta = MailMeta {
+            from: "M7SND".into(),
+            to: "op@example.com".into(),
+            subject: "s".into(),
+            dest: "G4GW".into(),
+            via: "G4GW".into(),
+            ack: true,
+            ..MailMeta::default()
+        };
+        let body = "x".repeat(300_000);
+        let wires = chunk_to_limit(&id, &meta, &body, 254);
+        assert!(wires.len() > 999, "{}", wires.len());
+        for w in &wires {
+            let len = encode_chunk(w).len();
+            assert!(len <= 254, "chunk {} is {len} B", w.idx);
+        }
+        let back: String = wires.iter().map(|w| w.payload.as_str()).collect();
+        assert_eq!(back.len(), body.len());
+    }
 
     /// One address only: a comma, semicolon or a second @ could smuggle in
     /// more recipients.

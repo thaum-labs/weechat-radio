@@ -1182,9 +1182,10 @@ async fn with_received_files(email_id: &str, text: String, files: &[ReceivedFile
         if kept.is_none() && f.worth_fetching() {
             if let Ok(data) = fetch_received_file(email_id, &f.id).await {
                 let name = f.filename.clone();
-                let ready =
-                    tokio::task::spawn_blocking(move || crate::mail::attach::prepare(&name, data))
-                        .await;
+                let ready = tokio::task::spawn_blocking(move || {
+                    crate::mail::attach::prepare(&name, data, crate::mail::attach::ATTACH_MAX_BYTES)
+                })
+                .await;
                 if let Ok(Ok((file, _))) = ready {
                     kept = Some(file);
                     continue;

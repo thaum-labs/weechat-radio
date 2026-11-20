@@ -921,6 +921,7 @@ impl GuiApp {
                 preset_cmd = Some(format!("/preset {next}"));
             }
         }
+        let file_cmd = file_send_row(ui, &s, key_cell);
         if let Some(note) = s.preset_pending_note() {
             ui.label(RichText::new(note).color(M_GOLD).small());
         }
@@ -960,7 +961,7 @@ impl GuiApp {
             );
         }
         m73_heard(ui, &s.heard);
-        for cmd in [mode_cmd, tower_cmd, preset_cmd, freq_cmd]
+        for cmd in [mode_cmd, tower_cmd, preset_cmd, file_cmd, freq_cmd]
             .into_iter()
             .flatten()
         {

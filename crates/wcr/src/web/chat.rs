@@ -173,6 +173,12 @@ impl Chat {
                 g.set_mode(value)?;
                 format!("/gateway {}", g.mode_name())
             }
+            // How a chat file goes out (QA #365): the same /filesend.
+            "file_send" => {
+                let mut rf = crate::config::RfConfig::default();
+                rf.set_file_send(value)?;
+                format!("/filesend {}", rf.file_send)
+            }
             // The dial (#334): the same /freq the desktop app sends. The page
             // saves it in wcr.toml first; this tells the running station.
             "freq" => {
@@ -180,11 +186,10 @@ impl Chat {
                     .ok_or_else(|| format!("{value} is not a frequency"))?;
                 format!("/freq {}", crate::band::fmt_mhz(khz))
             }
-            _ => {
-                return Err(
-                    "only mode, preset, dial, levels and gateway mode can be changed here".into(),
-                )
-            }
+            _ => return Err(
+                "only mode, preset, dial, levels, file send and gateway mode can be changed here"
+                    .into(),
+            ),
         };
         if !self.state.lock().up {
             return Err("the station is not running".into());

@@ -282,7 +282,10 @@ pub(crate) fn parse_file_progress(line: &str) -> Option<(String, String)> {
         return None;
     }
     let tags = irc_tags(line);
-    let bar = crate::proto::file::progress_bar_from_tag(tags.get("radio/file")?)?;
+    let bar = crate::proto::file::progress_with_step(
+        tags.get("radio/file")?,
+        tags.get("radio/filestep").map(String::as_str),
+    )?;
     let msgid = tags
         .get("radio/msgid")
         .or_else(|| tags.get("msgid"))
@@ -536,7 +539,12 @@ pub(crate) fn parse_privmsg(line: &str) -> Option<ChatLine> {
         snr: tags.get("radio/snr").and_then(|s| s.parse().ok()),
         progress: tags
             .get("radio/file")
-            .and_then(|t| crate::proto::file::progress_bar_from_tag(t))
+            .and_then(|t| {
+                crate::proto::file::progress_with_step(
+                    t,
+                    tags.get("radio/filestep").map(String::as_str),
+                )
+            })
             .unwrap_or_default(),
     })
 }
@@ -603,6 +611,12 @@ mod file_tests {
         assert_eq!(bar, crate::proto::file::progress_bar(3, 15));
         // A delivery mark is not file progress.
         assert!(parse_file_progress("@+radio/delivery=sent;+radio/msgid=ab TAGMSG *").is_none());
+        // A burst's step rides beside the count (QA #365).
+        let (_, step) = parse_file_progress(
+            "@msgid=ab12;+radio/msgid=ab12;+radio/file=6/16;+radio/filestep=resend:2 TAGMSG G4ABC",
+        )
+        .unwrap();
+        assert!(step.ends_with("6/16 · 2 missing, resending"), "{step}");
         let mut lines = vec![ChatLine::user("G4ABC", "📎 a", "G4ABC")];
         lines[0].msgid = "AB12".into();
         assert!(apply_file_progress(&mut lines, "ab12", &bar));

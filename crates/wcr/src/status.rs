@@ -157,6 +157,9 @@ pub struct StatusSnapshot {
     /// `chat-and-mail` or `mail-only`. Empty off internet-radio.
     #[serde(default)]
     pub gateway_mode: String,
+    /// `[rf] file_send` (QA #365): `auto`, `burst` or `pieces`.
+    #[serde(default)]
+    pub file_send: String,
     /// Frames this process has relayed for another station (not our own sends).
     /// Repeats of the same message each count.
     #[serde(default)]
@@ -667,6 +670,7 @@ impl Default for StatusSnapshot {
             hold_kind: String::new(),
             tower: false,
             gateway_mode: String::new(),
+            file_send: String::new(),
             relayed: 0,
             relayed_unique: 0,
             pid: std::process::id(),

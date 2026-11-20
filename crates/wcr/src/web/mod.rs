@@ -253,6 +253,7 @@ fn router(web: Web) -> Router {
         .route("/api/mail/open", get(mail_open))
         .route("/api/mail/send", post(mail_send))
         .route("/api/mail/retry", post(mail_retry))
+        .route("/api/mail/cancel", post(mail_cancel))
         .route("/api/mail/check", post(mail_check))
         .route("/api/mail/get", post(mail_get))
         .route("/logout", post(logout))
@@ -299,13 +300,14 @@ async fn security_headers(request: Request<Body>, next: Next) -> Response {
     set(h, "x-frame-options", "DENY");
     set(h, "referrer-policy", "no-referrer");
     set(h, "cache-control", "no-store");
-    set(
-        h,
-        "content-security-policy",
-        "default-src 'self'; frame-ancestors 'none'; form-action 'self'",
-    );
+    set(h, "content-security-policy", CSP);
     response
 }
+
+/// The page's content policy. `img-src` allows `blob:` so the page can load
+/// a picture the person picked and shrink it before sending (QA #365).
+pub const CSP: &str =
+    "default-src 'self'; img-src 'self' blob: data:; frame-ancestors 'none'; form-action 'self'";
 
 async fn lan_only(
     State(web): State<Web>,
@@ -418,6 +420,9 @@ async fn setting(State(web): State<Web>, Json(b): Json<SettingBody>) -> Response
     if b.what == "gateway_mode" {
         return set_gateway_mode(&web, &b.value);
     }
+    if b.what == "file_send" {
+        return set_file_send(&web, &b.value);
+    }
     if b.what == "freq" {
         return set_dial(&web, &b.value);
     }
@@ -509,6 +514,28 @@ fn set_gateway_mode(web: &Web, value: &str) -> Response {
     let _ = web.chat.radio_setting("gateway_mode", name);
     web.station
         .note(&format!("gateway mode set to {name} on the web page"));
+    Json(json!({ "ok": true })).into_response()
+}
+
+/// Save how a chat file goes out (QA #365) in wcr.toml and, when the
+/// station runs, use it now. Saved while stopped too.
+fn set_file_send(web: &Web, value: &str) -> Response {
+    let bad = |e: String| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response();
+    let mut cfg = match Config::load(&web.cfg_path) {
+        Ok(c) => c,
+        Err(e) => return bad(e.to_string()),
+    };
+    if let Err(e) = cfg.rf.set_file_send(value) {
+        return bad(e);
+    }
+    if let Err(e) = cfg.save(&web.cfg_path) {
+        return bad(e.to_string());
+    }
+    let v = cfg.rf.file_send.clone();
+    // Not an error while stopped: the saved value is used at the next Start.
+    let _ = web.chat.radio_setting("file_send", &v);
+    web.station
+        .note(&format!("file send set to {v} on the web page"));
     Json(json!({ "ok": true })).into_response()
 }
 
@@ -666,7 +693,10 @@ async fn gateway(State(web): State<Web>) -> Json<Value> {
     });
     // The gateway mode (#272), from wcr.toml so it shows while stopped.
     let gateway_mode = cfg.as_ref().map(|c| c.gateway.mode_name());
+    // How a chat file goes out (QA #365), from wcr.toml.
+    let file_send = cfg.as_ref().map(|c| c.rf.file_send.clone());
     Json(json!({
+        "file_send": file_send,
         "frequency": frequency,
         "mail_gateway": mail_gateway,
         "gateway_mode": gateway_mode,
@@ -962,6 +992,11 @@ async fn mail_send(State(web): State<Web>, Json(b): Json<Value>) -> Response {
 
 async fn mail_retry(State(web): State<Web>, Json(b): Json<Value>) -> Response {
     web.local_post("/mail/retry", json!({ "id": b["id"] }))
+        .await
+}
+
+async fn mail_cancel(State(web): State<Web>, Json(b): Json<Value>) -> Response {
+    web.local_post("/mail/cancel", json!({ "id": b["id"] }))
         .await
 }
 
@@ -1303,6 +1338,38 @@ pub fn install(_cfg_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA #365: the page shrinks a picked picture by loading it from a
+    /// `blob:` URL. The served policy must allow that, and still keep
+    /// everything else to this station.
+    #[tokio::test]
+    async fn served_policy_allows_blob_pictures() {
+        let app = Router::new()
+            .route("/", axum::routing::get(|| async { "ok" }))
+            .layer(middleware::from_fn(security_headers));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        let resp = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .unwrap();
+        let csp = resp.headers()["content-security-policy"].to_str().unwrap();
+        let img = csp
+            .split(';')
+            .map(str::trim)
+            .find(|d| d.starts_with("img-src"))
+            .expect("img-src");
+        assert!(img.split(' ').any(|s| s == "blob:"), "{csp}");
+        assert!(csp.starts_with("default-src 'self';"), "{csp}");
+        assert!(csp.contains("frame-ancestors 'none'"), "{csp}");
+    }
 
     /// The "saved to" download serves received files only.
     #[test]

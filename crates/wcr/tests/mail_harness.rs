@@ -2019,7 +2019,8 @@ async fn auto_asks_again_after_hearing_no_gateway() {
 async fn a_mail_with_a_file_reaches_the_hub_whole() {
     let _hang = watchdog(TEST_LIMIT);
     let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
-    let pair = Pair::start(
+    // Files go with mail over the radio on vhf-fast only.
+    let pair = Pair::start_tweaked(
         TimedOpts {
             frame_ms: 2_000,
             count_tx: false,
@@ -2030,6 +2031,11 @@ async fn a_mail_with_a_file_reaches_the_hub_whole() {
             rx_after_decode: false,
         },
         drop_rx,
+        Duration::ZERO,
+        |_, cfg| {
+            cfg.modem.preset = "vhf-fast".into();
+            cfg.rf.frequency_khz = 145_500;
+        },
     )
     .await;
     let file = wcr::mail::attach::Attachment {
@@ -2047,4 +2053,252 @@ async fn a_mail_with_a_file_reaches_the_hub_whole() {
     let (text, got) = wcr::mail::attach::split(posted);
     assert_eq!(text, "The log from the hill.");
     assert_eq!(got, Some(file));
+}
+
+/// QA #365: a mail with a big file on vhf-fast goes in normal 1 KB QAM16
+/// frames, block by block, each block answered by the gateway's report.
+/// The send's `keyed` count climbs chunk by chunk (never 0 straight to all),
+/// no frame is wider than modem73's normal frame, and the hub gets the
+/// file whole, once.
+async fn big_mail_goes_through(file_kb: usize, limit_secs: u64) {
+    big_mail_over(file_kb, limit_secs, Arc::new(|_, _, _| false), 3).await;
+}
+
+/// [`big_mail_goes_through`] over a link that drops what `drop_rx` says;
+/// `resent` data frames may go twice.
+async fn big_mail_over(file_kb: usize, limit_secs: u64, drop_rx: LinkDrop, resent: u64) {
+    let pair = Pair::start_tweaked(
+        TimedOpts {
+            frame_ms: 60,
+            count_tx: false,
+            collide: false,
+            csma_stuck_ms: 0,
+            rung_airtime: false,
+            noise_pct: 0,
+            rx_after_decode: false,
+        },
+        drop_rx,
+        Duration::ZERO,
+        |_, cfg| {
+            cfg.modem.preset = "vhf-fast".into();
+            cfg.rf.frequency_khz = 145_500;
+        },
+    )
+    .await;
+    let mut seed = 0x2545_f491_u32;
+    let data: Vec<u8> = (0..file_kb * 1024)
+        .map(|_| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed as u8
+        })
+        .collect();
+    let file = wcr::mail::attach::Attachment {
+        name: "survey.bin".into(),
+        data,
+    };
+    let body = wcr::mail::attach::join("The survey data.", &file);
+    let t0 = Instant::now();
+    let id = pair.compose(&body).await;
+    let deadline = Instant::now() + Duration::from_secs(limit_secs);
+    let mut seen = Vec::new();
+    let mut row = None;
+    while Instant::now() < deadline {
+        let v: Option<serde_json::Value> = async {
+            reqwest::get(format!(
+                "http://127.0.0.1:{}/mail/open?id={id}",
+                pair.status[0]
+            ))
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()
+        }
+        .await;
+        if let Some(v) = v {
+            let keyed = v.get("keyed").and_then(|k| k.as_u64()).unwrap_or(0);
+            if seen.last() != Some(&keyed) {
+                seen.push(keyed);
+            }
+            let state = v.get("state").and_then(|s| s.as_str()).unwrap_or("");
+            if state == "sent" || state == "failed" {
+                row = Some(v);
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    let posts = pair.posts.lock().unwrap().clone();
+    let log = pair.log.lock().unwrap().clone();
+    let took = t0.elapsed();
+    pair.stop();
+    let row = row.unwrap_or_else(|| panic!("{file_kb} KB mail never finished; keyed {seen:?}"));
+    let chunks = row.get("chunks").and_then(|c| c.as_u64()).unwrap_or(0);
+    assert_eq!(
+        row.get("state").and_then(|s| s.as_str()),
+        Some("sent"),
+        "{file_kb} KB: {row}"
+    );
+    assert_eq!(
+        posts.len(),
+        1,
+        "{file_kb} KB: gateway posts {}",
+        posts.len()
+    );
+    let posted = posts[0].get("body").and_then(|x| x.as_str()).unwrap_or("");
+    let (text, got) = wcr::mail::attach::split(posted);
+    assert_eq!(text, "The survey data.");
+    assert!(
+        got == Some(file),
+        "{file_kb} KB: the file did not arrive whole"
+    );
+    let mine: Vec<_> = log
+        .iter()
+        .filter(|k| k.station == 1 && is_mail(&k.payload))
+        .collect();
+    assert!(mine.iter().all(|k| !k.dropped && k.payload.len() <= 1024));
+    assert!(
+        mine.iter().any(|k| k.payload.len() > 512),
+        "{file_kb} KB: no normal-size frames"
+    );
+    // The bar steps: several distinct keyed counts on the way up.
+    let between = seen.iter().filter(|&&k| k > 0 && k < chunks).count();
+    assert!(
+        between >= 3,
+        "{file_kb} KB: keyed went {seen:?} of {chunks}"
+    );
+    let data_frames = mine
+        .iter()
+        .filter(|k| chunk_of(&k.payload).is_some_and(|(op, _, _)| is_data_op(op)))
+        .count() as u64;
+    // Only what the gateway lacked goes again.
+    assert!(
+        data_frames <= chunks + resent,
+        "{file_kb} KB: {data_frames} data frames for {chunks} chunks"
+    );
+    eprintln!(
+        "{file_kb} KB: {chunks} chunks, {data_frames} data frames, {:.0} s",
+        took.as_secs_f64()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_32_kb_file_goes_by_mail_on_vhf_fast() {
+    let _hang = watchdog(TEST_LIMIT);
+    big_mail_goes_through(32, 300).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_128_kb_file_goes_by_mail_on_vhf_fast() {
+    let _hang = watchdog(TEST_LIMIT);
+    big_mail_goes_through(128, 600).await;
+}
+
+/// Chunks lost in the middle of blocks are keyed again at the start of the
+/// next block, and only those.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_big_mail_resends_only_the_chunks_a_block_lost() {
+    let _hang = watchdog(TEST_LIMIT);
+    let lost = Arc::new(Mutex::new(std::collections::HashSet::new()));
+    let lost_c = lost.clone();
+    let drop_rx: LinkDrop = Arc::new(move |from, to, frame| {
+        let Some((op, idx, _)) = chunk_of(frame) else {
+            return false;
+        };
+        from == 1
+            && to == 2
+            && is_data_op(op)
+            && idx % 25 == 3
+            && lost_c.lock().unwrap().insert(idx)
+    });
+    // 64 KB: about 96 chunks over three blocks, four of them lost once.
+    big_mail_over(64, 600, drop_rx, 6).await;
+    assert!(lost.lock().unwrap().len() >= 3);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_512_kb_file_goes_by_mail_on_vhf_fast() {
+    let _hang = watchdog(TEST_LIMIT);
+    big_mail_goes_through(512, 1500).await;
+}
+
+/// QA #365: Cancel stops a big mail mid-block. The row turns Failed with
+/// the reason, and the radio stops keying its chunks within a few frames.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancel_stops_a_big_mail_mid_block() {
+    let _hang = watchdog(TEST_LIMIT);
+    let pair = Pair::start_tweaked(
+        TimedOpts {
+            frame_ms: 300,
+            count_tx: false,
+            collide: false,
+            csma_stuck_ms: 0,
+            rung_airtime: false,
+            noise_pct: 0,
+            rx_after_decode: false,
+        },
+        Arc::new(|_, _, _| false),
+        Duration::ZERO,
+        |_, cfg| {
+            cfg.modem.preset = "vhf-fast".into();
+            cfg.rf.frequency_khz = 145_500;
+        },
+    )
+    .await;
+    let file = wcr::mail::attach::Attachment {
+        name: "big.bin".into(),
+        data: (0..64 * 1024u32).map(|i| (i * 7 % 253) as u8).collect(),
+    };
+    let id = pair
+        .compose(&wcr::mail::attach::join("Too big after all.", &file))
+        .await;
+    let open = format!("http://127.0.0.1:{}/mail/open?id={id}", pair.status[0]);
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        let v: serde_json::Value = reqwest::get(&open).await.unwrap().json().await.unwrap();
+        if v.get("keyed").and_then(|k| k.as_u64()).unwrap_or(0) >= 5 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "never started keying: {v}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let v: serde_json::Value = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{}/mail/cancel", pair.status[0]))
+        .json(&serde_json::json!({ "id": id }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(v.get("ok").and_then(|o| o.as_bool()), Some(true), "{v}");
+    let cancelled_at = Instant::now();
+    tokio::time::sleep(Duration::from_secs(8)).await;
+    let row: serde_json::Value = reqwest::get(&open).await.unwrap().json().await.unwrap();
+    let log = pair.log.lock().unwrap().clone();
+    let posts = pair.posts.lock().unwrap().len();
+    pair.stop();
+    assert_eq!(
+        row.get("state").and_then(|s| s.as_str()),
+        Some("failed"),
+        "{row}"
+    );
+    assert!(row
+        .get("detail")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .starts_with("Cancelled"));
+    assert_eq!(posts, 0);
+    // Frames already handed to the modem may still key; nothing after that.
+    let late = log
+        .iter()
+        .filter(|k| k.station == 1 && is_mail(&k.payload))
+        .filter(|k| k.handed > cancelled_at + Duration::from_millis(300))
+        .count();
+    assert_eq!(
+        late, 0,
+        "{late} mail frames handed to the modem after Cancel"
+    );
 }

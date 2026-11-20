@@ -171,6 +171,25 @@ pub struct MailStore {
     get: Mutex<GetProgress>,
     /// Mail gateway Auto: the ranked gateways heard and the one in use.
     pick: Mutex<super::pick::GatewayPick>,
+    /// Big mail (QA #365): the chunks of each mail keyed so far, frame by
+    /// frame, for the send bar. Not saved: it is live progress only.
+    keyed: Mutex<std::collections::HashMap<String, std::collections::HashSet<u16>>>,
+    /// Mail the person cancelled mid-send. The burst stops feeding frames.
+    cancelled: Mutex<std::collections::HashSet<String>>,
+    /// A gateway's view of the mail it is receiving now, for its pages.
+    relay_rx: Mutex<Option<RelayRx>>,
+}
+
+/// The mail a gateway is receiving over the radio: who from, and how many
+/// chunks of how many it holds.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RelayRx {
+    pub from: String,
+    pub mail_id: String,
+    pub have: u32,
+    pub total: u32,
+    /// Unix seconds of the last chunk.
+    pub at: i64,
 }
 
 impl MailStore {
@@ -189,6 +208,9 @@ impl MailStore {
             notice: Mutex::new(String::new()),
             get: Mutex::new(GetProgress::default()),
             pick: Mutex::new(super::pick::GatewayPick::default()),
+            keyed: Mutex::new(Default::default()),
+            cancelled: Mutex::new(Default::default()),
+            relay_rx: Mutex::new(None),
         })
     }
 
@@ -203,6 +225,9 @@ impl MailStore {
             notice: Mutex::new(String::new()),
             get: Mutex::new(GetProgress::default()),
             pick: Mutex::new(super::pick::GatewayPick::default()),
+            keyed: Mutex::new(Default::default()),
+            cancelled: Mutex::new(Default::default()),
+            relay_rx: Mutex::new(None),
         })
     }
 
@@ -274,6 +299,47 @@ impl MailStore {
 
     pub fn set_get_progress(&self, p: GetProgress) {
         *self.get.lock() = p;
+    }
+
+    /// Chunk `idx` of mail `id` went on the air.
+    pub fn note_chunk_keyed(&self, id: &str, idx: u16) {
+        self.keyed
+            .lock()
+            .entry(id.to_string())
+            .or_default()
+            .insert(idx);
+    }
+
+    /// Distinct chunks of `id` keyed so far (live, not saved).
+    pub fn keyed_count(&self, id: &str) -> u32 {
+        self.keyed
+            .lock()
+            .get(id)
+            .map(|k| k.len() as u32)
+            .unwrap_or(0)
+    }
+
+    /// The person cancelled `id`: a burst keying it stops.
+    pub fn request_cancel(&self, id: &str) {
+        self.cancelled.lock().insert(id.to_string());
+    }
+
+    pub fn cancel_requested(&self, id: &str) -> bool {
+        self.cancelled.lock().contains(id)
+    }
+
+    /// A Retry sends a cancelled mail again.
+    pub fn clear_cancel(&self, id: &str) {
+        self.cancelled.lock().remove(id);
+        self.keyed.lock().remove(id);
+    }
+
+    pub fn set_relay_rx(&self, rx: Option<RelayRx>) {
+        *self.relay_rx.lock() = rx;
+    }
+
+    pub fn relay_rx(&self) -> Option<RelayRx> {
+        self.relay_rx.lock().clone()
     }
 
     /// Chunks of the fetched mail so far. The count never goes back.
@@ -460,18 +526,21 @@ impl MailStore {
 
     /// Record a gateway chunk ack. Returns `(have, total)` when the row exists.
     pub fn note_chunk(&self, id: &str, idx: u16) -> Result<Option<(u32, u32)>> {
+        self.note_chunks(id, &[idx])
+    }
+
+    /// The gateway holds `idxs` of mail `id`: one write however many (a big
+    /// mail's report names thousands). Returns (held, total).
+    pub fn note_chunks(&self, id: &str, idxs: &[u16]) -> Result<Option<(u32, u32)>> {
         let Some(row) = self.get(id)? else {
             return Ok(None);
         };
-        let mut have: Vec<u16> = row
+        let mut have: std::collections::BTreeSet<u16> = row
             .got
             .split(',')
             .filter_map(|s| s.parse::<u16>().ok())
             .collect();
-        if !have.contains(&idx) {
-            have.push(idx);
-            have.sort_unstable();
-        }
+        have.extend(idxs.iter().copied());
         let got = have
             .iter()
             .map(|n| n.to_string())

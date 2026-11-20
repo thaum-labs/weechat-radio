@@ -62,7 +62,7 @@ impl Preset {
     pub fn description(self) -> &'static str {
         match self {
             Self::VhfFm => "VHF/UHF FM, clean local links (OFDM QPSK 1/2)",
-            Self::VhfFast => "VHF/UHF FM, strong local links (OFDM QAM16 1/2, auto frame size)",
+            Self::VhfFast => "VHF/UHF FM, strong local links (OFDM QAM16 1/2, auto frame size). Cabled PTT preferred; VOX works on a strong link tuned per the VOX guide. Not on Bluetooth radios",
             Self::HfGood => "Good HF SSB path (OFDM 8PSK 1/2 + postamble)",
             Self::HfPoor => "Fading HF, NVIS (ROBUST RDM-600S)",
             Self::HfWeak => "Very weak HF (RDM-300S)",
