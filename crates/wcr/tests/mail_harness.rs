@@ -2019,7 +2019,8 @@ async fn auto_asks_again_after_hearing_no_gateway() {
 async fn a_mail_with_a_file_reaches_the_hub_whole() {
     let _hang = watchdog(TEST_LIMIT);
     let drop_rx: LinkDrop = Arc::new(|_, _, _| false);
-    let pair = Pair::start(
+    // Files go with mail over the radio on vhf-fast only.
+    let pair = Pair::start_tweaked(
         TimedOpts {
             frame_ms: 2_000,
             count_tx: false,
@@ -2030,6 +2031,11 @@ async fn a_mail_with_a_file_reaches_the_hub_whole() {
             rx_after_decode: false,
         },
         drop_rx,
+        Duration::ZERO,
+        |_, cfg| {
+            cfg.modem.preset = "vhf-fast".into();
+            cfg.rf.frequency_khz = 145_500;
+        },
     )
     .await;
     let file = wcr::mail::attach::Attachment {
