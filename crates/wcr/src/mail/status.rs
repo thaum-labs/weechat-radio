@@ -47,9 +47,9 @@ pub struct MailView {
     /// one is the gateway in use (#275).
     #[serde(default)]
     pub via: Vec<Via>,
-    /// The file carried in the mail, taken out of `row.body`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub file: Option<FileView>,
+    /// The files carried in the mail, taken out of `row.body`, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<FileView>,
     /// Chunks keyed on the air so far, frame by frame (big mail, live).
     #[serde(default)]
     pub keyed: u32,
@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn a_view_reads_back_as_a_plain_row() {
         let view = MailView {
-            file: None,
+            files: Vec::new(),
             keyed: 0,
             row: row("sent", "delivered"),
             status: mail_status(&row("sent", "delivered"), &[], 0, true),

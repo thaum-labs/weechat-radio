@@ -186,26 +186,25 @@ pub fn copy_code_digits(code: &str) -> String {
 }
 
 /// The body trimmed and checked: the text up to [`MAIL_MAX_BYTES`], plus
-/// at most one attached file up to [`super::attach::ATTACH_MAX_FAST_BYTES`],
+/// attached files up to [`super::attach::ATTACH_MAX_FAST_BYTES`] in all,
 /// the most any preset sends. The sending station holds its own preset's
 /// limit ([`super::attach::max_bytes`]).
 pub fn trim_body(body: &str) -> Result<String> {
     let t = body.trim();
-    let (text, file) = super::attach::split(t);
+    let (text, files) = super::attach::split(t);
     if text.len() > MAIL_MAX_BYTES {
         return Err(Error::config(format!(
             "Mail is {} bytes. The limit is {MAIL_MAX_BYTES} bytes of plain text.",
             text.len()
         )));
     }
-    if let Some(f) = file {
-        if f.data.len() > super::attach::ATTACH_MAX_FAST_BYTES {
-            return Err(Error::config(format!(
-                "The attached file is {}. The limit is {}.",
-                crate::proto::file::human_size(f.data.len()),
-                crate::proto::file::human_size(super::attach::ATTACH_MAX_FAST_BYTES)
-            )));
-        }
+    let total = super::attach::total(&files);
+    if total > super::attach::ATTACH_MAX_FAST_BYTES {
+        return Err(Error::config(format!(
+            "The attached files are {}. The limit is {}.",
+            crate::proto::file::human_size(total),
+            crate::proto::file::human_size(super::attach::ATTACH_MAX_FAST_BYTES)
+        )));
     }
     Ok(t.to_string())
 }

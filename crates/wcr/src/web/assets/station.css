@@ -54,6 +54,10 @@ p.meta { margin: 8px 0 0; }
 .warn { color: var(--orange); min-height: 1.4em; }
 .note { margin: 8px 0 0; font-size: 13px; color: var(--orange); }
 .note:empty { display: none; }
+.note.hint { color: var(--dim); }
+.m-files { list-style: none; margin: 8px 0 0; padding: 0; font-size: 13px; }
+.m-files li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; padding: 2px 0; overflow-wrap: anywhere; }
+.m-files li .refused { color: var(--orange); }
 
 /* Buttons and inputs */
 button { font: inherit; font-size: 14px; font-weight: 600; color: var(--accent); background: transparent;

@@ -739,8 +739,15 @@ test("a band change updates the card in place without a jump", async ({ page }) 
   }
   await page.locator("#band-power").selectOption("20");
   await expect(page.locator(".band-freq")).toBeVisible();
+  // The power change swaps the answer in place: the old one is removed and
+  // the new one added in the same task. A read in between can land on the
+  // detached old node, whose box is all zeros (rc13 main CI: "Received: 0").
+  // The observer above already fails on any drop or shrink; here wait for
+  // the swap to settle and check where the answer ends up.
+  await expect
+    .poll(() => page.locator(".band-answer").evaluate((e) => e.isConnected && e.getBoundingClientRect().top))
+    .toBe(top);
   expect(await page.evaluate(() => (window as unknown as { __jank: string[] }).__jank)).toEqual([]);
-  expect(await page.locator(".band-answer").evaluate((e) => e.getBoundingClientRect().top)).toBe(top);
 });
 
 test("an HF band picked by hand comes from the service", async ({ page }) => {

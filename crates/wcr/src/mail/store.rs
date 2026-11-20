@@ -550,15 +550,29 @@ impl MailStore {
             .split(',')
             .filter_map(|s| s.parse::<u16>().ok())
             .collect();
+        let had = have.len();
         have.extend(idxs.iter().copied());
         let got = have
             .iter()
             .map(|n| n.to_string())
             .collect::<Vec<_>>()
             .join(",");
-        self.conn
-            .lock()
-            .execute("UPDATE mail SET got = ?2 WHERE id = ?1", params![id, got])?;
+        // The gateway has more than it had: the link works, so the next
+        // keying goes back to the first (fast) rung. QA #365 rc13: two lost
+        // reports used up two tries, and the 7 missing chunks then went on
+        // try 3's RDM-1200S, ~15 s each, instead of QAM16 at ~3 s.
+        let progress = have.len() > had;
+        if progress && row.retries > 0 {
+            tracing::info!(
+                "mail {id}: gateway has {}/{} (was {had}), back to the first rung",
+                have.len(),
+                row.chunks
+            );
+        }
+        self.conn.lock().execute(
+            "UPDATE mail SET got = ?2, retries = CASE WHEN ?3 THEN 0 ELSE retries END WHERE id = ?1",
+            params![id, got, progress],
+        )?;
         Ok(Some((have.len() as u32, row.chunks)))
     }
 

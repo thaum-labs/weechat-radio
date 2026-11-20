@@ -943,6 +943,7 @@ async fn stations(State(web): State<Web>) -> Json<Value> {
     Json(json!({
         "me": status["callsign"],
         "mode": status["mode"],
+        "preset": status["preset"],
         "heard": heard,
         "now": chrono::Utc::now().timestamp(),
     }))
@@ -1001,6 +1002,11 @@ async fn mail_list(State(web): State<Web>, Query(q): Query<FolderQ>) -> Response
         out["get"] = tab["get"].clone();
         out["newest"] = tab["newest"].clone();
         out["unread"] = tab["unread"].clone();
+        // What can be attached here, and the mail this gateway is receiving
+        // over the radio (QA #365 rc13: neither reached the page, so the
+        // form stayed on its built-in 8 KB).
+        out["attach"] = tab["attach"].clone();
+        out["receiving"] = tab["receiving"].clone();
     }
     json_response(code, out.to_string())
 }
@@ -1026,8 +1032,7 @@ async fn mail_send(State(web): State<Web>, Json(b): Json<Value>) -> Response {
         "to": b["to"],
         "subject": b["subject"],
         "body": b["body"],
-        "file_name": b["file_name"],
-        "file_data": b["file_data"],
+        "files": b["files"],
     });
     web.local_post("/mail/compose", body).await
 }
