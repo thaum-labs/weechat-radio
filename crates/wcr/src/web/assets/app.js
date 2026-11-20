@@ -362,24 +362,69 @@ async function sendNow() {
 
 $("compose").onsubmit = (e) => { e.preventDefault(); sendNow(); };
 
-// A small file for a direct chat. The station checks the preset (vhf-fm or
-// afsk-1200) and answers in the note line if it cannot send it.
+// A small file for a direct chat. The station checks the preset and answers
+// in the note line if it cannot send it (pictures go on vhf-fast only).
 const FILE_MAX = 4096;
+
+// Shrink a picture in the browser until it fits: smaller, then lower JPEG
+// quality, like the station does. The browser reads phone formats (HEIC on
+// an iPhone) and turns the photo the right way up.
+async function shrinkPicture(f, max) {
+  const url = URL.createObjectURL(f);
+  try {
+    const img = await new Promise((ok, bad) => {
+      const i = new Image();
+      i.onload = () => ok(i);
+      i.onerror = () => bad(new Error(`${f.name} could not be read as a picture.`));
+      i.src = url;
+    });
+    const w0 = img.naturalWidth, h0 = img.naturalHeight;
+    const longest = Math.max(w0, h0);
+    const c = document.createElement("canvas");
+    for (let side = Math.min(longest, 640); side >= 40; side = Math.floor(side * 0.85)) {
+      const k = side / longest;
+      c.width = Math.max(1, Math.round(w0 * k));
+      c.height = Math.max(1, Math.round(h0 * k));
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      for (const q of [0.75, 0.6, 0.45, 0.35]) {
+        const b = await new Promise((r) => c.toBlob(r, "image/jpeg", q));
+        if (b && b.size <= max) return { blob: b, w: c.width, h: c.height };
+      }
+    }
+    throw new Error(`${f.name} would not shrink small enough to send.`);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 $("attach").onclick = () => $("attach-file").click();
 $("attach-file").onchange = async () => {
-  const f = $("attach-file").files[0];
+  let f = $("attach-file").files[0];
   $("attach-file").value = "";
   if (!f) return;
+  let name = f.name;
+  let note = "";
+  try {
+    if (f.size > FILE_MAX && f.type.startsWith("image/")) {
+      const s = await shrinkPicture(f, FILE_MAX);
+      note = `${name} shrunk from ${(f.size / 1024).toFixed(1)} KB to ${s.w}×${s.h}.`;
+      name = name.replace(/\.[^.]*$/, "") + ".jpg";
+      f = s.blob;
+    }
+  } catch (err) {
+    $("chat-note").textContent = err.message;
+    return;
+  }
   if (f.size > FILE_MAX) {
-    $("chat-note").textContent = `${f.name} is ${(f.size / 1024).toFixed(1)} KB; the limit is 4 KB.`;
+    $("chat-note").textContent = `${name} is ${(f.size / 1024).toFixed(1)} KB; the limit is 4 KB.`;
     return;
   }
   const buf = new Uint8Array(await f.arrayBuffer());
   let bin = "";
   for (const b of buf) bin += String.fromCharCode(b);
   try {
-    await post("/api/chat/file", { to: chat.active, name: f.name, data: btoa(bin) });
-    $("chat-note").textContent = "";
+    await post("/api/chat/file", { to: chat.active, name, data: btoa(bin) });
+    $("chat-note").textContent = note;
   } catch (err) {
     $("chat-note").textContent = err.message;
   }

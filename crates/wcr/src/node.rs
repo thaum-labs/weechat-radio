@@ -1878,10 +1878,38 @@ async fn send_file(rt: &Runtime, target: &str, path: &str) -> Result<String> {
     let len = std::fs::metadata(path)
         .map_err(|e| crate::error::Error::protocol(format!("cannot read {}: {e}", path.display())))?
         .len() as usize;
-    if let Some(why) = crate::proto::file::refusal(preset, cfg_g.mode.uses_radio(), target, len) {
-        return Err(crate::error::Error::protocol(why));
+    if len > crate::proto::file::PICTURE_SOURCE_MAX {
+        return Err(crate::error::Error::protocol(format!(
+            "the file is {}; pictures up to {} can be shrunk to send",
+            crate::proto::file::human_size(len),
+            crate::proto::file::human_size(crate::proto::file::PICTURE_SOURCE_MAX)
+        )));
     }
-    let data = std::fs::read(path)?;
+    let mut data = std::fs::read(path)?;
+    let mut raw_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    // A picture goes on vhf-fast only, shrunk to fit when it is too big.
+    let mut shrunk = None;
+    if crate::picture::is_picture(&data) {
+        if let Some(why) = crate::proto::file::picture_refusal(preset) {
+            return Err(crate::error::Error::protocol(why));
+        }
+        let limit = crate::proto::file::FILE_MAX_BYTES;
+        if data.len() > limit {
+            let before = data.len();
+            let s = crate::picture::shrink(&data, limit).map_err(crate::error::Error::protocol)?;
+            shrunk = Some(format!(
+                "shrunk from {} to {}×{}, ",
+                crate::proto::file::human_size(before),
+                s.width,
+                s.height
+            ));
+            data = s.jpeg;
+            raw_name = crate::picture::jpeg_name(&raw_name);
+        }
+    }
     if let Some(why) =
         crate::proto::file::refusal(preset, cfg_g.mode.uses_radio(), target, data.len())
     {
@@ -1889,10 +1917,6 @@ async fn send_file(rt: &Runtime, target: &str, path: &str) -> Result<String> {
     }
     let origin = Callsign::parse(&cfg_g.callsign)?;
     let dest = Callsign::parse(target)?;
-    let raw_name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
     let name = crate::proto::file::clean_name(&raw_name);
     let first_seq = rt.store.next_seq(origin.as_str())?;
     let id = crate::proto::file::file_id(origin.as_str(), dest.as_str(), &name, &data, first_seq);
@@ -1956,7 +1980,8 @@ async fn send_file(rt: &Runtime, target: &str, path: &str) -> Result<String> {
         .tagmsg_file_progress(&last_id.hex(), target, origin.as_str(), 0, count as u8)
         .await;
     Ok(format!(
-        "sending {name} to {target}: {count} piece{}, about {} s on the air. [ok] on the file line means {target} has the whole file.",
+        "sending {name} to {target}: {}{count} piece{}, about {} s on the air. [ok] on the file line means {target} has the whole file.",
+        shrunk.unwrap_or_default(),
         if count == 1 { "" } else { "s" },
         secs.round() as u64
     ))
@@ -5042,7 +5067,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             let path = sp.collect::<Vec<_>>().join(" ");
             if call.is_empty() || path.is_empty() {
                 return format!(
-                    "usage: /file CALL path (in a private tab: /file path). Sends a file of at most {} to one station, on vhf-fm, vhf-fast or afsk-1200 only. Received files are saved in {}",
+                    "usage: /file CALL path (in a private tab: /file path). Sends a file of at most {} to one station, on vhf-fm, vhf-fast or afsk-1200 only. A picture goes on vhf-fast only and is shrunk to fit. Received files are saved in {}",
                     crate::proto::file::human_size(crate::proto::file::FILE_MAX_BYTES),
                     crate::proto::file::received_dir(&cfg.lock().store).display()
                 );

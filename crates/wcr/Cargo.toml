@@ -58,6 +58,8 @@ hmac.workspace = true
 zeroize.workspace = true
 hostname.workspace = true
 notify-rust = "4.11"
+# Pictures sent in direct chats are shrunk to fit the file limit.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
 eframe = { version = "0.29", optional = true }
 # Emoji shown as :shortcode: names in the desktop app (#365).
 emojis = { version = "0.9", optional = true }

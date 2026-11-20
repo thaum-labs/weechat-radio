@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-/// Largest file that may be sent: about 30 s on vhf-fm.
+/// Largest file that may be sent: about 1 min on vhf-fast.
 pub const FILE_MAX_BYTES: usize = 4096;
 /// Longest file name kept on the air.
 pub const NAME_MAX: usize = 40;
@@ -34,6 +34,22 @@ const DONE_TTL: Duration = Duration::from_secs(60 * 60);
 /// Presets that may carry files: the VHF/UHF FM ones.
 pub fn preset_allows(preset: Preset) -> bool {
     matches!(preset, Preset::VhfFm | Preset::VhfFast | Preset::Afsk1200)
+}
+
+/// Biggest picture we read in to shrink (a phone photo is 2-8 MB).
+pub const PICTURE_SOURCE_MAX: usize = 30 * 1024 * 1024;
+
+/// Pictures go on vhf-fast only (Tobias, 2026-11-20): even shrunk they
+/// are the longest thing a station sends. Other files are unchanged.
+pub fn picture_refusal(preset: Preset) -> Option<String> {
+    if preset == Preset::VhfFast {
+        None
+    } else {
+        Some(format!(
+            "pictures go on vhf-fast only; this station is on {}",
+            preset.as_str()
+        ))
+    }
 }
 
 /// Why this file cannot be sent, in plain words. `None` means it can.
@@ -55,7 +71,7 @@ pub fn refusal(preset: Preset, uses_radio: bool, target: &str, len: usize) -> Op
     }
     if len > FILE_MAX_BYTES {
         return Some(format!(
-            "the file is {}; the limit is {} (about 30 s on vhf-fm, 1.5 min on afsk-1200)",
+            "the file is {}; the limit is {} (about 1 min on vhf-fast, 1.5 min on vhf-fm or afsk-1200)",
             human_size(len),
             human_size(FILE_MAX_BYTES)
         ));
@@ -238,6 +254,12 @@ pub fn split(file_id: u32, name: &str, data: &[u8], limit: usize) -> Result<Vec<
 pub fn airtime_secs(preset: Preset, len: usize) -> f64 {
     let limit = body_limit(preset);
     let pieces = ((len + NAME_MAX).div_ceil(limit - PIECE_HDR)).max(1);
+    // modem73 OFDM frames take their full time however little they carry,
+    // so count frames, not bits: a piece and its receipt each.
+    if matches!(preset, Preset::VhfFm | Preset::VhfFast) {
+        let rung = crate::presets::Rung::from_index(preset.ladder_start());
+        return pieces as f64 * (rung.frame_secs(limit + 30) + rung.frame_secs(40));
+    }
     // Frame header and CRC (~30 B on v2); a receipt is ~40 B.
     let piece_frames = pieces as f64 * crate::presets::airtime_secs(preset, limit + 30, 0);
     let receipts = pieces as f64 * crate::presets::airtime_secs(preset, 40, 0);
@@ -693,11 +715,24 @@ mod tests {
     }
 
     #[test]
-    fn four_kb_is_about_half_a_minute_on_vhf_fm() {
+    fn four_kb_takes_about_a_minute_on_vhf_fast() {
+        // 15 pieces of a 2.6 s frame and a ~1 s short receipt.
+        let f = airtime_secs(Preset::VhfFast, FILE_MAX_BYTES);
+        assert!((45.0..65.0).contains(&f), "{f}");
+        // vhf-fm has no short frame, so every receipt takes 2.6 s too.
         let s = airtime_secs(Preset::VhfFm, FILE_MAX_BYTES);
-        assert!((20.0..45.0).contains(&s), "{s}");
+        assert!((70.0..90.0).contains(&s), "{s}");
         let a = airtime_secs(Preset::Afsk1200, FILE_MAX_BYTES);
-        assert!(a > s);
+        assert!(a > f);
+    }
+
+    #[test]
+    fn pictures_go_on_vhf_fast_only() {
+        assert!(picture_refusal(Preset::VhfFast).is_none());
+        assert!(picture_refusal(Preset::VhfFm)
+            .unwrap()
+            .contains("vhf-fast only"));
+        assert!(picture_refusal(Preset::Afsk1200).is_some());
     }
 
     #[test]

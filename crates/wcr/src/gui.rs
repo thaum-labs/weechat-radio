@@ -1366,7 +1366,7 @@ impl GuiApp {
         if hovering {
             let text = if direct {
                 format!(
-                    "drop to send to {} (up to {}, VHF/UHF only)",
+                    "drop to send to {} (up to {}, VHF/UHF only; pictures shrink to fit, vhf-fast)",
                     self.active_channel.to_ascii_uppercase(),
                     crate::proto::file::human_size(crate::proto::file::FILE_MAX_BYTES)
                 )
@@ -2419,7 +2419,7 @@ impl eframe::App for GuiApp {
                                     .stroke(hairline(ACCENT)),
                             )
                             .on_hover_text(format!(
-                                "To send a file, drag it onto this window (up to {}, vhf-fm, vhf-fast or afsk-1200 only). Click to open the folder where received files are saved.",
+                                "To send a file, drag it onto this window (up to {}, vhf-fm, vhf-fast or afsk-1200 only; pictures on vhf-fast only, shrunk to fit). Click to open the folder where received files are saved.",
                                 crate::proto::file::human_size(crate::proto::file::FILE_MAX_BYTES)
                             ));
                         if files.clicked() {

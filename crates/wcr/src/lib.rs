@@ -30,6 +30,7 @@ pub mod modem;
 pub mod modes;
 pub mod net;
 pub mod node;
+pub mod picture;
 pub mod presets;
 pub mod proto;
 pub mod radios;
