@@ -25,8 +25,16 @@ pub use hub::GATEWAY_ASK_PATH;
 pub use lease::RadioPorts;
 pub use progress::{delivery_word, dos_bar, get_step, send_step, SendStep, SendView};
 
-pub fn airtime_parts(mail: &AirtimeMail<'_>, preset: Preset, turnaround_ms: u32) -> (f64, usize) {
-    air::mail_airtime_secs(preset, mail, turnaround_ms)
+/// Airtime and burst count for the send window, with the rests `[rf] duty`
+/// adds between the blocks of a big mail (QA #365).
+pub fn airtime_parts(
+    mail: &AirtimeMail<'_>,
+    preset: Preset,
+    turnaround_ms: u32,
+    rest_secs: u32,
+) -> (f64, usize) {
+    let (secs, n) = air::mail_airtime_secs(preset, mail, turnaround_ms);
+    (secs + air::rest_total_secs(preset, mail, rest_secs), n)
 }
 use parking_lot::Mutex;
 use serde_json::{json, Value};
@@ -112,9 +120,15 @@ pub fn email_block_reason(
     }
 }
 
-pub fn hint_line(mail: &AirtimeMail<'_>, mode: Mode, preset: Preset, turnaround_ms: u32) -> String {
+pub fn hint_line(
+    mail: &AirtimeMail<'_>,
+    mode: Mode,
+    preset: Preset,
+    turnaround_ms: u32,
+    rest_secs: u32,
+) -> String {
     let hub_only = matches!(gateway::local_send_path(mode), SendPath::Hub);
-    air::airtime_hint(mail, preset, hub_only, turnaround_ms)
+    air::airtime_hint(mail, preset, hub_only, turnaround_ms, rest_secs)
 }
 
 #[derive(Clone)]
@@ -439,7 +453,13 @@ impl MailHandle {
         let id = proto::compute_mail_id(&from, to_addr, subject_s, &body, ack);
         let preset = crate::presets::Preset::parse(&cfg.modem.preset)
             .unwrap_or(crate::presets::Preset::HfPoor);
-        let airtime = hint_line(&preview, cfg.mode, preset, cfg.rf.turnaround_ms);
+        let airtime = hint_line(
+            &preview,
+            cfg.mode,
+            preset,
+            cfg.rf.turnaround_ms,
+            cfg.rf.rest_secs(),
+        );
         self.store.insert(&MailRow {
             id: id.clone(),
             folder: "outbox".into(),
@@ -1199,7 +1219,7 @@ mod tests {
         let long_body = "hello mail ".repeat(3900 / 11) + &"x".repeat(3900 % 11);
         assert_eq!(long_body.len(), 3900);
         let long = preview(&long_body);
-        let hint = hint_line(&long, Mode::RadioPlus, Preset::HfPoor, 250);
+        let hint = hint_line(&long, Mode::RadioPlus, Preset::HfPoor, 250, 0);
         assert!(
             hint.contains("not Sent until the gateway accepts it"),
             "{hint}"
@@ -1218,7 +1238,7 @@ mod tests {
         let (_, short_n) = air::mail_airtime_secs(Preset::HfPoor, &preview(&short_body), 250);
         assert!(short_n >= 3, "115 B estimated {short_n} bursts");
         let one_body = "x";
-        let one = hint_line(&preview(&one_body), Mode::RadioPlus, Preset::VhfFm, 250);
+        let one = hint_line(&preview(&one_body), Mode::RadioPlus, Preset::VhfFm, 250, 0);
         assert!(one.contains("(1 burst)"), "{one}");
         assert!(!one.contains("bursts"), "{one}");
         let line = confirm_air_line(120.0, 23, "hf-poor");

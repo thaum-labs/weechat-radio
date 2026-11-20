@@ -404,7 +404,11 @@ pub fn parse_have_bitmap(body: &str) -> Option<(u16, Vec<u16>)> {
 
 /// The indexes set in `hexpart` below `total`.
 fn parse_bits(total: u16, hexpart: &str, max_hex: usize) -> Option<(u16, Vec<u16>)> {
-    if total == 0 || hexpart.is_empty() || hexpart.len() > max_hex || !hexpart.len().is_multiple_of(2) {
+    if total == 0
+        || hexpart.is_empty()
+        || hexpart.len() > max_hex
+        || !hexpart.len().is_multiple_of(2)
+    {
         return None;
     }
     if !hexpart.chars().all(|c| c.is_ascii_hexdigit()) {

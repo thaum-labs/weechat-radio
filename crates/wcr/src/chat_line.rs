@@ -99,6 +99,27 @@ pub(crate) fn irc_tags(line: &str) -> HashMap<String, String> {
     map
 }
 
+/// The "sending NAME to CALL: … [ok] on the file line means …" reply goes
+/// once the file line `msgid` is done: [ok] or failed (QA #365 rc11).
+pub(crate) fn drop_file_send_notice(chat: &mut Vec<ChatLine>, msgid: &str, state: &str) {
+    if !matches!(state, "delivered" | "failed") || msgid.is_empty() {
+        return;
+    }
+    let Some(name) = chat
+        .iter()
+        .rev()
+        .find(|l| !l.sys && l.msgid.eq_ignore_ascii_case(msgid))
+        .and_then(|l| l.text.strip_prefix("📎 "))
+        .and_then(|t| t.rsplit_once(" (").map(|(n, _)| n.to_string()))
+    else {
+        return;
+    };
+    let head = format!("sending {name} to ");
+    chat.retain(|l| {
+        !(l.sys && l.text.starts_with(&head) && l.text.contains("on the file line means"))
+    });
+}
+
 pub(crate) fn apply_delivery_to(
     chat: &mut [ChatLine],
     me: &str,
@@ -601,6 +622,33 @@ pub(crate) fn parse_invite(line: &str) -> Option<(String, String)> {
 #[cfg(test)]
 mod file_tests {
     use super::*;
+
+    /// QA #365 rc11: the "sending … [ok] on the file line means …" reply
+    /// goes once that file line is [ok] or failed, and only that one.
+    #[test]
+    fn the_file_send_reply_goes_once_the_file_is_done() {
+        let notice = |name: &str| {
+            ChatLine::sys(
+                format!("sending {name} to G4ABC: 38 pieces in one burst, about 43 s on the air. [ok] on the file line means G4ABC has the whole file."),
+                "G4ABC",
+            )
+        };
+        let mut line = ChatLine::user(
+            "M0ME",
+            "📎 car.jpg (8.0 KB), 38 pieces in one burst, about 43 s on vhf-fast",
+            "G4ABC",
+        );
+        line.msgid = "ab12".into();
+        let mut chat = vec![notice("car.jpg"), notice("other.txt"), line];
+        drop_file_send_notice(&mut chat, "ab12", "sent");
+        assert_eq!(chat.len(), 3, "still going");
+        drop_file_send_notice(&mut chat, "ab12", "delivered");
+        assert_eq!(chat.len(), 2);
+        assert!(chat[0].text.starts_with("sending other.txt"));
+        let mut chat = vec![notice("car.jpg"), chat.pop().unwrap()];
+        drop_file_send_notice(&mut chat, "ab12", "failed");
+        assert_eq!(chat.len(), 1);
+    }
 
     #[test]
     fn a_file_progress_tag_becomes_a_bar() {

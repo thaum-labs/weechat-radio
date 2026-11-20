@@ -197,6 +197,26 @@ const COMMANDS: &[Cmd] = &[
         send_bare: false,
     },
     Cmd {
+        name: "duty",
+        usage: "/duty handheld|mobile|base",
+        summary: "Rests between long blocks of TX, for the radio type",
+        args: &[
+            Arg {
+                value: "handheld",
+                hint: "20 s rest after each 2 min mail block (default)",
+            },
+            Arg {
+                value: "mobile",
+                hint: "10 s rest after each block",
+            },
+            Arg {
+                value: "base",
+                hint: "No rests, for a cooled rig",
+            },
+        ],
+        send_bare: false,
+    },
+    Cmd {
         name: "filesend",
         usage: "/filesend auto|burst|pieces",
         summary: "How a file in a direct chat goes out",
@@ -310,7 +330,7 @@ const COMMANDS: &[Cmd] = &[
     Cmd {
         name: "file",
         usage: "/file [CALL] path",
-        summary: "Send a small file (4 KB max) to one station, VHF/UHF only",
+        summary: "Send a small file to one station, VHF/UHF only (4 KB; a picture is shrunk to 8 KB on vhf-fast)",
         args: &[],
         send_bare: false,
     },

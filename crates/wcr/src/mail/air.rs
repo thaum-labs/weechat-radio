@@ -52,6 +52,8 @@ const BLOCK_SECS: f64 = 120.0;
 const FEED_AHEAD: u64 = 3;
 /// Between two blocks: the lease's quiet wait and the mode change.
 const LEASE_SETUP_SECS: f64 = 3.0;
+/// Row detail while the radio rests between two blocks: `resting:<secs>`.
+pub const RESTING: &str = "resting:";
 /// A gateway drops a part-received mail after this long with no new chunk.
 pub const PARTIAL_MAIL_TTL: Duration = Duration::from_secs(30 * 60);
 
@@ -123,6 +125,18 @@ pub fn mail_airtime_secs(
         secs += n.div_ceil(block_chunks(preset)) as f64 * block_gap_secs(preset, turnaround_ms);
     }
     (secs, n)
+}
+
+/// Rests a mail adds by `[rf] duty`: one between each two blocks of a big
+/// mail (QA #365). Other mail goes in one block and never rests.
+pub fn rest_total_secs(preset: Preset, mail: &AirtimeMail<'_>, rest_secs: u32) -> f64 {
+    if rest_secs == 0 || !is_big_mail(preset, mail.body.len()) {
+        return 0.0;
+    }
+    let id = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let n = plan_mail_wires(preset, id, mail).len().max(1);
+    let blocks = n.div_ceil(block_chunks(preset));
+    (blocks.saturating_sub(1) * rest_secs as usize) as f64
 }
 
 /// What each block of a big mail adds: its end marker, the gateway's quiet
@@ -199,7 +213,7 @@ pub fn humanize_airtime(secs: f64) -> String {
         format!("{} s", secs.round() as u64)
     } else {
         let min = (secs / 60.0).round().max(1.0) as u64;
-        format!("about {min} min")
+        format!("{min} min")
     }
 }
 
@@ -208,12 +222,14 @@ pub fn airtime_hint(
     preset: Preset,
     hub_only: bool,
     turnaround_ms: u32,
+    rest_secs: u32,
 ) -> String {
     let bytes = mail.body.len();
     if hub_only {
         format!("{bytes} B · hub only")
     } else {
         let (secs, n) = mail_airtime_secs(preset, mail, turnaround_ms);
+        let secs = secs + rest_total_secs(preset, mail, rest_secs);
         let warn = if secs >= 20.0 || bytes >= 1500 {
             " · not Sent until the gateway accepts it"
         } else {
@@ -1043,6 +1059,9 @@ async fn next_block(ctx: &TxCtx, id: &str) -> Result<()> {
     let Some(row) = ctx.store.get(id)? else {
         return Ok(());
     };
+    if row.detail.starts_with(RESTING) {
+        ctx.store.set_detail(id, "")?;
+    }
     if gateway::is_finished(&row.state) || row.folder != "outbox" {
         return Ok(());
     }
@@ -1831,9 +1850,16 @@ async fn apply_mail(
                 );
                 ctx.block_base.lock().remove(&id);
                 silence_wait(ctx, &id);
+                // The radio rests before the next block, by `[rf] duty`
+                // (QA #365 rc11: an uncooled handheld heat-faded).
+                let rest = ctx.cfg.lock().rf.rest_secs();
+                if rest > 0 {
+                    tracing::info!("mail {id}: resting the radio {rest} s before the next block");
+                    let _ = ctx.store.set_detail(&id, &format!("{RESTING}{rest}"));
+                }
                 let tx = ctx.cmd_tx.clone();
                 tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    tokio::time::sleep(Duration::from_secs(1 + u64::from(rest))).await;
                     let _ = tx.send(MailCmd::NextBlock { id }).await;
                 });
             } else if !indexes.is_empty()

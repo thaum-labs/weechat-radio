@@ -649,3 +649,74 @@ async fn pieces_mode_can_be_chosen_on_vhf_fast() {
         "{frames:?}"
     );
 }
+
+/// QA #365 rc11: a burst whose last piece and one middle piece are lost
+/// once. The receiver reports after its quiet wait, only those two go
+/// again, and the sender's line ends `[ok]` without a stale report sending
+/// more. The whole send stays close to its airtime: the air queue no
+/// longer waits a fixed cap after every item.
+#[tokio::test]
+async fn a_burst_that_loses_its_last_piece_ends_with_one_resend() {
+    let _hang = watchdog(TEST_LIMIT);
+    let _suite = suite_lock().lock().await;
+    let dropped: Arc<Mutex<HashSet<u8>>> = Arc::new(Mutex::new(HashSet::new()));
+    let d = dropped.clone();
+    let mut pair = Pair::start_tweaked(
+        move |from, to, env| {
+            if from != 1 || to != 2 || env.kind != MsgType::File {
+                return false;
+            }
+            let Ok(p) = Piece::decode(&env.body) else {
+                return false;
+            };
+            (p.idx == 3 || p.is_last()) && d.lock().unwrap().insert(p.idx)
+        },
+        vhf_fast,
+    )
+    .await;
+    let src = scratch("src").join("lastlost.bin");
+    let body = sample(4000);
+    std::fs::write(&src, &body).unwrap();
+    let start = std::time::Instant::now();
+    pair.clients[0]
+        .send(&format!("RADIO file {B} {}", src.display()))
+        .await;
+    let ok = pair.clients[0]
+        .wait_for(180, |lines| {
+            file_line_id(lines).is_some_and(|id| delivered(lines, &id))
+        })
+        .await;
+    let took = start.elapsed();
+    // Anything still queued would key after [ok]: give it the time.
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    let saved = pair.homes[1].join("files").join(A).join("lastlost.bin");
+    let trace = pair.trace();
+    let frames = file_frames(&pair);
+    let a_lines = pair.clients[0].lines().join("\n");
+    pair.stop();
+    assert_eq!(dropped.lock().unwrap().len(), 2, "{trace}");
+    assert_eq!(
+        std::fs::read(&saved).ok(),
+        Some(body),
+        "bytes differ{trace}"
+    );
+    assert!(ok, "A's file line never reached [ok]\n{a_lines}{trace}");
+    let id = file_line_id(&a_lines.lines().map(str::to_string).collect::<Vec<_>>()).unwrap();
+    let n = progress_steps(&a_lines, &id)[0].1 as usize;
+    let pieces: Vec<&String> = frames
+        .iter()
+        .filter(|(f, k)| *f == 1 && k.starts_with('p'))
+        .map(|(_, k)| k)
+        .collect();
+    let last = format!("p{}", n - 1);
+    assert_eq!(
+        pieces[n..],
+        [&"p3".to_string(), &last],
+        "one resend of only the two lost pieces {frames:?}"
+    );
+    eprintln!("burst with a lost last piece: [ok] after {took:?}");
+    assert!(
+        took < std::time::Duration::from_secs(120),
+        "took {took:?}{trace}"
+    );
+}

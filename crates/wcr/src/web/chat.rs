@@ -179,6 +179,12 @@ impl Chat {
                 rf.set_file_send(value)?;
                 format!("/filesend {}", rf.file_send)
             }
+            // Radio type (QA #365): the same /duty.
+            "duty" => {
+                let mut rf = crate::config::RfConfig::default();
+                rf.set_duty(value)?;
+                format!("/duty {}", rf.duty)
+            }
             // The dial (#334): the same /freq the desktop app sends. The page
             // saves it in wcr.toml first; this tells the running station.
             "freq" => {

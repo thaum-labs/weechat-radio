@@ -37,6 +37,10 @@ pub struct StatusSnapshot {
     pub modem_restart_failed: String,
     pub frequency: String,
     pub snr: f32,
+    /// Unix seconds of the decode `snr` comes from; 0 before the first.
+    /// `snr` is the last frame heard, not a live reading (QA #365 rc11).
+    #[serde(default)]
+    pub snr_ts: u64,
     pub ber: f32,
     pub audio_label: String,
     #[serde(default = "crate::presets::default_audio_db")]
@@ -160,6 +164,9 @@ pub struct StatusSnapshot {
     /// `[rf] file_send` (QA #365): `auto`, `burst` or `pieces`.
     #[serde(default)]
     pub file_send: String,
+    /// `[rf] duty` (QA #365): `handheld`, `mobile` or `base`.
+    #[serde(default)]
+    pub duty: String,
     /// Frames this process has relayed for another station (not our own sends).
     /// Repeats of the same message each count.
     #[serde(default)]
@@ -627,6 +634,7 @@ impl Default for StatusSnapshot {
             modem_restart_failed: String::new(),
             frequency: String::new(),
             snr: 0.0,
+            snr_ts: 0,
             ber: 0.0,
             audio_label: "—".into(),
             audio_db: crate::presets::AUDIO_FLOOR_DB,
@@ -671,6 +679,7 @@ impl Default for StatusSnapshot {
             tower: false,
             gateway_mode: String::new(),
             file_send: String::new(),
+            duty: String::new(),
             relayed: 0,
             relayed_unique: 0,
             pid: std::process::id(),
@@ -794,10 +803,37 @@ pub async fn serve_listener_with(
     let _ = axum::serve(listener, app).await;
 }
 
+/// `/status` SNR: the last decoded frame's, with how long ago it was heard,
+/// so a value that has not moved for minutes reads as old, not live.
+pub fn snr_with_age(snr: f32, at: u64, now: u64) -> String {
+    if at == 0 {
+        return "—".into();
+    }
+    let ago = now.saturating_sub(at);
+    let when = if ago < 60 {
+        format!("{ago} s ago")
+    } else if ago < 3600 {
+        format!("{} min ago", ago / 60)
+    } else {
+        format!("{} h ago", ago / 3600)
+    };
+    format!("{snr:.1} ({when})")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::modem::control::ModemStatus;
+
+    /// QA #365 rc11: /status said 12.019596 for 25 min; it is the last
+    /// decode's SNR, and now says how old it is.
+    #[test]
+    fn snr_says_how_old_it_is() {
+        assert_eq!(snr_with_age(12.02, 0, 1000), "—");
+        assert_eq!(snr_with_age(12.02, 990, 1000), "12.0 (10 s ago)");
+        assert_eq!(snr_with_age(-3.0, 1000, 2500), "-3.0 (25 min ago)");
+        assert_eq!(snr_with_age(5.0, 1000, 9000), "5.0 (2 h ago)");
+    }
     use crate::presets::{AUDIO_FLOOR_DB, AUDIO_TX_NOMINAL_DB};
 
     /// QA #284: the Mac's live /status in VR-N76 Bluetooth audio mode. `tnc`

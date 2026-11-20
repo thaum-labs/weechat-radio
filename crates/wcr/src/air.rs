@@ -1427,14 +1427,35 @@ pub fn ack_drain_cap(preset: Preset, drain_cap: Duration, ahead: u64) -> Duratio
     drain_cap + Duration::from_secs_f64(frame * ahead as f64)
 }
 
-/// Wait until the modem reports `target` transmitted frames, or `cap` elapses.
+/// The item's frames have left the modem: it counted them, or (upstream
+/// modem73 never counts sent frames) it reports an empty queue and is not
+/// keying. A modem that reports neither is waited out to the cap.
+pub fn tx_drained(st: &ModemStatus, target: u64) -> bool {
+    st.tx_frame_count >= target
+        || (st.tx_queue == Some(0)
+            && !st.ptt_on
+            && !st.channel_state.trim().eq_ignore_ascii_case("tx"))
+}
+
+/// Wait until the item's frames have left the modem, or `cap` elapses.
+/// Called after the item's airtime has been slept, so an idle modem means
+/// done. Waiting the full cap after every item (QA #365 rc11, Tobias's go
+/// 2026-11-20) held a resend burst up to 2 min and each file report ~18 s.
+/// Two idle polls in a row, so the gap between two frames of one item is
+/// not taken for its end.
 async fn wait_for_tx_drain(control: &ControlClient, target: u64, cap: Duration) {
     let start = Instant::now();
+    let mut idle = 0u8;
     loop {
         match control.get_status().await {
-            Ok(st) if st.tx_frame_count >= target => return,
+            Ok(st) if tx_drained(&st, target) => {
+                idle += 1;
+                if idle >= 2 {
+                    return;
+                }
+            }
+            Ok(_) => idle = 0,
             Err(_) => return,
-            _ => {}
         }
         if start.elapsed() >= cap {
             return;
@@ -2129,6 +2150,37 @@ mod tests {
             channel_state: "rx".into(),
             ..ModemStatus::default()
         }));
+        // QA #365 rc11: upstream modem73 never counts frames sent. An empty
+        // queue with PTT off is the end of the item; keying or a frame
+        // still queued is not. A modem that reports no queue waits the cap.
+        let idle = ModemStatus {
+            tx_queue: Some(0),
+            ..ModemStatus::default()
+        };
+        assert!(tx_drained(&idle, 5));
+        assert!(!tx_drained(
+            &ModemStatus {
+                tx_queue: Some(2),
+                ..ModemStatus::default()
+            },
+            5
+        ));
+        assert!(!tx_drained(
+            &ModemStatus {
+                tx_queue: Some(0),
+                ptt_on: true,
+                ..ModemStatus::default()
+            },
+            5
+        ));
+        assert!(!tx_drained(&ModemStatus::default(), 5));
+        assert!(tx_drained(
+            &ModemStatus {
+                tx_frame_count: 5,
+                ..ModemStatus::default()
+            },
+            5
+        ));
         assert!(modem_reports_busy(&ModemStatus {
             channel_state: "busy".into(),
             ..ModemStatus::default()
