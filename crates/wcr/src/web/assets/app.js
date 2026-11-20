@@ -399,6 +399,19 @@ $("compose").onsubmit = (e) => { e.preventDefault(); sendNow(); };
 // in the note line if it cannot send it (pictures go on vhf-fast only).
 const FILE_MAX = 4096;
 const PICTURE_MAX = 8192; // vhf-fast only
+let chatPreset = ""; // the station's preset, from /api/stations
+
+// Why a chat file is too big, saying which preset this is and what
+// vhf-fast allows (QA #365 rc13: "(pictures 8 KB, on vhf-fast)" read as if
+// the station were on vhf-fast already).
+function chatTooBig(name, size) {
+  const head = `${name} is ${(size / 1024).toFixed(1)} KB`;
+  if (chatPreset === "vhf-fast") {
+    return `${head}: chat files go up to 4 KB (pictures are shrunk to 8 KB). For a bigger file, attach it to a mail: up to 512 KB on vhf-fast.`;
+  }
+  const on = chatPreset ? ` on ${chatPreset}` : "";
+  return `${head}: chat files go up to 4 KB${on}. On vhf-fast, pictures go up to 8 KB and a mail can carry files up to 512 KB.`;
+}
 
 // Read a picture the person picked. createImageBitmap needs no URL; the
 // <img> fallback loads a blob: URL, which the page policy allows (QA #365).
@@ -458,8 +471,14 @@ $("attach-file").onchange = async () => {
   if (!f) return;
   let name = f.name;
   let note = "";
+  // The preset may have changed since the page loaded.
+  try { chatPreset = (await getJson("/api/stations")).preset || chatPreset; } catch (_) { /* keep the last */ }
+  const picture = f.type.startsWith("image/");
+  if (picture && chatPreset && chatPreset !== "vhf-fast") {
+    $("chat-note").textContent = `Pictures go in chat on vhf-fast only (shrunk to 8 KB); this station is on ${chatPreset}.`;
+    return;
+  }
   try {
-    const picture = f.type.startsWith("image/");
     if (picture && f.size > PICTURE_MAX) {
       const s = await shrinkPicture(f, PICTURE_MAX);
       note = `${name} shrunk from ${(f.size / 1024).toFixed(1)} KB to ${s.w}×${s.h}.`;
@@ -470,9 +489,8 @@ $("attach-file").onchange = async () => {
     $("chat-note").textContent = err.message;
     return;
   }
-  if (f.size > PICTURE_MAX || (!f.type.startsWith("image/") && f.size > FILE_MAX)) {
-    const limit = f.type.startsWith("image/") ? "8 KB for a picture" : "4 KB (pictures 8 KB, on vhf-fast)";
-    $("chat-note").textContent = `${name} is ${(f.size / 1024).toFixed(1)} KB; the limit is ${limit}.`;
+  if (f.size > PICTURE_MAX || (!picture && f.size > FILE_MAX)) {
+    $("chat-note").textContent = chatTooBig(name, f.size);
     return;
   }
   const buf = new Uint8Array(await f.arrayBuffer());
@@ -582,12 +600,12 @@ async function loadMail() {
     return;
   }
   mailRows = d.rows || [];
-  if (d.attach_max && d.attach_max !== attachMax) {
-    attachMax = d.attach_max;
-    // The preset changed: check the picked file again against the new limit,
-    // both ways, so Send opens up without picking it again (QA #365 rc12).
-    if (mailFileSource) attachMailFile(mailFileSource);
-    else setMailFile(mailFile, mailFileRefused);
+  // What can be attached here. A preset or mode change checks the picked
+  // files again, both ways, so Send opens up without picking them again
+  // (QA #365 rc12; rc13: the limit never reached this page before).
+  if (d.attach && JSON.stringify(d.attach) !== JSON.stringify(attach)) {
+    attach = d.attach;
+    recheckMailFiles();
   }
   // Why mail cannot go (for example Radio+ with no mail gateway), or the
   // Radio+ gateway in use (#274, #275).
@@ -660,21 +678,23 @@ function drawMail(m) {
     .sort((a, b) => a.ts - b.ts);
   $("mv-hops").replaceChildren(...steps.map((h) => el("li", "", `${clock(h.ts)} ${h.text}`)));
   $("mv-body").textContent = m.body || "";
-  const f = m.file;
-  $("mv-file").hidden = !f;
-  if (f) {
-    const label = `📎 ${f.name} (${(f.size / 1024).toFixed(1)} KB)`;
+  const files = m.files || [];
+  $("mv-files").hidden = !files.length;
+  $("mv-files").replaceChildren(...files.map((f) => {
+    const li = el("li");
+    const label = `📎 ${f.name} (${kb(f.size)})`;
     if (f.path) {
       const a = document.createElement("a");
       a.href = `/api/chat/received?path=${encodeURIComponent(f.path)}`;
       a.textContent = label;
       a.title = "Download this file from the station";
       a.setAttribute("download", "");
-      $("mv-file").replaceChildren(a);
+      li.append(a);
     } else {
-      $("mv-file").textContent = label;
+      li.textContent = label;
     }
-  }
+    return li;
+  }));
   $("mail-retry").hidden = !st.retry;
   $("mail-stop").hidden = !cancellable(m);
   $("mail-reply").hidden = m.folder !== "inbox";
@@ -722,102 +742,124 @@ function newMail(to, subject) {
   $("m-to").value = to || "";
   $("m-subject").value = subject || "";
   $("m-body").value = "";
-  $("m-note").textContent = "";
-  $("m-note").dataset.missing = "";
-  mailFileSource = null;
-  setMailFile(null, "");
+  mailPicks = [];
+  drawMailFiles();
   (to ? $("m-body") : $("m-to")).focus();
 }
 $("new-mail").onclick = () => newMail("", "");
 
-// One file for the mail. A big picture is shrunk here in the browser (phone
-// photo formats work); the station checks the size and the preset. A file
-// that does not fit clears any file picked before and blocks Send until it
-// is removed: a mail never goes without its file quietly (QA #365).
-let mailFile = null;
-let mailFileRefused = "";
-let mailFileSource = null; // the file as picked, checked again on a preset change
-let attachMax = 8192; // the station says: 512 KB on vhf-fast, 8 KB elsewhere
-const kb = (n) => `${(n / 1024).toFixed(1)} KB`;
-function setMailFile(file, refused, note) {
-  mailFile = file;
-  mailFileRefused = refused || "";
-  const line = $("m-file");
-  line.className = mailFileRefused ? "small warn" : "small";
-  line.textContent = mailFileRefused
-    ? `✗ Not attached: ${mailFileRefused}`
-    : file ? `📎 ${file.name} (${kb(file.size)})${note || ""}` : "";
-  $("m-remove").hidden = !mailFileRefused && !file;
-  updateMailSend();
-  $("m-limit").textContent = `One file up to ${kb(attachMax)}; pictures are shrunk to fit. Over the radio, vhf-fast only (512 KB there, 8 KB on other presets).`;
-}
-// A file over the limit on a slower preset: say where the big limit is
-// (QA #365 rc12), as the desktop app does.
-function tooBigText(name, size) {
-  const fast = 512 * 1024;
-  const tip = attachMax < fast && size <= fast
-    ? " Switch to vhf-fast (2 m or 70 cm, needs a steady link of about 10 dB) to send attachments up to 512 KB."
-    : "";
-  return `${name} is ${kb(size)}; files up to ${kb(attachMax)} can go with a mail here.${tip}`;
+// The mail's files, in order (QA #365 rc13: a second file used to replace
+// the first). A big picture is shrunk here in the browser (phone photo
+// formats work); the station checks again on Send. A file that does not
+// fit stays on its own line with why, and blocks Send until it is removed:
+// a mail never goes without a file quietly (QA #365).
+let attach = { max: 512 * 1024, line: "", no_files_on: "" }; // the station says
+let mailPicks = []; // { source: File, name, size, data (base64) | null, refused }
+const kb = (n) => (n < 1000 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`);
+const usedBytes = () => mailPicks.reduce((n, p) => n + (p.data ? p.size : 0), 0);
+
+// Why a file is not attached; the same words as the station's
+// attach::Limit::refusal.
+function refusalText(name, size, used) {
+  if (attach.no_files_on) {
+    return `${name} can't go on ${attach.no_files_on}: files go with mail over the radio on vhf-fast only. Switch to vhf-fast (2 m or 70 cm, needs a steady link of about 10 dB) to send files up to 512 KB.`;
+  }
+  if (!used || size > attach.max) return `${name} is ${kb(size)}, over the 512 KB limit for a mail.`;
+  return `${name} (${kb(size)}) would take this mail's files over 512 KB (${kb(used)} attached already).`;
 }
 
-// Send stays off until there is a file that fits (or none), an address and
-// a subject, and the note says what is missing (QA #365 rc12: Send with an
-// empty To did nothing).
-function mailMissing() {
-  if (mailFileRefused) return "Remove the file that was not attached, or attach one that fits, to send.";
-  const to = $("m-to").value.trim();
-  if (!to) return "Add an email address in To to send.";
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return "To needs a whole email address, like name@example.com.";
-  if (!$("m-subject").value.trim()) return "Add a subject to send.";
-  return "";
-}
-function updateMailSend() {
-  const why = mailMissing();
-  $("m-send").disabled = !!why;
-  const note = $("m-note");
-  if (why || note.dataset.missing) {
-    note.textContent = why;
-    note.dataset.missing = why ? "1" : "";
-  }
-}
-$("m-to").addEventListener("input", updateMailSend);
-$("m-subject").addEventListener("input", updateMailSend);
-$("m-remove").onclick = () => { mailFileSource = null; setMailFile(null, ""); };
-$("m-attach").onclick = () => $("m-attach-file").click();
-$("m-attach-file").onchange = async () => {
-  const f = $("m-attach-file").files[0];
-  $("m-attach-file").value = "";
-  if (!f) return;
-  mailFileSource = f;
-  await attachMailFile(f);
-};
-async function attachMailFile(f) {
-  setMailFile(null, "");
-  let name = f.name;
-  let note = "";
+async function readPick(f, used) {
+  const pick = { source: f, name: f.name, size: f.size, data: null, refused: "" };
+  const room = attach.max - used;
   try {
-    if (f.type.startsWith("image/") && f.size > attachMax) {
-      const s = await shrinkPicture(f, attachMax);
-      note = ` shrunk to ${s.w}×${s.h}`;
-      name = name.replace(/\.[^.]*$/, "") + ".jpg";
+    if (room > 1024 && f.type.startsWith("image/") && f.size > room) {
+      const s = await shrinkPicture(f, room);
+      pick.note = ` shrunk to ${s.w}×${s.h}`;
+      pick.name = f.name.replace(/\.[^.]*$/, "") + ".jpg";
       f = s.blob;
+      pick.size = f.size;
     }
   } catch (err) {
-    setMailFile(null, err.message);
-    return;
+    pick.refused = err.message;
+    return pick;
   }
-  if (f.size > attachMax) {
-    setMailFile(null, tooBigText(name, f.size));
-    return;
+  if (f.size > room) {
+    pick.refused = refusalText(pick.name, f.size, used);
+    return pick;
   }
   const buf = new Uint8Array(await f.arrayBuffer());
   let bin = "";
   for (let i = 0; i < buf.length; i += 0x8000) {
     bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
   }
-  setMailFile({ name, size: f.size, data: btoa(bin) }, "", note);
+  pick.data = btoa(bin);
+  return pick;
 }
+
+async function recheckMailFiles() {
+  const sources = mailPicks.map((p) => p.source);
+  mailPicks = [];
+  for (const f of sources) mailPicks.push(await readPick(f, usedBytes()));
+  drawMailFiles();
+}
+
+// One line per file, and one message: a refused file's line says why (the
+// only orange text), the grey limit line shows only while nothing is
+// refused, and the note beside Send lists what is still missing (QA #365
+// rc13 items 5 and 6).
+function drawMailFiles() {
+  const ul = $("m-files");
+  ul.replaceChildren(...mailPicks.map((p, i) => {
+    const li = el("li");
+    li.append(p.data
+      ? el("span", "", `📎 ${p.name} (${kb(p.size)})${p.note || ""}`)
+      : el("span", "refused", `✗ Not attached: ${p.refused}`));
+    const rm = el("button", "quiet", "Remove");
+    rm.type = "button";
+    rm.onclick = () => { mailPicks.splice(i, 1); recheckMailFiles(); };
+    li.append(rm);
+    return li;
+  }));
+  ul.hidden = !mailPicks.length;
+  const refused = mailPicks.some((p) => !p.data);
+  $("m-limit").textContent = attach.line || "";
+  $("m-limit").hidden = refused || !attach.line;
+  $("m-attach").textContent = mailPicks.length ? "Attach more" : "Attach files";
+  updateMailSend();
+}
+
+// Send stays off until every file fits (or none), there is an address and
+// a subject. The note lists everything still missing at once (QA #365
+// rc13 item 6); the same words as the station's mail::send_missing.
+function andList(items) {
+  return items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+function mailMissing() {
+  const todo = [];
+  const refused = mailPicks.filter((p) => !p.data).map((p) => p.name);
+  if (refused.length) todo.push(`remove ${andList(refused)}`);
+  const to = $("m-to").value.trim();
+  if (!to) todo.push("add an email address in To");
+  else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) todo.push("make To a whole address, like name@example.com");
+  if (!$("m-subject").value.trim()) todo.push("add a subject");
+  return todo.length ? `To send: ${andList(todo)}.` : "";
+}
+function updateMailSend() {
+  const why = mailMissing();
+  $("m-send").disabled = !!why;
+  const note = $("m-note");
+  note.className = "small note hint";
+  note.textContent = why;
+}
+$("m-to").addEventListener("input", updateMailSend);
+$("m-subject").addEventListener("input", updateMailSend);
+$("m-attach").onclick = () => $("m-attach-file").click();
+$("m-attach-file").onchange = async () => {
+  const picked = [...$("m-attach-file").files];
+  $("m-attach-file").value = "";
+  for (const f of picked) mailPicks.push(await readPick(f, usedBytes()));
+  drawMailFiles();
+};
 $("m-cancel").onclick = () => { $("mail-form").hidden = true; };
 $("mail-form").onsubmit = async (e) => {
   e.preventDefault();
@@ -828,13 +870,18 @@ $("mail-form").onsubmit = async (e) => {
   }
   $("m-note").textContent = "Sending…";
   try {
-    const send = { to: $("m-to").value.trim(), subject: $("m-subject").value, body: $("m-body").value };
-    if (mailFile) Object.assign(send, { file_name: mailFile.name, file_data: mailFile.data });
+    const send = {
+      to: $("m-to").value.trim(),
+      subject: $("m-subject").value,
+      body: $("m-body").value,
+      files: mailPicks.map((p) => ({ name: p.name, data: p.data })),
+    };
     await post("/api/mail/send", send);
     $("mail-form").hidden = true;
     $("folder").value = "outbox";
     loadMail();
   } catch (err) {
+    $("m-note").className = "small note warn";
     $("m-note").textContent = err.message;
   }
 };
@@ -849,6 +896,7 @@ async function loadStations() {
     return;
   }
   mailMode = d.mode || "";
+  chatPreset = d.preset || "";
   const ul = $("heard");
   ul.replaceChildren();
   if (!d.heard.length) ul.append(el("li", "empty", d.me ? "Nobody heard yet." : "Station stopped."));

@@ -28,6 +28,22 @@ pub fn mail_rung(preset: Preset, retries: u32) -> Rung {
     Rung::from_index(idx)
 }
 
+/// The rung a gateway keys its reply on. A have-report or an acceptance
+/// is a few dozen bytes, and the sender can't go on without hearing it, so
+/// on vhf-fast it goes on QPSK 1/2 (about 6 dB more robust than QAM16, the
+/// same frame time). QA #365 rc13: the Pi's three `have 42/49` reports on
+/// QAM16 went unheard at the handheld (about 6 dB there), each lost report
+/// cost a retry, and the retries stepped the resend down to RDM-1200S.
+/// Every receiver decodes every mode, so older senders hear it too.
+fn reply_rung(preset: Preset, op: MailOp) -> Rung {
+    let start = mail_rung(preset, 0);
+    if matches!(op, MailOp::ChunkAck | MailOp::CompleteAck) && start == Rung::OfdmQam16Half {
+        Rung::OfdmQpskHalf
+    } else {
+        start
+    }
+}
+
 /// The message the airtime hint and the sender both split. Chunk boundaries
 /// follow this body and header, not a stand-in of the same length.
 pub struct AirtimeMail<'a> {
@@ -1902,6 +1918,10 @@ async fn apply_mail(
             if row.state == "sent" || row.state == "failed" {
                 return Ok(());
             }
+            // The gateway has more than it had: the link works, so the next
+            // keying goes back to the fast rung (QA #365 rc13: lost reports
+            // used up retries, and 7 missing chunks went on RDM-1200S at
+            // ~15 s each instead of QAM16 at ~3 s).
             let base = ctx.block_base.lock().get(&id).copied();
             if total > 0 && have >= total {
                 ctx.store.set_outcome(&id, "outbox", "gateway", "")?;
@@ -2323,7 +2343,7 @@ async fn reply_chunks(
 ) -> Result<()> {
     let cfg = ctx.cfg.lock().clone();
     let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor);
-    let rung = mail_rung(preset, 0);
+    let rung = reply_rung(preset, op);
     let mtu = rung.mail_mtu() as usize;
     // The wire id is the mail id. Leaving it out of the JSON keeps a
     // CompleteAck inside one hf-poor frame. The receiver copies it back.
@@ -2946,6 +2966,56 @@ mod tests {
         assert_eq!(reports[0].indexes, vec![0, 2]);
         let done = std::collections::HashSet::from(["abc".to_string()]);
         assert!(pending_have_reports(&asm, &done).is_empty());
+    }
+
+    /// QA #365 rc13: a gateway's reports on vhf-fast go on QPSK so a
+    /// weaker sender still hears them; data and other presets unchanged.
+    #[test]
+    fn gateway_reports_go_on_the_robust_rung_on_vhf_fast() {
+        assert_eq!(
+            reply_rung(Preset::VhfFast, MailOp::ChunkAck),
+            Rung::OfdmQpskHalf
+        );
+        assert_eq!(
+            reply_rung(Preset::VhfFast, MailOp::CompleteAck),
+            Rung::OfdmQpskHalf
+        );
+        assert_eq!(
+            reply_rung(Preset::VhfFast, MailOp::ListHdr),
+            Rung::OfdmQam16Half
+        );
+        assert_eq!(
+            reply_rung(Preset::VhfFm, MailOp::ChunkAck),
+            mail_rung(Preset::VhfFm, 0)
+        );
+        assert_eq!(
+            reply_rung(Preset::HfPoor, MailOp::ChunkAck),
+            mail_rung(Preset::HfPoor, 0)
+        );
+        // A have report for 49 chunks fits one QPSK frame.
+        let report = proto::have_report(49, &(0..42).collect::<Vec<u16>>());
+        assert!(
+            report.len() + 120 < Rung::OfdmQpskHalf.mail_mtu() as usize,
+            "{report}"
+        );
+    }
+
+    /// QA #365 rc13 item 3: why the 7 missing chunks came ~15 s apart. Two
+    /// lost reports made it try 3, which is RDM-1200S on vhf-fast: a 1 KB
+    /// chunk is cut into 7 slices of ~1.9 s. The burst was one keying.
+    #[test]
+    fn try_three_on_vhf_fast_slices_a_chunk_into_seven_frames() {
+        let rung = mail_rung(Preset::VhfFast, 2);
+        assert_eq!(rung, Rung::Rdm1200S);
+        let chunk = "x".repeat(proto::MAX_CHUNK - 40);
+        let frames = proto::frames_for_mtu(chunk.as_bytes(), rung_mtu(rung, true)).unwrap();
+        let secs: f64 = frames.iter().map(|f| rung.frame_secs(f.len())).sum();
+        assert!(
+            frames.len() >= 6 && (11.0..16.0).contains(&secs),
+            "{} frames, {secs:.1} s",
+            frames.len()
+        );
+        assert_eq!(mail_rung(Preset::VhfFast, 0), Rung::OfdmQam16Half);
     }
 
     #[test]

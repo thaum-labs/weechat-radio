@@ -2052,7 +2052,7 @@ async fn a_mail_with_a_file_reaches_the_hub_whole() {
     let posted = posts[0].get("body").and_then(|x| x.as_str()).unwrap_or("");
     let (text, got) = wcr::mail::attach::split(posted);
     assert_eq!(text, "The log from the hill.");
-    assert_eq!(got, Some(file));
+    assert_eq!(got, vec![file]);
 }
 
 /// QA #365: a mail with a big file on vhf-fast goes in normal 1 KB QAM16
@@ -2074,7 +2074,7 @@ async fn big_mail_over(
     drop_rx: LinkDrop,
     resent: u64,
     duty: &'static str,
-) {
+) -> Vec<wcr::sim::TimedKey> {
     let pair = Pair::start_tweaked(
         TimedOpts {
             frame_ms: 60,
@@ -2165,7 +2165,7 @@ async fn big_mail_over(
     let (text, got) = wcr::mail::attach::split(posted);
     assert_eq!(text, "The survey data.");
     assert!(
-        got == Some(file),
+        got == vec![file],
         "{file_kb} KB: the file did not arrive whole"
     );
     let mine: Vec<_> = log
@@ -2201,6 +2201,7 @@ async fn big_mail_over(
         "{file_kb} KB on {duty}: {chunks} chunks, {data_frames} data frames, {:.0} s",
         took.as_secs_f64()
     );
+    log
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -2235,6 +2236,50 @@ async fn a_big_mail_resends_only_the_chunks_a_block_lost() {
     // 64 KB: about 96 chunks over three blocks, four of them lost once.
     big_mail_over(64, 600, drop_rx, 6, "base").await;
     assert!(lost.lock().unwrap().len() >= 3);
+}
+
+/// QA #365 rc13 item 3: the gateway's first two reports never reach the
+/// sender (as at the handheld, ~6 dB). The sender probes, hears the third
+/// report, and the chunks the block lost go again whole on the first rung,
+/// not cut into RDM-1200S slices (rc13: ~15 s per chunk).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn lost_reports_do_not_slow_the_resend() {
+    let _hang = watchdog(TEST_LIMIT);
+    let lost = Arc::new(Mutex::new(std::collections::HashSet::new()));
+    let lost_c = lost.clone();
+    let reports = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let reports_c = reports.clone();
+    let drop_rx: LinkDrop = Arc::new(move |from, to, frame| {
+        let Some((op, idx, _)) = chunk_of(frame) else {
+            return false;
+        };
+        if from == 2 && to == 1 && op == 6 {
+            // MailOp::ChunkAck: the first two go unheard.
+            return reports_c.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2;
+        }
+        from == 1
+            && to == 2
+            && is_data_op(op)
+            && (10..14).contains(&idx)
+            && lost_c.lock().unwrap().insert(idx)
+    });
+    let log = big_mail_over(32, 900, drop_rx, 6, "base").await;
+    assert!(
+        reports.load(std::sync::atomic::Ordering::SeqCst) >= 3,
+        "the gateway reported {} times",
+        reports.load(std::sync::atomic::Ordering::SeqCst)
+    );
+    for idx in 10..14u16 {
+        let whole = log
+            .iter()
+            .filter(|k| k.station == 1)
+            .filter(|k| chunk_of(&k.payload).is_some_and(|(op, i, _)| is_data_op(op) && i == idx))
+            .count();
+        assert!(
+            whole >= 2,
+            "chunk {idx} went whole {whole} time(s): the resend was sliced"
+        );
+    }
 }
 
 /// QA #365 rc11: on a handheld (the default) the radio rests between the

@@ -375,48 +375,46 @@ impl MailHandle {
             "block": email_block_reason(&cfg.callsign, cfg.mode, &cfg.mail.choice(), snap.hub_ok, true),
             // The mail this gateway is receiving over the radio now.
             "receiving": self.store.relay_rx().filter(|r| chrono::Utc::now().timestamp() - r.at < 120),
-            // The attachment limit on this preset, for the Pi page.
-            "attach_max": attach::max_bytes(Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor)),
+            // What can be attached here, for the Pi page: the limit for all
+            // files together, the line under Attach, and what the refusal
+            // says (QA #365 rc13: the page never had these).
+            "attach": attach_json(&cfg),
         })
     }
 
-    /// Queue a mail. `file` (name, bytes) is attached: a picture is shrunk
-    /// to fit, any other file must be up to [`attach::max_bytes`] for the
-    /// preset. A file that cannot go refuses the whole mail: it is never
-    /// dropped quietly (QA #365).
+    /// Queue a mail. `files` (name, bytes) are attached: a picture is
+    /// shrunk to fit, any other file must fit the station's
+    /// [`attach::Limit`], all files together. A file that cannot go refuses
+    /// the whole mail: it is never dropped quietly (QA #365).
     pub async fn compose(
         &self,
         to: &str,
         subject: &str,
         body: &str,
-        file: Option<(String, Vec<u8>)>,
+        files: Vec<(String, Vec<u8>)>,
     ) -> Result<Value> {
         proto::validate_internet_addr(to)?;
         let cfg = self.cfg.lock().clone();
-        let max = attach::max_bytes(Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor));
-        let mut note = None;
-        let body = match file {
-            Some((name, data)) => {
-                let (f, n) = attach::prepare(&name, data, max)?;
-                note = n;
-                attach::join(body, &f)
-            }
-            None => body.to_string(),
-        };
-        let body = proto::trim_body(&body)?;
-        // The desktop app sends the file already in the body.
-        if let Some(f) = attach::split(&body).1 {
-            if let Some(why) = attach_refusal(&cfg) {
-                return Err(Error::config(why));
-            }
-            if f.data.len() > max {
-                return Err(Error::config(attach::too_big_text(
-                    &f.name,
-                    f.data.len(),
-                    max,
-                )));
-            }
+        let limit = attach_limit(&cfg);
+        // The desktop app sends its files already in the body.
+        let (text, mut ready) = attach::split(body);
+        let mut notes = Vec::new();
+        for (name, data) in files {
+            let (f, n) = limit
+                .attach(&name, data, attach::total(&ready))
+                .map_err(Error::config)?;
+            notes.extend(n);
+            ready.push(f);
         }
+        let mut used = 0;
+        for f in &ready {
+            if used + f.data.len() > limit.max() {
+                return Err(Error::config(limit.refusal(&f.name, f.data.len(), used)));
+            }
+            used += f.data.len();
+        }
+        let note = (!notes.is_empty()).then(|| notes.join("; "));
+        let body = proto::trim_body(&attach::join_all(&text, &ready))?;
         if matches!(gateway::local_send_path(cfg.mode), SendPath::Blocked) {
             return Err(Error::config(
                 "Use Internet, Internet+Radio, or Radio+ with a gateway.",
@@ -492,27 +490,33 @@ impl MailHandle {
         let now = chrono::Utc::now().timestamp();
         let via = self.store.via(&row.id).unwrap_or_default();
         let (text, attached) = attach::split(&row.body);
-        let file = attached.map(|f| {
-            let path = if row.folder == "inbox" {
-                let dir = crate::proto::file::received_dir(&self.cfg.lock().store);
-                save_mail_file(&dir, &row.id, &f)
-            } else {
-                String::new()
-            };
+        if !attached.is_empty() {
             row.body = text;
-            FileView {
-                name: f.name,
-                size: f.data.len(),
-                path,
-            }
-        });
+        }
+        let files = attached
+            .iter()
+            .enumerate()
+            .map(|(n, f)| {
+                let path = if row.folder == "inbox" {
+                    let dir = crate::proto::file::received_dir(&self.cfg.lock().store);
+                    save_mail_file(&dir, &row.id, n, f)
+                } else {
+                    String::new()
+                };
+                FileView {
+                    name: f.name.clone(),
+                    size: f.data.len(),
+                    path,
+                }
+            })
+            .collect();
         MailView {
             status: mail_status(&row, &hops, now, online),
             keyed: self.store.keyed_count(&row.id),
             row,
             hops,
             via,
-            file,
+            files,
         }
     }
 
@@ -713,32 +717,73 @@ pub fn copy_hub_unreachable(mode: Mode) -> &'static str {
     }
 }
 
-/// Why a file cannot go with mail from this station, or `None`. Over the
-/// radio, files go on vhf-fast only (Tobias, 2026-11-20); mail sent
-/// straight to the hub over the internet may always carry one.
-pub fn attach_refusal(cfg: &Config) -> Option<String> {
-    if !matches!(gateway::local_send_path(cfg.mode), SendPath::Rf) {
-        return None;
+/// What still stops a mail from going, as one line for beside Send: every
+/// missing thing at once (QA #365 rc13 item 6). `refused` names the files
+/// not attached. `None`: it can go.
+pub fn send_missing(to: &str, subject: &str, refused: &[String]) -> Option<String> {
+    let mut todo = Vec::new();
+    if !refused.is_empty() {
+        todo.push(format!("remove {}", and_list(refused)));
     }
-    let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor);
-    (preset != Preset::VhfFast).then(|| {
-        format!(
-            "Files go with mail over the radio on vhf-fast only; this station is on {}.",
-            preset.as_str()
-        )
+    let to = to.trim();
+    if to.is_empty() {
+        todo.push("add an email address in To".to_string());
+    } else if proto::validate_internet_addr(to).is_err() {
+        todo.push("make To a whole address, like name@example.com".to_string());
+    }
+    if subject.trim().is_empty() {
+        todo.push("add a subject".to_string());
+    }
+    (!todo.is_empty()).then(|| format!("To send: {}.", and_list(&todo)))
+}
+
+/// "a", "a and b", "a, b and c".
+fn and_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// What this station may attach to its own mail (see [`attach::Limit`]).
+pub fn attach_limit(cfg: &Config) -> attach::Limit {
+    attach::Limit::for_station(
+        cfg.mode,
+        Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor),
+    )
+}
+
+/// The attachment limit for the Pi page: bytes for all files together,
+/// the line under Attach, and the preset when files are off.
+fn attach_json(cfg: &Config) -> Value {
+    let limit = attach_limit(cfg);
+    json!({
+        "max": limit.max(),
+        "line": limit.line(),
+        "no_files_on": match limit {
+            attach::Limit::NoFiles(p) => p.as_str(),
+            _ => "",
+        },
     })
 }
 
-/// Save a received mail's file once, as `<dir>/mail/<id>-<name>`; the same
-/// mail opened again finds it there. Returns the path, or "" when it could
-/// not be written.
-fn save_mail_file(dir: &std::path::Path, id: &str, f: &attach::Attachment) -> String {
+/// Save a received mail's file once, as `<dir>/mail/<id>-<name>` (the
+/// second file of a mail `<id>-2-<name>`, and so on); the same mail opened
+/// again finds it there. Returns the path, or "" when it could not be
+/// written.
+fn save_mail_file(dir: &std::path::Path, id: &str, n: usize, f: &attach::Attachment) -> String {
     let short: String = id
         .chars()
         .filter(|c| c.is_ascii_alphanumeric())
         .take(8)
         .collect();
-    let path = dir.join("mail").join(format!("{short}-{}", f.name));
+    let file = if n == 0 {
+        format!("{short}-{}", f.name)
+    } else {
+        format!("{short}-{}-{}", n + 1, f.name)
+    };
+    let path = dir.join("mail").join(file);
     if !path.exists() {
         let ok = path
             .parent()
@@ -1061,24 +1106,43 @@ mod tests {
         }
     }
 
+    /// QA #365 rc13 item 6: the hint lists everything still missing.
+    #[test]
+    fn the_send_hint_lists_everything_missing() {
+        let refused = vec!["qa-32k.bin".to_string()];
+        assert_eq!(
+            send_missing("", "", &refused).unwrap(),
+            "To send: remove qa-32k.bin, add an email address in To and add a subject."
+        );
+        assert_eq!(
+            send_missing("tj@", "hi", &[]).unwrap(),
+            "To send: make To a whole address, like name@example.com."
+        );
+        assert_eq!(send_missing("tj@example.com", "hi", &[]), None);
+    }
+
     /// QA #365 BLOCKER: a file that is refused refuses the whole mail. The
     /// mail is never queued without it, whether the file comes as its own
     /// field (Pi page) or already in the body (desktop app).
     #[tokio::test]
     async fn a_refused_file_queues_no_mail() {
-        let h = copy_station(Mode::InternetRadio, HUB_DOWN);
+        let h = copy_station(Mode::RadioPlus, HUB_DOWN);
         h.cfg.lock().modem.preset = "vhf-fm".into();
-        let csv = vec![b'7'; attach::ATTACH_MAX_BYTES + 1];
+        let csv = vec![b'7'; 32 * 1024];
         let err = h
             .compose(
                 "tj@example.com",
                 "log",
                 "see file",
-                Some(("log.csv".into(), csv.clone())),
+                vec![("log.csv".into(), csv.clone())],
             )
             .await
             .unwrap_err();
-        assert!(err.plain().contains("log.csv is 8.0 KB"), "{}", err.plain());
+        assert!(
+            err.plain().contains("log.csv can't go on vhf-fm"),
+            "{}",
+            err.plain()
+        );
         let joined = attach::join(
             "see file",
             &attach::Attachment {
@@ -1087,27 +1151,48 @@ mod tests {
             },
         );
         assert!(h
-            .compose("tj@example.com", "log", &joined, None)
+            .compose("tj@example.com", "log", &joined, Vec::new())
             .await
             .is_err());
         assert!(h.store.list("outbox").unwrap().is_empty());
+    }
 
-        // The same file fits on vhf-fast (512 KB there).
-        h.cfg.lock().modem.preset = "vhf-fast".into();
-        h.compose(
-            "tj@example.com",
-            "log",
-            "see file",
-            Some(("log.csv".into(), csv)),
-        )
-        .await
-        .expect("fits on vhf-fast");
+    /// QA #365 rc13 BLOCKER: the Pi is an internet-radio gateway on
+    /// vhf-fast, and its own mail goes to the hub over the internet. A
+    /// 32 KB file and a second one go, on vhf-fm as well.
+    #[tokio::test]
+    async fn a_gateway_attaches_files_over_the_internet_on_any_preset() {
+        let h = copy_station(Mode::InternetRadio, HUB_DOWN);
+        for preset in ["vhf-fast", "vhf-fm"] {
+            h.cfg.lock().modem.preset = preset.into();
+            let tab = h.tab_json();
+            assert_eq!(tab["attach"]["max"], 512 * 1024, "{preset}");
+            assert_eq!(tab["attach"]["no_files_on"], "", "{preset}");
+            h.compose(
+                "tj@example.com",
+                preset,
+                "two files",
+                vec![
+                    ("qa-32k.bin".into(), vec![b'q'; 32 * 1024]),
+                    ("notes.txt".into(), b"hello".to_vec()),
+                ],
+            )
+            .await
+            .expect("fits over the internet");
+        }
         let rows = h.store.list("outbox").unwrap();
-        assert_eq!(rows.len(), 1);
-        assert!(
-            attach::split(&rows[0].body).1.is_some(),
-            "the file went with it"
-        );
+        assert_eq!(rows.len(), 2);
+        for row in rows {
+            let (text, files) = attach::split(&row.body);
+            assert_eq!(text, "two files");
+            let names: Vec<_> = files.iter().map(|f| f.name.as_str()).collect();
+            assert_eq!(names, ["qa-32k.bin", "notes.txt"], "both files went");
+        }
+        // Radio+ on vhf-fm: no files, and the page is told so.
+        h.cfg.lock().mode = Mode::RadioPlus;
+        let tab = h.tab_json();
+        assert_eq!(tab["attach"]["max"], 0);
+        assert_eq!(tab["attach"]["no_files_on"], "vhf-fm");
     }
 
     fn copy_state(h: &MailHandle) -> String {

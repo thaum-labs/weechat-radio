@@ -99,35 +99,47 @@ struct ComposeBody {
     to: String,
     subject: String,
     body: String,
-    /// An attached file: its name and base64 bytes.
+    /// Attached files, in order: name and base64 bytes (the Pi page).
+    #[serde(default)]
+    files: Vec<FileBody>,
+    /// One attached file, as pages before rc14 send it.
     #[serde(default)]
     file_name: String,
     #[serde(default)]
     file_data: String,
 }
 
+#[derive(Deserialize)]
+struct FileBody {
+    name: String,
+    data: String,
+}
+
 async fn compose(
     axum::Extension(slot): axum::Extension<MailSlot>,
     Json(b): Json<ComposeBody>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
+    use base64::Engine as _;
     let h = handle(&slot)
         .await
         .map_err(|s| (s, "mail starting".into()))?;
-    let file = if b.file_data.is_empty() {
-        None
-    } else {
-        use base64::Engine as _;
+    let mut sent: Vec<(String, String)> = b.files.into_iter().map(|f| (f.name, f.data)).collect();
+    if !b.file_data.is_empty() {
+        sent.push((b.file_name, b.file_data));
+    }
+    let mut files = Vec::new();
+    for (name, data) in sent {
         let data = base64::engine::general_purpose::STANDARD
-            .decode(b.file_data.trim())
+            .decode(data.trim())
             .map_err(|_| {
                 (
                     StatusCode::BAD_REQUEST,
-                    "the file did not arrive whole".to_string(),
+                    format!("{name} did not arrive whole"),
                 )
             })?;
-        Some((b.file_name.clone(), data))
-    };
-    match h.compose(&b.to, &b.subject, &b.body, file).await {
+        files.push((name, data));
+    }
+    match h.compose(&b.to, &b.subject, &b.body, files).await {
         Ok(v) => Ok(Json(v)),
         Err(e) => Err((StatusCode::BAD_REQUEST, e.plain())),
     }

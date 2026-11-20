@@ -1294,8 +1294,8 @@ async fn resend_last_event(resend_id: &str) -> Result<String> {
         .to_string())
 }
 
-/// The Resend `POST /emails` body. A file carried in the mail text (see
-/// [`crate::mail::attach`]) goes out as a real attachment.
+/// The Resend `POST /emails` body. Files carried in the mail text (see
+/// [`crate::mail::attach`]) go out as real attachments, in order.
 fn resend_payload(
     from: &str,
     to: &str,
@@ -1304,18 +1304,23 @@ fn resend_payload(
     bcc: Option<&str>,
     mark_copy: bool,
 ) -> Value {
-    let (text, file) = crate::mail::attach::split(text);
+    let (text, files) = crate::mail::attach::split(text);
     let mut payload = json!({
         "from": from,
         "to": [to],
         "subject": subject,
         "text": text,
     });
-    if let Some(f) = file {
-        payload["attachments"] = json!([{
-            "filename": f.name,
-            "content": base64::engine::general_purpose::STANDARD.encode(&f.data),
-        }]);
+    if !files.is_empty() {
+        payload["attachments"] = files
+            .iter()
+            .map(|f| {
+                json!({
+                    "filename": f.name,
+                    "content": base64::engine::general_purpose::STANDARD.encode(&f.data),
+                })
+            })
+            .collect();
     }
     if let Some(b) = bcc {
         payload["bcc"] = json!([b]);
@@ -1387,7 +1392,7 @@ mod tests {
         );
         let (text, got) = crate::mail::attach::split(&out);
         assert_eq!(text, "Hello\n\nNot sent over the radio: big.pdf (2.0 MB)");
-        assert_eq!(got.unwrap(), f);
+        assert_eq!(got, vec![f]);
         assert_eq!(received_text("Hi".into(), None, &[]), "Hi");
         let logo: ReceivedFile = serde_json::from_str(
             r#"{"id":"1","filename":"logo.png","size":900,"content_type":"image/png","content_disposition":"inline"}"#,
@@ -1424,6 +1429,23 @@ mod tests {
         assert_eq!(p["text"], "Here is the log.");
         assert_eq!(p["attachments"][0]["filename"], "log.csv");
         assert_eq!(p["attachments"][0]["content"], "YSxiCjEsMgo=");
+        // Two files (rc14): both go, in order, and neither stays in the text.
+        let second = crate::mail::attach::Attachment {
+            name: "notes.txt".into(),
+            data: b"hi".to_vec(),
+        };
+        let two = crate::mail::attach::join(&body, &second);
+        let p2 = resend_payload(
+            "a@mail.weechatradio.com",
+            "x@example.com",
+            "s",
+            &two,
+            None,
+            false,
+        );
+        assert_eq!(p2["text"], "Here is the log.");
+        assert_eq!(p2["attachments"][0]["filename"], "log.csv");
+        assert_eq!(p2["attachments"][1]["filename"], "notes.txt");
         let plain = resend_payload(
             "a@mail.weechatradio.com",
             "x@example.com",
