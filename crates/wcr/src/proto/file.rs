@@ -660,6 +660,24 @@ impl Outgoing {
         Some(out)
     }
 
+    /// Stop tracking the file line `line` (Cancel) and return its pieces'
+    /// msgids, the line's own last. Empty when it is not being sent.
+    pub fn cancel(&mut self, line: &str) -> Vec<String> {
+        if !self.files.contains_key(line) {
+            return Vec::new();
+        }
+        let mut ids: Vec<String> = self
+            .pieces
+            .iter()
+            .filter(|(p, l)| l.as_str() == line && p.as_str() != line)
+            .map(|(p, _)| p.clone())
+            .collect();
+        ids.sort();
+        ids.push(line.to_string());
+        self.forget(line);
+        ids
+    }
+
     fn forget(&mut self, line: &str) {
         self.files.remove(line);
         self.pieces.retain(|_, l| l != line);

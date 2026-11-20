@@ -175,12 +175,57 @@ fn hint_airtime_secs(
     total
 }
 
-pub fn burst_label(n: usize) -> String {
-    if n == 1 {
-        "1 burst".to_string()
+/// What the estimate counts: `frames` chunks, keyed in `bursts` keyings
+/// (one per ~2 min block of a big mail, else one), with `rest_secs` of
+/// `[rf] duty` rest between blocks already inside `secs`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AirtimeEstimate {
+    pub secs: f64,
+    pub rest_secs: f64,
+    pub frames: usize,
+    pub bursts: usize,
+}
+
+pub fn airtime_estimate(
+    preset: Preset,
+    mail: &AirtimeMail<'_>,
+    turnaround_ms: u32,
+    rest_secs: u32,
+) -> AirtimeEstimate {
+    let (secs, frames) = mail_airtime_secs(preset, mail, turnaround_ms);
+    let rest = rest_total_secs(preset, mail, rest_secs);
+    let bursts = if is_big_mail(preset, mail.body.len()) {
+        frames.div_ceil(block_chunks(preset)).max(1)
     } else {
-        format!("{n} bursts")
+        1
+    };
+    AirtimeEstimate {
+        secs: secs + rest,
+        rest_secs: rest,
+        frames,
+        bursts,
     }
+}
+
+/// `49 frames in 2 bursts, incl. 20 s rest` (QA #365 rc12: "49 bursts" for
+/// 49 frames read as one keying each, and whole minutes hid the rest).
+pub fn burst_label(est: &AirtimeEstimate) -> String {
+    let frames = if est.frames == 1 {
+        "1 frame".to_string()
+    } else {
+        format!("{} frames", est.frames)
+    };
+    let bursts = if est.bursts == 1 {
+        "in one burst".to_string()
+    } else {
+        format!("in {} bursts", est.bursts)
+    };
+    let rest = if est.rest_secs > 0.0 {
+        format!(", incl. {} s rest", est.rest_secs.round() as u64)
+    } else {
+        String::new()
+    };
+    format!("{frames} {bursts}{rest}")
 }
 
 /// Airtime of the frames actually keyed, including preset overhead.
@@ -206,14 +251,21 @@ pub fn keyed_airtime_secs(
     tx + n as f64 * (preset.overhead_ms() + turnaround_ms) as f64 / 1000.0
 }
 
+/// `4.2 s`, `45 s`, `3 min 10 s` (seconds to the nearest 5 above 90 s, so
+/// a duty rest shows; QA #365 rc12).
 pub fn humanize_airtime(secs: f64) -> String {
     if secs < 10.0 {
         format!("{secs:.1} s")
     } else if secs <= 90.0 {
         format!("{} s", secs.round() as u64)
     } else {
-        let min = (secs / 60.0).round().max(1.0) as u64;
-        format!("{min} min")
+        let total = ((secs / 5.0).round() * 5.0) as u64;
+        let (min, sec) = (total / 60, total % 60);
+        if sec == 0 {
+            format!("{min} min")
+        } else {
+            format!("{min} min {sec} s")
+        }
     }
 }
 
@@ -228,27 +280,26 @@ pub fn airtime_hint(
     if hub_only {
         format!("{bytes} B · hub only")
     } else {
-        let (secs, n) = mail_airtime_secs(preset, mail, turnaround_ms);
-        let secs = secs + rest_total_secs(preset, mail, rest_secs);
-        let warn = if secs >= 20.0 || bytes >= 1500 {
+        let est = airtime_estimate(preset, mail, turnaround_ms, rest_secs);
+        let warn = if est.secs >= 20.0 || bytes >= 1500 {
             " · not Sent until the gateway accepts it"
         } else {
             ""
         };
         format!(
             "{bytes} B · ~{} on {} ({}){warn}",
-            humanize_airtime(secs),
+            humanize_airtime(est.secs),
             preset.as_str(),
-            burst_label(n)
+            burst_label(&est)
         )
     }
 }
 
-pub fn confirm_air_line(secs: f64, bursts: usize, preset: &str) -> String {
+pub fn confirm_air_line(est: &AirtimeEstimate, preset: &str) -> String {
     format!(
         "About {} on the air ({} @ {preset}). Not Sent until the gateway accepts it. Retries can take longer.",
-        humanize_airtime(secs),
-        burst_label(bursts)
+        humanize_airtime(est.secs),
+        burst_label(est)
     )
 }
 
@@ -1183,6 +1234,7 @@ async fn burst(
     let mut held = false;
     let mut snapshot = None;
     let mut mode_set = false;
+    let mut burst_on = false;
     let mut before = 0u64;
     let mut fed_out = false;
     let mut keyed = KeyPlan::default();
@@ -1227,6 +1279,9 @@ async fn burst(
                             keyed.frames.len()
                         );
                         c.set_config(lease::mail_tx_config(preset, rung)).await?;
+                        // The whole block in one keying, VOX included (QA #365).
+                        c.burst_begin().await;
+                        burst_on = true;
                     }
                 }
                 "vox_lead" => {
@@ -1266,6 +1321,10 @@ async fn burst(
                         let _ = c.set_config(snap).await;
                         mode_set = false;
                     }
+                    if let (Some(c), true) = (&ports.control, burst_on) {
+                        c.burst_end().await;
+                        burst_on = false;
+                    }
                 }
                 "resume" => {
                     if let Some(air) = &ports.air {
@@ -1283,6 +1342,9 @@ async fn burst(
         if let (Some(c), Some(snap)) = (&ports.control, snapshot) {
             let _ = c.set_config(snap).await;
         }
+    }
+    if let (Some(c), true) = (&ports.control, burst_on) {
+        c.burst_end().await;
     }
     if held {
         if let Some(air) = &ports.air {
@@ -1335,7 +1397,12 @@ async fn feed_frames(
     let mut moved = std::time::Instant::now();
     loop {
         if ctx.store.cancel_requested(id) {
-            tracing::info!("mail {id} cancelled after {done} of {total} frames");
+            // Frames already handed to modem73 would key for up to half a
+            // minute more (QA #365 rc12): drop them; the one on the air ends.
+            let dropped = control.clear_tx_queue().await.unwrap_or(0);
+            tracing::info!(
+                "mail {id} cancelled after {done} of {total} frames, {dropped} dropped at the modem"
+            );
             return Err(Error::Msg("cancelled".into()));
         }
         let st = control.get_status().await.ok();

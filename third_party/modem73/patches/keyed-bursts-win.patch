@@ -1,0 +1,201 @@
+diff --git a/control_port.hh b/control_port.hh
+index 5097772..e20671d 100644
+--- a/control_port.hh
++++ b/control_port.hh
+@@ -155,6 +155,9 @@ public:
+         std::function<void(std::function<void(float)> done)> alc_tune;
+         std::function<void()> reset_stats;
+         std::function<void()> restart;
++        // wcr: drop every frame waiting to key (Cancel); the one on the air
++        // finishes. Returns how many were dropped.
++        std::function<size_t()> clear_tx_queue;
+         std::function<void()> idle;
+     };
+ 
+@@ -519,6 +522,8 @@ private:
+             handle_reset_stats(id);
+         } else if (strcmp(cmd_str, "restart") == 0) {
+             handle_restart(id);
++        } else if (strcmp(cmd_str, "clear_tx_queue") == 0) {
++            handle_clear_tx_queue(id);
+         } else {
+             send_error(id, "unknown command");
+         }
+@@ -526,6 +531,19 @@ private:
+         cJSON_Delete(request);
+     }
+ 
++    void handle_clear_tx_queue(uint64_t id) {
++        if (!iface_.clear_tx_queue) {
++            send_error(id, "clear_tx_queue not available");
++            return;
++        }
++        size_t dropped = iface_.clear_tx_queue();
++        cJSON* response = cJSON_CreateObject();
++        cJSON_AddBoolToObject(response, "ok", 1);
++        cJSON_AddNumberToObject(response, "dropped", (double)dropped);
++        send_json(id, response);
++        cJSON_Delete(response);
++    }
++
+     void handle_get_status(uint64_t id) {
+         if (!iface_.get_status) {
+             send_error(id, "get_status not available");
+diff --git a/kiss_tnc.cc b/kiss_tnc.cc
+index 8ca1c2b..fed7449 100644
+--- a/kiss_tnc.cc
++++ b/kiss_tnc.cc
+@@ -1593,6 +1593,7 @@ int main(int argc, char** argv) {
+                 cJSON_AddNumberToObject(j, "csma_cw", cfg.csma_cw);
+                 cJSON_AddNumberToObject(j, "csma_responder_dither", cfg.csma_responder_dither);
+                 cJSON_AddNumberToObject(j, "csma_burst", cfg.csma_burst);
++                cJSON_AddNumberToObject(j, "burst_frames", cfg.burst_frames);
+                 cJSON_AddBoolToObject(j, "tx_lead_tone", cfg.tx_lead_tone);
+                 cJSON_AddNumberToObject(j, "tx_drive", cfg.tx_drive);
+                 cJSON_AddBoolToObject(j, "tx_blanking_enabled", cfg.tx_blanking_enabled);
+@@ -1688,6 +1689,9 @@ int main(int argc, char** argv) {
+                     new_config.csma_responder_dither = item->valueint;
+                 if ((item = cJSON_GetObjectItemCaseSensitive(params, "csma_burst")) && cJSON_IsNumber(item))
+                     new_config.csma_burst = item->valueint;
++                // wcr: frames per keying for a file or mail burst (0 = off)
++                if ((item = cJSON_GetObjectItemCaseSensitive(params, "burst_frames")) && cJSON_IsNumber(item))
++                    new_config.burst_frames = std::max(0, item->valueint);
+                 if ((item = cJSON_GetObjectItemCaseSensitive(params, "tx_lead_tone")) && cJSON_IsBool(item))
+                     new_config.tx_lead_tone = cJSON_IsTrue(item);
+                 if ((item = cJSON_GetObjectItemCaseSensitive(params, "tx_drive")) && cJSON_IsNumber(item)
+@@ -1763,6 +1767,10 @@ int main(int argc, char** argv) {
+                 return tnc.queue_beacon();
+             };
+ 
++            ctrl_iface.clear_tx_queue = [&tnc]() -> size_t {
++                return tnc.clear_tx_queue();
++            };
++
+             ctrl_iface.send_probe = [&tnc]() -> bool {
+                 return tnc.queue_probe();
+             };
+diff --git a/kiss_tnc.hh b/kiss_tnc.hh
+index 397b53e..7d7eda1 100644
+--- a/kiss_tnc.hh
++++ b/kiss_tnc.hh
+@@ -161,6 +161,10 @@ struct TNCConfig {
+     int csma_responder_dither = 250;
+     bool tx_lead_tone = true;
+     int csma_burst = 2;
++    // wcr: key up to this many queued frames in one transmission, VOX too
++    // (0 = upstream: csma_burst, one frame per keying on VOX). wcr sets it
++    // for a file or mail burst only, so the whole block goes in one keying.
++    int burst_frames = 0;
+     
+     // RX decoder settings
+     bool mfsk_rx_enabled = true;
+diff --git a/kiss_tnc_impl.hh b/kiss_tnc_impl.hh
+index f9ee04d..a8e5979 100644
+--- a/kiss_tnc_impl.hh
++++ b/kiss_tnc_impl.hh
+@@ -712,6 +712,8 @@ private:
+                         }
+                     }
+                     if (config_.ptt_type == PTTType::VOX) csma_burst = 1;
++                    if (config_.burst_frames > 0)
++                        csma_burst = std::min(config_.burst_frames, WCR_BURST_MAX);
+                 }
+                 if (csma_enabled) {
+                     // Wait for TX lockout to clear
+@@ -1159,6 +1161,14 @@ private:
+                     set_ptt(false);
+                 }
+             }
++            // wcr: a VOX burst that ends on a frame that could not be
++            // encoded still lets the audio out and shows PTT off.
++            if (!first && last && config_.ptt_type == PTTType::VOX) {
++                audio_->drain_playback();
++#ifdef WITH_UI
++                if (g_ui_state) g_ui_state->ptt_on = false;
++#endif
++            }
+             if (last) {
+                 tx_on_air_ = false;
+                 tx_blanking_active_ = false;
+@@ -1179,8 +1189,12 @@ private:
+         // Handle PTT based on type
+         if (config_.ptt_type == PTTType::VOX) {
+             // VOX mode: generate tone to trigger radio's VOX
+-            int lead_samples = config_.vox_lead_ms * config_.sample_rate / 1000;
+-            int tail_ms = beacon ? 0 : config_.vox_tail_ms;
++            // wcr: in a burst_frames keying a frame after the first gets a
++            // short tone instead of the full lead, and only the last one
++            // gets the tail, so VOX stays keyed for the whole burst.
++            int lead_samples = (first ? config_.vox_lead_ms : BURST_GAP_MS) *
++                               config_.sample_rate / 1000;
++            int tail_ms = (beacon || !last) ? 0 : config_.vox_tail_ms;
+             int tail_samples = tail_ms * config_.sample_rate / 1000;
+ 
+             bool sig_lead = first &&
+@@ -1207,11 +1221,15 @@ private:
+             auto tail_tone = generate_tone(config_.vox_tone_freq, tail_samples, 0.8f);
+ 
+             total_tx_duration += (sig_lead ? sig_lead_ms
+-                                           : config_.vox_lead_ms) / 1000.0f +
++                                  : first  ? config_.vox_lead_ms
++                                           : BURST_GAP_MS) / 1000.0f +
+                                  (gap_frames + tail_samples) /
+                                      (float)config_.sample_rate;
+ 
+-            if (sig_lead)
++            if (!first)
++                ui_log("TX: VOX burst continues, " +
++                       std::to_string(tail_ms) + "ms tail");
++            else if (sig_lead)
+                 ui_log("TX: VOX mode, signature lead " +
+                        std::to_string(sig_lead_ms) + "ms, " +
+                        std::to_string(tail_ms) + "ms tail");
+@@ -1247,11 +1265,13 @@ private:
+                 if (!g_running || audio_->write(tail_tone.data() + i, n) < n) break;
+             }
+             
+-            audio_->drain_playback();
+-            
++            if (last) {
++                audio_->drain_playback();
++
+ #ifdef WITH_UI
+-            if (g_ui_state) g_ui_state->ptt_on = false;
++                if (g_ui_state) g_ui_state->ptt_on = false;
+ #endif
++            }
+         } else {
+             // RIGCTL, COM, or NONE mode
+             total_tx_duration += (first ? tx_lead_ms() : BURST_GAP_MS) / 1000.0f;
+@@ -2221,6 +2241,8 @@ private:
+     }
+     
+     static constexpr int BURST_GAP_MS = 200;
++    // wcr: most frames one burst_frames keying may carry.
++    static constexpr int WCR_BURST_MAX = 64;
+     static constexpr int TONE_LEAD_GAP_MS = 150;
+ 
+     TNCConfig config_;
+@@ -2529,6 +2551,7 @@ public:
+             config_.csma_cw = new_config.csma_cw;
+             config_.csma_responder_dither = new_config.csma_responder_dither;
+             config_.csma_burst = new_config.csma_burst;
++            config_.burst_frames = new_config.burst_frames;
+             config_.tx_lead_tone = new_config.tx_lead_tone;
+             config_.probe_reply = new_config.probe_reply;
+             config_.tx_blanking_enabled = new_config.tx_blanking_enabled || new_config.csma_enabled;
+@@ -2764,6 +2787,14 @@ public:
+     }
+ 
+     size_t tx_queue_depth() const { return tx_queue_.size(); }
++    // wcr: Cancel drops the frames still waiting to key.
++    size_t clear_tx_queue() {
++        size_t n = tx_queue_.size();
++        tx_queue_.clear();
++        if (n > 0)
++            ui_log("TX: cancelled, " + std::to_string(n) + " queued frame(s) dropped");
++        return n;
++    }
+ 
+     int channel_population() { return known_others(); }
+ 

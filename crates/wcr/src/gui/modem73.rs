@@ -1621,6 +1621,7 @@ impl GuiApp {
         let active = self.active_channel.clone();
         let show_snr = self.status.as_ref().map(|s| s.show_snr).unwrap_or(true);
         let mut open_folder_of: Option<String> = None;
+        let mut cancel_file: Option<String> = None;
         egui::ScrollArea::vertical()
             .stick_to_bottom(true)
             .auto_shrink([false, false])
@@ -1689,6 +1690,14 @@ impl GuiApp {
                                             "pieces received so far"
                                         },
                                     );
+                                    if super::file_cancellable(line, mine)
+                                        && ui
+                                            .add(super::hair_btn("Cancel", M_GOLD))
+                                            .on_hover_text(super::FILE_CANCEL_HINT)
+                                            .clicked()
+                                    {
+                                        cancel_file = Some(line.msgid.clone());
+                                    }
                                 }
                             });
                         });
@@ -1712,6 +1721,9 @@ impl GuiApp {
             if let Some(dir) = std::path::Path::new(&path).parent() {
                 let _ = open::that(dir);
             }
+        }
+        if let Some(id) = cancel_file {
+            self.send_cmd(&format!("/radio filecancel {id}"));
         }
     }
 

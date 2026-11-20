@@ -27,6 +27,15 @@ sound card, is upstream since v2.5.0 and needs no patch.
   `CSMA: Channel clear`, so PTT keys straight after the clear (on a Pi 3
   the encode took about 1 s, long enough for another station to key in
   that gap). It logs `TX: frame encoded before the busy test (N ms)`.
+- `patches/keyed-bursts.patch` (Linux and macOS) and
+  `patches/keyed-bursts-win.patch` (Windows): a `burst_frames` setting
+  (control port `set_config`, 0 = off, at most 64) that keys every frame
+  waiting in the queue in one transmission, VOX included: the full VOX lead
+  before the first frame, a 200 ms tone between frames and the tail after
+  the last. Upstream keys at most 4 frames per transmission and one on VOX,
+  so a 38-piece file burst keyed 38 times on VOX (#365 rc12). wcr sets it
+  only for a file or mail burst. Also a `clear_tx_queue` control command
+  that drops the frames still waiting to key, for Cancel (#365 rc12).
 
 The patches are under the same Unlicense as modem73. That binary is not
 Apache-2.0.

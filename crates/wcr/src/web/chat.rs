@@ -44,6 +44,8 @@ pub struct LineView {
     pub snr: Option<f32>,
     /// File transfer bar, such as `[████░░░░] 3/15`; empty otherwise.
     pub progress: String,
+    /// The line's message id: a file line's Cancel names it (QA #365 rc13).
+    pub msgid: String,
     /// A long message received or sent as pieces (#365): its `1/3` badge,
     /// footer line and tone (`progress`, `done`, `missing`). Empty otherwise.
     pub parts_badge: String,
@@ -245,6 +247,19 @@ impl Chat {
         Ok(())
     }
 
+    /// Stop sending the file whose line is `msgid` (`/radio filecancel`).
+    pub fn cancel_file(&self, msgid: &str) -> Result<(), String> {
+        let id = msgid.trim();
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err("not a file line".into());
+        }
+        if !self.state.lock().up {
+            return Err("the station is not running".into());
+        }
+        let _ = self.out.send(format!("RADIO filecancel {id}"));
+        Ok(())
+    }
+
     /// Send a file the page uploaded to one station (`/file`). The bytes
     /// are written beside the station's data first; the station reads them
     /// from there, checks the preset and says why not if it cannot send.
@@ -420,7 +435,10 @@ impl Chat {
             for conv in st.convs.iter_mut() {
                 for j in 0..conv.lines.len() {
                     let l = &mut conv.lines[j];
-                    if l.msgid.eq_ignore_ascii_case(msgid) && l.progress != bar {
+                    if l.msgid.eq_ignore_ascii_case(msgid)
+                        && l.progress != bar
+                        && !crate::chat_line::file_line_settled(l)
+                    {
                         l.progress = bar.to_string();
                         out.push(view(&me, &conv.id, conv.seqs[j], &conv.lines[j]));
                     }
@@ -636,6 +654,7 @@ fn view(me: &str, conv: &str, seq: u64, l: &ChatLine) -> LineView {
         when: l.when.clone(),
         snr: l.snr,
         progress: l.progress.clone(),
+        msgid: l.msgid.clone(),
         parts_badge: footer.as_ref().map(|f| f.0.clone()).unwrap_or_default(),
         parts_footer: footer.as_ref().map(|f| f.1.clone()).unwrap_or_default(),
         parts_tone: footer
@@ -755,6 +774,7 @@ mod tests {
                 when: v["when"].as_str().unwrap().into(),
                 snr: v["snr"].as_f64().map(|f| f as f32),
                 progress: v["progress"].as_str().unwrap_or("").into(),
+                msgid: v["msgid"].as_str().unwrap_or("").into(),
                 parts_badge: v["parts_badge"].as_str().unwrap_or("").into(),
                 parts_footer: v["parts_footer"].as_str().unwrap_or("").into(),
                 parts_tone: v["parts_tone"].as_str().unwrap_or("").into(),

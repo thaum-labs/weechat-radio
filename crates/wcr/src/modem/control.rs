@@ -152,6 +152,12 @@ pub struct ControlClient {
     vox: Arc<AtomicBool>,
 }
 
+/// Most frames one burst keys in one transmission (modem73's cap too).
+pub const BURST_FRAMES: u32 = 64;
+
+/// File and mail bursts going now; `burst_frames` stays on until the last ends.
+static BURSTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 /// On VOX, raises a `carrier_threshold_db` below the VOX gate to it.
 fn vox_csma_floor(map: &mut serde_json::Map<String, Value>) {
     let floor = crate::presets::Preset::VOX_CSMA_THRESHOLD_DB as i64;
@@ -217,6 +223,45 @@ impl ControlClient {
             return Err(Error::Modem("modem73 rejected set_config".into()));
         }
         Ok(())
+    }
+
+    /// Drop the frames modem73 still holds to key (Cancel, QA #365 rc12);
+    /// the frame on the air finishes. Returns how many were dropped. A
+    /// modem73 without wcr's patch answers "unknown command": `Ok(0)`.
+    pub async fn clear_tx_queue(&self) -> Result<u64> {
+        let v = self
+            .request(serde_json::json!({"cmd": "clear_tx_queue"}))
+            .await?;
+        Ok(v.get("dropped").and_then(|x| x.as_u64()).unwrap_or(0))
+    }
+
+    /// A file or mail burst starts: modem73 keys every frame waiting in its
+    /// queue in one transmission, VOX included (`burst_frames`, wcr's
+    /// modem73 patch). Upstream keys at most 4 frames per keying and one on
+    /// VOX, so a VOX station keyed each frame on its own with the full VOX
+    /// lead (QA #365 rc12). Pair with [`Self::burst_end`]. A modem73
+    /// without the patch ignores the setting.
+    pub async fn burst_begin(&self) {
+        BURSTS.fetch_add(1, Ordering::AcqRel);
+        let _ = self
+            .set_config(serde_json::json!({ "burst_frames": BURST_FRAMES }))
+            .await;
+    }
+
+    /// The burst is over: back to modem73's own burst size once no other
+    /// burst is still going.
+    pub async fn burst_end(&self) {
+        let left = BURSTS
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                Some(n.saturating_sub(1))
+            })
+            .unwrap_or(0)
+            .saturating_sub(1);
+        if left == 0 {
+            let _ = self
+                .set_config(serde_json::json!({ "burst_frames": 0 }))
+                .await;
+        }
     }
 
     pub async fn rigctl(&self, command: &str) -> Result<String> {

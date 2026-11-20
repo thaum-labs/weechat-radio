@@ -121,10 +121,17 @@ pub fn prepare(name: &str, data: Vec<u8>, max: usize) -> Result<(Attachment, Opt
     Err(Error::Msg(too_big_text(&name, data.len(), max)))
 }
 
-/// Why a file is not attached, with its size and the limit.
+/// Why a file is not attached, with its size and the limit. Below the
+/// vhf-fast limit it says where the big one is (QA #365 rc12: otherwise
+/// hidden).
 pub fn too_big_text(name: &str, len: usize, max: usize) -> String {
+    let tip = if max < ATTACH_MAX_FAST_BYTES && len <= ATTACH_MAX_FAST_BYTES {
+        ". Switch to vhf-fast (2 m or 70 cm, needs a steady link of about 10 dB) to send attachments up to 512 KB"
+    } else {
+        ""
+    };
     format!(
-        "{name} is {}; files up to {} can go with a mail here (pictures are shrunk to fit)",
+        "{name} is {}; files up to {} can go with a mail here (pictures are shrunk to fit){tip}",
         crate::proto::file::human_size(len),
         crate::proto::file::human_size(max)
     )
@@ -207,6 +214,13 @@ mod tests {
             "{}",
             err.plain()
         );
+        assert!(
+            err.plain().contains("Switch to vhf-fast") && err.plain().contains("about 10 dB"),
+            "{}",
+            err.plain()
+        );
+        let huge = too_big_text("disk.iso", ATTACH_MAX_FAST_BYTES + 1, ATTACH_MAX_BYTES);
+        assert!(!huge.contains("vhf-fast"), "{huge}");
         let img = image::RgbImage::from_fn(1200, 900, |x, y| {
             image::Rgb([(x % 256) as u8, (y % 256) as u8, ((x * y) % 251) as u8])
         });

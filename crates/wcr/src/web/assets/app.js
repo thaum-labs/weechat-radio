@@ -219,6 +219,17 @@ function lineNode(l) {
     const bar = n ? cssBar(Number(n[1]) / Math.max(1, Number(n[2])), `${n[1]}/${n[2]}${n[3] ? ` ${n[3]}` : ""}`) : el("span", "bar", l.progress);
     bar.title = l.mine ? "Pieces the far station has receipted" : "Pieces received so far";
     li.append(bar);
+    // Our own file still going: Cancel stops it (QA #365 rc13).
+    if (l.mine && l.msgid && !/\[(ok|all|no)\]/.test(l.ticks || "")) {
+      const stop = el("button", "link", "Cancel");
+      stop.type = "button";
+      stop.title = "Stop sending this file: nothing more goes on the air, and the line shows [no]";
+      stop.onclick = async () => {
+        stop.disabled = true;
+        try { await post("/api/chat/filecancel", { msgid: l.msgid }); } catch (err) { alert(err.message); stop.disabled = false; }
+      };
+      li.append(stop);
+    }
   }
   const marks = [];
   // [ok net] / [ok rf]: how the first receipt came back (#226).
@@ -573,7 +584,10 @@ async function loadMail() {
   mailRows = d.rows || [];
   if (d.attach_max && d.attach_max !== attachMax) {
     attachMax = d.attach_max;
-    setMailFile(mailFile, mailFileRefused);
+    // The preset changed: check the picked file again against the new limit,
+    // both ways, so Send opens up without picking it again (QA #365 rc12).
+    if (mailFileSource) attachMailFile(mailFileSource);
+    else setMailFile(mailFile, mailFileRefused);
   }
   // Why mail cannot go (for example Radio+ with no mail gateway), or the
   // Radio+ gateway in use (#274, #275).
@@ -709,6 +723,8 @@ function newMail(to, subject) {
   $("m-subject").value = subject || "";
   $("m-body").value = "";
   $("m-note").textContent = "";
+  $("m-note").dataset.missing = "";
+  mailFileSource = null;
   setMailFile(null, "");
   (to ? $("m-body") : $("m-to")).focus();
 }
@@ -720,6 +736,7 @@ $("new-mail").onclick = () => newMail("", "");
 // is removed: a mail never goes without its file quietly (QA #365).
 let mailFile = null;
 let mailFileRefused = "";
+let mailFileSource = null; // the file as picked, checked again on a preset change
 let attachMax = 8192; // the station says: 512 KB on vhf-fast, 8 KB elsewhere
 const kb = (n) => `${(n / 1024).toFixed(1)} KB`;
 function setMailFile(file, refused, note) {
@@ -731,15 +748,51 @@ function setMailFile(file, refused, note) {
     ? `✗ Not attached: ${mailFileRefused}`
     : file ? `📎 ${file.name} (${kb(file.size)})${note || ""}` : "";
   $("m-remove").hidden = !mailFileRefused && !file;
-  $("m-send").disabled = !!mailFileRefused;
+  updateMailSend();
   $("m-limit").textContent = `One file up to ${kb(attachMax)}; pictures are shrunk to fit. Over the radio, vhf-fast only (512 KB there, 8 KB on other presets).`;
 }
-$("m-remove").onclick = () => setMailFile(null, "");
+// A file over the limit on a slower preset: say where the big limit is
+// (QA #365 rc12), as the desktop app does.
+function tooBigText(name, size) {
+  const fast = 512 * 1024;
+  const tip = attachMax < fast && size <= fast
+    ? " Switch to vhf-fast (2 m or 70 cm, needs a steady link of about 10 dB) to send attachments up to 512 KB."
+    : "";
+  return `${name} is ${kb(size)}; files up to ${kb(attachMax)} can go with a mail here.${tip}`;
+}
+
+// Send stays off until there is a file that fits (or none), an address and
+// a subject, and the note says what is missing (QA #365 rc12: Send with an
+// empty To did nothing).
+function mailMissing() {
+  if (mailFileRefused) return "Remove the file that was not attached, or attach one that fits, to send.";
+  const to = $("m-to").value.trim();
+  if (!to) return "Add an email address in To to send.";
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return "To needs a whole email address, like name@example.com.";
+  if (!$("m-subject").value.trim()) return "Add a subject to send.";
+  return "";
+}
+function updateMailSend() {
+  const why = mailMissing();
+  $("m-send").disabled = !!why;
+  const note = $("m-note");
+  if (why || note.dataset.missing) {
+    note.textContent = why;
+    note.dataset.missing = why ? "1" : "";
+  }
+}
+$("m-to").addEventListener("input", updateMailSend);
+$("m-subject").addEventListener("input", updateMailSend);
+$("m-remove").onclick = () => { mailFileSource = null; setMailFile(null, ""); };
 $("m-attach").onclick = () => $("m-attach-file").click();
 $("m-attach-file").onchange = async () => {
-  let f = $("m-attach-file").files[0];
+  const f = $("m-attach-file").files[0];
   $("m-attach-file").value = "";
   if (!f) return;
+  mailFileSource = f;
+  await attachMailFile(f);
+};
+async function attachMailFile(f) {
   setMailFile(null, "");
   let name = f.name;
   let note = "";
@@ -755,7 +808,7 @@ $("m-attach-file").onchange = async () => {
     return;
   }
   if (f.size > attachMax) {
-    setMailFile(null, `${name} is ${kb(f.size)}; files up to ${kb(attachMax)} can go with a mail here.`);
+    setMailFile(null, tooBigText(name, f.size));
     return;
   }
   const buf = new Uint8Array(await f.arrayBuffer());
@@ -764,12 +817,13 @@ $("m-attach-file").onchange = async () => {
     bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
   }
   setMailFile({ name, size: f.size, data: btoa(bin) }, "", note);
-};
+}
 $("m-cancel").onclick = () => { $("mail-form").hidden = true; };
 $("mail-form").onsubmit = async (e) => {
   e.preventDefault();
-  if (mailFileRefused) {
-    $("m-note").textContent = "Remove the file that was not attached, or attach one that fits, to send.";
+  const why = mailMissing();
+  if (why) {
+    $("m-note").textContent = why;
     return;
   }
   $("m-note").textContent = "Sending…";
@@ -818,10 +872,10 @@ async function loadStations() {
 // ---------- on the air (#243) ----------
 // Every frame heard or sent, read only. Reply opens a separate DM with
 // that station; nothing is ever posted into the monitor or anyone else's chat.
-const KIND_WORD = { dm: "DM", bulletin: "bulletin", group: "group", receipt: "receipt", beacon: "beacon", mail: "mail", status: "status", form: "form", checkin: "check-in", ping: "ping" };
+const KIND_WORD = { file: "file", dm: "DM", bulletin: "bulletin", group: "group", receipt: "receipt", beacon: "beacon", mail: "mail", status: "status", form: "form", checkin: "check-in", ping: "ping" };
 const FILTER = {
   all: () => true,
-  chat: (r) => ["dm", "bulletin", "group", "form", "checkin", "status"].includes(r.kind),
+  chat: (r) => ["dm", "bulletin", "group", "form", "checkin", "status", "file"].includes(r.kind),
   receipt: (r) => r.kind === "receipt",
   beacon: (r) => r.kind === "beacon",
   mail: (r) => r.kind === "mail",
@@ -839,6 +893,7 @@ function trafficRow(r) {
   li.append(who);
   const side = el("span", "t-side");
   if (typeof r.snr === "number") side.append(el("span", r.snr >= 10 ? "up" : r.snr >= 6 ? "amber" : "down", `${r.snr.toFixed(0)} dB`));
+  if (r.bytes) side.append(el("span", "dim", `${r.bytes} B`));
   side.append(document.createTextNode(r.via === "rf" ? (r.relayed ? "relayed rf" : r.dir === "sent" ? "sent rf" : "rf") : r.via === "inet" ? "internet" : r.via));
   const chatty = ["dm", "bulletin", "group", "checkin", "status", "form"].includes(r.kind);
   const station = r.dir === "sent" ? (r.kind === "dm" ? r.to : "") : r.from;
@@ -850,7 +905,7 @@ function trafficRow(r) {
     side.append(b);
   }
   li.append(side);
-  if (r.text) li.append(el("span", ["dm", "bulletin", "group"].includes(r.kind) ? "t-text" : "t-text dim", r.text));
+  if (r.text) li.append(el("span", ["dm", "bulletin", "group", "file"].includes(r.kind) ? "t-text" : "t-text dim", r.text));
   return li;
 }
 

@@ -246,6 +246,7 @@ fn router(web: Web) -> Router {
         .route("/api/chat/join", post(chat_join))
         .route("/api/chat/remove", post(chat_remove))
         .route("/api/chat/file", post(chat_file))
+        .route("/api/chat/filecancel", post(chat_file_cancel))
         .route("/api/chat/received", get(chat_received))
         .route("/api/stations", get(stations))
         .route("/api/traffic", get(traffic))
@@ -886,6 +887,19 @@ async fn chat_file(State(web): State<Web>, Json(b): Json<FileBody>) -> Response 
         .unwrap_or_else(|_| crate::config::default_data_dir().join("wcr.db"));
     let dir = crate::proto::file::data_files_dir(&store);
     match web.chat.send_file(&b.to, &b.name, &data, &dir) {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct FileCancelBody {
+    msgid: String,
+}
+
+/// Stop a file we are sending (the Cancel on its line, QA #365 rc13).
+async fn chat_file_cancel(State(web): State<Web>, Json(b): Json<FileCancelBody>) -> Response {
+    match web.chat.cancel_file(&b.msgid) {
         Ok(()) => Json(json!({ "ok": true })).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response(),
     }
