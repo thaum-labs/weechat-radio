@@ -6342,7 +6342,7 @@ dependencies = [
 
 [[package]]
 name = "wcr"
-version = "1.0.20-rc10"
+version = "1.0.20-rc11"
 dependencies = [
  "alsa",
  "anyhow",
