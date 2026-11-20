@@ -365,6 +365,7 @@ $("compose").onsubmit = (e) => { e.preventDefault(); sendNow(); };
 // A small file for a direct chat. The station checks the preset and answers
 // in the note line if it cannot send it (pictures go on vhf-fast only).
 const FILE_MAX = 4096;
+const PICTURE_MAX = 8192; // vhf-fast only
 
 // Shrink a picture in the browser until it fits: smaller, then lower JPEG
 // quality, like the station does. The browser reads phone formats (HEIC on
@@ -405,8 +406,9 @@ $("attach-file").onchange = async () => {
   let name = f.name;
   let note = "";
   try {
-    if (f.size > FILE_MAX && f.type.startsWith("image/")) {
-      const s = await shrinkPicture(f, FILE_MAX);
+    const picture = f.type.startsWith("image/");
+    if (picture && f.size > PICTURE_MAX) {
+      const s = await shrinkPicture(f, PICTURE_MAX);
       note = `${name} shrunk from ${(f.size / 1024).toFixed(1)} KB to ${s.w}×${s.h}.`;
       name = name.replace(/\.[^.]*$/, "") + ".jpg";
       f = s.blob;
@@ -415,7 +417,7 @@ $("attach-file").onchange = async () => {
     $("chat-note").textContent = err.message;
     return;
   }
-  if (f.size > FILE_MAX) {
+  if (f.size > PICTURE_MAX || (!f.type.startsWith("image/") && f.size > FILE_MAX)) {
     $("chat-note").textContent = `${name} is ${(f.size / 1024).toFixed(1)} KB; the limit is 4 KB.`;
     return;
   }

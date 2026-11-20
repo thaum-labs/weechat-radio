@@ -19,8 +19,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-/// Largest file that may be sent: about 1 min on vhf-fast.
+/// Largest ordinary file that may be sent: about 1 min on vhf-fast.
 pub const FILE_MAX_BYTES: usize = 4096;
+/// Largest picture, on vhf-fast only: about 2 min (Tobias, 2026-11-20).
+/// Also the most a station takes in, so older stations refuse bigger.
+pub const PICTURE_MAX_BYTES: usize = 8192;
 /// Longest file name kept on the air.
 pub const NAME_MAX: usize = 40;
 /// Bytes before the data in every piece.
@@ -53,7 +56,14 @@ pub fn picture_refusal(preset: Preset) -> Option<String> {
 }
 
 /// Why this file cannot be sent, in plain words. `None` means it can.
-pub fn refusal(preset: Preset, uses_radio: bool, target: &str, len: usize) -> Option<String> {
+/// `max` is [`FILE_MAX_BYTES`], or [`PICTURE_MAX_BYTES`] for a picture.
+pub fn refusal(
+    preset: Preset,
+    uses_radio: bool,
+    target: &str,
+    len: usize,
+    max: usize,
+) -> Option<String> {
     if target.starts_with('#') || target.starts_with('&') {
         return Some("files go in direct messages only, not in channels".into());
     }
@@ -69,11 +79,13 @@ pub fn refusal(preset: Preset, uses_radio: bool, target: &str, len: usize) -> Op
     if len == 0 {
         return Some("the file is empty".into());
     }
-    if len > FILE_MAX_BYTES {
+    if len > max {
         return Some(format!(
-            "the file is {}; the limit is {} (about 1 min on vhf-fast, 1.5 min on vhf-fm or afsk-1200)",
+            "the file is {}; the limit is {} (about {} s on {})",
             human_size(len),
-            human_size(FILE_MAX_BYTES)
+            human_size(max),
+            airtime_secs(preset, max).round() as u64,
+            preset.as_str()
         ));
     }
     None
@@ -171,7 +183,7 @@ impl Piece {
         let idx = body[5];
         let count = body[6];
         let total = u16::from_le_bytes(body[7..9].try_into().unwrap());
-        if count == 0 || idx >= count || total as usize > FILE_MAX_BYTES {
+        if count == 0 || idx >= count || total as usize > PICTURE_MAX_BYTES {
             return Err(Error::protocol("bad file piece header"));
         }
         let mut rest = &body[PIECE_HDR..];
@@ -213,7 +225,7 @@ pub fn file_id(origin: &str, dest: &str, name: &str, data: &[u8], seq: u32) -> u
 
 /// Cut `data` into pieces whose bodies are at most `limit` bytes.
 pub fn split(file_id: u32, name: &str, data: &[u8], limit: usize) -> Result<Vec<Piece>> {
-    if data.is_empty() || data.len() > FILE_MAX_BYTES {
+    if data.is_empty() || data.len() > PICTURE_MAX_BYTES {
         return Err(Error::protocol("file size out of range"));
     }
     let name = clean_name(name);
@@ -558,14 +570,14 @@ mod tests {
 
     #[test]
     fn only_vhf_uhf_presets_and_direct_messages_may_send() {
-        assert!(refusal(Preset::VhfFm, true, "M0XYZ", 100).is_none());
-        assert!(refusal(Preset::Afsk1200, true, "M0XYZ", 4096).is_none());
-        assert!(refusal(Preset::HfPoor, true, "M0XYZ", 100).is_some());
-        assert!(refusal(Preset::VoxSafe, true, "M0XYZ", 100).is_some());
-        assert!(refusal(Preset::VhfFm, true, "#bulletin", 100).is_some());
-        assert!(refusal(Preset::VhfFm, false, "M0XYZ", 100).is_some());
-        assert!(refusal(Preset::VhfFm, true, "M0XYZ", 4097).is_some());
-        assert!(refusal(Preset::VhfFm, true, "M0XYZ", 0).is_some());
+        assert!(refusal(Preset::VhfFm, true, "M0XYZ", 100, FILE_MAX_BYTES).is_none());
+        assert!(refusal(Preset::Afsk1200, true, "M0XYZ", 4096, FILE_MAX_BYTES).is_none());
+        assert!(refusal(Preset::HfPoor, true, "M0XYZ", 100, FILE_MAX_BYTES).is_some());
+        assert!(refusal(Preset::VoxSafe, true, "M0XYZ", 100, FILE_MAX_BYTES).is_some());
+        assert!(refusal(Preset::VhfFm, true, "#bulletin", 100, FILE_MAX_BYTES).is_some());
+        assert!(refusal(Preset::VhfFm, false, "M0XYZ", 100, FILE_MAX_BYTES).is_some());
+        assert!(refusal(Preset::VhfFm, true, "M0XYZ", 4097, FILE_MAX_BYTES).is_some());
+        assert!(refusal(Preset::VhfFm, true, "M0XYZ", 0, FILE_MAX_BYTES).is_some());
     }
 
     #[test]
@@ -724,6 +736,23 @@ mod tests {
         assert!((70.0..90.0).contains(&s), "{s}");
         let a = airtime_secs(Preset::Afsk1200, FILE_MAX_BYTES);
         assert!(a > f);
+    }
+
+    #[test]
+    fn an_8_kb_picture_takes_about_two_minutes_on_vhf_fast() {
+        let p = airtime_secs(Preset::VhfFast, PICTURE_MAX_BYTES);
+        assert!((90.0..130.0).contains(&p), "{p}");
+        // 29 pieces: the u8 piece count has room.
+        let pieces = split(
+            1,
+            "cat.jpg",
+            &data(PICTURE_MAX_BYTES),
+            body_limit(Preset::VhfFast),
+        )
+        .unwrap();
+        assert!(pieces.len() < 255);
+        assert!(refusal(Preset::VhfFast, true, "M0XYZ", 8192, PICTURE_MAX_BYTES).is_none());
+        assert!(refusal(Preset::VhfFast, true, "M0XYZ", 8193, PICTURE_MAX_BYTES).is_some());
     }
 
     #[test]

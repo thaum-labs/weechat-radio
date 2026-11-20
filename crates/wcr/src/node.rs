@@ -1892,11 +1892,12 @@ async fn send_file(rt: &Runtime, target: &str, path: &str) -> Result<String> {
         .unwrap_or_default();
     // A picture goes on vhf-fast only, shrunk to fit when it is too big.
     let mut shrunk = None;
+    let mut limit = crate::proto::file::FILE_MAX_BYTES;
     if crate::picture::is_picture(&data) {
         if let Some(why) = crate::proto::file::picture_refusal(preset) {
             return Err(crate::error::Error::protocol(why));
         }
-        let limit = crate::proto::file::FILE_MAX_BYTES;
+        limit = crate::proto::file::PICTURE_MAX_BYTES;
         if data.len() > limit {
             let before = data.len();
             let s = crate::picture::shrink(&data, limit).map_err(crate::error::Error::protocol)?;
@@ -1911,7 +1912,7 @@ async fn send_file(rt: &Runtime, target: &str, path: &str) -> Result<String> {
         }
     }
     if let Some(why) =
-        crate::proto::file::refusal(preset, cfg_g.mode.uses_radio(), target, data.len())
+        crate::proto::file::refusal(preset, cfg_g.mode.uses_radio(), target, data.len(), limit)
     {
         return Err(crate::error::Error::protocol(why));
     }
@@ -5067,7 +5068,7 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             let path = sp.collect::<Vec<_>>().join(" ");
             if call.is_empty() || path.is_empty() {
                 return format!(
-                    "usage: /file CALL path (in a private tab: /file path). Sends a file of at most {} to one station, on vhf-fm, vhf-fast or afsk-1200 only. A picture goes on vhf-fast only and is shrunk to fit. Received files are saved in {}",
+                    "usage: /file CALL path (in a private tab: /file path). Sends a file of at most {} to one station, on vhf-fm, vhf-fast or afsk-1200 only. A picture goes on vhf-fast only and is shrunk to fit 8 KB. Received files are saved in {}",
                     crate::proto::file::human_size(crate::proto::file::FILE_MAX_BYTES),
                     crate::proto::file::received_dir(&cfg.lock().store).display()
                 );

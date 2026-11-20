@@ -251,11 +251,11 @@ impl Chat {
         if data.is_empty() {
             return Err("the file is empty".into());
         }
-        if data.len() > crate::proto::file::FILE_MAX_BYTES {
+        if data.len() > crate::proto::file::PICTURE_MAX_BYTES {
             return Err(format!(
                 "the file is {}; the limit is {}",
                 crate::proto::file::human_size(data.len()),
-                crate::proto::file::human_size(crate::proto::file::FILE_MAX_BYTES)
+                crate::proto::file::human_size(crate::proto::file::PICTURE_MAX_BYTES)
             ));
         }
         if !self.state.lock().up {
