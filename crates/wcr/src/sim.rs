@@ -426,6 +426,8 @@ fn timed_len(log: &TimedLog, from: u64, payload: &[u8]) -> Option<Duration> {
 
 fn timed_cap(cfg: &serde_json::Value, prev: usize) -> usize {
     match cfg.get("modem_type").and_then(|v| v.as_i64()) {
+        // QAM16 1/2 (vhf-fast): modem73's normal frame carries 1024 B.
+        Some(0) if cfg.get("modulation").and_then(|v| v.as_str()) == Some("QAM16") => 1024,
         Some(0) => 512,
         Some(1) => 55,
         Some(2) => 170,

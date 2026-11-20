@@ -80,6 +80,8 @@ pub struct SendView<'a> {
     pub airtime_secs: f64,
     /// Seconds since the row turned Sent, when it has.
     pub since_sent_secs: f64,
+    /// Chunks keyed on the air so far (big mail, frame by frame).
+    pub keyed: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -200,6 +202,24 @@ pub fn send_step(v: &SendView<'_>) -> SendStep {
             false,
             false,
         ),
+        "tx" | "queued" if v.keyed > 0 && v.chunks > 0 => {
+            // A big mail (QA #365): the bar steps chunk by chunk as each
+            // frame keys, and the gateway's count follows each block.
+            let have = got_count(v.got).min(v.chunks);
+            let done = v.keyed.max(have).min(v.chunks);
+            let part = done as f32 / v.chunks as f32;
+            let left = v.airtime_secs * f64::from(v.chunks - done) / f64::from(v.chunks);
+            let label = if done < v.chunks {
+                format!(
+                    "On the air: {done} of {} chunks sent, the gateway has {have}. About {} left…",
+                    v.chunks,
+                    clock(left)
+                )
+            } else {
+                format!("Keyed. The gateway has {have} of {} chunks…", v.chunks)
+            };
+            step(0.05 + 0.75 * part, label, false, false)
+        }
         "tx" | "queued" => {
             let have = got_count(v.got);
             if v.chunks > 0 && have > 0 {
@@ -225,6 +245,16 @@ pub fn send_step(v: &SendView<'_>) -> SendStep {
             step(0.05 + 0.45 * part, label, false, false)
         }
         _ => step(0.02, "Waiting for the radio…".into(), false, false),
+    }
+}
+
+/// `45 s` or `12 min 5 s`.
+fn clock(secs: f64) -> String {
+    let s = secs.max(0.0).ceil() as u64;
+    if s < 60 {
+        format!("{s} s")
+    } else {
+        format!("{} min {} s", s / 60, s % 60)
     }
 }
 
@@ -287,6 +317,7 @@ mod tests {
             elapsed_secs: 10.0,
             airtime_secs: 20.0,
             since_sent_secs: 0.0,
+            keyed: 0,
         }
     }
 
@@ -310,6 +341,30 @@ mod tests {
         assert!(order[6].done && order[6].ok);
         assert_eq!(order[6].label, "Success: delivered.");
         assert!(!order[5].done);
+    }
+
+    /// QA #365: a big mail's bar steps chunk by chunk, never 0 to 100 %.
+    #[test]
+    fn a_big_mail_steps_chunk_by_chunk() {
+        let mut last = 0.0;
+        for k in 1..=4 {
+            let mut v = view("tx", "", "");
+            v.keyed = k;
+            v.airtime_secs = 400.0;
+            let s = send_step(&v);
+            assert!(s.fraction > last, "{k}: {}", s.fraction);
+            assert!(s.fraction <= 0.8 && !s.done);
+            last = s.fraction;
+            if k == 1 {
+                assert_eq!(
+                    s.label,
+                    "On the air: 1 of 4 chunks sent, the gateway has 0. About 5 min 0 s left…"
+                );
+            }
+        }
+        let mut v = view("tx", "0,1", "");
+        v.keyed = 4;
+        assert_eq!(send_step(&v).label, "Keyed. The gateway has 2 of 4 chunks…");
     }
 
     #[test]

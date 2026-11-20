@@ -498,13 +498,23 @@ function cssBar(fraction, label) {
   return wrap;
 }
 
-// How far an outgoing radio mail is: chunks the gateway has receipted.
+// How far an outgoing radio mail is: chunks the gateway has receipted, and
+// for a big mail the chunks keyed so far, frame by frame (#365).
 function sendBar(m) {
   if (m.folder !== "outbox" || !(m.chunks > 0)) return null;
   if (m.state === "gateway") return cssBar(1);
   if (m.state !== "tx" && m.state !== "queued") return null;
   const have = String(m.got || "").split(",").filter((x) => /^\d+$/.test(x.trim())).length;
+  const keyed = Math.min(m.chunks, m.keyed || 0);
+  if (keyed > have) {
+    return cssBar(keyed / m.chunks, `${keyed}/${m.chunks} sent, gateway has ${have}`);
+  }
   return cssBar(have / m.chunks, `${Math.round((100 * have) / m.chunks)}% ${have}/${m.chunks}`);
+}
+
+// A radio mail still on its way can be stopped (#365).
+function cancellable(m) {
+  return m.folder === "outbox" && m.ack && ["queued", "tx", "locating"].includes(m.state);
 }
 
 // The Radio+ Get under way, or the mail it fetched (click to open).
@@ -544,7 +554,10 @@ async function loadMail() {
   // Why mail cannot go (for example Radio+ with no mail gateway), or the
   // Radio+ gateway in use (#274, #275).
   const note = $("mail-note");
-  note.textContent = d.block || (d.gateway_line ? `Mail gateway: ${d.gateway_line}` : "");
+  // A gateway shows a mail coming in over the radio, chunk by chunk (#365).
+  const rx = d.receiving;
+  const rxLine = rx ? `Receiving mail from ${rx.from}: chunk ${rx.have} of ${rx.total}` : "";
+  note.textContent = d.block || [d.gateway_line ? `Mail gateway: ${d.gateway_line}` : "", rxLine].filter(Boolean).join(" · ");
   note.className = d.block ? "small warn" : "small dim";
   note.hidden = !note.textContent;
   drawGet(folder === "inbox" ? d.get : null, mailRows);
@@ -625,6 +638,7 @@ function drawMail(m) {
     }
   }
   $("mail-retry").hidden = !st.retry;
+  $("mail-stop").hidden = !cancellable(m);
   $("mail-reply").hidden = m.folder !== "inbox";
 }
 
@@ -641,6 +655,13 @@ $("mail-close").onclick = () => { openMail = null; $("mail-view").hidden = true;
 $("mail-retry").onclick = async () => {
   if (!openMail) return;
   try { await post("/api/mail/retry", { id: openMail.id }); } catch (err) { alert(err.message); }
+  loadMail();
+};
+$("mail-stop").onclick = async () => {
+  if (!openMail) return;
+  $("mail-stop").disabled = true;
+  try { await post("/api/mail/cancel", { id: openMail.id }); } catch (err) { alert(err.message); }
+  $("mail-stop").disabled = false;
   loadMail();
 };
 $("mail-reply").onclick = () => {

@@ -171,6 +171,10 @@ pub enum MailCmd {
         gen: u64,
     },
     /// The outbox row is still `tx` and nothing has moved it on.
+    /// A big mail's block got through: key the next one.
+    NextBlock {
+        id: String,
+    },
     TxStuck {
         id: String,
         gen: u64,
@@ -260,11 +264,7 @@ fn note_have_report(store: &store::MailStore, us: &str, incoming: &Incoming) -> 
     if row.folder != "outbox" || row.chunks != u32::from(count) {
         return None;
     }
-    let mut last = None;
-    for idx in bits {
-        last = store.note_chunk(&w.mail_id, idx).ok().flatten().or(last);
-    }
-    last
+    store.note_chunks(&w.mail_id, &bits).ok().flatten()
 }
 
 /// Record the gateway's acceptance the moment it is decoded. A retry lease
@@ -360,6 +360,8 @@ impl MailHandle {
             "pick": self.store.pick(),
             "gateway_line": gateway_line(&cfg, &self.store.pick()),
             "block": email_block_reason(&cfg.callsign, cfg.mode, &cfg.mail.choice(), snap.hub_ok, true),
+            // The mail this gateway is receiving over the radio now.
+            "receiving": self.store.relay_rx().filter(|r| chrono::Utc::now().timestamp() - r.at < 120),
             // The attachment limit on this preset, for the Pi page.
             "attach_max": attach::max_bytes(Preset::parse(&cfg.modem.preset).unwrap_or(Preset::HfPoor)),
         })
@@ -487,11 +489,29 @@ impl MailHandle {
         });
         MailView {
             status: mail_status(&row, &hops, now, online),
+            keyed: self.store.keyed_count(&row.id),
             row,
             hops,
             via,
             file,
         }
+    }
+
+    /// Stop sending `id` (QA #365): a long send can be cancelled. The burst
+    /// stops after the frames already with the modem; the gateway drops the
+    /// part it holds after [`air::PARTIAL_MAIL_TTL`]. Retry sends it again.
+    pub fn cancel(&self, id: &str) -> Result<bool> {
+        let Some(row) = self.store.get(id)? else {
+            return Ok(false);
+        };
+        if row.folder != "outbox" || gateway::is_finished(&row.state) {
+            return Ok(false);
+        }
+        self.store.request_cancel(id);
+        self.store
+            .set_outcome(id, "outbox", "failed", gateway::CANCELLED)?;
+        tracing::info!("mail cancelled {id}");
+        Ok(true)
     }
 
     /// Retry a Failed mail: back to the outbox and sent again from the start,
@@ -500,6 +520,7 @@ impl MailHandle {
         if !self.store.reset_for_retry(id)? {
             return Ok(false);
         }
+        self.store.clear_cancel(id);
         tracing::info!("mail retry by hand {id}");
         let _ = self.cmd.send(MailCmd::Send { id: id.to_string() }).await;
         Ok(true)

@@ -253,6 +253,7 @@ fn router(web: Web) -> Router {
         .route("/api/mail/open", get(mail_open))
         .route("/api/mail/send", post(mail_send))
         .route("/api/mail/retry", post(mail_retry))
+        .route("/api/mail/cancel", post(mail_cancel))
         .route("/api/mail/check", post(mail_check))
         .route("/api/mail/get", post(mail_get))
         .route("/logout", post(logout))
@@ -963,6 +964,11 @@ async fn mail_send(State(web): State<Web>, Json(b): Json<Value>) -> Response {
 
 async fn mail_retry(State(web): State<Web>, Json(b): Json<Value>) -> Response {
     web.local_post("/mail/retry", json!({ "id": b["id"] }))
+        .await
+}
+
+async fn mail_cancel(State(web): State<Web>, Json(b): Json<Value>) -> Response {
+    web.local_post("/mail/cancel", json!({ "id": b["id"] }))
         .await
 }
 

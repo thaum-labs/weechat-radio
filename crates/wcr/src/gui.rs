@@ -586,6 +586,10 @@ struct MailSend {
     /// Last time the station answered about this mail.
     heard: Instant,
     row: Option<crate::mail::MailRow>,
+    /// Chunks keyed on the air so far (big mail, live from the station).
+    keyed: u32,
+    /// Cancel was pressed; the station is told once.
+    cancelled: bool,
     step: crate::mail::SendStep,
     /// A send from compose clears To, subject and body once it succeeds; a
     /// Retry of an older mail leaves compose alone.
@@ -4973,6 +4977,7 @@ impl GuiApp {
         if let Some(send) = self.mail_send.as_mut() {
             if !send.step.done {
                 if let Some(v) = mail_http("GET", &format!("/mail/open?id={}", send.id), None) {
+                    send.keyed = v.get("keyed").and_then(|k| k.as_u64()).unwrap_or(0) as u32;
                     if let Ok(row) = serde_json::from_value::<crate::mail::MailRow>(v) {
                         send.heard = Instant::now();
                         if row.state == "sent" && send.sent_at.is_none() {
@@ -5024,6 +5029,7 @@ impl GuiApp {
                     .sent_at
                     .map(|t| t.elapsed().as_secs_f64())
                     .unwrap_or(0.0),
+                keyed: send.keyed,
             })
         };
         let fraction = next.fraction.max(send.step.fraction);
@@ -5078,6 +5084,8 @@ impl GuiApp {
         ctx.memory_mut(|m| m.stop_text_input());
         let mut close = false;
         let mut resend = false;
+        let mut cancel = false;
+        let can_cancel = send.rf && !send.cancelled;
         let title = match &bad {
             Some(st) => st.label.clone(),
             None if step.done && step.ok => "Success".into(),
@@ -5132,8 +5140,26 @@ impl GuiApp {
                             .small()
                             .monospace(),
                     );
+                    // QA #365: a long send (big mail on vhf-fast) can stop.
+                    if can_cancel {
+                        ui.add_space(6.0);
+                        if ui.add(hair_btn("Cancel", ORANGE)).clicked() {
+                            cancel = true;
+                        }
+                    }
                 }
             });
+        if cancel {
+            if let Some(send) = self.mail_send.as_mut() {
+                send.cancelled = true;
+                let _ = mail_http(
+                    "POST",
+                    "/mail/cancel",
+                    Some(&serde_json::json!({ "id": send.id }).to_string()),
+                );
+                send.step.label = "Cancelling…".into();
+            }
+        }
         if resend {
             if let Some(row) = self.mail_send.take().and_then(|s| s.row) {
                 self.mail_to = row.to_addr;
@@ -5727,6 +5753,8 @@ impl GuiApp {
             sent_at: None,
             heard: Instant::now(),
             row: None,
+            keyed: 0,
+            cancelled: false,
             step: crate::mail::SendStep {
                 fraction: 0.0,
                 label: "Starting…".into(),
@@ -5881,6 +5909,8 @@ impl GuiApp {
                                 sent_at: None,
                                 heard: Instant::now(),
                                 row: None,
+                                keyed: 0,
+                                cancelled: false,
                                 step: crate::mail::SendStep {
                                     fraction: 0.0,
                                     label: "Starting…".into(),
@@ -6959,7 +6989,7 @@ fn solid_bar(ui: &mut egui::Ui, fraction: f32, color: Color32) {
         let w = (ui.available_width() - label_w).max(40.0);
         let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 14.0), egui::Sense::hover());
         let p = ui.painter();
-        p.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, color));
+        p.rect_stroke(rect, 2.0, egui::Stroke::new(1.0_f32, color));
         let mut fill = rect.shrink(2.0);
         fill.set_width(fill.width() * f);
         if f > 0.0 {
