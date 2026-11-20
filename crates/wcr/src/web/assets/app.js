@@ -200,8 +200,9 @@ function lineNode(l) {
   li.append(textNode(l.text));
   // File transfer: a solid bar and "3/15" (the station sends "[███░░] 3/15").
   if (l.progress) {
-    const n = /(\d+)\s*\/\s*(\d+)\s*$/.exec(l.progress);
-    const bar = n ? cssBar(Number(n[1]) / Math.max(1, Number(n[2])), `${n[1]}/${n[2]}`) : el("span", "bar", l.progress);
+    // "[bar] 6/16" or, for a burst (#365), "[bar] 6/16 · 2 missing, resending".
+    const n = /(\d+)\s*\/\s*(\d+)\s*(?:·\s*(.*))?$/.exec(l.progress);
+    const bar = n ? cssBar(Number(n[1]) / Math.max(1, Number(n[2])), `${n[1]}/${n[2]}${n[3] ? ` ${n[3]}` : ""}`) : el("span", "bar", l.progress);
     bar.title = l.mine ? "Pieces the far station has receipted" : "Pieces received so far";
     li.append(bar);
   }

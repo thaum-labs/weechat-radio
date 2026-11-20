@@ -13,6 +13,11 @@ pub const FLAG_NO_INET: u16 = 1 << 7;
 pub const FLAG_GROUP_IDX: u16 = 1 << 8;
 /// Wire-only: body is smaz-compressed (v2). Cleared after decode.
 pub const FLAG_COMPRESSED: u16 = 1 << 9;
+/// A file piece keyed in one burst with the rest of its file (QA #365).
+/// A receiver that knows it answers once, with a report of what it holds,
+/// instead of a receipt per piece. Older receivers ignore it and answer
+/// each piece as before.
+pub const FLAG_BURST: u16 = 1 << 10;
 pub const FLAG_PRIORITY_SHIFT: u16 = 5;
 pub const FLAG_PRIORITY_MASK: u16 = 0b11 << FLAG_PRIORITY_SHIFT;
 
@@ -133,6 +138,11 @@ impl Flags {
 
     pub fn req_ack(self) -> bool {
         self.has(FLAG_REQ_ACK)
+    }
+
+    /// See [`FLAG_BURST`].
+    pub fn burst(self) -> bool {
+        self.has(FLAG_BURST)
     }
 
     pub fn third_party(self) -> bool {

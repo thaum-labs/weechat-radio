@@ -219,6 +219,14 @@ struct Pair {
 impl Pair {
     /// `drop` sees `(from, to, envelope)` and returns true to lose that copy.
     async fn start(drop: impl Fn(u64, u64, &Envelope) -> bool + Send + Sync + 'static) -> Self {
+        Self::start_tweaked(drop, |_| {}).await
+    }
+
+    /// [`Pair::start`] with `tweak` applied to both stations' config.
+    async fn start_tweaked(
+        drop: impl Fn(u64, u64, &Envelope) -> bool + Send + Sync + 'static,
+        tweak: impl Fn(&mut Config),
+    ) -> Self {
         let air = wcr::sim::SharedAir::new(0.0);
         let tx = Arc::new(Mutex::new(Vec::new()));
         {
@@ -250,7 +258,8 @@ impl Pair {
         let mut nodes = Vec::new();
         let mut homes = Vec::new();
         for (i, (call, home, kiss, ctrl)) in prep.into_iter().enumerate() {
-            let cfg = radio_cfg(call, &home, kiss, ctrl, ports[i * 2], ports[i * 2 + 1]);
+            let mut cfg = radio_cfg(call, &home, kiss, ctrl, ports[i * 2], ports[i * 2 + 1]);
+            tweak(&mut cfg);
             homes.push(home);
             nodes.push(tokio::spawn(async move {
                 wcr::node::run_node(cfg, false).await
@@ -463,5 +472,180 @@ async fn a_lost_piece_is_sent_again_and_the_last_receipt_waits_for_it() {
     assert!(
         last_ack > retry,
         "B answered the last piece before it had piece 2 {order:?}{trace}"
+    );
+}
+
+/// `(from, kind, piece idx or report)` of every File and Ack frame keyed.
+fn file_frames(pair: &Pair) -> Vec<(u64, String)> {
+    pair.tx
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|(from, env)| match env.kind {
+            MsgType::File => Some((
+                *from,
+                match Piece::decode(&env.body) {
+                    Ok(p) => format!("p{}", p.idx),
+                    Err(_) => "report".into(),
+                },
+            )),
+            MsgType::Ack => Some((*from, "ack".into())),
+            _ => None,
+        })
+        .collect()
+}
+
+fn vhf_fast(cfg: &mut Config) {
+    cfg.modem.preset = "vhf-fast".into();
+}
+
+/// QA #365: on vhf-fast a file goes in one burst. The receiver answers
+/// once, with a report, not a receipt per piece; the sender's line steps
+/// through the burst and ends `[ok]`.
+#[tokio::test]
+async fn a_file_goes_in_one_burst_on_vhf_fast() {
+    let _hang = watchdog(TEST_LIMIT);
+    let _suite = suite_lock().lock().await;
+    let mut pair = Pair::start_tweaked(|_, _, _| false, vhf_fast).await;
+    let src = scratch("src").join("burst.bin");
+    let body = sample(4000);
+    std::fs::write(&src, &body).unwrap();
+    pair.clients[0]
+        .send(&format!("RADIO file {B} {}", src.display()))
+        .await;
+    let got = pair.clients[1]
+        .wait_for(120, |lines| lines.iter().any(|l| l.contains("saved to")))
+        .await;
+    let ok = pair.clients[0]
+        .wait_for(60, |lines| {
+            file_line_id(lines).is_some_and(|id| delivered(lines, &id))
+        })
+        .await;
+    let saved = pair.homes[1].join("files").join(A).join("burst.bin");
+    let trace = pair.trace();
+    let frames = file_frames(&pair);
+    let a_lines = pair.clients[0].lines().join("\n");
+    pair.stop();
+    assert!(got, "B never saved the file{trace}");
+    assert_eq!(
+        std::fs::read(&saved).ok(),
+        Some(body),
+        "bytes differ{trace}"
+    );
+    assert!(ok, "A's file line never reached [ok]\n{a_lines}{trace}");
+    let pieces = frames
+        .iter()
+        .filter(|(f, k)| *f == 1 && k.starts_with('p'))
+        .count();
+    let reports = frames
+        .iter()
+        .filter(|(f, k)| *f == 2 && k == "report")
+        .count();
+    let acks = frames.iter().filter(|(f, k)| *f == 2 && k == "ack").count();
+    let id = file_line_id(&a_lines.lines().map(str::to_string).collect::<Vec<_>>()).unwrap();
+    let n = progress_steps(&a_lines, &id)[0].1 as usize;
+    assert_eq!(pieces, n, "every piece once {frames:?}");
+    assert_eq!(reports, 1, "one report {frames:?}");
+    assert_eq!(acks, 0, "no receipt per piece {frames:?}");
+    assert!(a_lines.contains("in one burst"), "{a_lines}");
+    assert!(a_lines.contains("+radio/filestep=complete"), "{a_lines}");
+}
+
+/// QA #365: pieces lost in a burst are the only ones keyed again, as a
+/// smaller burst after the receiver's report.
+#[tokio::test]
+async fn a_burst_resends_only_the_lost_pieces() {
+    let _hang = watchdog(TEST_LIMIT);
+    let _suite = suite_lock().lock().await;
+    let dropped: Arc<Mutex<HashSet<u8>>> = Arc::new(Mutex::new(HashSet::new()));
+    let d = dropped.clone();
+    let mut pair = Pair::start_tweaked(
+        move |from, to, env| {
+            if from != 1 || to != 2 || env.kind != MsgType::File {
+                return false;
+            }
+            let Ok(p) = Piece::decode(&env.body) else {
+                return false;
+            };
+            (p.idx == 2 || p.idx == 5) && d.lock().unwrap().insert(p.idx)
+        },
+        vhf_fast,
+    )
+    .await;
+    let src = scratch("src").join("lossy.bin");
+    let body = sample(4000);
+    std::fs::write(&src, &body).unwrap();
+    pair.clients[0]
+        .send(&format!("RADIO file {B} {}", src.display()))
+        .await;
+    let ok = pair.clients[0]
+        .wait_for(180, |lines| {
+            file_line_id(lines).is_some_and(|id| delivered(lines, &id))
+        })
+        .await;
+    let saved = pair.homes[1].join("files").join(A).join("lossy.bin");
+    let trace = pair.trace();
+    let frames = file_frames(&pair);
+    let a_lines = pair.clients[0].lines().join("\n");
+    pair.stop();
+    assert_eq!(dropped.lock().unwrap().len(), 2, "{trace}");
+    assert_eq!(
+        std::fs::read(&saved).ok(),
+        Some(body),
+        "bytes differ{trace}"
+    );
+    assert!(ok, "A's file line never reached [ok]\n{a_lines}{trace}");
+    let id = file_line_id(&a_lines.lines().map(str::to_string).collect::<Vec<_>>()).unwrap();
+    let n = progress_steps(&a_lines, &id)[0].1 as usize;
+    let pieces: Vec<&String> = frames
+        .iter()
+        .filter(|(f, k)| *f == 1 && k.starts_with('p'))
+        .map(|(_, k)| k)
+        .collect();
+    assert_eq!(
+        pieces.len(),
+        n + 2,
+        "only the two lost pieces again {frames:?}"
+    );
+    assert_eq!(
+        pieces[n..],
+        [&"p2".to_string(), &"p5".to_string()],
+        "{frames:?}"
+    );
+    assert!(a_lines.contains("+radio/filestep=resend:2"), "{a_lines}");
+}
+
+/// The setting overrides the default: pieces mode on vhf-fast answers
+/// each piece with its own receipt, as before.
+#[tokio::test]
+async fn pieces_mode_can_be_chosen_on_vhf_fast() {
+    let _hang = watchdog(TEST_LIMIT);
+    let _suite = suite_lock().lock().await;
+    let mut pair = Pair::start_tweaked(
+        |_, _, _| false,
+        |cfg| {
+            vhf_fast(cfg);
+            cfg.rf.file_send = "pieces".into();
+        },
+    )
+    .await;
+    let src = scratch("src").join("pieces.bin");
+    std::fs::write(&src, sample(1500)).unwrap();
+    pair.clients[0]
+        .send(&format!("RADIO file {B} {}", src.display()))
+        .await;
+    let ok = pair.clients[0]
+        .wait_for(180, |lines| {
+            file_line_id(lines).is_some_and(|id| delivered(lines, &id))
+        })
+        .await;
+    let trace = pair.trace();
+    let frames = file_frames(&pair);
+    pair.stop();
+    assert!(ok, "never [ok]{trace}");
+    assert!(frames.iter().all(|(_, k)| k != "report"), "{frames:?}");
+    assert!(
+        frames.iter().filter(|(f, k)| *f == 2 && k == "ack").count() >= 2,
+        "{frames:?}"
     );
 }

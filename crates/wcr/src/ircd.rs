@@ -691,9 +691,29 @@ impl IrcServer {
         have: u8,
         count: u8,
     ) {
+        self.tagmsg_file_step(msgid, target, from, have, count, "")
+            .await;
+    }
+
+    /// [`Self::tagmsg_file_progress`] with a burst's step (QA #365), such
+    /// as `keyed` or `resend:2`; empty for none.
+    pub async fn tagmsg_file_step(
+        &self,
+        msgid: &str,
+        target: &str,
+        from: &str,
+        have: u8,
+        count: u8,
+        step: &str,
+    ) {
         let target = normalize_irc_channel(target);
+        let step = if step.is_empty() {
+            String::new()
+        } else {
+            format!(";+radio/filestep={step}")
+        };
         let line = format!(
-            "@msgid={msgid};+radio/msgid={msgid};+radio/file={have}/{count} TAGMSG {target}"
+            "@msgid={msgid};+radio/msgid={msgid};+radio/file={have}/{count}{step} TAGMSG {target}"
         );
         let ids: Vec<u64> = {
             let g = self.inner.lock();

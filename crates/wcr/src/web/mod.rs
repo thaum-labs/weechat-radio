@@ -420,6 +420,9 @@ async fn setting(State(web): State<Web>, Json(b): Json<SettingBody>) -> Response
     if b.what == "gateway_mode" {
         return set_gateway_mode(&web, &b.value);
     }
+    if b.what == "file_send" {
+        return set_file_send(&web, &b.value);
+    }
     if b.what == "freq" {
         return set_dial(&web, &b.value);
     }
@@ -511,6 +514,28 @@ fn set_gateway_mode(web: &Web, value: &str) -> Response {
     let _ = web.chat.radio_setting("gateway_mode", name);
     web.station
         .note(&format!("gateway mode set to {name} on the web page"));
+    Json(json!({ "ok": true })).into_response()
+}
+
+/// Save how a chat file goes out (QA #365) in wcr.toml and, when the
+/// station runs, use it now. Saved while stopped too.
+fn set_file_send(web: &Web, value: &str) -> Response {
+    let bad = |e: String| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response();
+    let mut cfg = match Config::load(&web.cfg_path) {
+        Ok(c) => c,
+        Err(e) => return bad(e.to_string()),
+    };
+    if let Err(e) = cfg.rf.set_file_send(value) {
+        return bad(e);
+    }
+    if let Err(e) = cfg.save(&web.cfg_path) {
+        return bad(e.to_string());
+    }
+    let v = cfg.rf.file_send.clone();
+    // Not an error while stopped: the saved value is used at the next Start.
+    let _ = web.chat.radio_setting("file_send", &v);
+    web.station
+        .note(&format!("file send set to {v} on the web page"));
     Json(json!({ "ok": true })).into_response()
 }
 
@@ -668,7 +693,10 @@ async fn gateway(State(web): State<Web>) -> Json<Value> {
     });
     // The gateway mode (#272), from wcr.toml so it shows while stopped.
     let gateway_mode = cfg.as_ref().map(|c| c.gateway.mode_name());
+    // How a chat file goes out (QA #365), from wcr.toml.
+    let file_send = cfg.as_ref().map(|c| c.rf.file_send.clone());
     Json(json!({
+        "file_send": file_send,
         "frequency": frequency,
         "mail_gateway": mail_gateway,
         "gateway_mode": gateway_mode,

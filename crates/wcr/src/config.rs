@@ -672,6 +672,48 @@ pub struct RfConfig {
     /// Answer a `/report` request (`SNR?`) with the SNR we heard it at.
     /// At most once per callsign every five minutes.
     pub auto_report: bool,
+    /// How a file in a direct chat goes out (QA #365): `burst` keys every
+    /// piece back to back and the far end reports once what it lacks;
+    /// `pieces` sends one piece at a time, each with its own receipt (for a
+    /// weak link); `auto` (default) is burst on vhf-fast, pieces elsewhere.
+    pub file_send: String,
+}
+
+/// The `[rf] file_send` choices, in the order the pickers show them.
+pub const FILE_SEND_CHOICES: [&str; 3] = ["auto", "burst", "pieces"];
+
+impl RfConfig {
+    /// A chat file on `preset` goes as one burst.
+    pub fn file_burst(&self, preset: crate::presets::Preset) -> bool {
+        match self.file_send.trim().to_ascii_lowercase().as_str() {
+            "burst" => true,
+            "pieces" => false,
+            _ => preset == crate::presets::Preset::VhfFast,
+        }
+    }
+
+    /// Set `file_send` from a picker or `/radio filesend`.
+    pub fn set_file_send(&mut self, value: &str) -> std::result::Result<(), String> {
+        let v = value.trim().to_ascii_lowercase();
+        if !FILE_SEND_CHOICES.contains(&v.as_str()) {
+            return Err(format!("file send is auto, burst or pieces, not {value}"));
+        }
+        self.file_send = v;
+        Ok(())
+    }
+
+    /// `auto (burst)`: the setting, and what it means on `preset`.
+    pub fn file_send_word(&self, preset: crate::presets::Preset) -> String {
+        let how = if self.file_burst(preset) {
+            "burst"
+        } else {
+            "pieces"
+        };
+        match self.file_send.trim().to_ascii_lowercase().as_str() {
+            "burst" | "pieces" => how.to_string(),
+            _ => format!("auto ({how})"),
+        }
+    }
 }
 
 impl Default for RfConfig {
@@ -695,6 +737,7 @@ impl Default for RfConfig {
             outbound_max_age_secs: 3600,
             frequency_khz: 0,
             auto_report: true,
+            file_send: "auto".into(),
         }
     }
 }
@@ -1066,6 +1109,25 @@ mod tests {
 
     /// QA #365: vhf-fast worked over VOX on an RT-900, so VOX may pick it;
     /// Bluetooth audio still refuses it.
+    #[test]
+    fn file_send_is_burst_on_vhf_fast_unless_set() {
+        use crate::presets::Preset;
+        let mut rf = RfConfig::default();
+        assert_eq!(rf.file_send, "auto");
+        assert!(rf.file_burst(Preset::VhfFast));
+        assert!(!rf.file_burst(Preset::VhfFm));
+        assert!(!rf.file_burst(Preset::Afsk1200));
+        rf.set_file_send(" Burst ").unwrap();
+        assert!(rf.file_burst(Preset::VhfFm));
+        rf.set_file_send("pieces").unwrap();
+        assert!(!rf.file_burst(Preset::VhfFast));
+        assert!(rf.set_file_send("fast").is_err());
+        // An older wcr.toml without the key reads as auto.
+        let c: Config = toml::from_str("[rf]\nmax_retries = 3\n").unwrap();
+        assert_eq!(c.rf.file_send, "auto");
+        assert_eq!(c.rf.file_send_word(Preset::VhfFast), "auto (burst)");
+    }
+
     #[test]
     fn vhf_fast_is_allowed_on_vox_and_refused_on_bluetooth() {
         use super::ModemConfig;

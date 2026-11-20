@@ -2138,6 +2138,7 @@ impl eframe::App for GuiApp {
                         ui.add_space(8.0);
                         let mut mode_cmd = None;
                         let mut preset_cmd = None;
+                        let mut file_cmd = None;
                         let mut freq_cmd = None;
                         let mut tower_cmd = None;
                         let mut level_cmd = None;
@@ -2199,6 +2200,7 @@ impl eframe::App for GuiApp {
                                     preset_cmd = Some(format!("/preset {next}"));
                                 }
                             }
+                            file_cmd = file_send_row(ui, s, station_key);
                             if let Some(note) = s.preset_pending_note() {
                                 ui.label(RichText::new(note).color(ORANGE).small());
                             }
@@ -2359,6 +2361,9 @@ impl eframe::App for GuiApp {
                             self.send_cmd(&cmd);
                         }
                         if let Some(cmd) = preset_cmd {
+                            self.send_cmd(&cmd);
+                        }
+                        if let Some(cmd) = file_cmd {
                             self.send_cmd(&cmd);
                         }
                         if let Some(cmd) = level_cmd {
@@ -3865,6 +3870,59 @@ fn tower_toggle(ui: &mut egui::Ui, on: bool, key: KeyFn) -> Option<bool> {
         "While internet-radio is on, show this station as a tower on the public map with its frequency beside the icon.",
     );
     flipped
+}
+
+/// The FILES row (QA #365): how a file in a direct chat goes out. Shown
+/// on the presets that carry files. Returns the command to send.
+fn file_send_row(ui: &mut egui::Ui, s: &StatusSnapshot, key: KeyFn) -> Option<String> {
+    let preset = Preset::parse(&s.preset)?;
+    if !s.tnc.is_empty() || !crate::proto::file::preset_allows(preset) {
+        return None;
+    }
+    let mut rf = crate::config::RfConfig::default();
+    if !s.file_send.is_empty() {
+        let _ = rf.set_file_send(&s.file_send);
+    }
+    let current = rf.file_send_word(preset);
+    let mut chosen = None;
+    let inner = ui.horizontal(|ui| {
+        key(ui, "FILES");
+        let w = ui.available_width();
+        egui::ComboBox::from_id_salt("file_send_pick")
+            .selected_text(RichText::new(&current).color(PURPLE).monospace())
+            .width(w)
+            .truncate()
+            .show_ui(ui, |ui| {
+                ui.set_min_width(w.max(160.0));
+                for c in crate::config::FILE_SEND_CHOICES {
+                    let row = ui.selectable_label(
+                        rf.file_send == c,
+                        RichText::new(c).color(PURPLE).monospace(),
+                    );
+                    hover_tip(
+                        &row,
+                        match c {
+                            "auto" => "Burst on vhf-fast, piece by piece on vhf-fm and afsk-1200.",
+                            "burst" => "Every piece back to back, then the far end says once what it lacks and only that goes again. For a strong link.",
+                            _ => "One piece at a time, each with its own receipt. Slower; for a weak or marginal link.",
+                        },
+                    );
+                    if row.clicked() && rf.file_send != c {
+                        chosen = Some(format!("/filesend {c}"));
+                    }
+                }
+            });
+    });
+    let resp = ui.interact(
+        inner.response.rect,
+        ui.id().with("file_send_row"),
+        egui::Sense::hover(),
+    );
+    hover_tip(
+        &resp,
+        "How a file in a direct chat goes out. Saved in wcr.toml as [rf] file_send.",
+    );
+    chosen
 }
 
 fn preset_pick(ui: &mut egui::Ui, current: &str, key: KeyFn) -> Option<String> {
@@ -7771,9 +7829,11 @@ mod tests {
     /// QA #365: "Restarting modem…" gives way to "now running" or the failure.
     #[test]
     fn the_restart_note_follows_the_station() {
-        let mut s = crate::status::StatusSnapshot::default();
-        s.preset = "vhf-fast".into();
-        s.preset_running = "vhf-fm".into();
+        let mut s = crate::status::StatusSnapshot {
+            preset: "vhf-fast".into(),
+            preset_running: "vhf-fm".into(),
+            ..Default::default()
+        };
         let quick = Duration::from_secs(1);
         assert_eq!(
             restart_follow(&s, false, quick),

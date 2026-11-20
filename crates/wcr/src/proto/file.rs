@@ -100,6 +100,21 @@ pub fn body_limit(preset: Preset) -> usize {
         .max(PIECE_HDR + 1 + NAME_MAX + 16)
 }
 
+/// Largest piece body in a burst (QA #365). On vhf-fast a piece that fits
+/// modem73's 1 s short QAM16 frame (256 B less its length) carries twice
+/// the bytes per second of a 2.6 s normal frame, so a burst cuts to that.
+/// Receivers take any piece size, so older ones are not affected.
+pub fn burst_body_limit(preset: Preset) -> usize {
+    if preset == Preset::VhfFast {
+        let short = crate::presets::Rung::OfdmQam16Half.mail_mtu() as usize;
+        short
+            .saturating_sub(HEADER_LEN + CRC_LEN)
+            .max(PIECE_HDR + 1 + NAME_MAX + 16)
+    } else {
+        body_limit(preset)
+    }
+}
+
 /// A file name that is safe to save anywhere: the last path part only,
 /// letters, digits, `.`, `-` and `_`, at most [`NAME_MAX`] bytes.
 pub fn clean_name(raw: &str) -> String {
@@ -261,6 +276,45 @@ pub fn split(file_id: u32, name: &str, data: &[u8], limit: usize) -> Result<Vec<
     Ok(out)
 }
 
+/// Pieces mode on the air, per piece, beyond its frame and receipt: carrier
+/// sense, the receipt's turnaround and the air queue waiting for it. QA's
+/// rc10 run on vhf-fast: 16 pieces with no retry took about 8 min.
+pub const PIECE_GAP_SECS: f64 = 25.0;
+/// A burst receiver reports this long after the last piece it heard.
+pub const BURST_QUIET_SECS: f64 = 6.0;
+
+/// Pieces a `len`-byte file is cut into for a body limit of `limit`.
+pub fn piece_count(len: usize, limit: usize) -> usize {
+    ((len + NAME_MAX).div_ceil(limit.saturating_sub(PIECE_HDR).max(1))).max(1)
+}
+
+/// Honest time to send `len` bytes on `preset`, the way it will go (QA
+/// #365): a burst is every piece back to back, then the far end's one
+/// report; pieces mode is a piece, its receipt and the wait between.
+pub fn send_secs(preset: Preset, len: usize, burst: bool) -> f64 {
+    if !burst {
+        let gap = if matches!(preset, Preset::VhfFm | Preset::VhfFast) {
+            PIECE_GAP_SECS * piece_count(len, body_limit(preset)) as f64
+        } else {
+            0.0
+        };
+        return airtime_secs(preset, len) + gap;
+    }
+    let limit = burst_body_limit(preset);
+    let pieces = piece_count(len, limit) as f64;
+    let report = 60;
+    let (frame, short) = if matches!(preset, Preset::VhfFm | Preset::VhfFast) {
+        let rung = crate::presets::Rung::from_index(preset.ladder_start());
+        (rung.frame_secs(limit + 30), rung.frame_secs(report))
+    } else {
+        (
+            crate::presets::airtime_secs(preset, limit + 30, 0),
+            crate::presets::airtime_secs(preset, report, 0),
+        )
+    };
+    pieces * frame + BURST_QUIET_SECS + short
+}
+
 /// Rough airtime for sending `len` bytes with this preset: every piece plus
 /// its receipt, before any retry.
 pub fn airtime_secs(preset: Preset, len: usize) -> f64 {
@@ -278,6 +332,64 @@ pub fn airtime_secs(preset: Preset, len: usize) -> f64 {
     let last_short = (pieces * limit).saturating_sub(len + NAME_MAX + pieces * PIECE_HDR);
     let saved = last_short as f64 * 8.0 / preset.bitrate_bps().max(1) as f64;
     (piece_frames + receipts - saved).max(0.0)
+}
+
+/// Version byte of a burst report: never a piece, so an older station's
+/// [`Piece::decode`] passes it by.
+pub const REPORT_VER: u8 = 2;
+
+/// The one answer to a burst (QA #365): which pieces of `file_id` the
+/// receiver holds. Body: `ver u8 (2), file_id u32, count u8, bitmap`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Report {
+    pub file_id: u32,
+    pub count: u8,
+    pub held: Vec<u8>,
+}
+
+impl Report {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = vec![REPORT_VER];
+        out.extend_from_slice(&self.file_id.to_le_bytes());
+        out.push(self.count);
+        let mut bits = vec![0u8; usize::from(self.count).div_ceil(8)];
+        for &i in &self.held {
+            if i < self.count {
+                bits[usize::from(i / 8)] |= 1 << (i % 8);
+            }
+        }
+        out.extend_from_slice(&bits);
+        out
+    }
+
+    pub fn decode(body: &[u8]) -> Result<Self> {
+        if body.len() < 6 || body[0] != REPORT_VER {
+            return Err(Error::protocol("not a file report"));
+        }
+        let file_id = u32::from_le_bytes(body[1..5].try_into().unwrap());
+        let count = body[5];
+        let bits = &body[6..];
+        if count == 0 || bits.len() != usize::from(count).div_ceil(8) {
+            return Err(Error::protocol("bad file report"));
+        }
+        let held = (0..count)
+            .filter(|i| bits[usize::from(i / 8)] & (1 << (i % 8)) != 0)
+            .collect();
+        Ok(Self {
+            file_id,
+            count,
+            held,
+        })
+    }
+
+    pub fn complete(&self) -> bool {
+        self.held.len() == usize::from(self.count)
+    }
+
+    /// Pieces the receiver lacks, lowest first.
+    pub fn missing(&self) -> Vec<u8> {
+        (0..self.count).filter(|i| !self.held.contains(i)).collect()
+    }
 }
 
 /// What [`Assembler::push`] made of a piece.
@@ -399,6 +511,28 @@ impl Assembler {
         }
     }
 
+    /// What a burst receiver reports for `file_id` from `origin`: every
+    /// piece once the file is saved, or the pieces held so far.
+    pub fn report(&self, origin: &str, file_id: u32, count: u8) -> Report {
+        let key = (origin.to_ascii_uppercase(), file_id);
+        let held = if self.done.contains_key(&key) {
+            (0..count).collect()
+        } else {
+            let mut held: Vec<u8> = self
+                .partial
+                .get(&key)
+                .map(|p| p.pieces.keys().copied().collect())
+                .unwrap_or_default();
+            held.sort_unstable();
+            held
+        };
+        Report {
+            file_id,
+            count,
+            held,
+        }
+    }
+
     /// May a retry of this piece be answered with a receipt? Not the last
     /// piece of a file that is still missing pieces.
     pub fn may_answer(&self, origin: &str, piece: &Piece) -> bool {
@@ -433,6 +567,29 @@ pub fn progress_bar_from_tag(tag: &str) -> Option<String> {
         have.trim().parse().ok()?,
         count.trim().parse().ok()?,
     ))
+}
+
+/// A burst's step (`+radio/filestep`, QA #365) in the marker style of
+/// grouped lines: `keyed`, `waiting`, `resend:N`, `pieces:N`, `complete`.
+pub fn step_text(step: &str) -> Option<String> {
+    let (word, n) = step.split_once(':').unwrap_or((step, ""));
+    Some(match word {
+        "keyed" => "burst keyed".into(),
+        "waiting" => "burst keyed, waiting for report".into(),
+        "resend" => format!("{n} missing, resending"),
+        "pieces" => format!("{n} missing, sending piece by piece"),
+        "complete" => "complete".into(),
+        _ => return None,
+    })
+}
+
+/// The bar for a `+radio/file` tag and, when there is one, its step.
+pub fn progress_with_step(file: &str, step: Option<&str>) -> Option<String> {
+    let bar = progress_bar_from_tag(file)?;
+    Some(match step.and_then(step_text) {
+        Some(t) => format!("{bar} · {t}"),
+        None => bar,
+    })
 }
 
 /// Files we are sending: which piece receipts have come back, so the file
@@ -548,6 +705,36 @@ fn desktop_dir() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA #365: the report round-trips and says what is missing.
+    #[test]
+    fn a_burst_report_lists_what_is_held_and_missing() {
+        let r = Report {
+            file_id: 0xdead_beef,
+            count: 39,
+            held: (0..39).filter(|i| i % 10 != 3).collect(),
+        };
+        let back = Report::decode(&r.encode()).unwrap();
+        assert_eq!(back, r);
+        assert_eq!(back.missing(), vec![3, 13, 23, 33]);
+        assert!(!back.complete());
+        assert!(r.encode().len() <= 11);
+        assert!(Report::decode(&[2, 0, 0, 0, 0, 9, 0]).is_err());
+    }
+
+    /// The estimate follows the way the file will go: an 8 KB picture in a
+    /// burst on vhf-fast is under a minute; QA's 4.4 KB in pieces was
+    /// about 8 minutes, and the pieces estimate now says so.
+    #[test]
+    fn the_estimate_matches_burst_and_pieces() {
+        let burst = send_secs(Preset::VhfFast, 8192, true);
+        assert!((30.0..60.0).contains(&burst), "{burst:.0} s");
+        let pieces = send_secs(Preset::VhfFast, 4500, false);
+        assert!((6.0 * 60.0..10.0 * 60.0).contains(&pieces), "{pieces:.0} s");
+        // A burst piece fits the 1 s short frame on vhf-fast.
+        assert!(burst_body_limit(Preset::VhfFast) + HEADER_LEN + CRC_LEN <= 254);
+        assert_eq!(burst_body_limit(Preset::VhfFm), body_limit(Preset::VhfFm));
+    }
     use crate::proto::{Callsign, Flags, MsgType};
 
     fn env_for(p: &Piece, seq: u32) -> Envelope {
@@ -767,6 +954,13 @@ mod tests {
     #[test]
     fn junk_is_not_a_piece() {
         assert!(Piece::decode(b"hello").is_err());
+        // A burst report is never taken for a piece, by old or new code.
+        let r = Report {
+            file_id: 7,
+            count: 3,
+            held: vec![0, 2],
+        };
+        assert!(Piece::decode(&r.encode()).is_err());
         assert!(Piece::decode(&[1, 0, 0, 0, 0, 3, 2, 1, 0]).is_err());
     }
 }

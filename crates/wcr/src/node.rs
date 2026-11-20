@@ -12,6 +12,7 @@ use crate::net::hub_client::{ArcFlag, HubClient};
 use crate::net::lan::LanMesh;
 use crate::net::peers::DirectPeers;
 use crate::presets::{self, Preset, Rung};
+use crate::proto::flags::FLAG_BURST;
 use crate::proto::frag::{self, FragAssembler};
 use crate::proto::{
     load_or_create, Callsign, Envelope, Flags, IdentityKeys, MsgId, MsgType, Priority, FLAG_GROUP,
@@ -80,6 +81,10 @@ struct Runtime {
     files: Arc<Mutex<crate::proto::file::Assembler>>,
     /// Files we are sending: piece receipts for the progress bar.
     file_sends: Arc<Mutex<crate::proto::file::Outgoing>>,
+    /// Files we are sending in one burst (QA #365), by file id.
+    burst_sends: Arc<Mutex<HashMap<u32, BurstSend>>>,
+    /// Burst files coming in: (sender, file id) → the pending report's turn.
+    burst_rx: Arc<Mutex<HashMap<(String, u32), u64>>>,
     last_rx_snr: Arc<Mutex<Option<f32>>>,
     radio_lock: Arc<tokio::sync::Mutex<()>>,
     /// One ACK key at a time. The air queue is paused while it runs.
@@ -390,6 +395,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         s.version = crate::update::current_version().into();
         s.tower = cfg.gateway.show_tower(cfg.mode);
         s.gateway_mode = Runtime::gateway_mode_word(&cfg);
+        s.file_send = cfg.rf.file_send.clone();
     }
 
     // Bind chat and status before opening the store. A locked SQLite (old
@@ -522,6 +528,8 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         assembler: Arc::new(Mutex::new(FragAssembler::new())),
         files: Arc::new(Mutex::new(crate::proto::file::Assembler::new())),
         file_sends: Arc::new(Mutex::new(crate::proto::file::Outgoing::new())),
+        burst_sends: Arc::new(Mutex::new(HashMap::new())),
+        burst_rx: Arc::new(Mutex::new(HashMap::new())),
         range_test: Arc::new(Mutex::new(crate::range_test::RangeTest::new())),
         last_rx_snr,
         radio_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -1921,14 +1929,23 @@ async fn send_file(rt: &Runtime, target: &str, path: &str) -> Result<String> {
     let name = crate::proto::file::clean_name(&raw_name);
     let first_seq = rt.store.next_seq(origin.as_str())?;
     let id = crate::proto::file::file_id(origin.as_str(), dest.as_str(), &name, &data, first_seq);
-    let pieces =
-        crate::proto::file::split(id, &name, &data, crate::proto::file::body_limit(preset))?;
+    // QA #365: on vhf-fast (or when set) every piece goes in one burst and
+    // the far end reports once what it lacks.
+    let burst = cfg_g.rf.file_burst(preset);
+    let limit = if burst {
+        crate::proto::file::burst_body_limit(preset)
+    } else {
+        crate::proto::file::body_limit(preset)
+    };
+    let pieces = crate::proto::file::split(id, &name, &data, limit)?;
     let mut flags = Flags::new().with(FLAG_REQ_ACK);
     apply_mode_flags(&mut flags, cfg_g.mode, origin.is_guest());
+    flags.set(FLAG_BURST, burst);
     let hops = Priority::Routine.default_ttl();
     let count = pieces.len();
     let mut last_id = None;
     let mut piece_ids = Vec::with_capacity(count);
+    let mut burst_envs = Vec::new();
     for (i, piece) in pieces.into_iter().enumerate() {
         let seq = if i == 0 {
             first_seq
@@ -1952,6 +1969,11 @@ async fn send_file(rt: &Runtime, target: &str, path: &str) -> Result<String> {
         if i + 1 == count {
             rt.file_sends.lock().start(dest.as_str(), &piece_ids);
         }
+        if burst {
+            burst_envs.push(env.clone());
+            last_id = Some(env.msg_id);
+            continue;
+        }
         dispatch_rf_at(rt, &env, 0, Duration::ZERO, 0).await?;
         rt.store.set_delivery(&env.msg_id, Delivery::Sent)?;
         let hold = relay::next_retry_hold_jittered(
@@ -1964,12 +1986,34 @@ async fn send_file(rt: &Runtime, target: &str, path: &str) -> Result<String> {
         last_id = Some(env.msg_id);
     }
     let last_id = last_id.expect("a file has at least one piece");
-    let secs = crate::proto::file::airtime_secs(preset, data.len());
+    if burst {
+        for env in &burst_envs {
+            rt.store.set_delivery(&env.msg_id, Delivery::Sent)?;
+        }
+        let keyed = key_file_burst(rt, &burst_envs, 0, 0, count as u8).await?;
+        hold_burst_pieces(rt, &burst_envs, keyed);
+        rt.burst_sends.lock().insert(
+            id,
+            BurstSend {
+                dest: dest.to_string(),
+                pieces: burst_envs,
+                tries: 0,
+                quiet_until: std::time::Instant::now()
+                    + Duration::from_secs_f64(keyed + crate::proto::file::BURST_QUIET_SECS),
+            },
+        );
+    }
+    let secs = crate::proto::file::send_secs(preset, data.len(), burst);
+    let how = if burst {
+        "in one burst"
+    } else {
+        "piece by piece"
+    };
     let line = format!(
-        "📎 {name} ({}), {count} piece{}, about {} s on {}",
+        "📎 {name} ({}), {count} piece{} {how}, about {} on {}",
         crate::proto::file::human_size(data.len()),
         if count == 1 { "" } else { "s" },
-        secs.round() as u64,
+        about_time(secs),
         preset.as_str()
     );
     rt.irc
@@ -1981,11 +2025,368 @@ async fn send_file(rt: &Runtime, target: &str, path: &str) -> Result<String> {
         .tagmsg_file_progress(&last_id.hex(), target, origin.as_str(), 0, count as u8)
         .await;
     Ok(format!(
-        "sending {name} to {target}: {}{count} piece{}, about {} s on the air. [ok] on the file line means {target} has the whole file.",
+        "sending {name} to {target}: {}{count} piece{} {how}, about {} on the air. [ok] on the file line means {target} has the whole file.",
         shrunk.unwrap_or_default(),
         if count == 1 { "" } else { "s" },
-        secs.round() as u64
+        about_time(secs)
     ))
+}
+
+/// `45 s` or `8 min`.
+fn about_time(secs: f64) -> String {
+    let s = secs.max(1.0).round() as u64;
+    if s < 90 {
+        format!("{s} s")
+    } else {
+        format!("{} min", (s + 30) / 60)
+    }
+}
+
+/// A file going out in one burst (QA #365).
+struct BurstSend {
+    dest: String,
+    /// Every piece, in order; the last is the file line.
+    pieces: Vec<Envelope>,
+    /// Bursts of missing pieces sent again so far.
+    tries: u32,
+    /// The burst on the air now, and the far end's quiet wait, end here.
+    quiet_until: std::time::Instant,
+}
+
+/// Bursts of missing pieces before the rest goes piece by piece, each on
+/// its own retry timer.
+const BURST_RESENDS: u32 = 2;
+
+/// Key `pieces` back to back as one air-queue item, on the rung for try
+/// `tries` (down the ladder as tries go up). Returns the airtime. The bar
+/// on the file line steps frame by frame as the modem keys them; `have`
+/// pieces are already at the far end, of `count`.
+async fn key_file_burst(
+    rt: &Runtime,
+    pieces: &[Envelope],
+    tries: u32,
+    have: u8,
+    count: u8,
+) -> Result<f64> {
+    let cfg = rt.cfg.lock().clone();
+    let preset = Preset::parse(&cfg.modem.preset).unwrap_or(Preset::VhfFm);
+    let Some(last) = pieces.last() else {
+        return Ok(0.0);
+    };
+    let mut frames = Vec::with_capacity(pieces.len());
+    let mut item_env = None;
+    for env in pieces {
+        let mut env = env.clone();
+        stamp_own_mode_flags(&mut env, &rt.engine.our_call, cfg.mode);
+        let rf_env = rf_copy(&env, preset);
+        frames.push(rf_env.encode()?);
+        item_env = Some(rf_env);
+    }
+    let item_env = item_env.expect("at least one piece");
+    let widest = frames.iter().map(Vec::len).max().unwrap_or(0);
+    let stored = rt
+        .dest_rungs
+        .lock()
+        .get(last.dest.as_str())
+        .copied()
+        .unwrap_or(preset.ladder_start());
+    let rung = presets::rung_for(preset, stored, tries, widest);
+    let secs: f64 = frames
+        .iter()
+        .map(|f| {
+            if preset.is_radio_tnc() {
+                crate::presets::airtime_secs(preset, f.len(), 0)
+            } else {
+                rung.frame_secs(f.len())
+            }
+        })
+        .sum::<f64>()
+        + cfg.rf.turnaround_ms as f64 / 1000.0;
+    let handed_before = rt.air().map(|a| a.own_handed_count());
+    let n = frames.len() as u64;
+    tracing::info!(
+        "file burst to {}: {n} piece{} on {}, about {secs:.0} s",
+        last.dest,
+        if n == 1 { "" } else { "s" },
+        rung.as_str()
+    );
+    enqueue_rf(
+        rt,
+        &item_env,
+        frames,
+        preset,
+        EnqueueOpts {
+            rung: Some(rung),
+            delay: Duration::ZERO,
+            copy: 0,
+        },
+    )
+    .await?;
+    // The queue counts a key for the item; the other pieces went too.
+    for env in &pieces[..pieces.len() - 1] {
+        let _ = rt.store.bump_rf_tx(&env.msg_id);
+    }
+    let line = rt
+        .burst_sends
+        .lock()
+        .values()
+        .find(|b| b.pieces.iter().any(|p| p.msg_id == last.msg_id))
+        .and_then(|b| b.pieces.last().map(|p| p.msg_id.hex()))
+        .unwrap_or_else(|| last.msg_id.hex());
+    if let Some(before) = handed_before {
+        let rt = rt.clone();
+        let dest = last.dest.to_string();
+        tokio::spawn(async move {
+            watch_burst_tx(&rt, before, n, &line, &dest, have, count, secs).await;
+        });
+    }
+    Ok(secs)
+}
+
+/// The file line's bar steps up one piece at a time as modem73 keys each
+/// frame of a burst (QA #365), then waits for the far end's report.
+#[allow(clippy::too_many_arguments)]
+async fn watch_burst_tx(
+    rt: &Runtime,
+    handed_before: u64,
+    frames: u64,
+    line: &str,
+    dest: &str,
+    have: u8,
+    count: u8,
+    secs: f64,
+) {
+    let Some(air) = rt.air() else {
+        return;
+    };
+    let our = rt.engine.our_call.clone();
+    let deadline = std::time::Instant::now() + Duration::from_secs_f64(secs * 3.0 + 120.0);
+    let mut shown = 0u64;
+    while std::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let handed = air
+            .own_handed_count()
+            .saturating_sub(handed_before)
+            .min(frames);
+        if handed == 0 {
+            continue;
+        }
+        let keyed = match rt.control() {
+            Some(c) => match c.get_status().await.ok() {
+                Some(st) if st.tx_queue.is_some() => {
+                    handed.saturating_sub(st.tx_queue.unwrap_or(0) + u64::from(st.ptt_on))
+                }
+                _ => handed,
+            },
+            None => handed,
+        };
+        if keyed <= shown {
+            continue;
+        }
+        shown = keyed;
+        let done = keyed >= frames;
+        let at = (u64::from(have) + keyed).min(u64::from(count)) as u8;
+        rt.irc
+            .tagmsg_file_step(
+                line,
+                dest,
+                &our,
+                at,
+                count,
+                if done { "waiting" } else { "keyed" },
+            )
+            .await;
+        if done {
+            return;
+        }
+    }
+}
+
+/// Burst pieces wait for the far end's report before any retries alone:
+/// the burst's airtime, the quiet wait and a normal retry hold. The air
+/// queue holds back the next item for up to three times a burst's airtime
+/// plus 15 s after it (modem73 does not count sent frames), so a resend
+/// burst can wait that long; the hold covers it.
+fn hold_burst_pieces(rt: &Runtime, pieces: &[Envelope], keyed_secs: f64) {
+    let jitter = rt.cfg.lock().rf.retry_jitter;
+    let now = crate::proto::now_ts();
+    let queue_busy = keyed_secs * 4.0 + 15.0;
+    let wait = (queue_busy + crate::proto::file::BURST_QUIET_SECS).ceil() as u32 + 10;
+    for env in pieces {
+        let retries = rt.store.retries_of(&env.msg_id).unwrap_or(0);
+        let hold = relay::next_retry_hold_jittered(retries, now + wait, Priority::Routine, jitter);
+        let _ = rt.store.set_hold(&env.msg_id, hold, env.hops_left);
+    }
+}
+
+/// The far end's report on a file we sent in a burst (QA #365). Pieces it
+/// holds are done; the missing ones go again in a smaller burst, down the
+/// ladder, and after [`BURST_RESENDS`] piece by piece on their own timers.
+async fn on_file_report(rt: &Runtime, env: &Envelope, report: crate::proto::file::Report) {
+    let from = env.origin.to_string();
+    let Some((dest, pieces, tries, quiet)) =
+        rt.burst_sends.lock().get(&report.file_id).and_then(|b| {
+            b.dest
+                .eq_ignore_ascii_case(&from)
+                .then(|| (b.dest.clone(), b.pieces.clone(), b.tries, b.quiet_until))
+        })
+    else {
+        return;
+    };
+    if pieces.len() != usize::from(report.count) {
+        return;
+    }
+    let count = report.count;
+    let line = pieces.last().map(|p| p.msg_id).expect("pieces");
+    let our = rt.engine.our_call.clone();
+    let complete = report.complete();
+    // Held pieces are done; the last only once the file is whole, since
+    // its receipt is the file's [ok].
+    for &i in &report.held {
+        let Some(p) = pieces.get(usize::from(i)) else {
+            continue;
+        };
+        if p.msg_id == line && !complete {
+            continue;
+        }
+        let _ = rt.store.advance_delivery(&p.msg_id, Delivery::Delivered);
+        let _ = rt.store.set_hold(&p.msg_id, 0, p.hops_left);
+        if let Some(air) = rt.air() {
+            air.cancel(p.msg_id);
+        }
+        rt.file_sends.lock().acked(&p.msg_id.hex());
+    }
+    let have = report.held.len() as u8;
+    if complete {
+        rt.burst_sends.lock().remove(&report.file_id);
+        tracing::info!("file burst to {dest}: complete");
+        rt.irc
+            .tagmsg_file_step(&line.hex(), &dest, &our, count, count, "complete")
+            .await;
+        rt.irc.tagmsg_delivered_via(&line.hex(), "rf").await;
+        return;
+    }
+    let missing: Vec<Envelope> = report
+        .missing()
+        .into_iter()
+        .filter_map(|i| pieces.get(usize::from(i)).cloned())
+        .collect();
+    let gone = missing.len();
+    // A report heard while a resend is still on the air is about the
+    // burst before it.
+    if std::time::Instant::now() < quiet {
+        rt.irc
+            .tagmsg_file_step(
+                &line.hex(),
+                &dest,
+                &our,
+                have,
+                count,
+                &format!("resend:{gone}"),
+            )
+            .await;
+        return;
+    }
+    if tries >= BURST_RESENDS {
+        tracing::info!("file burst to {dest}: {gone} missing, piece by piece now");
+        rt.irc
+            .tagmsg_file_step(
+                &line.hex(),
+                &dest,
+                &our,
+                have,
+                count,
+                &format!("pieces:{gone}"),
+            )
+            .await;
+        return;
+    }
+    tracing::info!("file burst to {dest}: {have}/{count} there, {gone} missing, resending");
+    rt.irc
+        .tagmsg_file_step(
+            &line.hex(),
+            &dest,
+            &our,
+            have,
+            count,
+            &format!("resend:{gone}"),
+        )
+        .await;
+    match key_file_burst(rt, &missing, tries + 1, have, count).await {
+        Ok(secs) => {
+            // The last piece waits too, so it does not go alone meanwhile.
+            let mut held = missing.clone();
+            if let Some(last) = pieces.last() {
+                if !missing.iter().any(|m| m.msg_id == last.msg_id) {
+                    held.push(last.clone());
+                }
+            }
+            hold_burst_pieces(rt, &held, secs);
+            if let Some(b) = rt.burst_sends.lock().get_mut(&report.file_id) {
+                b.tries = tries + 1;
+                b.quiet_until = std::time::Instant::now()
+                    + Duration::from_secs_f64(secs + crate::proto::file::BURST_QUIET_SECS);
+            }
+        }
+        Err(e) => tracing::warn!("file burst to {dest}: resend failed: {e}"),
+    }
+}
+
+/// A burst piece came in, new or again: report once the burst has gone
+/// quiet, or at once after the file's last piece (QA #365). Each new piece
+/// moves the report back, so a burst gets one report.
+fn arm_burst_report(rt: &Runtime, from: &str, file_id: u32, count: u8, soon: bool) {
+    let key = (from.to_ascii_uppercase(), file_id);
+    let turn = {
+        let mut g = rt.burst_rx.lock();
+        let n = g.entry(key.clone()).or_insert(0);
+        *n = n.wrapping_add(1);
+        *n
+    };
+    let wait = if soon {
+        Duration::from_millis(500)
+    } else {
+        Duration::from_secs_f64(crate::proto::file::BURST_QUIET_SECS)
+    };
+    let rt = rt.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(wait).await;
+        if rt.burst_rx.lock().get(&key) != Some(&turn) {
+            return;
+        }
+        if let Err(e) = send_file_report(&rt, &key.0, file_id, count).await {
+            tracing::warn!("file report to {}: {e}", key.0);
+        }
+    });
+}
+
+async fn send_file_report(rt: &Runtime, to: &str, file_id: u32, count: u8) -> Result<()> {
+    let report = rt.files.lock().report(to, file_id, count);
+    let (mode, our) = {
+        let cfg = rt.cfg.lock();
+        (cfg.mode, cfg.callsign.clone())
+    };
+    let origin = Callsign::parse(&our)?;
+    let dest = Callsign::parse(to)?;
+    let mut flags = Flags::new();
+    apply_mode_flags(&mut flags, mode, origin.is_guest());
+    let seq = rt.store.next_seq(origin.as_str())?;
+    let mut env = Envelope::new_msg(
+        origin,
+        dest,
+        seq,
+        report.encode(),
+        Priority::Routine.default_ttl(),
+        flags,
+    )?;
+    env.kind = MsgType::File;
+    tracing::info!(
+        "file report to {to}: {}/{} pieces",
+        report.held.len(),
+        report.count
+    );
+    dispatch_rf_at(rt, &env, 0, Duration::ZERO, 0).await?;
+    Ok(())
 }
 
 /// One piece of a file sent to us. Its receipt goes now, except the last
@@ -1997,11 +2398,20 @@ async fn on_file_piece(rt: &Runtime, env: &Envelope, medium: &str, snr: Option<f
     {
         return;
     }
+    if env.body.first() == Some(&crate::proto::file::REPORT_VER) {
+        if let Ok(report) = crate::proto::file::Report::decode(&env.body) {
+            on_file_report(rt, env, report).await;
+        }
+        return;
+    }
     let Ok(piece) = crate::proto::file::Piece::decode(&env.body) else {
         return;
     };
     let from = env.origin.to_string();
     let (file_id, count, total) = (piece.file_id, piece.count, piece.total);
+    let is_last = piece.is_last();
+    // A burst (QA #365) is answered once, with a report, not per piece.
+    let burst = env.flags.burst();
     // The "receiving" line's id: stable per sender and file.
     let rx_line = format!("file-{}-{file_id:08x}", from.to_ascii_lowercase());
     let pushed = rt.files.lock().push(&from, env, piece);
@@ -2034,7 +2444,9 @@ async fn on_file_piece(rt: &Runtime, env: &Envelope, medium: &str, snr: Option<f
                     .tagmsg_file_progress(&rx_line, &rt.engine.our_call, &from, have, count)
                     .await;
             }
-            if answer && now {
+            if answer && burst {
+                arm_burst_report(rt, &from, file_id, count, is_last);
+            } else if answer && now {
                 let _ = acknowledge(rt, env, snr).await;
             }
         }
@@ -2076,7 +2488,9 @@ async fn on_file_piece(rt: &Runtime, env: &Envelope, medium: &str, snr: Option<f
                     snr,
                 )
                 .await;
-            if answer {
+            if answer && burst {
+                arm_burst_report(rt, &from, file_id, count, true);
+            } else if answer {
                 let _ = acknowledge(rt, env, snr).await;
                 if let Some(last) = held_last {
                     let _ = acknowledge(rt, &last, snr).await;
@@ -3517,6 +3931,16 @@ async fn maybe_answer_retry(rt: &Runtime, env: &Envelope, medium: &str, snr: Opt
         return;
     }
     if !is_line(env) {
+        return;
+    }
+    // A burst piece heard again is answered with the burst's one report
+    // (QA #365), not a receipt.
+    if env.kind == MsgType::File && env.flags.burst() {
+        if env.dest.as_str().eq_ignore_ascii_case(&rt.engine.our_call) {
+            if let Ok(p) = crate::proto::file::Piece::decode(&env.body) {
+                arm_burst_report(rt, env.origin.as_str(), p.file_id, p.count, p.is_last());
+            }
+        }
         return;
     }
     // The last piece of a file is answered only once every piece is here.
@@ -4983,6 +5407,27 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                 let s = snap.lock();
                 crate::band::describe(s.freq_khz)
             }
+        }
+        "filesend" => {
+            // QA #365: how a file in a direct chat goes out.
+            if let Some(v) = sp.next() {
+                if let Err(e) = cfg.lock().rf.set_file_send(v) {
+                    return e;
+                }
+                snap.lock().file_send = cfg.lock().rf.file_send.clone();
+                persist_cfg(&cfg.lock());
+            }
+            let c = cfg.lock();
+            let preset = Preset::parse(&c.modem.preset).unwrap_or(Preset::VhfFm);
+            format!(
+                "file send {}: {}",
+                c.rf.file_send_word(preset),
+                if c.rf.file_burst(preset) {
+                    "every piece in one burst, then one report from the far end"
+                } else {
+                    "one piece at a time, each with its own receipt"
+                }
+            )
         }
         "tower" => {
             let mode = cfg.lock().mode;

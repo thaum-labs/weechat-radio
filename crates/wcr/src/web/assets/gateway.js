@@ -509,6 +509,7 @@ function draw(d) {
   drawDial(d.dial, s);
   drawMailGateway(d.mail_gateway, s);
   drawGatewayMode(d.gateway_mode, d.mail_gateway, s);
+  drawFileSend(d.file_send, s);
   drawRadio(running, s);
   drawLists(d);
   drawDiagnostics(d);
@@ -744,6 +745,47 @@ $("gwmode-save").addEventListener("click", async () => {
       ? `Gateway mode saved: ${value === "mail-only" ? "mail only" : "chat and mail"}.`
       : d.error || "could not save the gateway mode";
     if (r.ok) gwmodeEdited = false;
+  } finally {
+    setTimeout(poll, 500);
+  }
+});
+
+// File send (#365): burst or pieces for a file in a direct chat. Shown on
+// the presets that carry files; saved in wcr.toml, so it works while stopped.
+let filesendEdited = false;
+const FILE_PRESETS = ["vhf-fm", "vhf-fast", "afsk-1200"];
+
+function drawFileSend(saved, s) {
+  const box = $("filesend-box");
+  const preset = s.preset || "";
+  // While stopped the preset is not known here: show it anyway.
+  box.hidden = !saved || (preset !== "" && !FILE_PRESETS.includes(preset));
+  if (box.hidden) return;
+  if (!filesendEdited) $("filesend-pick").value = s.file_send || saved;
+  const v = $("filesend-pick").value;
+  const burst = v === "burst" || (v === "auto" && preset === "vhf-fast");
+  const how = burst
+    ? "Burst: every piece back to back, then the far end says once what it lacks and only that goes again. For a strong link."
+    : "Pieces: one piece at a time, each with its own receipt. Slower; for a weak or marginal link.";
+  $("filesend-how").textContent = v === "auto" ? `Auto, now ${how}` : how;
+}
+
+$("filesend-pick").addEventListener("change", () => {
+  filesendEdited = true;
+  drawFileSend($("filesend-pick").value, { preset: shown.preset });
+});
+$("filesend-save").addEventListener("click", async () => {
+  const value = $("filesend-pick").value;
+  $("action").textContent = "Saving file send…";
+  try {
+    const r = await fetch("/api/station/setting", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ what: "file_send", value }),
+    });
+    const d = await r.json().catch(() => ({}));
+    $("action").textContent = r.ok ? `File send saved: ${value}.` : d.error || "could not save file send";
+    if (r.ok) filesendEdited = false;
   } finally {
     setTimeout(poll, 500);
   }
