@@ -1,0 +1,13 @@
+# Gradle and Android Studio
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+# Made by build-native.sh
+core/target/
+app/src/main/jniLibs/
+.native-build/
+# Never commit a signing key
+*.jks
+*.keystore

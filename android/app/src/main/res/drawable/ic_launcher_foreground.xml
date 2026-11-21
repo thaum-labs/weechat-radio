@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A handheld radio with signal arcs, in the website blue. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#3654D1"
+        android:pathData="M48,30h4v8h8a4,4 0,0 1,4 4v32a4,4 0,0 1,-4 4H48a4,4 0,0 1,-4 -4V42a4,4 0,0 1,4 -4z"/>
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M54,58m-6,0a6,6 0,1 1,12 0a6,6 0,1 1,-12 0M49,44h10v6H49z"/>
+    <path android:strokeColor="#178A2A" android:strokeWidth="3" android:strokeLineCap="round"
+        android:pathData="M36,48a16,16 0,0 0,0 20M72,48a16,16 0,0 1,0 20"/>
+    <path android:strokeColor="#178A2A" android:strokeWidth="3" android:strokeLineCap="round"
+        android:pathData="M30,43a24,24 0,0 0,0 30M78,43a24,24 0,0 1,0 30"/>
+</vector>

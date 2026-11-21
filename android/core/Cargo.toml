@@ -1,0 +1,26 @@
+# The wcr core as a library for the Android app (Kotlin calls it via UniFFI).
+# Its own workspace, so the desktop CI never builds it.
+[workspace]
+
+[package]
+name = "wcr-mobile"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "wcr_mobile"
+
+[dependencies]
+# No desktop window and no sound-card probe on a phone.
+wcr = { path = "../../crates/wcr", default-features = false }
+# Keep in step with UNIFFI_VERSION in android/build-native.sh.
+uniffi = "=0.32.2"
+
+[profile.release]
+# Keep symbols: uniffi-bindgen reads its metadata from them.
+strip = "debuginfo"
+lto = "thin"
+opt-level = "s"
