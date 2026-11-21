@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Cable
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Palette
@@ -48,6 +49,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.weechatradio.app.core.Core
 import com.weechatradio.app.radio.Radio
+import com.weechatradio.app.radio.RadioLink
 import com.weechatradio.app.ui.theme.ThemeChoice
 
 @Composable
@@ -70,7 +72,7 @@ fun SettingsScreen(radio: Radio, theme: ThemeChoice, onTheme: (ThemeChoice) -> U
             SectionTitle("Station", Modifier.padding(start = 16.dp, top = 8.dp))
             Setting(Icons.Filled.Person, "Callsign", "${s.callsign} · grid ${s.grid}", onClick = { editingCall = true })
             // Tap to pick another radio (back to Connect radio).
-            Setting(Icons.Filled.Bluetooth, "Radio", "${s.radioName} · ${s.link.label}", arrow = true, onClick = radio::disconnect)
+            Setting(if (s.link == RadioLink.VoxCable) Icons.Filled.Cable else Icons.Filled.Bluetooth, "Radio", "${s.radioName} · ${s.link.label}", arrow = true, onClick = radio::disconnect)
             Setting(
                 Icons.Filled.SettingsInputAntenna, "Channel and mode",
                 "${s.frequencyMhz} · ${s.mode} · ${s.preset}", arrow = true, onClick = { pickingPreset = true },

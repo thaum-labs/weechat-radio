@@ -76,25 +76,6 @@ jobs:
       - name: screenshots of every screen (Standard light/dark, modem73)
         working-directory: android
         run: ./gradlew --no-daemon testDebugUnitTest
-      - name: TEMP screenshot montage in the log (removed before merge)
-        run: |
-          pip install -q pillow
-          python3 - <<'PY'
-          import base64, io
-          from PIL import Image
-          d = "android/app/build/screens/"
-          names = ["standard-light/1-connect", "standard-light/9-vox-headset-setup", "standard-light/10-vox-cable-setup",
-                   "standard-light/11-radio-vox", "standard-light/12-settings-vox", "modem73/9-vox-headset-setup",
-                   "standard-dark/1-connect", "modem73/11-radio-vox"]
-          ims = [Image.open(d + n + ".png").convert("RGB") for n in names]
-          w = 360; ims = [i.resize((w, int(i.height * w / i.width))) for i in ims]
-          h = max(i.height for i in ims)
-          sheet = Image.new("RGB", (w * 4 + 30, h * 2 + 10), "white")
-          for n, i in enumerate(ims):
-              sheet.paste(i, ((n % 4) * (w + 10), (n // 4) * (h + 10)))
-          buf = io.BytesIO(); sheet.save(buf, "JPEG", quality=70)
-          print("MONTAGE vox " + base64.b64encode(buf.getvalue()).decode())
-          PY
       - uses: actions/upload-artifact@v4
         with:
           name: android-screens
