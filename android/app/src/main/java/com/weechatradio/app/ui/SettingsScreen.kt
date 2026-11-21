@@ -69,7 +69,8 @@ fun SettingsScreen(radio: Radio, theme: ThemeChoice, onTheme: (ThemeChoice) -> U
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())) {
             SectionTitle("Station", Modifier.padding(start = 16.dp, top = 8.dp))
             Setting(Icons.Filled.Person, "Callsign", "${s.callsign} · grid ${s.grid}", onClick = { editingCall = true })
-            Setting(Icons.Filled.Bluetooth, "Radio", "${s.radioName} · Bluetooth", arrow = true)
+            // Tap to pick another radio (back to Connect radio).
+            Setting(Icons.Filled.Bluetooth, "Radio", "${s.radioName} · ${s.link.label}", arrow = true, onClick = radio::disconnect)
             Setting(
                 Icons.Filled.SettingsInputAntenna, "Channel and mode",
                 "${s.frequencyMhz} · ${s.mode} · ${s.preset}", arrow = true, onClick = { pickingPreset = true },
@@ -79,7 +80,8 @@ fun SettingsScreen(radio: Radio, theme: ThemeChoice, onTheme: (ThemeChoice) -> U
                 headlineContent = { Text("Transmit level") },
                 supportingContent = {
                     Column {
-                        Text("${s.txLevelDb} dB · set radio squelch to 0")
+                        // Digital modes run at squelch 0, except VOX radios (squelch 1, VOX 4: QA #365).
+                        Text("${s.txLevelDb} dB · " + if (s.link.isVox) "radio: squelch 1, VOX 4" else "set radio squelch to 0")
                         Slider(
                             value = s.txLevelDb.toFloat(),
                             onValueChange = { radio.setTxLevel(it.toInt()) },
@@ -133,7 +135,7 @@ fun SettingsScreen(radio: Radio, theme: ThemeChoice, onTheme: (ThemeChoice) -> U
         radio.setCallsign(it)
         editingCall = false
     }
-    if (pickingPreset) PresetDialog(s.preset, onDismiss = { pickingPreset = false }) {
+    if (pickingPreset) PresetDialog(s.preset, vox = s.link.isVox, onDismiss = { pickingPreset = false }) {
         radio.setPreset(it)
         pickingPreset = false
     }
@@ -168,9 +170,12 @@ private fun CallsignDialog(current: String, onDismiss: () -> Unit, onSave: (Stri
     )
 }
 
+/** What has worked over VOX so far (Tobias, 2026-10-21: only hf-poor decoded over VOX). */
+private val VoxBestPresets = setOf("hf-poor")
+
 /** The preset list comes straight from the wcr core, so it always matches the desktop app. */
 @Composable
-private fun PresetDialog(current: String, onDismiss: () -> Unit, onPick: (String) -> Unit) {
+private fun PresetDialog(current: String, vox: Boolean, onDismiss: () -> Unit, onPick: (String) -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Mode") },
@@ -180,11 +185,13 @@ private fun PresetDialog(current: String, onDismiss: () -> Unit, onPick: (String
                 Text("The wcr core is not loaded in this build.")
             } else {
                 LazyColumn {
-                    items(presets, key = { it.name }) { p ->
+                    // afsk-1200 needs the radio's own TNC, which a VOX radio does not have.
+                    items(presets.filter { !(vox && it.usesRadioTnc) }, key = { it.name }) { p ->
+                        val best = vox && p.name in VoxBestPresets
                         ListItem(
                             modifier = Modifier.clickable { onPick(p.name) },
                             leadingContent = { RadioButton(selected = p.name == current, onClick = { onPick(p.name) }) },
-                            headlineContent = { Text(p.name) },
+                            headlineContent = { Text(if (best) "${p.name} · best on VOX" else p.name) },
                             supportingContent = { Text(p.description) },
                         )
                     }

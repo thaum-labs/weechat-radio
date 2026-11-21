@@ -24,9 +24,21 @@ class SimulatedRadio(initial: RadioStatus = RadioStatus()) : Radio {
     override var onAir by mutableStateOf(sampleOnAir())
     override val mailAddress: String get() = "${status.callsign}@mail.weechatradio.com"
 
-    override fun connect() {
-        status = status.copy(connected = true, sentToday = 14, heardToday = 31)
+    override fun connect(name: String, link: RadioLink) {
+        // VOX starts on a robust preset (hf-poor is what worked for Tobias over
+        // speaker and mic); the Bluetooth-PTT radios keep vhf-fm.
+        val preset = if (link.isVox) "hf-poor" else status.preset
+        status = status.copy(
+            connected = true, radioName = name, link = link, preset = preset,
+            sentToday = 14, heardToday = 31,
+        )
+        main.removeCallbacksAndMessages(null)
         tickLevels()
+    }
+
+    override fun disconnect() {
+        main.removeCallbacksAndMessages(null)
+        status = status.copy(connected = false)
     }
 
     private fun tickLevels() {

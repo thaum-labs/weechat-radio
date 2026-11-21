@@ -1,5 +1,6 @@
 package com.weechatradio.app.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -9,8 +10,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Cable
+import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.SettingsRemote
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -23,18 +29,32 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.weechatradio.app.radio.Radio
+import com.weechatradio.app.radio.RadioLink
 
-/** First run: pick the radio. Simulated for now; Phase 0 makes it real Bluetooth. */
+/**
+ * First run: pick the radio. Bluetooth radios (VR-N76, UV-PRO) carry audio and
+ * PTT themselves; any other radio works on VOX, over a Bluetooth headset link
+ * or a USB-C audio lead. Simulated for now; Phase 0 makes it real.
+ */
 @Composable
 fun ConnectRadioScreen(radio: Radio) {
+    var vox by rememberSaveable { mutableStateOf<RadioLink?>(null) }
+    vox?.let { link ->
+        VoxSetupScreen(link, back = { vox = null }) { radio.connect(it, link) }
+        return
+    }
     Surface(Modifier.fillMaxSize()) {
         Column(
-            Modifier.safeDrawingPadding().padding(20.dp),
+            Modifier.safeDrawingPadding().verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Connect your radio", style = MaterialTheme.typography.headlineMedium)
@@ -47,14 +67,14 @@ fun ConnectRadioScreen(radio: Radio) {
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
             ) {
                 Column(
-                    Modifier.fillMaxWidth().padding(24.dp),
+                    Modifier.fillMaxWidth().padding(20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Icon(
                         Icons.Filled.SettingsRemote, contentDescription = null,
-                        modifier = Modifier.size(96.dp), tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary,
                     )
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(8.dp))
                     Text("Looking for radios…", style = MaterialTheme.typography.titleMedium)
                     Text(
                         "Turn the radio on and close the radio maker's app.",
@@ -66,15 +86,24 @@ fun ConnectRadioScreen(radio: Radio) {
             }
             SectionTitle("Found nearby", Modifier.padding(top = 8.dp))
             RadioRow("VR-N76", "Paired · signal strong") {
-                Button(onClick = radio::connect) { Text("Connect") }
+                Button(onClick = { radio.connect("VR-N76", RadioLink.BluetoothRadio) }) { Text("Connect") }
             }
             RadioRow("UV-PRO", "Not paired · signal weak") {
                 OutlinedButton(onClick = {}) { Text("Pair") }
             }
-            Spacer(Modifier.weight(1f))
+
+            SectionTitle("Any other radio, on VOX", Modifier.padding(top = 8.dp))
             Text(
-                "Simulated radio: real Bluetooth comes when the phone arrives.",
-                modifier = Modifier.fillMaxWidth(),
+                "For radios like the Baofeng UV-36 Pro. The radio's VOX keys it when the phone sends sound.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            VoxRow(RadioLink.VoxHeadset, "Paired to the phone as a headset") { vox = it }
+            VoxRow(RadioLink.VoxCable, "USB-C to K1 audio lead") { vox = it }
+
+            Text(
+                "Simulated radio: real Bluetooth and audio come when the phone arrives.",
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -91,6 +120,20 @@ private fun RadioRow(name: String, detail: String, action: @Composable () -> Uni
             supportingContent = { Text(detail) },
             leadingContent = { Icon(Icons.Filled.Bluetooth, contentDescription = null) },
             trailingContent = action,
+        )
+    }
+}
+
+@Composable
+private fun VoxRow(link: RadioLink, detail: String, onPick: (RadioLink) -> Unit) {
+    OutlinedCard(Modifier.fillMaxWidth().clickable { onPick(link) }) {
+        ListItem(
+            headlineContent = { Text(if (link == RadioLink.VoxHeadset) "Bluetooth headset" else "USB-C cable") },
+            supportingContent = { Text(detail) },
+            leadingContent = {
+                Icon(if (link == RadioLink.VoxHeadset) Icons.Filled.Headset else Icons.Filled.Cable, contentDescription = null)
+            },
+            trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null) },
         )
     }
 }

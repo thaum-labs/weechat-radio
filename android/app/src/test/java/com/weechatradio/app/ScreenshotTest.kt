@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import com.github.takahirom.roborazzi.captureRoboImage
+import com.weechatradio.app.radio.RadioLink
 import com.weechatradio.app.radio.RadioStatus
 import com.weechatradio.app.radio.SimulatedRadio
 import com.weechatradio.app.ui.ChatsScreen
@@ -14,6 +15,7 @@ import com.weechatradio.app.ui.NewMailScreen
 import com.weechatradio.app.ui.RadioScreen
 import com.weechatradio.app.ui.ReadMailScreen
 import com.weechatradio.app.ui.SettingsScreen
+import com.weechatradio.app.ui.VoxSetupScreen
 import com.weechatradio.app.ui.theme.ThemeChoice
 import com.weechatradio.app.ui.theme.WeeChatRadioTheme
 import org.junit.Rule
@@ -59,4 +61,16 @@ class ScreenshotTest(private val look: String) {
     @Test fun newMail() = shot("6-new-mail") { NewMailScreen(radio, "sam@example.com", "Re: Weekend plans") {} }
     @Test fun radioTab() = shot("7-radio") { RadioScreen(radio) {} }
     @Test fun settings() = shot("8-settings") { SettingsScreen(radio, theme, {}) {} }
+
+    // VOX radios (any radio, keyed by its own VOX).
+    private val voxRadio = SimulatedRadio(
+        RadioStatus(
+            connected = true, radioName = "UV-36 Pro", link = RadioLink.VoxHeadset, preset = "hf-poor",
+            hearing = 0.55f, channelBusy = 0.02f, snrDb = 6, sentToday = 3, heardToday = 9,
+        ),
+    )
+    @Test fun voxHeadsetSetup() = shot("9-vox-headset-setup") { VoxSetupScreen(RadioLink.VoxHeadset, {}) {} }
+    @Test fun voxCableSetup() = shot("10-vox-cable-setup") { VoxSetupScreen(RadioLink.VoxCable, {}) {} }
+    @Test fun voxRadioTab() = shot("11-radio-vox") { RadioScreen(voxRadio) {} }
+    @Test fun voxSettings() = shot("12-settings-vox") { SettingsScreen(voxRadio, theme, {}) {} }
 }

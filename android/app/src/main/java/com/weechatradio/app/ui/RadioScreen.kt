@@ -13,6 +13,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Cable
+import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -42,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.weechatradio.app.core.Core
 import com.weechatradio.app.radio.Radio
+import com.weechatradio.app.radio.RadioLink
 import com.weechatradio.app.ui.theme.LocalStatusColors
 
 @Composable
@@ -69,9 +72,16 @@ fun RadioScreen(radio: Radio, open: (Page) -> Unit) {
             Panel {
                 ListItem(
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    leadingContent = { Icon(Icons.Filled.Bluetooth, contentDescription = null, tint = colors.primary) },
+                    leadingContent = {
+                        val icon = when (s.link) {
+                            RadioLink.BluetoothRadio -> Icons.Filled.Bluetooth
+                            RadioLink.VoxHeadset -> Icons.Filled.Headset
+                            RadioLink.VoxCable -> Icons.Filled.Cable
+                        }
+                        Icon(icon, contentDescription = null, tint = colors.primary)
+                    },
                     headlineContent = { Text("${s.radioName} connected", fontWeight = FontWeight.SemiBold) },
-                    supportingContent = { Text("Bluetooth · listening") },
+                    supportingContent = { Text("${s.link.label} · listening") },
                     trailingContent = { Text("On air", color = status.good, style = MaterialTheme.typography.labelMedium) },
                 )
             }

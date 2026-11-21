@@ -8,6 +8,16 @@ enum class Delivery(val words: String) {
     NoReceipt("no receipt"),
 }
 
+/** How the phone reaches the radio. */
+enum class RadioLink(val label: String, val isVox: Boolean) {
+    /** VR-N76, UV-PRO, GA-5WB: audio and PTT over the radio's own Bluetooth link. */
+    BluetoothRadio("Bluetooth", false),
+    /** Any radio paired to the phone as a Bluetooth headset; the radio's VOX keys it. */
+    VoxHeadset("VOX · Bluetooth headset", true),
+    /** Any radio on a USB-C to K1 audio lead; the radio's VOX keys it. */
+    VoxCable("VOX · USB-C cable", true),
+}
+
 data class ChatMessage(
     val id: Long,
     val from: String,
@@ -48,6 +58,7 @@ data class OnAirEvent(val time: String, val what: String, val detail: String, va
 
 data class RadioStatus(
     val radioName: String = "VR-N76",
+    val link: RadioLink = RadioLink.BluetoothRadio,
     val connected: Boolean = false,
     val frequencyMhz: String = "144.950",
     val preset: String = "vhf-fm",
@@ -78,7 +89,9 @@ interface Radio {
     val onAir: List<OnAirEvent>
     val mailAddress: String
 
-    fun connect()
+    fun connect(name: String, link: RadioLink)
+    /** Back to the Connect radio screen, to pick another radio. */
+    fun disconnect()
     fun sendChat(name: String, text: String)
     fun openChat(name: String)
     fun sendMail(to: String, subject: String, body: String)
