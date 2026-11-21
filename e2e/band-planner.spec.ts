@@ -936,8 +936,14 @@ test("PMR446 with a mobile antenna keeps the gain and shows a short note", async
   const note = page.locator(".band-ant-note");
   await expect(note).toContainText("built-in antenna; an external roof antenna isn't licence-free");
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-  const box = await note.boundingBox();
-  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  // The card is redrawn in place: wait for the note's settled box, not a
+  // node that was just swapped out (boundingBox() null on a loaded runner).
+  await expect
+    .poll(async () => {
+      const box = await note.boundingBox();
+      return box ? box.x + box.width : null;
+    })
+    .toBeLessThanOrEqual(390);
   await page.locator("#band-override").selectOption("cb");
   await expect(page.locator(".band-ant-note")).toHaveCount(0);
 });
