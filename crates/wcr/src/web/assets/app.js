@@ -641,10 +641,19 @@ async function loadMail() {
     const what = el("span", "what");
     const via = (m.via || []).at(-1);
     const who = folder === "inbox" ? m.from_addr : `${m.to_addr}${via ? ` · via ${via.gateway}` : ""}`;
-    what.append(el("span", "subject", m.subject || "(no subject)"), el("span", "who", who));
+    const subject = el("span", "subject", m.subject || "(no subject)");
+    if ((m.files || []).length) {
+      const clip = el("span", "clip", "📎");
+      clip.title = (m.files || []).map((f) => f.name).join(", ");
+      subject.append(clip);
+    }
+    what.append(subject, el("span", "who", who));
     const bar = sendBar(m);
     if (bar) what.append(bar);
-    li.append(el("span", "when", clock(m.ts)), chip(m.status || {}), what);
+    li.append(el("span", "when", clock(m.ts)));
+    // A received mail needs no chip: it says nothing the Inbox does not.
+    if (!quietChip(m.status)) li.append(chip(m.status || {}));
+    li.append(what);
     li.tabIndex = 0;
     li.onclick = () => showMail(m.id);
     li.onkeydown = (e) => { if (e.key === "Enter") showMail(m.id); };
@@ -656,17 +665,29 @@ async function loadMail() {
   }
 }
 
+// The Mail tab shows one thing at a time: the list, a mail, or the form.
+function mailPane(which) {
+  $("mail-home").hidden = which !== "home";
+  $("mail-view").hidden = which !== "view";
+  $("mail-form").hidden = which !== "form";
+  if (which === "home") openMail = null;
+  window.scrollTo(0, 0);
+}
+
+const quietChip = (st) => !st || st.key === "received";
+const FOLDER_NAMES = { inbox: "Inbox", outbox: "Outbox", sent: "Sent" };
+
 const STAGES = { locate: "finding a mail gateway", air: "on air", gateway: "at the gateway", sent: "sent (Resend took it)", report: "delivery report", failed: "failed", fetched: "fetched", keyed: "burst keyed" };
 
 function drawMail(m) {
   openMail = m;
-  $("mail-view").hidden = false;
-  $("mail-form").hidden = true;
+  $("mail-close").textContent = `‹ ${FOLDER_NAMES[$("folder").value] || "Back"}`;
   $("mv-subject").textContent = m.subject || "(no subject)";
   $("mv-who").textContent = `${m.from_addr} → ${m.to_addr} · ${clock(m.ts)}`;
   const st = m.status || {};
   const p = $("mv-status");
-  p.replaceChildren(chip(st), document.createTextNode(` ${st.word || ""}`));
+  p.replaceChildren();
+  if (!quietChip(st)) p.append(chip(st), document.createTextNode(` ${st.word || ""}`));
   if (st.reason) p.append(el("span", "dim small block", st.reason));
   const bar = sendBar(m);
   if (bar) {
@@ -703,13 +724,19 @@ function drawMail(m) {
 async function showMail(id) {
   try {
     drawMail(await getJson(`/api/mail/open?id=${encodeURIComponent(id)}`));
-    $("mail-view").scrollIntoView({ block: "start" });
+    mailPane("view");
   } catch (err) {
     alert(err.message);
   }
 }
 
-$("mail-close").onclick = () => { openMail = null; $("mail-view").hidden = true; };
+$("mail-close").onclick = () => { mailPane("home"); loadMail(); };
+$("mail-delete").onclick = async () => {
+  if (!openMail || !confirm("Delete this mail from the station?")) return;
+  try { await post("/api/mail/delete", { id: openMail.id }); } catch (err) { alert(err.message); return; }
+  mailPane("home");
+  loadMail();
+};
 $("mail-retry").onclick = async () => {
   if (!openMail) return;
   try { await post("/api/mail/retry", { id: openMail.id }); } catch (err) { alert(err.message); }
@@ -727,7 +754,7 @@ $("mail-reply").onclick = () => {
   const subj = openMail.subject || "";
   newMail(openMail.from_addr, /^re:/i.test(subj) ? subj : `Re: ${subj}`);
 };
-$("folder").onchange = () => { openMail = null; $("mail-view").hidden = true; loadMail(); };
+$("folder").onchange = () => { mailPane("home"); loadMail(); };
 $("check-mail").onclick = async () => {
   $("check-mail").disabled = true;
   try { await post("/api/mail/check"); } catch (err) { alert(err.message); }
@@ -736,9 +763,8 @@ $("check-mail").onclick = async () => {
 };
 
 function newMail(to, subject) {
-  openMail = null;
-  $("mail-view").hidden = true;
-  $("mail-form").hidden = false;
+  mailPane("form");
+  $("m-title").textContent = to ? "Reply" : "New mail";
   $("m-to").value = to || "";
   $("m-subject").value = subject || "";
   $("m-body").value = "";
@@ -860,7 +886,8 @@ $("m-attach-file").onchange = async () => {
   for (const f of picked) mailPicks.push(await readPick(f, usedBytes()));
   drawMailFiles();
 };
-$("m-cancel").onclick = () => { $("mail-form").hidden = true; };
+$("m-cancel").onclick = () => mailPane("home");
+$("m-back").onclick = () => mailPane("home");
 $("mail-form").onsubmit = async (e) => {
   e.preventDefault();
   const why = mailMissing();
@@ -877,7 +904,7 @@ $("mail-form").onsubmit = async (e) => {
       files: mailPicks.map((p) => ({ name: p.name, data: p.data })),
     };
     await post("/api/mail/send", send);
-    $("mail-form").hidden = true;
+    mailPane("home");
     $("folder").value = "outbox";
     loadMail();
   } catch (err) {

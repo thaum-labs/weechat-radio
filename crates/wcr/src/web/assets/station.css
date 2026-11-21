@@ -248,6 +248,13 @@ main.wide { max-width: 1100px; }
 .mail-list { margin-top: 8px; }
 .mail-list li { cursor: pointer; }
 .mail-list li.unread .subject { color: var(--fg); font-weight: 700; }
+/* Unread: a dot before the subject. Has files: a clip after it. */
+.mail-list li.unread .subject::before { content: "● "; color: var(--accent); }
+.mail-list .clip { margin-left: 6px; }
+.mail-head { justify-content: space-between; }
+.mail-acts { gap: 8px; margin: 0; }
+#mv-files a { display: inline-block; border: 1px solid color-mix(in srgb, var(--green) 55%, var(--line));
+  color: var(--green); border-radius: 8px; padding: 6px 10px; text-decoration: none; }
 .mail-list li.waiting { cursor: default; }
 .mail-list .bar, #mv-status .bar, .mail-get .bar { color: var(--green); font-family: var(--mono); font-size: 12px; white-space: nowrap; }
 .list .what .bar { display: block; }

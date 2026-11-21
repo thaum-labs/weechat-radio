@@ -254,6 +254,7 @@ fn router(web: Web) -> Router {
         .route("/api/mail/open", get(mail_open))
         .route("/api/mail/send", post(mail_send))
         .route("/api/mail/retry", post(mail_retry))
+        .route("/api/mail/delete", post(mail_delete))
         .route("/api/mail/cancel", post(mail_cancel))
         .route("/api/mail/check", post(mail_check))
         .route("/api/mail/get", post(mail_get))
@@ -1039,6 +1040,12 @@ async fn mail_send(State(web): State<Web>, Json(b): Json<Value>) -> Response {
 
 async fn mail_retry(State(web): State<Web>, Json(b): Json<Value>) -> Response {
     web.local_post("/mail/retry", json!({ "id": b["id"] }))
+        .await
+}
+
+/// Delete a mail from the station's store (the Pi page had no delete).
+async fn mail_delete(State(web): State<Web>, Json(b): Json<Value>) -> Response {
+    web.local_post("/mail/delete", json!({ "id": b["id"] }))
         .await
 }
 

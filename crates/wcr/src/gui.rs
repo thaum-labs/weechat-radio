@@ -757,6 +757,10 @@ struct GuiApp {
     mail_toast_warn: bool,
     mail_notice: String,
     mail_open: Option<crate::mail::MailView>,
+    /// The compose form is open (New, Reply, Re-send or a dropped file).
+    mail_compose: bool,
+    /// The Email settings panel under the gear is open.
+    mail_settings: bool,
     mail_rows: Vec<crate::mail::MailView>,
     /// The folder `mail_rows` was fetched for. Another folder's rows never
     /// show under a tab.
@@ -899,6 +903,8 @@ impl GuiApp {
             mail_toast_warn: false,
             mail_notice: String::new(),
             mail_open: None,
+            mail_compose: false,
+            mail_settings: false,
             mail_rows: Vec::new(),
             mail_rows_folder: String::new(),
             mail_waiting: Vec::new(),
@@ -1451,6 +1457,9 @@ impl GuiApp {
         }
         for path in dropped {
             if email {
+                if !self.mail_compose {
+                    self.start_compose(String::new(), String::new());
+                }
                 self.attach_mail_file(&path);
                 continue;
             }
@@ -5177,6 +5186,7 @@ impl GuiApp {
                 self.mail_body.clear();
                 self.clear_mail_files();
                 self.mail_folder = "sent".into();
+                self.mail_compose = false;
             }
         }
     }
@@ -5379,6 +5389,7 @@ impl GuiApp {
         self.leave_setup();
         self.center = CenterView::Email;
         self.mail_folder = "inbox".into();
+        self.mail_compose = false;
         if let Some(view) = mail_http(
             "GET",
             &format!(
@@ -5455,15 +5466,9 @@ impl GuiApp {
         }
     }
 
+    /// The Email screen shows one thing at a time: the folder list, the
+    /// opened mail, or the compose form (2026-11-21 email UI review).
     fn paint_email(&mut self, ui: &mut egui::Ui) {
-        let addr = crate::mail::wcr_address(&self.callsign);
-        module_title(ui, "EMAIL", &addr);
-        ui.add_space(6.0);
-        if !self.mail_toast.is_empty() {
-            let color = if self.mail_toast_warn { ORANGE } else { GREEN };
-            ui.label(RichText::new(&self.mail_toast).color(color).monospace());
-            ui.add_space(4.0);
-        }
         let mode = self
             .status
             .as_ref()
@@ -5474,13 +5479,54 @@ impl GuiApp {
             .as_ref()
             .and_then(|s| Preset::parse(&s.preset))
             .unwrap_or(Preset::HfPoor);
+        let view = if self.mail_compose {
+            MailPane::Compose
+        } else if self.mail_open.is_some() {
+            MailPane::Read
+        } else {
+            MailPane::List
+        };
+        let gear = match view {
+            MailPane::List => self.paint_mail_list_bar(ui, mode),
+            MailPane::Read => self.paint_mail_read_bar(ui),
+            MailPane::Compose => self.paint_mail_compose_bar(ui),
+        };
+        if let Some(gear) = gear {
+            if gear.clicked() {
+                self.mail_settings = !self.mail_settings;
+            }
+            if self.mail_settings {
+                self.paint_mail_settings(ui, gear.rect);
+            }
+        }
+        ui.add_space(4.0);
+        if !self.mail_toast.is_empty() {
+            let color = if self.mail_toast_warn { ORANGE } else { GREEN };
+            ui.label(RichText::new(&self.mail_toast).color(color).monospace());
+            ui.add_space(4.0);
+        }
+        match view {
+            MailPane::List => self.paint_mail_rows(ui, mode),
+            MailPane::Read => {
+                if let Some(open) = self.mail_open.clone() {
+                    egui::ScrollArea::vertical()
+                        .id_salt("mail_read")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| self.paint_mail_open(ui, &open, preset));
+                }
+            }
+            MailPane::Compose => self.paint_mail_compose(ui, mode, preset),
+        }
+        if let Some(confirm) = self.mail_confirm.clone() {
+            self.paint_mail_confirm(ui, &confirm, mode, preset);
+        }
+    }
+
+    /// Folder tabs, Check mail, the address, + New and the settings gear.
+    fn paint_mail_list_bar(&mut self, ui: &mut egui::Ui, mode: Mode) -> Option<egui::Response> {
+        let addr = crate::mail::wcr_address(&self.callsign);
         ui.horizontal(|ui| {
-            for (id, label) in [
-                ("inbox", "Inbox"),
-                ("outbox", "Outbox"),
-                ("sent", "Sent"),
-                ("drafts", "Drafts"),
-            ] {
+            for (id, label) in [("inbox", "Inbox"), ("outbox", "Outbox"), ("sent", "Sent")] {
                 let on = self.mail_folder == id;
                 if ui
                     .selectable_label(on, RichText::new(label).monospace())
@@ -5506,35 +5552,133 @@ impl GuiApp {
                     let _ = mail_http("POST", "/mail/check", Some("{}"));
                 }
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let gear = ui.add(hair_btn("⚙", PURPLE));
+                hover_tip(&gear, "Email settings: Copy-to and the mail gateway");
+                if ui.add(hair_btn("+ New", GREEN)).clicked() {
+                    self.start_compose(String::new(), String::new());
+                }
+                ui.label(RichText::new(&addr).color(ORANGE).monospace());
+                gear
+            })
+            .inner
+        })
+        .inner
+        .into()
+    }
+
+    /// Back to the folder, where this mail is in it, Reply and Delete.
+    fn paint_mail_read_bar(&mut self, ui: &mut egui::Ui) -> Option<egui::Response> {
+        let open = self.mail_open.clone()?;
+        let row = &open.row;
+        ui.horizontal(|ui| {
+            if ui
+                .add(hair_btn(
+                    &format!("< {}", folder_name(&self.mail_folder)),
+                    PURPLE,
+                ))
+                .clicked()
+            {
+                self.mail_open = None;
+                self.last_mail_poll = Instant::now() - Duration::from_secs(5);
+            }
+            if let Some(n) = self.mail_rows.iter().position(|r| r.row.id == row.id) {
+                ui.label(
+                    RichText::new(format!("{} of {}", n + 1, self.mail_rows.len()))
+                        .color(DIM)
+                        .monospace(),
+                );
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.add(hair_btn("Delete", RED)).clicked() {
+                    self.delete_mail(&row.id);
+                }
+                if row.folder == "inbox" && ui.add(hair_btn("Reply", ORANGE)).clicked() {
+                    self.start_compose(row.from_addr.clone(), reply_subject(&row.subject));
+                }
+            });
         });
-        ui.add_space(6.0);
+        None
+    }
+
+    /// Back to the list (the text stays), the title and the settings gear.
+    fn paint_mail_compose_bar(&mut self, ui: &mut egui::Ui) -> Option<egui::Response> {
+        ui.horizontal(|ui| {
+            if ui.add(hair_btn("< Back", PURPLE)).clicked() && !self.mail_hold {
+                self.mail_compose = false;
+                self.mail_settings = false;
+            }
+            let title = if self.mail_subject.starts_with("Re: ") && !self.mail_to.is_empty() {
+                "Reply"
+            } else {
+                "New mail"
+            };
+            ui.label(
+                RichText::new(title)
+                    .color(Color32::WHITE)
+                    .strong()
+                    .monospace(),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let gear = ui.add(hair_btn("⚙", PURPLE));
+                hover_tip(&gear, "Email settings: Copy-to and the mail gateway");
+                gear
+            })
+            .inner
+        })
+        .inner
+        .into()
+    }
+
+    /// Opens the compose form, To and Subject filled for a reply.
+    fn start_compose(&mut self, to: String, subject: String) {
+        if self.mail_hold {
+            return;
+        }
+        if !to.is_empty() || !self.mail_compose {
+            self.mail_to = to;
+            self.mail_subject = subject;
+            self.mail_body.clear();
+            self.clear_mail_files();
+        }
+        self.mail_open = None;
+        self.mail_compose = true;
+        self.mail_toast.clear();
+    }
+
+    fn delete_mail(&mut self, id: &str) {
+        let _ = mail_http(
+            "POST",
+            "/mail/delete",
+            Some(&serde_json::json!({ "id": id }).to_string()),
+        );
+        self.mail_rows.retain(|r| r.row.id != id);
+        self.mail_waiting.retain(|w| w.id != id);
+        if self.mail_open.as_ref().map(|m| m.row.id.as_str()) == Some(id) {
+            self.mail_open = None;
+        }
+    }
+
+    /// The folder's mail, one line each, filling the screen.
+    fn paint_mail_rows(&mut self, ui: &mut egui::Ui, mode: Mode) {
         let loading = self.mail_rows_folder != self.mail_folder;
         let rows = if loading {
             Vec::new()
         } else {
             self.mail_rows.clone()
         };
+        let waiting = self.mail_folder == "inbox" && mode == Mode::RadioPlus;
         let mut open_id = None;
         let mut delete_id = None;
-        // Room for more than a handful of rows; compose stays below.
-        let list_h = (ui.available_height() * 0.45).clamp(180.0, 520.0);
         egui::ScrollArea::vertical()
             .id_salt("mail_rows")
-            .max_height(list_h)
-            .auto_shrink([false, true])
+            .auto_shrink([false, false])
             .show(ui, |ui| {
-                if rows.is_empty()
-                    && !(self.mail_folder == "inbox"
-                        && mode == Mode::RadioPlus
-                        && !self.mail_waiting.is_empty())
-                {
+                if rows.is_empty() && !(waiting && !self.mail_waiting.is_empty()) {
                     let empty = if loading { "Loading…" } else { "Nothing here." };
                     ui.label(RichText::new(empty).color(DIM).monospace());
                 }
-                if self.mail_folder == "inbox"
-                    && mode == Mode::RadioPlus
-                    && !self.mail_waiting.is_empty()
-                {
+                if waiting {
                     for w in &self.mail_waiting {
                         // Only the header is here; the hub holds the body until Get.
                         let act = mail_list_row(
@@ -5545,12 +5689,14 @@ impl GuiApp {
                                 when: "",
                                 when_full: "Waiting at the hub. Click to Get it.",
                                 key: "waiting",
-                                label: "Waiting",
+                                label: "Waiting · Get",
                                 mark: "",
-                                word: &format!("{} B", w.bytes),
+                                word: &crate::proto::file::human_size(w.bytes),
                                 tip: "Only the header is here. Click the line to Get the mail over the radio.",
                                 who: &w.from_addr,
                                 subject: &w.subject,
+                                files: false,
+                                can_delete: true,
                             },
                         );
                         if act.opened {
@@ -5581,8 +5727,7 @@ impl GuiApp {
                     let act = mail_list_row(
                         ui,
                         &MailListRow {
-                            selected: self.mail_open.as_ref().map(|m| m.row.id.as_str())
-                                == Some(row.id.as_str()),
+                            selected: false,
                             unread: row.folder == "inbox" && row.unread,
                             when: &local_short(row.ts),
                             when_full: &local_stamp(row.ts),
@@ -5593,27 +5738,24 @@ impl GuiApp {
                             tip: &st.reason,
                             who,
                             subject: &row.subject,
+                            files: !view.files.is_empty(),
+                            can_delete: false,
                         },
                     );
                     if act.opened {
                         open_id = Some(row.id.clone());
                     }
-                    if act.deleted {
-                        delete_id = Some(row.id.clone());
-                    }
                 }
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new("Click a mail to read it. ● not read yet · 📎 has a file.")
+                        .color(DIM)
+                        .small()
+                        .monospace(),
+                );
             });
         if let Some(id) = delete_id {
-            let _ = mail_http(
-                "POST",
-                "/mail/delete",
-                Some(&serde_json::json!({ "id": id }).to_string()),
-            );
-            self.mail_rows.retain(|r| r.row.id != id);
-            self.mail_waiting.retain(|w| w.id != id);
-            if self.mail_open.as_ref().map(|m| &m.row.id) == Some(&id) {
-                self.mail_open = None;
-            }
+            self.delete_mail(&id);
         }
         if let Some(id) = open_id {
             if let Some(v) = mail_http("GET", &format!("/mail/open?id={id}"), None) {
@@ -5621,15 +5763,15 @@ impl GuiApp {
                     if let Some(r) = self.mail_rows.iter_mut().find(|r| r.row.id == id) {
                         r.row.unread = false;
                     }
+                    self.mail_settings = false;
                     self.mail_open = Some(view);
                 }
             }
         }
-        if let Some(open) = self.mail_open.clone() {
-            self.paint_mail_open(ui, &open, preset);
-        }
-        ui.add_space(8.0);
-        ui.separator();
+    }
+
+    /// To, Subject, Message, files, the airtime line, Cancel and Send.
+    fn paint_mail_compose(&mut self, ui: &mut egui::Ui, mode: Mode, preset: Preset) {
         ui.label(RichText::new("To").color(DIM).monospace());
         ui.add(
             egui::TextEdit::singleline(&mut self.mail_to)
@@ -5644,10 +5786,12 @@ impl GuiApp {
                 .font(FontId::monospace(13.0)),
         );
         ui.label(RichText::new("Message").color(DIM).monospace());
+        // The message box takes the room the rest leaves.
+        let rows = ((ui.available_height() - 120.0) / 18.0).clamp(5.0, 30.0) as usize;
         ui.add(
             egui::TextEdit::multiline(&mut self.mail_body)
                 .desired_width(f32::INFINITY)
-                .desired_rows(5)
+                .desired_rows(rows)
                 .font(FontId::monospace(13.0)),
         );
         let limit = self.mail_attach_limit();
@@ -5708,66 +5852,137 @@ impl GuiApp {
         // Breathing room between the message box and the Send row.
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            let color = if blocked { ORANGE } else { DIM };
-            ui.label(RichText::new(hint).color(color).monospace());
-            let send = ui.add_enabled(!blocked, hair_btn("Send", ORANGE));
-            if send.clicked() && !self.mail_hold && !blocked {
-                self.mail_toast.clear();
-                self.mail_confirm = Some(MailConfirm {
-                    kind: "send",
-                    to: self.mail_to.clone(),
-                    subject: self.mail_subject.clone(),
-                    bytes,
-                    ids: Vec::new(),
-                });
-            }
+            ui.add(egui::Label::new(RichText::new(hint).color(DIM).monospace()).truncate());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let send = ui.add_enabled(!blocked, hair_btn("Send", ORANGE));
+                if send.clicked() && !self.mail_hold && !blocked {
+                    self.mail_toast.clear();
+                    self.mail_confirm = Some(MailConfirm {
+                        kind: "send",
+                        to: self.mail_to.clone(),
+                        subject: self.mail_subject.clone(),
+                        bytes,
+                        ids: Vec::new(),
+                    });
+                }
+                if ui.add(hair_btn("Cancel", PURPLE)).clicked() && !self.mail_hold {
+                    self.mail_to.clear();
+                    self.mail_subject.clear();
+                    self.mail_body.clear();
+                    self.clear_mail_files();
+                    self.mail_compose = false;
+                    self.mail_settings = false;
+                }
+            });
         });
-        ui.add_space(8.0);
+    }
+
+    /// Copy-to and the mail gateway, under the gear, out of the main view.
+    fn paint_mail_settings(&mut self, ui: &mut egui::Ui, gear: egui::Rect) {
         self.take_copy_reply();
         let busy = self.copy_rx.is_some();
-        ui.label(RichText::new("Copy-to").color(DIM).monospace());
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.copy_addr)
-                    .desired_width(220.0)
-                    .hint_text(placeholder("address, empty = off"))
-                    .font(FontId::monospace(13.0)),
-            );
-            if ui.add(hair_btn("save", PURPLE)).clicked() && !busy {
-                let body = serde_json::json!({ "address": self.copy_addr.trim() }).to_string();
-                self.copy_note = "Asking the hub…".into();
-                self.copy_rx = Some(spawn_copy_call(false, body));
-            }
-            ui.add(
-                egui::TextEdit::singleline(&mut self.copy_code)
-                    .desired_width(80.0)
-                    .hint_text(placeholder("code"))
-                    .font(FontId::monospace(13.0)),
-            );
-            if ui.add(hair_btn("confirm", ORANGE)).clicked() && !busy {
-                let body = serde_json::json!({ "code": self.copy_code.trim() }).to_string();
-                self.copy_note = "Asking the hub…".into();
-                self.copy_rx = Some(spawn_copy_call(true, body));
-            }
-        });
-        if !self.copy_state.is_empty() {
-            ui.label(
-                RichText::new(format!("copy-to: {}", self.copy_state))
-                    .color(DIM)
-                    .small()
-                    .monospace(),
-            );
-        }
-        if !self.copy_note.is_empty() {
-            ui.label(
-                RichText::new(&self.copy_note)
-                    .color(DIM)
-                    .small()
-                    .monospace(),
-            );
-        }
-        if let Some(confirm) = self.mail_confirm.clone() {
-            self.paint_mail_confirm(ui, &confirm, mode, preset);
+        let gateway = self
+            .status
+            .as_ref()
+            .filter(|s| s.mode == Mode::RadioPlus)
+            .map(|s| {
+                let now = if s.mail_gateway.is_empty() {
+                    self.mail_gateway_choice()
+                } else {
+                    s.mail_gateway.clone()
+                };
+                if now == "AUTO" {
+                    "Auto".to_string()
+                } else {
+                    now
+                }
+            });
+        let mut close = false;
+        egui::Area::new(egui::Id::new("mail_settings"))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::RIGHT_TOP)
+            .fixed_pos(gear.right_bottom() + egui::vec2(0.0, 6.0))
+            .show(ui.ctx(), |ui| {
+                egui::Frame::none()
+                    .fill(SHELL)
+                    .stroke(hairline(PURPLE))
+                    .inner_margin(egui::Margin::same(10.0))
+                    .show(ui, |ui| {
+                        ui.set_width(440.0);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("⚙ Email settings").color(PURPLE).monospace());
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if ui.add(hair_btn("x", DIM)).clicked() {
+                                        close = true;
+                                    }
+                                },
+                            );
+                        });
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new("Copy-to: a copy of every mail you send and get")
+                                .color(DIM)
+                                .monospace(),
+                        );
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.copy_addr)
+                                    .desired_width(200.0)
+                                    .hint_text(placeholder("address, empty = off"))
+                                    .font(FontId::monospace(13.0)),
+                            );
+                            if ui.add(hair_btn("save", PURPLE)).clicked() && !busy {
+                                let body = serde_json::json!({ "address": self.copy_addr.trim() })
+                                    .to_string();
+                                self.copy_note = "Asking the hub…".into();
+                                self.copy_rx = Some(spawn_copy_call(false, body));
+                            }
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.copy_code)
+                                    .desired_width(70.0)
+                                    .hint_text(placeholder("code"))
+                                    .font(FontId::monospace(13.0)),
+                            );
+                            if ui.add(hair_btn("confirm", ORANGE)).clicked() && !busy {
+                                let body = serde_json::json!({ "code": self.copy_code.trim() })
+                                    .to_string();
+                                self.copy_note = "Asking the hub…".into();
+                                self.copy_rx = Some(spawn_copy_call(true, body));
+                            }
+                        });
+                        if !self.copy_state.is_empty() {
+                            ui.label(
+                                RichText::new(format!("copy-to: {}", self.copy_state))
+                                    .color(DIM)
+                                    .small()
+                                    .monospace(),
+                            );
+                        }
+                        if !self.copy_note.is_empty() {
+                            ui.label(
+                                RichText::new(&self.copy_note)
+                                    .color(DIM)
+                                    .small()
+                                    .monospace(),
+                            );
+                        }
+                        if let Some(gw) = &gateway {
+                            ui.add_space(6.0);
+                            ui.label(RichText::new("Mail gateway").color(DIM).monospace());
+                            ui.label(RichText::new(gw).color(FG).monospace());
+                            ui.label(
+                                RichText::new("Change it in Setup.")
+                                    .color(DIM)
+                                    .small()
+                                    .monospace(),
+                            );
+                        }
+                    });
+            });
+        if close {
+            self.mail_settings = false;
         }
     }
 
@@ -5776,22 +5991,50 @@ impl GuiApp {
     fn paint_mail_open(&mut self, ui: &mut egui::Ui, open: &crate::mail::MailView, preset: Preset) {
         let row = &open.row;
         let st = &open.status;
-        ui.add_space(6.0);
-        ui.add(
-            egui::Label::new(
-                RichText::new(format!("{} → {}", row.from_addr, row.to_addr))
-                    .color(ACCENT)
-                    .monospace(),
-            )
-            .truncate(),
-        );
-        ui.add(egui::Label::new(RichText::new(&row.subject).color(ACCENT).monospace()).wrap());
-        ui.horizontal_wrapped(|ui| {
-            mail_chip(ui, &st.label, &st.key, &st.mark);
-            if !st.word.is_empty() {
-                ui.label(RichText::new(&st.word).color(DIM).monospace());
-            }
-        });
+        let outgoing = row.folder != "inbox";
+        ui.add_space(4.0);
+        egui::Grid::new("mail_head")
+            .num_columns(2)
+            .spacing([14.0, 2.0])
+            .show(ui, |ui| {
+                for (name, value, strong) in [
+                    ("From", row.from_addr.as_str(), false),
+                    ("To", row.to_addr.as_str(), false),
+                    ("Subject", row.subject.as_str(), true),
+                ] {
+                    ui.label(RichText::new(name).color(DIM).monospace());
+                    let text = RichText::new(value).color(if strong { Color32::WHITE } else { FG });
+                    ui.add(
+                        egui::Label::new(if strong { text.strong() } else { text }.monospace())
+                            .wrap(),
+                    );
+                    ui.end_row();
+                }
+                ui.label(
+                    RichText::new(if outgoing { "Written" } else { "Received" })
+                        .color(DIM)
+                        .monospace(),
+                );
+                let when = ui.label(RichText::new(local_day_time(row.ts)).color(FG).monospace());
+                hover_tip(&when, local_stamp(row.ts));
+                ui.end_row();
+                if st.key != "received" {
+                    ui.label(RichText::new("Status").color(DIM).monospace());
+                    ui.horizontal_wrapped(|ui| {
+                        mail_chip(ui, &st.label, &st.key, &st.mark);
+                        let via = open.via.last().map(|v| format!("via {}", v.gateway));
+                        let word = [st.word.clone(), via.unwrap_or_default()]
+                            .into_iter()
+                            .filter(|w| !w.is_empty())
+                            .collect::<Vec<_>>()
+                            .join(" · ");
+                        if !word.is_empty() {
+                            ui.label(RichText::new(word).color(DIM).monospace());
+                        }
+                    });
+                    ui.end_row();
+                }
+            });
         if !st.reason.is_empty() {
             let color = if matches!(st.key.as_str(), "failed" | "bounced" | "spam") {
                 ORANGE
@@ -5800,44 +6043,29 @@ impl GuiApp {
             };
             ui.add(egui::Label::new(RichText::new(&st.reason).color(color).monospace()).wrap());
         }
-        let outgoing = row.folder != "inbox";
-        let mut times: Vec<(String, i64)> = Vec::new();
-        times.push((
-            if outgoing {
-                "Created"
-            } else {
-                "Sent by the sender"
+        // The mail's journey on one line, in local time (outgoing mail only).
+        if outgoing && !open.hops.is_empty() {
+            let mut times: Vec<(String, i64)> = vec![("written".into(), row.ts)];
+            for hop in &open.hops {
+                times.push((lower_first(hop_name(&hop.stage, &st.label)), hop.ts));
             }
-            .into(),
-            row.ts,
-        ));
-        for hop in &open.hops {
-            times.push((hop_name(&hop.stage, &st.label).into(), hop.ts));
+            times.sort_by_key(|(_, ts)| *ts);
+            let line = times
+                .iter()
+                .map(|(name, ts)| format!("{} {name}", local_clock(*ts)))
+                .collect::<Vec<_>>()
+                .join(" → ");
+            ui.add(egui::Label::new(RichText::new(line).color(DIM).monospace()).wrap());
         }
-        for v in &open.via {
-            times.push((format!("Via gateway {}", v.gateway), v.ts));
-        }
-        // In time order; a gateway first used in the same second as a hop
-        // goes after it.
-        times.sort_by_key(|(_, ts)| *ts);
-        egui::Grid::new("mail_hops")
-            .num_columns(2)
-            .spacing([12.0, 2.0])
-            .show(ui, |ui| {
-                for (name, ts) in &times {
-                    ui.label(RichText::new(name).color(DIM).monospace());
-                    ui.label(RichText::new(local_stamp(*ts)).color(FG).monospace());
-                    ui.end_row();
-                }
-            });
+        ui.add_space(4.0);
+        ui.separator();
         if st.retry || st.resend {
             ui.horizontal(|ui| {
                 if st.retry && ui.add(hair_btn("Retry", ORANGE)).clicked() {
                     self.retry_mail(row, preset);
                 }
                 if st.resend && ui.add(hair_btn("Re-send", ORANGE)).clicked() {
-                    self.mail_to = row.to_addr.clone();
-                    self.mail_subject = row.subject.clone();
+                    self.start_compose(row.to_addr.clone(), row.subject.clone());
                     self.mail_body = row.body.clone();
                     self.mail_toast =
                         "Compose has the mail again. Check the address, then press Send.".into();
@@ -5850,9 +6078,9 @@ impl GuiApp {
         for f in &open.files {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                let line = format!("📎 {} ({})", f.name, crate::proto::file::human_size(f.size));
-                ui.label(RichText::new(line).color(ACCENT).monospace());
-                if !f.path.is_empty() && ui.add(hair_btn("open folder", PURPLE)).clicked() {
+                let line = format!("📎 {} · {}", f.name, crate::proto::file::human_size(f.size));
+                ui.label(RichText::new(line).color(GREEN).monospace());
+                if !f.path.is_empty() && ui.add(hair_btn("Open folder", GREEN)).clicked() {
                     let dir = std::path::Path::new(&f.path)
                         .parent()
                         .map(std::path::Path::to_path_buf)
@@ -6127,6 +6355,11 @@ struct MailListRow<'a> {
     tip: &'a str,
     who: &'a str,
     subject: &'a str,
+    /// The mail carries files: a clip after the subject.
+    files: bool,
+    /// A delete button on the line (waiting headers only: a fetched mail
+    /// is deleted from its own view).
+    can_delete: bool,
 }
 
 struct MailRowAct {
@@ -6156,11 +6389,14 @@ fn mail_list_row(ui: &mut egui::Ui, r: &MailListRow<'_>) -> MailRowAct {
                 .monospace(),
         );
         hover_tip(&when, r.when_full);
-        let chip = mail_chip(ui, r.label, r.key, r.mark);
-        if !r.tip.is_empty() {
-            hover_tip(&chip, r.tip);
+        // A received mail needs no chip: the Inbox already says so.
+        if r.key != "received" {
+            let chip = mail_chip(ui, r.label, r.key, r.mark);
+            if !r.tip.is_empty() {
+                hover_tip(&chip, r.tip);
+            }
         }
-        let delete_w = 64.0;
+        let delete_w = if r.can_delete { 64.0 } else { 0.0 };
         let width = (ui.available_width() - delete_w).max(40.0);
         let height = ui.spacing().interact_size.y;
         ui.allocate_ui_with_layout(
@@ -6204,6 +6440,9 @@ fn mail_list_row(ui: &mut egui::Ui, r: &MailListRow<'_>) -> MailRowAct {
                 let fmt = |color| egui::TextFormat::simple(font.clone(), color);
                 let mut text = egui::text::LayoutJob::default();
                 text.append(r.subject, 0.0, fmt(color));
+                if r.files {
+                    text.append("  📎", 0.0, fmt(DIM));
+                }
                 if !r.word.is_empty() {
                     text.append(&format!("  · {}", r.word), 0.0, fmt(DIM));
                 }
@@ -6222,7 +6461,7 @@ fn mail_list_row(ui: &mut egui::Ui, r: &MailListRow<'_>) -> MailRowAct {
                 }
             },
         );
-        if ui.add(hair_btn("delete", DIM)).clicked() {
+        if r.can_delete && ui.add(hair_btn("delete", DIM)).clicked() {
             act.deleted = true;
         }
     });
@@ -6258,15 +6497,81 @@ fn local_stamp(ts: i64) -> String {
         .unwrap_or_default()
 }
 
-/// Short local time for the Email list.
+/// Short local time for the Email list: the time today, the weekday this
+/// week, else the date.
 fn local_short(ts: i64) -> String {
+    short_when(ts, chrono::Local::now())
+}
+
+fn short_when(ts: i64, now: chrono::DateTime<chrono::Local>) -> String {
+    let Some(t) = chrono::DateTime::from_timestamp(ts, 0) else {
+        return String::new();
+    };
+    let t = t.with_timezone(&chrono::Local);
+    let days = (now.date_naive() - t.date_naive()).num_days();
+    if days == 0 {
+        t.format("%H:%M").to_string()
+    } else if (1..7).contains(&days) {
+        t.format("%a").to_string()
+    } else {
+        t.format("%-d %b").to_string()
+    }
+}
+
+/// "Today 06:50", or "Thu 20 Nov 13:52", for the opened mail.
+fn local_day_time(ts: i64) -> String {
+    let Some(t) = chrono::DateTime::from_timestamp(ts, 0) else {
+        return String::new();
+    };
+    let t = t.with_timezone(&chrono::Local);
+    if t.date_naive() == chrono::Local::now().date_naive() {
+        t.format("Today %H:%M").to_string()
+    } else {
+        t.format("%a %-d %b %H:%M").to_string()
+    }
+}
+
+/// Local hours and minutes, for the sent mail's journey.
+fn local_clock(ts: i64) -> String {
     chrono::DateTime::from_timestamp(ts, 0)
-        .map(|t| {
-            t.with_timezone(&chrono::Local)
-                .format("%m-%d %H:%M")
-                .to_string()
-        })
+        .map(|t| t.with_timezone(&chrono::Local).format("%H:%M").to_string())
         .unwrap_or_default()
+}
+
+/// "Accepted by Resend" -> "accepted by Resend".
+fn lower_first(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) => f.to_lowercase().chain(c).collect(),
+        None => String::new(),
+    }
+}
+
+/// The folder's name on the Back button.
+fn folder_name(folder: &str) -> &'static str {
+    match folder {
+        "outbox" => "Outbox",
+        "sent" => "Sent",
+        _ => "Inbox",
+    }
+}
+
+/// "Re: subject", without a second "Re:".
+fn reply_subject(subject: &str) -> String {
+    let s = subject.trim();
+    if s.len() >= 3 && s[..3].eq_ignore_ascii_case("re:") {
+        s.to_string()
+    } else {
+        format!("Re: {s}")
+    }
+}
+
+/// What the Email screen shows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MailPane {
+    List,
+    Read,
+    Compose,
 }
 
 struct HardwareProbe {
@@ -8000,6 +8305,31 @@ mod tests {
         assert!(
             matches!(restart_follow(&s, true, quick), RestartFollow::Failed(t) if t.contains("port in use"))
         );
+    }
+
+    #[test]
+    fn a_reply_subject_gets_one_re() {
+        assert_eq!(reply_subject("Field day"), "Re: Field day");
+        assert_eq!(reply_subject("Re: Field day"), "Re: Field day");
+        assert_eq!(reply_subject("RE: Field day"), "RE: Field day");
+        assert_eq!(lower_first("Accepted by Resend"), "accepted by Resend");
+    }
+
+    #[test]
+    fn the_mail_list_says_the_time_today_the_day_this_week_else_the_date() {
+        use chrono::TimeZone;
+        let now = chrono::Local
+            .with_ymd_and_hms(2026, 11, 21, 12, 0, 0)
+            .unwrap();
+        let at = |d, h| {
+            chrono::Local
+                .with_ymd_and_hms(2026, 11, d, h, 30, 0)
+                .unwrap()
+                .timestamp()
+        };
+        assert_eq!(short_when(at(21, 6), now), "06:30");
+        assert_eq!(short_when(at(19, 6), now), "Thu");
+        assert_eq!(short_when(at(10, 6), now), "10 Nov");
     }
 
     #[test]
