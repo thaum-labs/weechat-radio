@@ -40,9 +40,9 @@ jobs:
         working-directory: android/core
         run: cargo test --release
       - name: native libraries (wcr core, Kotlin bindings, modem73)
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_LATEST_HOME }}
         run: |
+          # The runner image ships the NDK; this is its newest one.
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
           cargo install cargo-ndk --version 4.1.2 --locked
           android/build-native.sh
       - name: signing key
