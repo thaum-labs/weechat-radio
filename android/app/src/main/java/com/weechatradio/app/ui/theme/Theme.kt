@@ -16,20 +16,42 @@ import androidx.compose.ui.text.font.FontFamily
 /** Settings > Look > Theme. One layout, two looks. */
 enum class ThemeChoice(val label: String) { Standard("Standard"), Modem73("modem73") }
 
-/** Colours Material has no slot for: "Good" levels, warnings, the "Waiting" tag. */
-data class StatusColors(val good: Color, val warn: Color, val warnContainer: Color)
+/**
+ * Colours Material has no slot for: "Good" levels, warnings and the "Waiting"
+ * tag, the orange of rooms and things we sent, and the pink of radio-plus.
+ */
+data class StatusColors(
+    val good: Color,
+    val warn: Color,
+    val warnContainer: Color,
+    val accent: Color,
+    val accentContainer: Color,
+    val plus: Color,
+)
 
-val LocalStatusColors = staticCompositionLocalOf {
-    StatusColors(Color(0xFF178A2A), Color(0xFF9A6A00), Color(0xFFFFE9B8))
-}
+private val StandardLightStatus = StatusColors(
+    good = Color(0xFF178A2A), warn = Color(0xFF9A6A00), warnContainer = Color(0xFFFFE9B8),
+    accent = Color(0xFFC2491A), accentContainer = Color(0xFFFFE2D4), plus = Color(0xFFB0189F),
+)
+private val StandardDarkStatus = StatusColors(
+    good = Color(0xFF39FF14), warn = Color(0xFFFFBF00), warnContainer = Color(0xFF3A2C00),
+    accent = Color(0xFFFF7A3D), accentContainer = Color(0xFF4A2010), plus = Color(0xFFFF4DFF),
+)
+private val Modem73Status = StatusColors(
+    good = Color(0xFF18FC7C), warn = Color(0xFFE6B800), warnContainer = Color(0xFF2A2000),
+    accent = Color(0xFFFF7A3D), accentContainer = Color(0xFF2A1030), plus = Color(0xFFFF4DFF),
+)
+
+val LocalStatusColors = staticCompositionLocalOf { StandardLightStatus }
 
 // Standard: the weechatradio.com website palette mapped to Material 3 roles
 // (same values as the mockups in mobile-app-material/screens-source.html).
 private val StandardLight = lightColorScheme(
     primary = Color(0xFF3654D1), onPrimary = Color.White,
     primaryContainer = Color(0xFFDDE3FF), onPrimaryContainer = Color(0xFF0E1C66),
-    secondary = Color(0xFFC2491A), onSecondary = Color.White,
-    secondaryContainer = Color(0xFFFFE2D4), onSecondaryContainer = Color(0xFF5A1E05),
+    // Selected chips, tabs and tonal buttons use the secondary slots: blue, as in the mockups.
+    secondary = Color(0xFF3654D1), onSecondary = Color.White,
+    secondaryContainer = Color(0xFFDDE3FF), onSecondaryContainer = Color(0xFF0E1C66),
     tertiary = Color(0xFF6A4FC9),
     background = Color(0xFFFCFAFF), onBackground = Color(0xFF1A1726),
     surface = Color(0xFFFCFAFF), onSurface = Color(0xFF1A1726),
@@ -43,8 +65,8 @@ private val StandardLight = lightColorScheme(
 private val StandardDark = darkColorScheme(
     primary = Color(0xFF7D9BFF), onPrimary = Color(0xFF06081A),
     primaryContainer = Color(0xFF222C5C), onPrimaryContainer = Color(0xFFD9E0FF),
-    secondary = Color(0xFFFF7A3D), onSecondary = Color(0xFF06081A),
-    secondaryContainer = Color(0xFF4A2010), onSecondaryContainer = Color(0xFFFFD9C7),
+    secondary = Color(0xFF7D9BFF), onSecondary = Color(0xFF06081A),
+    secondaryContainer = Color(0xFF222C5C), onSecondaryContainer = Color(0xFFD9E0FF),
     tertiary = Color(0xFFC4B5FD),
     background = Color(0xFF07070A), onBackground = Color(0xFFF1ECFA),
     surface = Color(0xFF07070A), onSurface = Color(0xFFF1ECFA),
@@ -60,8 +82,8 @@ private val StandardDark = darkColorScheme(
 private val Modem73 = darkColorScheme(
     primary = Color(0xFF18FC7C), onPrimary = Color(0xFF0A0005),
     primaryContainer = Color(0xFF2A1030), onPrimaryContainer = Color(0xFF18FC7C),
-    secondary = Color(0xFFFF4DFF), onSecondary = Color(0xFF0A0005),
-    secondaryContainer = Color(0xFF2A1030), onSecondaryContainer = Color(0xFFFF4DFF),
+    secondary = Color(0xFF18FC7C), onSecondary = Color(0xFF0A0005),
+    secondaryContainer = Color(0xFF2A1030), onSecondaryContainer = Color(0xFF18FC7C),
     tertiary = Color(0xFF00D0D0),
     background = Color(0xFF100008), onBackground = Color(0xFFE8E0E4),
     surface = Color(0xFF100008), onSurface = Color(0xFFE8E0E4),
@@ -95,17 +117,17 @@ fun WeeChatRadioTheme(
     when {
         choice == ThemeChoice.Modem73 -> {
             scheme = Modem73
-            status = StatusColors(Color(0xFF18FC7C), Color(0xFFE6B800), Color(0xFF2A2000))
+            status = Modem73Status
             type = Typography().mono()
         }
         dark -> {
             scheme = StandardDark
-            status = StatusColors(Color(0xFF39FF14), Color(0xFFFFBF00), Color(0xFF3A2C00))
+            status = StandardDarkStatus
             type = Typography()
         }
         else -> {
             scheme = StandardLight
-            status = StatusColors(Color(0xFF178A2A), Color(0xFF9A6A00), Color(0xFFFFE9B8))
+            status = StandardLightStatus
             type = Typography()
         }
     }

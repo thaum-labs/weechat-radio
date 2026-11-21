@@ -91,7 +91,7 @@ fun RadioScreen(radio: Radio, open: (Page) -> Unit) {
                     }
                     Core.frequencyWarning(s.frequencyMhz)?.let { Text(it, color = status.warn, style = MaterialTheme.typography.bodySmall) }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        AssistChip(onClick = {}, label = { Text(s.mode, color = colors.secondary) })
+                        AssistChip(onClick = {}, label = { Text(s.mode, color = status.plus) })
                         AssistChip(onClick = {}, label = { Text(s.preset) })
                         AssistChip(onClick = {}, label = { Text("${s.callsign} · ${s.grid}") })
                     }
@@ -117,7 +117,7 @@ fun RadioScreen(radio: Radio, open: (Page) -> Unit) {
                     Text("${e.time}  ${e.what}", modifier = Modifier.weight(1f))
                     Text(
                         e.detail,
-                        color = if (e.sent) colors.secondary else colors.onSurfaceVariant,
+                        color = if (e.sent) status.accent else colors.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }

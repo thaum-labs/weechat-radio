@@ -136,7 +136,7 @@ private fun Bubble(m: ChatMessage, showSender: Boolean) {
                 .padding(horizontal = 14.dp, vertical = 9.dp),
         ) {
             if (showSender && !m.mine) {
-                Text(m.from, style = MaterialTheme.typography.labelMedium, color = colors.secondary)
+                Text(m.from, style = MaterialTheme.typography.labelMedium, color = LocalStatusColors.current.accent)
             }
             Text(m.text, color = if (m.mine) colors.onPrimary else colors.onSurface)
         }

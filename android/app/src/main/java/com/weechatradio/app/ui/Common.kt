@@ -13,14 +13,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.weechatradio.app.ui.theme.LocalStatusColors
 
 /** A round badge with "#" for rooms or the first two letters of a callsign or address. */
 @Composable
 fun Avatar(name: String, size: Dp = 40.dp) {
     val room = name.startsWith("#")
-    val bg = if (room) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.primaryContainer
-    val fg = if (room) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onPrimaryContainer
-    val text = if (room) "#" else name.take(2).uppercase()
+    val accent = LocalStatusColors.current
+    val bg = if (room) accent.accentContainer else MaterialTheme.colorScheme.primaryContainer
+    val fg = if (room) accent.accent else MaterialTheme.colorScheme.onPrimaryContainer
+    val text = when {
+        room -> "#"
+        name.contains('@') -> name.take(1).uppercase() // an email address
+        else -> name.take(2).uppercase() // a callsign
+    }
     Box(
         Modifier.size(size).clip(CircleShape).background(bg),
         contentAlignment = Alignment.Center,
