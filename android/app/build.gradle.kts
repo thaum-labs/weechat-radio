@@ -63,7 +63,7 @@ android {
     buildFeatures { compose = true }
 }
 
-kotlin { jvmToolchain(17) }
+kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2025.06.00")
