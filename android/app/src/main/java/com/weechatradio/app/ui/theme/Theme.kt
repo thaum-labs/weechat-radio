@@ -84,8 +84,11 @@ private fun Typography.mono(): Typography {
 }
 
 @Composable
-fun WeeChatRadioTheme(choice: ThemeChoice, content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
+fun WeeChatRadioTheme(
+    choice: ThemeChoice,
+    dark: Boolean = isSystemInDarkTheme(),
+    content: @Composable () -> Unit,
+) {
     val scheme: ColorScheme
     val status: StatusColors
     val type: Typography

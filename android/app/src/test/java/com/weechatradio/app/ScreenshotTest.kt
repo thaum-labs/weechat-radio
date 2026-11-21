@@ -3,7 +3,6 @@ package com.weechatradio.app
 import androidx.compose.runtime.Composable
 import app.cash.paparazzi.DeviceConfig
 import app.cash.paparazzi.Paparazzi
-import com.android.resources.NightMode
 import com.weechatradio.app.radio.RadioStatus
 import com.weechatradio.app.radio.SimulatedRadio
 import com.weechatradio.app.ui.ChatsScreen
@@ -36,9 +35,7 @@ class ScreenshotTest(private val look: String) {
 
     @get:Rule
     val paparazzi = Paparazzi(
-        deviceConfig = DeviceConfig.PIXEL_5.copy(
-            nightMode = if (look == "standard-dark") NightMode.NIGHT else NightMode.NOTNIGHT,
-        ),
+        deviceConfig = DeviceConfig.PIXEL_5,
         maxPercentDifference = 100.0,
     )
 
@@ -48,7 +45,7 @@ class ScreenshotTest(private val look: String) {
     private val theme = if (look == "modem73") ThemeChoice.Modem73 else ThemeChoice.Standard
 
     private fun shot(name: String, content: @Composable () -> Unit) =
-        paparazzi.snapshot(name) { WeeChatRadioTheme(theme) { content() } }
+        paparazzi.snapshot(name) { WeeChatRadioTheme(theme, dark = look != "standard-light") { content() } }
 
     @Test fun connect() = shot("1-connect") { ConnectRadioScreen(SimulatedRadio()) }
     @Test fun chats() = shot("2-chats") { ChatsScreen(radio) {} }
