@@ -35,7 +35,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          # Gradle runs on 21 (the screenshot plugin needs it); the app targets Java 17.
+          # The app targets Java 17; Gradle itself runs on 21.
           java-version: 21
       - name: core tests
         working-directory: android/core
@@ -75,11 +75,11 @@ jobs:
           unzip -l "$apk" | grep -E "lib/arm64-v8a/lib(wcr_mobile|modem73)\.so"
       - name: screenshots of every screen (Standard light/dark, modem73)
         working-directory: android
-        run: ./gradlew --no-daemon recordPaparazziDebug
+        run: ./gradlew --no-daemon testDebugUnitTest
       - uses: actions/upload-artifact@v4
         with:
           name: android-screens
-          path: android/app/src/test/snapshots/images/*.png
+          path: android/app/build/screens/
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:

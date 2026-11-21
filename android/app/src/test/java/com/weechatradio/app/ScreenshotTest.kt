@@ -1,8 +1,9 @@
 package com.weechatradio.app
 
 import androidx.compose.runtime.Composable
-import app.cash.paparazzi.DeviceConfig
-import app.cash.paparazzi.Paparazzi
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onRoot
+import com.github.takahirom.roborazzi.captureRoboImage
 import com.weechatradio.app.radio.RadioStatus
 import com.weechatradio.app.radio.SimulatedRadio
 import com.weechatradio.app.ui.ChatsScreen
@@ -18,34 +19,37 @@ import com.weechatradio.app.ui.theme.WeeChatRadioTheme
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.junit.runners.Parameterized
+import org.robolectric.ParameterizedRobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * Pictures of every screen in each look, rendered on the computer (no phone).
- * CI uploads them as the "android-screens" artifact. They are for looking at,
- * not compared against saved copies.
+ * CI uploads app/build/screens as the "android-screens" artifact. They are for
+ * looking at, not compared against saved copies.
  */
-@RunWith(Parameterized::class)
+@RunWith(ParameterizedRobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(sdk = [34], qualifiers = "w411dp-h891dp-xxhdpi")
 class ScreenshotTest(private val look: String) {
     companion object {
         @JvmStatic
-        @Parameterized.Parameters(name = "{0}")
+        @ParameterizedRobolectricTestRunner.Parameters(name = "{0}")
         fun looks() = listOf("standard-light", "standard-dark", "modem73")
     }
 
     @get:Rule
-    val paparazzi = Paparazzi(
-        deviceConfig = DeviceConfig.PIXEL_5,
-        maxPercentDifference = 100.0,
-    )
+    val compose = createComposeRule()
 
     private val radio = SimulatedRadio(
         RadioStatus(connected = true, hearing = 0.62f, channelBusy = 0.04f, snrDb = 7, sentToday = 14, heardToday = 31),
     )
     private val theme = if (look == "modem73") ThemeChoice.Modem73 else ThemeChoice.Standard
 
-    private fun shot(name: String, content: @Composable () -> Unit) =
-        paparazzi.snapshot(name) { WeeChatRadioTheme(theme, dark = look != "standard-light") { content() } }
+    private fun shot(name: String, content: @Composable () -> Unit) {
+        compose.setContent { WeeChatRadioTheme(theme, dark = look != "standard-light") { content() } }
+        compose.onRoot().captureRoboImage("build/screens/$look/$name.png")
+    }
 
     @Test fun connect() = shot("1-connect") { ConnectRadioScreen(SimulatedRadio()) }
     @Test fun chats() = shot("2-chats") { ChatsScreen(radio) {} }

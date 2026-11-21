@@ -2,7 +2,6 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
-    id("app.cash.paparazzi")
 }
 
 // The app version follows the wcr workspace version (root Cargo.toml),
@@ -61,6 +60,13 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     buildFeatures { compose = true }
+
+    // Screenshots of every screen on the computer (Robolectric + Roborazzi):
+    // ./gradlew testDebugUnitTest writes them to app/build/screens/.
+    testOptions.unitTests {
+        isIncludeAndroidResources = true
+        all { it.systemProperty("roborazzi.test.record", "true") }
+    }
 }
 
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
@@ -78,4 +84,9 @@ dependencies {
     // UniFFI's Kotlin bindings call the Rust core through JNA.
     implementation("net.java.dev.jna:jna:5.17.0@aar")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.15.1")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.46.1")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.46.1")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
