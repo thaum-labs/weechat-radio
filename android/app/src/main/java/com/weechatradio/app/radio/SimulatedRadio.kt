@@ -14,11 +14,11 @@ import kotlin.random.Random
  * Lines you send go "on air" after a short wait and get a receipt; people
  * sometimes answer; the levels wander about like a real channel.
  */
-class SimulatedRadio : Radio {
-    private val main = Handler(Looper.getMainLooper())
+class SimulatedRadio(initial: RadioStatus = RadioStatus()) : Radio {
+    private val main by lazy { Handler(Looper.getMainLooper()) }
     private var nextId = 100L
 
-    override var status by mutableStateOf(RadioStatus())
+    override var status by mutableStateOf(initial)
     override var chats by mutableStateOf(sampleChats())
     override var mail by mutableStateOf(sampleMail())
     override var onAir by mutableStateOf(sampleOnAir())

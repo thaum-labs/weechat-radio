@@ -72,6 +72,14 @@ jobs:
           mkdir -p ../out
           cp "$apk" "../out/weechat-radio-android-$version-$APK_KIND.apk"
           unzip -l "$apk" | grep -E "lib/arm64-v8a/lib(wcr_mobile|modem73)\.so"
+      - name: screenshots of every screen (Standard light/dark, modem73)
+        working-directory: android
+        run: ./gradlew --no-daemon recordPaparazziDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-screens
+          path: android/app/src/test/snapshots/images/*.png
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: weechat-radio-android

@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("app.cash.paparazzi")
 }
 
 // The app version follows the wcr workspace version (root Cargo.toml),
@@ -76,4 +77,5 @@ dependencies {
     implementation("androidx.core:core-ktx:1.16.0")
     // UniFFI's Kotlin bindings call the Rust core through JNA.
     implementation("net.java.dev.jna:jna:5.17.0@aar")
+    testImplementation("junit:junit:4.13.2")
 }
