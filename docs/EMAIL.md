@@ -77,9 +77,13 @@ Every station and gateway sends its mail id with `POST /api/v1/mail/send` (`mail
 
 A toast timer does not mark Sent. The compose hint and the send confirm both show the estimated airtime for this message, counted from the WCRM frames the send will key (header included, same split as the body), so one short mail says `1 burst` and a long one matches the chunk count. `POST /api/v1/mail/compose` returns that same hint as `airtime`. A long message says it is not Sent until the gateway accepts it.
 
+## The Email screen
+
+The desktop app and the Pi page show one thing at a time: the folder list, the opened mail, or the compose form. **+ New** (Pi: **New mail**) opens compose; **Reply** on a received mail opens it with To and `Re: subject` filled. **Delete** is on the opened mail (a waiting header keeps its own delete on the list line). In the list, a dot marks mail not read yet and 📎 marks mail with files; a chip shows only when it says something (Waiting, On air, Failed, Delivered...). On the desktop, Copy-to sits under the **⚙** button; the mail gateway is changed in Setup.
+
 ## Status in the Email tab
 
-Every mail in the list has one coloured chip:
+Every outgoing or waiting mail in the list has one coloured chip (received mail needs none):
 
 | Chip | Mark | Meaning |
 | --- | --- | --- |
@@ -132,7 +136,7 @@ Internet and internet-radio pull waiting mail from the hub as themselves. Radio-
 
 ## Copy-to
 
-Off by default. Type a personal address in the Copy-to box and press save. The hub emails a six-digit code to that inbox; type it in the code box and press confirm. The hub is the side that copies mail, so save, confirm, and off all need the hub to answer, and the station changes nothing until it has. Outbound mail can BCC it. Inbound copies use `X-WCR-Copy`. Copy-to is never put on RF.
+Off by default. On the desktop, open **⚙** on the Email screen. Type a personal address in the Copy-to box and press save. The hub emails a six-digit code to that inbox; type it in the code box and press confirm. The hub is the side that copies mail, so save, confirm, and off all need the hub to answer, and the station changes nothing until it has. Outbound mail can BCC it. Inbound copies use `X-WCR-Copy`. Copy-to is never put on RF.
 
 - **Confirm with the hub down:** the code matches here but is kept, and the state is `hub not confirmed`. Press confirm again with the same code when the hub is up.
 - **Radio+:** save and confirm are one signed HTTPS call to the hub over this computer's internet, nothing on the air. Without internet the station says so. The hub then copies the station's mail by its callsign, including mail a gateway posts for it.

@@ -65,7 +65,7 @@
   </section>
 
   <section id="mail" role="tabpanel" aria-labelledby="tab-mail" hidden>
-    <div class="card">
+    <div class="card" id="mail-home">
       <div class="row mail-bar">
         <select id="folder" aria-label="Folder">
           <option value="inbox">Inbox</option>
@@ -80,10 +80,11 @@
       <ul id="mail-list" class="list mail-list"></ul>
     </div>
     <div class="card" id="mail-view" hidden>
-      <div class="row"><button type="button" id="mail-close" class="quiet">‹ Back</button>
-        <button type="button" id="mail-reply" class="quiet">Reply</button>
+      <div class="row mail-head"><button type="button" id="mail-close" class="quiet">‹ Back</button>
+        <span class="row mail-acts"><button type="button" id="mail-reply" class="quiet">Reply</button>
         <button type="button" id="mail-retry" class="quiet" hidden>Retry</button>
-        <button type="button" id="mail-stop" class="quiet danger" hidden>Cancel send</button></div>
+        <button type="button" id="mail-stop" class="quiet danger" hidden>Cancel send</button>
+        <button type="button" id="mail-delete" class="quiet danger">Delete</button></span></div>
       <h2 id="mv-subject"></h2>
       <p class="dim small" id="mv-who"></p>
       <p id="mv-status"></p>
@@ -92,7 +93,8 @@
       <ul id="mv-files" class="m-files" hidden></ul>
     </div>
     <form class="card" id="mail-form" hidden>
-      <h2>New mail</h2>
+      <div class="row"><button type="button" id="m-back" class="quiet">‹ Back</button></div>
+      <h2 id="m-title">New mail</h2>
       <label class="small dim" for="m-to">To (email address)</label>
       <input id="m-to" type="email" autocomplete="off" spellcheck="false" required>
       <label class="small dim" for="m-subject">Subject</label>
