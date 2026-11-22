@@ -1,205 +1,116 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
-
 package com.weechatradio.app.ui
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Bluetooth
-import androidx.compose.material.icons.filled.Cable
-import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.SettingsInputAntenna
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.weechatradio.app.core.Core
+import androidx.compose.ui.unit.sp
+import com.weechatradio.app.BuildConfig
+import com.weechatradio.app.radio.BtAudio
+import com.weechatradio.app.radio.Link
 import com.weechatradio.app.radio.Radio
-import com.weechatradio.app.radio.RadioLink
-import com.weechatradio.app.ui.theme.ThemeChoice
+
+// Design screen 21: Settings (Station, Radio, Audio, Email, Phone, About). Opens from the gear; no nav bar.
 
 @Composable
-fun SettingsScreen(radio: Radio, theme: ThemeChoice, onTheme: (ThemeChoice) -> Unit, back: () -> Unit) {
+fun SettingsScreen(radio: Radio, onBack: () -> Unit, onSetup: (SetupStep) -> Unit) {
     val s = radio.status
-    var editingCall by rememberSaveable { mutableStateOf(false) }
-    var pickingPreset by rememberSaveable { mutableStateOf(false) }
-
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Settings") },
-                navigationIcon = {
-                    IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
-                },
-            )
-        },
-    ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())) {
-            SectionTitle("Station", Modifier.padding(start = 16.dp, top = 8.dp))
-            Setting(Icons.Filled.Person, "Callsign", "${s.callsign} · grid ${s.grid}", onClick = { editingCall = true })
-            // Tap to pick another radio (back to Connect radio).
-            Setting(if (s.link == RadioLink.VoxCable) Icons.Filled.Cable else Icons.Filled.Bluetooth, "Radio", "${s.radioName} · ${s.link.label}", arrow = true, onClick = radio::disconnect)
-            Setting(
-                Icons.Filled.SettingsInputAntenna, "Channel and mode",
-                "${s.frequencyMhz} · ${s.mode} · ${s.preset}", arrow = true, onClick = { pickingPreset = true },
-            )
-            ListItem(
-                leadingContent = { Icon(Icons.Filled.Tune, contentDescription = null) },
-                headlineContent = { Text("Transmit level") },
-                supportingContent = {
-                    Column {
-                        // Digital modes run at squelch 0, except VOX radios (squelch 1, VOX 4: QA #365).
-                        Text("${s.txLevelDb} dB · " + if (s.link.isVox) "radio: squelch 1, VOX 4" else "set radio squelch to 0")
-                        Slider(
-                            value = s.txLevelDb.toFloat(),
-                            onValueChange = { radio.setTxLevel(it.toInt()) },
-                            valueRange = -40f..0f,
-                        )
-                    }
-                },
-                trailingContent = { TextButton(onClick = {}) { Text("Test tone") } },
-            )
-            HorizontalDivider()
-
-            SectionTitle("Mail and internet", Modifier.padding(start = 16.dp, top = 12.dp))
-            Setting(Icons.Filled.Email, "Mail gateway", "Auto · nearest heard on air", arrow = true)
-            ListItem(
-                leadingContent = { Icon(Icons.Filled.Cloud, contentDescription = null) },
-                headlineContent = { Text("Use the internet hub") },
-                supportingContent = { Text("When the phone has signal") },
-                trailingContent = { Switch(checked = s.useInternetHub, onCheckedChange = radio::setUseInternetHub) },
-            )
-            HorizontalDivider()
-
-            SectionTitle("Look", Modifier.padding(start = 16.dp, top = 12.dp))
-            ListItem(
-                leadingContent = { Icon(Icons.Filled.Palette, contentDescription = null) },
-                headlineContent = { Text("Theme") },
-                supportingContent = {
-                    Column {
-                        Text("Light or dark follows your phone")
-                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                            ThemeChoice.entries.forEachIndexed { i, t ->
-                                SegmentedButton(
-                                    selected = theme == t,
-                                    onClick = { onTheme(t) },
-                                    shape = SegmentedButtonDefaults.itemShape(i, ThemeChoice.entries.size),
-                                ) { Text(t.label) }
-                            }
-                        }
-                    }
-                },
-            )
-            Text(
-                "wcr core " + (Core.version ?: "not loaded"),
-                modifier = Modifier.padding(16.dp),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+    val connection = when (s.link) {
+        Link.Usb -> "USB · ${s.rig}"
+        Link.Bluetooth -> if (s.btAudio == BtAudio.HeadsetVox) "Bluetooth headset · VOX" else "Bluetooth · ${s.rig}"
+        Link.InternetOnly -> "Internet only"
+    }
+    Column(Modifier.fillMaxSize()) {
+        TopBar("Settings", lead = { BackLead(onBack) }) {
+            Text("v${BuildConfig.VERSION_NAME}", Modifier.padding(end = 16.dp), fontSize = 11.sp, color = colors().onSurfaceVariant)
+        }
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+            Section("Station", top = 4.dp)
+            Item("Callsign", value = s.call, mono = true) { onSetup(SetupStep.You) }
+            Item("Locator", value = s.grid, mono = true, after = " · from GPS") { onSetup(SetupStep.You) }
+            Item("Mode", value = s.mode.id, sub = s.mode.words) { onSetup(SetupStep.You) }
+            Divider()
+            Section("Radio")
+            Item("Connection", value = connection) { onSetup(SetupStep.Radio) }
+            if (s.linked) {
+                Item("Frequency", value = s.freq, mono = true, after = " ${s.emission}") {}
+                Item("Preset", value = s.preset, mono = true) { onSetup(SetupStep.Levels) }
+                Item("TX duty", value = s.txDuty, sub = "rests 6 s between blocks") {}
+            }
+            Divider()
+            Section("Audio")
+            if (s.link == Link.Usb) Item("PTT method", value = s.ptt.name) { onSetup(SetupStep.Levels) }
+            else if (s.link == Link.Bluetooth) Item("PTT method", value = if (s.btAudio == BtAudio.HeadsetVox) "the radio's VOX" else "Bluetooth") { onSetup(SetupStep.Bluetooth) }
+            Item("IN / OUT level", value = "${s.inDb} dB / ${"%.1f".format(s.outSetDb)} dB") { onSetup(SetupStep.Levels) }
+            Toggle("Show SNR on lines", null, s.showSnr) { on -> radio.update { it.copy(showSnr = on) } }
+            Divider()
+            Section("Email")
+            Item("Copy-to", value = s.copyTo, sub = if (s.copyToConfirmed) "confirmed" else "waiting for the code") {}
+            Item("Mail gateway", value = "Auto", sub = "${s.gateway} · ${s.gatewayPlace}") {}
+            Divider()
+            Section("Phone")
+            Toggle("Listen in background", "persistent notification · uses battery", s.listenInBackground) { on -> radio.update { it.copy(listenInBackground = on, listening = true) } }
+            Item("Notifications", sub = "mail · direct · TX" + if (s.muted) " · muted" else "") {}
+            Item("Time", value = "UTC + local") {}
+            Divider()
+            Section("About")
+            Item("Update", value = "up to date", valueColor = radioColors().ok, chevron = false) {}
+            Item("Identity key", value = "back up") {}
+            Item("Re-run setup") { onSetup(SetupStep.Radio) }
         }
     }
-
-    if (editingCall) CallsignDialog(s.callsign, onDismiss = { editingCall = false }) {
-        radio.setCallsign(it)
-        editingCall = false
-    }
-    if (pickingPreset) PresetDialog(s.preset, vox = s.link.isVox, onDismiss = { pickingPreset = false }) {
-        radio.setPreset(it)
-        pickingPreset = false
-    }
 }
 
 @Composable
-private fun Setting(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+private fun Divider() = HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = colors().outlineVariant)
+
+@Composable
+private fun Item(
     title: String,
-    detail: String,
-    arrow: Boolean = false,
-    onClick: () -> Unit = {},
+    value: String? = null,
+    sub: String? = null,
+    mono: Boolean = false,
+    after: String = "",
+    valueColor: Color = Color.Unspecified,
+    chevron: Boolean = true,
+    onClick: () -> Unit,
 ) {
-    ListItem(
-        modifier = Modifier.clickable(onClick = onClick),
-        leadingContent = { Icon(icon, contentDescription = null) },
-        headlineContent = { Text(title) },
-        supportingContent = { Text(detail) },
-        trailingContent = { if (arrow) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null) },
-    )
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).heightIn(min = if (sub != null) 64.dp else 52.dp).padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 16.sp, lineHeight = 24.sp)
+            if (sub != null) Text(sub, fontSize = 13.sp, color = colors().onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (value != null) {
+            val col = if (valueColor == Color.Unspecified) colors().onSurfaceVariant else valueColor
+            if (mono) MonoText(value, color = col, size = 13.sp) else Text(value, fontSize = 14.sp, color = col, maxLines = 1)
+            if (after.isNotEmpty()) Text(after, fontSize = 14.sp, color = colors().onSurfaceVariant)
+        }
+        if (chevron) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.padding(start = 4.dp), tint = colors().onSurfaceVariant)
+    }
 }
 
 @Composable
-private fun CallsignDialog(current: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
-    var text by rememberSaveable { mutableStateOf(current) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Callsign") },
-        text = { OutlinedTextField(text, { text = it }, singleLine = true, label = { Text("Callsign") }) },
-        confirmButton = { TextButton(onClick = { onSave(text.trim()) }, enabled = text.isNotBlank()) { Text("Save") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
-}
-
-/** What has worked over VOX so far (Tobias, 2026-10-21: only hf-poor decoded over VOX). */
-private val VoxBestPresets = setOf("hf-poor")
-
-/** The preset list comes straight from the wcr core, so it always matches the desktop app. */
-@Composable
-private fun PresetDialog(current: String, vox: Boolean, onDismiss: () -> Unit, onPick: (String) -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Mode") },
-        text = {
-            val presets = Core.presets()
-            if (presets.isEmpty()) {
-                Text("The wcr core is not loaded in this build.")
-            } else {
-                LazyColumn {
-                    // afsk-1200 needs the radio's own TNC, which a VOX radio does not have.
-                    items(presets.filter { !(vox && it.usesRadioTnc) }, key = { it.name }) { p ->
-                        val best = vox && p.name in VoxBestPresets
-                        ListItem(
-                            modifier = Modifier.clickable { onPick(p.name) },
-                            leadingContent = { RadioButton(selected = p.name == current, onClick = { onPick(p.name) }) },
-                            headlineContent = { Text(if (best) "${p.name} · best on VOX" else p.name) },
-                            supportingContent = { Text(p.description) },
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-    )
+private fun Toggle(title: String, sub: String?, on: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable { onChange(!on) }.heightIn(min = if (sub != null) 64.dp else 52.dp).padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 16.sp, lineHeight = 24.sp)
+            if (sub != null) Text(sub, fontSize = 13.sp, color = colors().onSurfaceVariant)
+        }
+        Switch(on, onChange)
+    }
 }

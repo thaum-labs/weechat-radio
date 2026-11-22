@@ -3,160 +3,250 @@ package com.weechatradio.app.radio
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
-import kotlin.random.Random
 
 /**
- * A pretend station for building the screens before the phone arrives.
- * Lines you send go "on air" after a short wait and get a receipt; people
- * sometimes answer; the levels wander about like a real channel.
+ * A pretend station with the sample data from the designs (docs/design/android).
+ * XX0… callsigns are made-up stations. When [live], a timer keys queued lines,
+ * moves the waterfall and turns sent lines into receipts, so the app can be
+ * tried without a radio. Tests pass live = false so nothing moves.
  */
-class SimulatedRadio(initial: RadioStatus = RadioStatus()) : Radio {
-    private val main by lazy { Handler(Looper.getMainLooper()) }
+class SimulatedRadio(
+    start: Status = Status(),
+    startOnAir: Boolean = false,
+    private val live: Boolean = true,
+) : Radio {
+    override var status by mutableStateOf(start)
+        private set
+    override var onAir by mutableStateOf<OnAir?>(null)
+        private set
+    override var channel by mutableStateOf("#bulletin")
+        private set
+    override var channels by mutableStateOf(sampleChannels)
+        private set
+    override val heard = sampleHeard
+    override val lines: List<Line> get() = chats[channel] ?: emptyList()
+    override var mails by mutableStateOf(sampleMails)
+        private set
+    override var frames by mutableStateOf(sampleFrames)
+        private set
+    override var note by mutableStateOf<String?>(null)
+        private set
+    override var tick by mutableIntStateOf(0)
+        private set
+
+    private var chats by mutableStateOf(mapOf("#bulletin" to sampleLines))
     private var nextId = 100L
-
-    override var status by mutableStateOf(initial)
-    override var chats by mutableStateOf(sampleChats())
-    override var mail by mutableStateOf(sampleMail())
-    override var onAir by mutableStateOf(sampleOnAir())
-    override val mailAddress: String get() = "${status.callsign}@mail.weechatradio.com"
-
-    override fun connect(name: String, link: RadioLink) {
-        // VOX starts on a robust preset (hf-poor is what worked for Tobias over
-        // speaker and mic); the Bluetooth-PTT radios keep vhf-fm.
-        val preset = if (link.isVox) "hf-poor" else status.preset
-        status = status.copy(
-            connected = true, radioName = name, link = link, preset = preset,
-            sentToday = 14, heardToday = 31,
-        )
-        main.removeCallbacksAndMessages(null)
-        tickLevels()
-    }
-
-    override fun disconnect() {
-        main.removeCallbacksAndMessages(null)
-        status = status.copy(connected = false)
-    }
-
-    private fun tickLevels() {
-        status = status.copy(
-            hearing = (0.55f + Random.nextFloat() * 0.15f),
-            channelBusy = Random.nextFloat() * 0.08f,
-            snrDb = Random.nextInt(5, 10),
-        )
-        main.postDelayed(::tickLevels, 2000)
-    }
-
-    override fun openChat(name: String) {
-        chats = chats.map { if (it.name == name) it.copy(unread = 0) else it }
-    }
-
-    override fun sendChat(name: String, text: String) {
-        val id = nextId++
-        val line = ChatMessage(id, status.callsign, text, now(), mine = true, delivery = Delivery.Waiting)
-        if (chats.none { it.name == name }) chats = listOf(Chat(name, emptyList())) + chats
-        chats = chats.map { if (it.name == name) it.copy(messages = it.messages + line) else it }
-        main.postDelayed({
-            setDelivery(name, id, if (name.startsWith("#")) Delivery.Sent else Delivery.Received)
-            heard("$name · you", sent = true)
-        }, 1800)
-        if (!name.startsWith("#") && Random.nextInt(3) == 0) {
-            main.postDelayed({
-                val reply = ChatMessage(nextId++, name, "Copy that, 73.", now(), mine = false)
-                chats = chats.map { if (it.name == name) it.copy(messages = it.messages + reply) else it }
-                heard(name, sent = false)
-            }, 5000)
+    private val handler = Handler(Looper.getMainLooper())
+    private val clearNote = Runnable { note = null }
+    private val step = object : Runnable {
+        override fun run() {
+            advance()
+            handler.postDelayed(this, STEP_MS)
         }
     }
 
-    private fun setDelivery(name: String, id: Long, d: Delivery) {
-        chats = chats.map { c ->
-            if (c.name != name) c
-            else c.copy(messages = c.messages.map { if (it.id == id) it.copy(delivery = d) else it })
+    init {
+        if (startOnAir) {
+            chats = mapOf("#bulletin" to sampleLinesOnAir)
+            onAir = OnAir(lineId = 31, piece = 2, of = 3, seconds = 7, progress = 0.66f)
+            note = "Queued behind the message on air"
         }
+        if (live) handler.postDelayed(step, STEP_MS)
     }
 
-    private fun heard(what: String, sent: Boolean) {
-        val detail = if (sent) "sent" else "heard · ${status.snrDb} dB"
-        onAir = listOf(OnAirEvent(now(), what, detail, sent)) + onAir.take(19)
-        status = if (sent) status.copy(sentToday = status.sentToday + 1)
-        else status.copy(heardToday = status.heardToday + 1)
+    override fun update(change: (Status) -> Status) {
+        status = change(status)
     }
 
-    override fun sendMail(to: String, subject: String, body: String) {
-        val m = Mail(nextId++, MailFolder.Outbox, to, subject, body, now())
-        mail = listOf(m) + mail
-        main.postDelayed({
-            mail = mail.map { if (it.id == m.id) it.copy(folder = MailFolder.Sent) else it }
-            heard("Mail to $to", sent = true)
-        }, 4000)
+    override fun openChannel(name: String) {
+        channel = name
+        if (name !in chats) chats = chats + (name to emptyList())
+        channels = channels.map { if (it.name == name) it.copy(unread = 0) else it }
+    }
+
+    override fun send(text: String) {
+        val t = text.trim()
+        if (t.isEmpty()) return
+        val pieces = (t.length + PIECE_CHARS - 1) / PIECE_CHARS
+        val busy = onAir != null
+        val line = Line(
+            id = nextId++, time = now(), from = status.call, text = t, mine = true,
+            mark = Mark.Queued, pieces = pieces,
+        )
+        chats = chats + (channel to lines + line)
+        if (busy) say("Queued behind the message on air")
+        frames = listOf(Frame(now() + ":00", FrameKind.Bulletin, "${status.call} → $channel", null, "sent", t, sent = true)) + frames
+    }
+
+    override fun stopTx() {
+        val air = onAir ?: return
+        onAir = null
+        edit(air.lineId) { it.copy(mark = Mark.Refused, sendingPiece = 0) }
+    }
+
+    override fun undoQueued() {
+        val last = lines.lastOrNull { it.mine && it.mark == Mark.Queued && it.sendingPiece == 0 } ?: return
+        if (onAir?.lineId == last.id) return
+        chats = chats + (channel to lines.filter { it.id != last.id })
+        note = null
+    }
+
+    override fun tune(freq: String, emission: String, preset: String) {
+        status = status.copy(freq = freq, emission = emission, preset = preset)
+        say(if (status.link == Link.Bluetooth) {
+            "Set the ${status.rig} to $freq $emission by hand: Bluetooth can't tune it yet"
+        } else {
+            "Tuned to $freq $emission + $preset"
+        })
     }
 
     override fun getMail(id: Long) {
-        main.postDelayed({
-            mail = mail.map {
-                if (it.id == id) it.copy(downloaded = true, body = "Sounds great, see you there.\n\nSam") else it
-            }
-        }, 2500)
+        mails = mails.map {
+            if (it.id == id) it.copy(
+                waiting = false, time = now(), day = "Today ${now()}",
+                body = "Here are the photos from Saturday's walk. The view from the top was worth it.\n\nAnn",
+                attachment = Attachment("bath-walk.jpg", "17.9 KB"),
+            ) else it
+        }
+    }
+
+    override fun readMail(id: Long) {
+        mails = mails.map { if (it.id == id) it.copy(unread = false) else it }
+    }
+
+    override fun sendMail(to: String, subject: String, body: String, attachment: Attachment?) {
+        mails = listOf(
+            Mail(nextId++, Folder.Outbox, to.trim(), subject.trim().ifEmpty { "(no subject)" }, body, now(), attachment = attachment),
+        ) + mails
+        say("Mail queued for the gateway")
     }
 
     override fun deleteMail(id: Long) {
-        mail = mail.filterNot { it.id == id }
+        mails = mails.filter { it.id != id }
     }
 
-    override fun setFrequency(mhz: String) { status = status.copy(frequencyMhz = mhz) }
-    override fun setPreset(name: String) { status = status.copy(preset = name) }
-    override fun setCallsign(callsign: String) { status = status.copy(callsign = callsign.uppercase()) }
-    override fun setTxLevel(db: Int) { status = status.copy(txLevelDb = db) }
-    override fun setUseInternetHub(on: Boolean) { status = status.copy(useInternetHub = on) }
+    override fun dismissNote() {
+        note = null
+    }
+
+    /** One timer step: move the waterfall, key the next piece, hand out receipts. */
+    private fun advance() {
+        tick++
+        if (!status.listening) return
+        val air = onAir
+        if (air == null) {
+            val next = chats.values.flatten().firstOrNull { it.mine && it.mark == Mark.Queued } ?: return
+            onAir = OnAir(next.id, 1, next.pieces, 0, 0f)
+            edit(next.id) { it.copy(mark = Mark.Sent, sendingPiece = 1, keyed = 1) }
+            return
+        }
+        val progress = air.progress + 1f / (air.of * STEPS_PER_PIECE)
+        val piece = (progress * air.of).toInt() + 1
+        if (progress >= 1f) {
+            onAir = null
+            edit(air.lineId) { it.copy(sendingPiece = 0) }
+            handler.postDelayed({ edit(air.lineId) { if (it.mark == Mark.Sent) it.copy(mark = Mark.Delivered) else it } }, 2_000)
+        } else {
+            onAir = air.copy(piece = piece.coerceAtMost(air.of), seconds = (tick / 4), progress = progress)
+            edit(air.lineId) { it.copy(sendingPiece = piece.coerceAtMost(air.of)) }
+        }
+    }
+
+    private fun say(text: String) {
+        note = text
+        if (live) {
+            handler.removeCallbacks(clearNote)
+            handler.postDelayed(clearNote, 4_000)
+        }
+    }
+
+    private fun edit(id: Long, change: (Line) -> Line) {
+        chats = chats.mapValues { (_, l) -> l.map { if (it.id == id) change(it) else it } }
+    }
 
     private fun now(): String = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
+
+    private companion object {
+        const val STEP_MS = 250L
+        const val STEPS_PER_PIECE = 12
+        const val PIECE_CHARS = 120
+    }
 }
 
-private fun sampleChats() = listOf(
-    Chat("#bulletin", listOf(ChatMessage(1, "2E0XYZ", "73 both, 2E0XYZ out", "21:26", false)), unread = 2),
-    Chat(
-        "M0ABC",
-        listOf(
-            ChatMessage(2, "M0ABC", "Evening, are you on the hill tomorrow?", "21:08", false),
-            ChatMessage(3, "M7TJF", "Yes, portable with the N76 from 10. How am I coming in?", "21:10", true, Delivery.Received),
-            ChatMessage(4, "M0ABC", "5 and 9 here. Mail is on its way.", "21:12", false),
-            ChatMessage(5, "M7TJF", "Thanks, will listen on 144.950", "21:14", true, Delivery.NoReceipt),
-            ChatMessage(6, "M0ABC", "Just going to QSY to the calling freq", "21:22", false),
-        ),
-        unread = 1,
-        lastHeard = "Heard 2 min ago · by radio · 1 dB",
+// ---- Sample data from docs/design/android/material (XX0… are made-up stations) ----
+
+private val sampleLines = listOf(
+    Line(1, text = "Saturday 21 Nov", kind = LineKind.Day),
+    Line(2, "22:41", "XX0AAA", "Pi gateway in Frome is up if anyone wants to test mail ✉️", via = Via.Radio, snrDb = 10),
+    Line(3, "22:48", "XX0BBB", "cq cq from Bath, anyone about on 433.625? ☀️", via = Via.Radio, snrDb = 11),
+    Line(4, "22:49", "XX0AAA", "Evening XX0BBB! Strong in Frome, 5/9 👍", via = Via.Radio, snrDb = 9),
+    Line(5, "22:51", "M7TJF", "Hi both, M7TJF here. Phone station now live 📱", mine = true, keyed = 1, mark = Mark.Delivered),
+    Line(
+        6, "22:52", "XX0BBB",
+        "Net notes for Sunday: we meet on 433.625 NFM at 10:00, low power only, handhelds rest between blocks. " +
+            "M7TJF, can you run net control from Frome? I will relay from Bath if the ridge gets in the way.",
+        via = Via.Radio, snrDb = -4, pieces = 3,
     ),
-    Chat("#local", listOf(ChatMessage(7, "G4XYZ", "anyone hearing the Pi gateway?", "20:51", false))),
-    Chat(
-        "2E0FOX",
-        listOf(ChatMessage(8, "M7TJF", "QSY to 145.500?", "Tue", true, Delivery.Received)),
-        viaInternet = true,
-        lastHeard = "Heard Tue · by internet",
-    ),
-    Chat("#emcomm", listOf(ChatMessage(9, "M0QRP", "Net check-in at 19:00 local", "Mon", false))),
+    Line(7, "22:54", "XX0AAA", "👍👍", via = Via.Radio, snrDb = -7),
+    Line(8, "22:55", "M7TJF", "Net control is fine, see you at 10:00. 73", mine = true, keyed = 1, mark = Mark.Delivered),
+    Line(9, text = "XX0CCC joined #bulletin", kind = LineKind.Note),
 )
 
-private fun sampleMail() = listOf(
-    Mail(11, MailFolder.Inbox, "sam@example.com", "Weekend plans", "", "21:20", downloaded = false),
+private val sampleLinesOnAir = listOf(
+    Line(1, text = "Saturday 21 Nov", kind = LineKind.Day),
+    Line(4, "22:49", "XX0AAA", "Evening XX0BBB! Strong in Frome, 5/9 👍", via = Via.Radio, snrDb = 9),
+    Line(5, "22:51", "M7TJF", "Hi both, M7TJF here. Phone station now live 📱", mine = true, keyed = 1, mark = Mark.Delivered),
+    Line(6, "22:52", "XX0BBB", "Net notes for Sunday: we meet on 433.625 NFM at 10:00, low power only.", via = Via.Radio, snrDb = -4),
+    Line(
+        31, "23:30", "M7TJF",
+        "Net control is fine. I will set up in Frome by 09:30, bring a flask and the Pi gateway so mail works too. " +
+            "If the ridge blocks Bath, XX0BBB relays. Please check IN levels before TX and keep to NARROW, low power indoors. 73 and see you then ☕",
+        mine = true, keyed = 1, mark = Mark.Sent, pieces = 3, sendingPiece = 2,
+    ),
+    Line(32, text = "Rest 6 s between blocks (handheld duty)", kind = LineKind.Rest),
+    Line(33, "23:31", "M7TJF", "Also testing the phone mail screen tonight 📧", mine = true, mark = Mark.Queued),
+)
+
+private val sampleChannels = listOf(
+    Channel("#bulletin", ChannelKind.Room, "everyone · radio + hub", "22:55"),
+    Channel("#frome-bath-net", ChannelKind.Closed, "closed room · 3 members · [all] receipts", "22:31"),
+    Channel("XX0BBB", ChannelKind.Direct, "Net notes for Sunday: we meet on…", "22:52", unread = 1),
+    Channel("XX0AAA", ChannelKind.Direct, "👍👍", "22:54"),
+)
+
+private val sampleHeard = listOf(Heard("XX0BBB", 11), Heard("XX0AAA", 9), Heard("XX0CCC", 2), Heard("XX0DDD", 6))
+
+private val sampleMails = listOf(
+    Mail(1, Folder.Inbox, "ann@example.com", "Photos from the Bath walk", time = "", unread = true, waiting = true, waitingSize = "18.2 KB"),
+    Mail(2, Folder.Inbox, "wcr-qa@mail.grokbot.com", "Re: phone attachment test", "Arrived intact, checksum matches. 73", "23:12", "Today 23:12", unread = true, attachment = Attachment("qa-32k.bin", "32.0 KB")),
     Mail(
-        12, MailFolder.Inbox, "G4XYZ", "Repeater list",
-        "Hi Tobias,\n\nHere are the ones I can hit from the hill with the handheld:\n\n" +
-            "GB3XX 145.725 −0.6 tone 77.0\nGB3YY 433.200 +1.6 tone 82.5\nGB3ZZ 145.6625 −0.6 tone 71.9\n\n" +
-            "Map attached. See you on Sunday.\n\n73, Dave",
-        "20:31", attachment = "map.jpg · 3.8 KB",
+        3, Folder.Inbox, "XX0BBB@mail.weechatradio.com", "Net notes for Sunday",
+        "Hi Tobias,\n\nNotes for the Sunday net:\n\n1. 433.625 NFM, vhf-fast, 10:00\n2. Low power, handhelds rest 6 s between blocks\n" +
+            "3. You run net control from Frome, I relay from Bath if the ridge gets in the way ⛰️\n\nPlan attached. Good luck with the phone app! 73\nXX0BBB",
+        "22:40", "Today\n22:40", unread = true, attachment = Attachment("net-plan.txt", "1.2 KB"),
     ),
-    Mail(13, MailFolder.Inbox, "mum@example.com", "Re: back Sunday", "Safe travels, text when you're down.", "Wed"),
-    Mail(14, MailFolder.Inbox, "M0ABC", "Net times", "Thursday 20:00 on 145.500, simplex.", "Mon"),
-    Mail(15, MailFolder.Sent, "sam@example.com", "Weekend plans", "Are we still on for Saturday?", "Fri"),
+    Mail(4, Folder.Inbox, "XX0AAA@mail.weechatradio.com", "Re: aerial height at Frome", "Six metres on the mast should clear the ridge.", "Fri"),
+    Mail(5, Folder.Inbox, "ann@example.com", "Hello from the hill", "Lovely day for it.", "Thu", attachment = Attachment("hill.jpg", "12.4 KB")),
+    Mail(6, Folder.Inbox, "newsletter@rsgb.example", "Your callsign renewal reminder", "Your licence is due for revalidation.", "14 Nov"),
+    Mail(
+        7, Folder.Sent, "wcr-qa@mail.grokbot.com", "Phone attachment test",
+        "Sending qa-32k.bin from the phone over vhf-fast. Please confirm it arrives intact. 73 de M7TJF",
+        "23:04", "Today 23:04", attachment = Attachment("qa-32k.bin", "32.0 KB"), delivered = true,
+        journey = listOf("23:04" to "Written", "23:05" to "On air", "23:07" to "At gateway M7TJF", "23:07" to "Sent on", "23:08" to "Delivered"),
+    ),
+    Mail(8, Folder.Sent, "XX0BBB@mail.weechatradio.com", "Re: Net notes for Sunday", "Count me in. 73", "22:45", "Today 22:45", delivered = true),
+    Mail(9, Folder.Sent, "ann@example.com", "Walk photos?", "Did you get any good ones?", "Fri", "Fri 18:02", delivered = true),
 )
 
-private fun sampleOnAir() = listOf(
-    OnAirEvent("21:33", "#bulletin · 2E0XYZ", "heard · 1 dB", false),
-    OnAirEvent("21:32", "Receipt from M0ABC", "heard · 2 dB", false),
-    OnAirEvent("21:31", "#bulletin · you", "sent", true),
-    OnAirEvent("21:27", "Mail header to sam@…", "sent", true),
+private val sampleFrames = listOf(
+    Frame("23:31:08", FrameKind.Bulletin, "M7TJF → #bulletin", null, "sent", "Also testing the phone mail screen tonight 📧", sent = true),
+    Frame("23:30:41", FrameKind.Receipt, "XX0AAA → M7TJF", 10, "rf"),
+    Frame("23:24:55", FrameKind.Mail, "M7TJF → M7TJF", 8, "rf", "chunk 3/3 · wcr-qa@mail.grokbot.com"),
+    Frame("23:22:03", FrameKind.Direct, "XX0BBB → M7TJF", 11, "rf", "Heard the 3 pieces fine 👍"),
+    Frame("23:19:47", FrameKind.Bulletin, "XX0CCC → #bulletin", 2, "internet", "See you all Sunday"),
 )
