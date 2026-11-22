@@ -5,12 +5,18 @@ Early groundwork. The app runs against a **simulated radio** until Phase 0
 
 | Folder | What it is |
 | --- | --- |
-| `app/` | The app: Kotlin, Jetpack Compose, Material 3. Three tabs (Chats, Mail, Radio), Settings behind the gear on Radio. |
-| `app/.../ui/theme/Theme.kt` | Both looks: **Standard** (website colours, light and dark follow the phone) and **modem73** (the desktop modem73 look). |
-| `app/.../radio/` | `Radio` (what the screens need) and `SimulatedRadio` (the fake one used for now). |
+| `app/` | The app: Kotlin, Jetpack Compose, Material 3, built to the designs in `docs/design/android/material/`. Four tabs (Chat, Mail, Map, Radio), Settings behind the gear, setup in four steps. |
+| `app/.../ui/theme/Theme.kt` | Material 3 palette seeded from #7d9bff, dark first plus light (follows the phone), Roboto Mono for callsigns and frequencies, and the fixed radio colours (TX orange, meter zones, waterfall). |
+| `app/.../radio/` | `Radio` (what the screens need), `SimulatedRadio` (the fake one used for now, with the designs' sample data) and `ListeningService` (background listening notification). |
 | `app/.../core/Core.kt` | The calls into the wcr core (bands, presets, airtime, grid). |
 | `core/` | The wcr core as an Android library (Rust, UniFFI). Its own Cargo workspace, so desktop CI never builds it. |
 | `build-native.sh` | Builds `libwcr_mobile.so`, its Kotlin bindings, and modem73 (as `libmodem73.so`) with the NDK. |
+
+## Screenshots
+
+`./gradlew testDebugUnitTest` draws every design screen, dark and light, into
+`app/build/screens/` (CI uploads them as `android-screens`). The map shows a
+plain grid there, since tests have no network for map tiles.
 
 ## Build
 

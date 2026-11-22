@@ -76,26 +76,6 @@ jobs:
       - name: screenshots of every design screen (dark and light)
         working-directory: android
         run: ./gradlew --no-daemon testDebugUnitTest
-      - name: TEMP screenshot montage in the log (removed before merge)
-        if: always()
-        run: |
-          pip install -q pillow
-          python3 - <<'PY'
-          import base64, io, glob
-          from PIL import Image
-          for look in ("dark", "light"):
-              files = sorted(glob.glob(f"android/app/build/screens/{look}/*.png"))
-              for k in range(0, len(files), 8):
-                  ims = [Image.open(f).convert("RGB") for f in files[k:k + 8]]
-                  w = 300; ims = [i.resize((w, int(i.height * w / i.width))) for i in ims]
-                  h = max(i.height for i in ims)
-                  sheet = Image.new("RGB", (w * 4 + 30, h * 2 + 10), "white")
-                  for n, i in enumerate(ims):
-                      sheet.paste(i, ((n % 4) * (w + 10), (n // 4) * (h + 10)))
-                  buf = io.BytesIO(); sheet.save(buf, "JPEG", quality=65)
-                  print(f"MONTAGE {look}-{k // 8} " + " ".join(f.rsplit('/', 1)[1] for f in files[k:k + 8]))
-                  print(f"B64 {look}-{k // 8} " + base64.b64encode(buf.getvalue()).decode())
-          PY
       - uses: actions/upload-artifact@v4
         with:
           name: android-screens

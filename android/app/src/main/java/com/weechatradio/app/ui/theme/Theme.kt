@@ -61,6 +61,8 @@ private val Light = lightColorScheme(
 data class RadioColors(
     /** TX, own call, Tune radio, the on-air banner, unread mail dot. */
     val tx: Color,
+    /** Text and icons on a filled [tx] button. */
+    val onTx: Color,
     val txContainer: Color,
     val onTxContainer: Color,
     /** Delivered, linked, MAIL GW up. */
@@ -75,14 +77,14 @@ data class RadioColors(
 )
 
 private val DarkRadio = RadioColors(
-    tx = Color(0xFFFF8A50), txContainer = Color(0xFF5D2C12), onTxContainer = Color(0xFFFFDBC9),
+    tx = Color(0xFFFF8A50), onTx = Color(0xFF2A0D00), txContainer = Color(0xFF5D2C12), onTxContainer = Color(0xFFFFDBC9),
     ok = Color(0xFF78DC66), okContainer = Color(0xFF1B5220),
     warn = Color(0xFFFFD166), warnContainer = Color(0xFF574300), onWarnContainer = Color(0xFFFFE9B0),
     otherCall = Color(0xFF5FD3E0),
 )
 
 private val LightRadio = RadioColors(
-    tx = Color(0xFFB3410A), txContainer = Color(0xFFFFDBC9), onTxContainer = Color(0xFF5D2C12),
+    tx = Color(0xFFB3410A), onTx = Color.White, txContainer = Color(0xFFFFDBC9), onTxContainer = Color(0xFF5D2C12),
     ok = Color(0xFF1D7A22), okContainer = Color(0xFFC8F0BE),
     warn = Color(0xFF7A5900), warnContainer = Color(0xFFFFE9B0), onWarnContainer = Color(0xFF3D2E00),
     otherCall = Color(0xFF006A73),

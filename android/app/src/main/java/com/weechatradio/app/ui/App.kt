@@ -107,7 +107,7 @@ fun App(radio: Radio, start: Start = Start()) {
                 }
             }
         }
-}
+    }
 }
 
 @Composable

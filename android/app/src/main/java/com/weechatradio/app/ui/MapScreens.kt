@@ -245,7 +245,7 @@ private fun PlanVerdict(band: BandChip) {
 
 @Composable
 fun TuneButton(modifier: Modifier, label: String, onClick: () -> Unit) {
-    Button(onClick, modifier, colors = ButtonDefaults.buttonColors(containerColor = radioColors().tx, contentColor = TxInk), contentPadding = PaddingValues(horizontal = 14.dp)) {
+    Button(onClick, modifier, colors = ButtonDefaults.buttonColors(containerColor = radioColors().tx, contentColor = radioColors().onTx), contentPadding = PaddingValues(horizontal = 14.dp)) {
         Icon(Icons.Filled.Tune, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(label, maxLines = 1)
     }
 }

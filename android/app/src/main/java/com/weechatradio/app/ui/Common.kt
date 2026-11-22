@@ -52,8 +52,6 @@ import com.weechatradio.app.ui.theme.WaterfallColors
 
 // Small building blocks shared by the screens. Sizes follow the Material mockups.
 
-val TxInk = Color(0xFF2A0D00)
-
 @Composable fun colors() = MaterialTheme.colorScheme
 
 @Composable fun radioColors() = LocalRadioColors.current
@@ -277,7 +275,7 @@ fun OnAirBanner(s: Status, air: OnAir, onStop: () -> Unit) {
             Box(
                 Modifier.size(52.dp).clip(CircleShape).background(radioColors().tx.copy(alpha = 0.22f)).padding(6.dp).clip(CircleShape).background(radioColors().tx),
                 contentAlignment = Alignment.Center,
-            ) { Icon(Icons.Filled.SettingsInputAntenna, null, tint = TxInk) }
+            ) { Icon(Icons.Filled.SettingsInputAntenna, null, tint = radioColors().onTx) }
             Column(Modifier.weight(1f)) {
                 Text("On air · $how", color = radioColors().onTxContainer, fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
@@ -288,7 +286,7 @@ fun OnAirBanner(s: Status, air: OnAir, onStop: () -> Unit) {
                     color = radioColors().onTxContainer.copy(alpha = 0.85f), fontSize = 13.sp, maxLines = 1,
                 )
             }
-            Button(onStop, colors = ButtonDefaults.buttonColors(containerColor = radioColors().tx, contentColor = TxInk), contentPadding = PaddingValues(horizontal = 16.dp), modifier = Modifier.height(36.dp)) {
+            Button(onStop, colors = ButtonDefaults.buttonColors(containerColor = radioColors().tx, contentColor = radioColors().onTx), contentPadding = PaddingValues(horizontal = 16.dp), modifier = Modifier.height(36.dp)) {
                 Text("Stop")
             }
         }
