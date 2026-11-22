@@ -267,7 +267,7 @@ fun StationStrip(s: Status, tx: Boolean) {
 /** Orange "On air" banner with Stop, shown while a message is keyed. */
 @Composable
 fun OnAirBanner(s: Status, air: OnAir, onStop: () -> Unit) {
-    val how = if (s.link == com.weechatradio.app.radio.Link.Bluetooth) "keying ${s.rig} over Bluetooth" else "keying via ${s.rig.substringBefore(' ')} ${s.ptt}"
+    val how = if (s.link == com.weechatradio.app.radio.Link.Bluetooth) "${s.rig} Bluetooth" else "${s.rig.substringBefore(' ')} ${s.ptt}"
     Box(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 6.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(radioColors().txContainer)) {
         Row(
             Modifier.padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
@@ -280,13 +280,13 @@ fun OnAirBanner(s: Status, air: OnAir, onStop: () -> Unit) {
             ) { Icon(Icons.Filled.SettingsInputAntenna, null, tint = TxInk) }
             Column(Modifier.weight(1f)) {
                 Text("On air · $how", color = radioColors().onTxContainer, fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    MonoText(s.freq, color = radioColors().onTxContainer.copy(alpha = 0.85f), size = 12.5.sp)
-                    Text(
-                        " ${s.emission} · piece ${air.piece} of ${air.of} · 00:%02d".format(air.seconds),
-                        color = radioColors().onTxContainer.copy(alpha = 0.85f), fontSize = 13.sp,
-                    )
-                }
+                Text(
+                    androidx.compose.ui.text.buildAnnotatedString {
+                        pushStyle(androidx.compose.ui.text.SpanStyle(fontFamily = Mono)); append(s.freq); pop()
+                        append(" ${s.emission} · piece ${air.piece} of ${air.of} · 00:%02d".format(air.seconds))
+                    },
+                    color = radioColors().onTxContainer.copy(alpha = 0.85f), fontSize = 13.sp, maxLines = 1,
+                )
             }
             Button(onStop, colors = ButtonDefaults.buttonColors(containerColor = radioColors().tx, contentColor = TxInk), contentPadding = PaddingValues(horizontal = 16.dp), modifier = Modifier.height(36.dp)) {
                 Text("Stop")

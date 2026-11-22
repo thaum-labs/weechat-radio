@@ -155,7 +155,7 @@ fun TileMap(
             }
             overlay { p -> Offset(((worldX(p.lon, zoom) - left) * scale).toFloat(), ((worldY(p.lat, zoom) - top) * scale).toFloat()) }
         }
-        Text(
+        if (maxWidth > 200.dp) Text(
             "© OpenStreetMap © CARTO", Modifier.align(Alignment.BottomStart).padding(4.dp),
             fontSize = 9.sp, color = colors().onSurfaceVariant.copy(alpha = 0.8f),
         )

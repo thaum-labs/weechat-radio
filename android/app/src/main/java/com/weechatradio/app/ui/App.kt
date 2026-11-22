@@ -69,42 +69,45 @@ fun App(radio: Radio, start: Start = Start()) {
         }
     }
 
-    Box(Modifier.fillMaxSize().background(colors().surface).systemBarsPadding().imePadding()) {
-        when (val f = full) {
-            FullScreen.Settings -> SettingsScreen(radio, { full = null }) { full = FullScreen.Setup(it) }
-            is FullScreen.Setup -> SetupScreen(
-                radio, f.step,
-                onStep = { full = FullScreen.Setup(it) },
-                onClose = { full = if (radio.status.setUp) null else f },
-                onDone = { radio.update { it.copy(setUp = true, listening = true) }; full = null; tab = HomeTab.Chat },
-            )
-            null -> Column(Modifier.fillMaxSize()) {
-                Box(Modifier.weight(1f)) {
-                    val settings = { full = FullScreen.Settings }
-                    when (val p = page) {
-                        is Page.MailOpen -> MailOpenScreen(radio, p.id, { page = null }) { m -> page = Page.Compose(m.peer, "Re: " + m.subject.removePrefix("Re: ")) }
-                        is Page.Compose -> ComposeScreen(radio, p.to, p.subject, p.body, p.file, { page = null }) { full = FullScreen.Setup(SetupStep.Radio) }
-                        Page.PlanVhf -> PlanVhfScreen(radio, { page = null }) { page = Page.PlanHf }
-                        Page.PlanHf -> PlanHfScreen(radio) { page = Page.PlanVhf }
-                        Page.Station -> StationScreen(radio, { page = null }, settings)
-                        null -> when (tab) {
-                            HomeTab.Chat -> ChatScreen(radio, { sheet = SheetKind.Channels }, { sheet = SheetKind.Key }, settings)
-                            HomeTab.Mail -> MailListScreen(radio, folder, { folder = it }, { page = Page.MailOpen(it.id) }, { page = Page.Compose() }) { sheet = SheetKind.MailSettings }
-                            HomeTab.Map -> MapScreen(radio, tiles, { page = Page.PlanVhf }, settings)
-                            HomeTab.Radio -> RadioScreen(radio, { page = Page.Station }, settings) { full = FullScreen.Setup(SetupStep.Radio) }
+    // Surface sets the text colour (onSurface) for everything inside.
+    Surface(Modifier.fillMaxSize(), color = colors().surface) {
+        Box(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
+            when (val f = full) {
+                FullScreen.Settings -> SettingsScreen(radio, { full = null }) { full = FullScreen.Setup(it) }
+                is FullScreen.Setup -> SetupScreen(
+                    radio, f.step,
+                    onStep = { full = FullScreen.Setup(it) },
+                    onClose = { full = if (radio.status.setUp) null else f },
+                    onDone = { radio.update { it.copy(setUp = true, listening = true) }; full = null; tab = HomeTab.Chat },
+                )
+                null -> Column(Modifier.fillMaxSize()) {
+                    Box(Modifier.weight(1f)) {
+                        val settings = { full = FullScreen.Settings }
+                        when (val p = page) {
+                            is Page.MailOpen -> MailOpenScreen(radio, p.id, { page = null }) { m -> page = Page.Compose(m.peer, "Re: " + m.subject.removePrefix("Re: ")) }
+                            is Page.Compose -> ComposeScreen(radio, p.to, p.subject, p.body, p.file, { page = null }) { full = FullScreen.Setup(SetupStep.Radio) }
+                            Page.PlanVhf -> PlanVhfScreen(radio, { page = null }) { page = Page.PlanHf }
+                            Page.PlanHf -> PlanHfScreen(radio) { page = Page.PlanVhf }
+                            Page.Station -> StationScreen(radio, { page = null }, settings)
+                            null -> when (tab) {
+                                HomeTab.Chat -> ChatScreen(radio, { sheet = SheetKind.Channels }, { sheet = SheetKind.Key }, settings)
+                                HomeTab.Mail -> MailListScreen(radio, folder, { folder = it }, { page = Page.MailOpen(it.id) }, { page = Page.Compose() }) { sheet = SheetKind.MailSettings }
+                                HomeTab.Map -> MapScreen(radio, tiles, { page = Page.PlanVhf }, settings)
+                                HomeTab.Radio -> RadioScreen(radio, { page = Page.Station }, settings) { full = FullScreen.Setup(SetupStep.Radio) }
+                            }
+                        }
+                        when (sheet) {
+                            SheetKind.Channels -> ChannelsSheet(radio) { sheet = null }
+                            SheetKind.Key -> KeySheet { sheet = null }
+                            SheetKind.MailSettings -> MailSettingsSheet(radio, { sheet = null }) { sheet = null; full = FullScreen.Settings }
+                            null -> {}
                         }
                     }
-                    when (sheet) {
-                        SheetKind.Channels -> ChannelsSheet(radio) { sheet = null }
-                        SheetKind.Key -> KeySheet { sheet = null }
-                        SheetKind.MailSettings -> MailSettingsSheet(radio, { sheet = null }) { sheet = null; full = FullScreen.Settings }
-                        null -> {}
-                    }
+                    BottomBar(radio, tab) { tab = it; page = null; sheet = null }
                 }
-                BottomBar(radio, tab) { tab = it; page = null; sheet = null }
             }
         }
-    }
+}
 }
 
 @Composable

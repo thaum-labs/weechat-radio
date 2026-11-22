@@ -20,11 +20,11 @@ enum class Link(val label: String) {
 /** What runs over the Bluetooth link (setup step 1b). */
 enum class BtAudio(val label: String) {
     /** Radio audio into modem73 on the phone. */
-    Modem73("Audio · modem73"),
+    Modem73("modem73"),
     /** The radio's own KISS TNC, afsk-1200 only. */
-    Tnc1200("TNC · 1200 bd"),
+    Tnc1200("TNC 1200"),
     /** Any radio paired as a Bluetooth headset, keyed by its own VOX. */
-    HeadsetVox("Headset · VOX"),
+    HeadsetVox("Headset VOX"),
 }
 
 /** How a USB-cabled radio is keyed. */
