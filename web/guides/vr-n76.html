@@ -264,7 +264,7 @@
             <p><strong>RADIO</strong> reads <code>VR-N76 linked</code> in green, or <code>lost, reconnecting…</code> in red; the app reconnects by itself.</p>
           </li>
         </ol>
-        <p>Presets: <code>vhf-fm</code> (default), <code>hf-poor</code>, <code>hf-weak</code>, <code>hf-deep</code>. <code>hf-good</code> and <code>vhf-fast</code> are refused: the radio’s Bluetooth codec breaks 8PSK, and QAM16 is denser still. This needs the modem73 that comes with WeeChat Radio 1.0.2 or newer.</p>
+        <p>Presets: <code>vhf-fm</code> (default), <code>hf-poor</code>, <code>hf-weak</code>, <code>hf-deep</code>. <code>hf-good</code> is refused: the radio’s Bluetooth codec breaks 8PSK. <code>vhf-fast</code> (QAM16, denser still) is refused too, unless you turn on <strong>Experimental: allow vhf-fast over Bluetooth</strong> in the desktop STATION panel or the Pi page (<code>[modem] experimental_bt_vhf_fast = true</code>). It is untested over Bluetooth; if QAM16 does not get through, the modem falls back to slower modes. This needs the modem73 that comes with WeeChat Radio 1.0.2 or newer.</p>
       </section>
 
       <p class="next">Other paths: <a href="/guides/handheld.html">handheld + Digirig</a> · <a href="/guides/vox.html">VOX cable</a> · <a href="/guides/hf.html">HF + CAT</a>. Frequencies: <a href="/docs/calling.html">calling</a>.</p>

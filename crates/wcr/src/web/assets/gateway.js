@@ -511,6 +511,7 @@ function draw(d) {
   drawGatewayMode(d.gateway_mode, d.mail_gateway, s);
   drawFileSend(d.file_send, s);
   drawDuty(d.duty, s);
+  drawBtFast(d.bt_vhf_fast);
   drawRadio(running, s);
   drawLists(d);
   drawDiagnostics(d);
@@ -825,6 +826,38 @@ $("duty-save").addEventListener("click", async () => {
     const d = await r.json().catch(() => ({}));
     $("action").textContent = r.ok ? `Radio type saved: ${value}.` : d.error || "could not save radio type";
     if (r.ok) dutyEdited = false;
+  } finally {
+    setTimeout(poll, 500);
+  }
+});
+
+// Experimental vhf-fast over Bluetooth (#392). Shown only on a Bluetooth
+// audio radio. Saved in wcr.toml as [modem] experimental_bt_vhf_fast.
+let btFastEdited = false;
+
+function drawBtFast(g) {
+  const box = $("btfast-box");
+  box.hidden = !g;
+  if (box.hidden) return;
+  if (!btFastEdited) $("btfast-on").checked = !!g.on;
+  $("btfast-warn").textContent = $("btfast-on").checked ? g.warning || "" : "";
+}
+
+$("btfast-on").addEventListener("change", () => { btFastEdited = true; });
+$("btfast-save").addEventListener("click", async () => {
+  const value = $("btfast-on").checked ? "on" : "off";
+  $("action").textContent = "Saving experimental setting…";
+  try {
+    const r = await fetch("/api/station/setting", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ what: "bt_vhf_fast", value }),
+    });
+    const d = await r.json().catch(() => ({}));
+    $("action").textContent = r.ok
+      ? `vhf-fast over Bluetooth ${value === "on" ? "allowed (experimental)" : "off"}.`
+      : d.error || "could not save the experimental setting";
+    if (r.ok) btFastEdited = false;
   } finally {
     setTimeout(poll, 500);
   }

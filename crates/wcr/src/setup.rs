@@ -346,7 +346,7 @@ pub fn run_wizard(cfg_path: &Path) -> Result<Config> {
         // Over Bluetooth audio, only the presets that survive the link.
         let offered: Vec<Preset> = Preset::all()
             .into_iter()
-            .filter(|&p| !cfg.modem.is_bt_audio() || crate::btaudio::preset_allowed(p))
+            .filter(|&p| cfg.modem.link_allows(p))
             .collect();
         let presets: Vec<&str> = offered.iter().map(|p| p.as_str()).collect();
         let idx = Select::with_theme(&theme)

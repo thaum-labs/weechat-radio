@@ -217,6 +217,22 @@ const COMMANDS: &[Cmd] = &[
         send_bare: false,
     },
     Cmd {
+        name: "btfast",
+        usage: "/btfast on|off",
+        summary: "Experimental: offer vhf-fast on a Bluetooth audio radio",
+        args: &[
+            Arg {
+                value: "on",
+                hint: "Untested over Bluetooth; may fall back to slower modes",
+            },
+            Arg {
+                value: "off",
+                hint: "As before: vhf-fast refused over Bluetooth (default)",
+            },
+        ],
+        send_bare: true,
+    },
+    Cmd {
         name: "filesend",
         usage: "/filesend auto|burst|pieces",
         summary: "How a file in a direct chat goes out",

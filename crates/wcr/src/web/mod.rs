@@ -428,6 +428,9 @@ async fn setting(State(web): State<Web>, Json(b): Json<SettingBody>) -> Response
     if b.what == "duty" {
         return set_duty(&web, &b.value);
     }
+    if b.what == "bt_vhf_fast" {
+        return set_bt_vhf_fast(&web, &b.value);
+    }
     if b.what == "freq" {
         return set_dial(&web, &b.value);
     }
@@ -544,6 +547,35 @@ fn set_file_send(web: &Web, value: &str) -> Response {
     Json(json!({ "ok": true })).into_response()
 }
 
+/// Save the experimental vhf-fast over Bluetooth setting (QA #392) in
+/// wcr.toml and, when the station runs, use it now. Turning it off on a
+/// Bluetooth radio that sits on vhf-fast moves it back to vhf-fm.
+fn set_bt_vhf_fast(web: &Web, value: &str) -> Response {
+    let bad = |e: String| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response();
+    let on = match crate::config::parse_on_off(value) {
+        Ok(on) => on,
+        Err(e) => return bad(e),
+    };
+    let mut cfg = match Config::load(&web.cfg_path) {
+        Ok(c) => c,
+        Err(e) => return bad(e.to_string()),
+    };
+    cfg.modem.experimental_bt_vhf_fast = on;
+    cfg.normalize();
+    if let Err(e) = cfg.save(&web.cfg_path) {
+        return bad(e.to_string());
+    }
+    // Not an error while stopped: the saved value is used at the next Start.
+    let _ = web
+        .chat
+        .radio_setting("bt_vhf_fast", if on { "on" } else { "off" });
+    web.station.note(&format!(
+        "experimental vhf-fast over Bluetooth turned {} on the web page",
+        if on { "on" } else { "off" }
+    ));
+    Json(json!({ "ok": true })).into_response()
+}
+
 /// Save the radio type (QA #365) in wcr.toml and, when the station runs,
 /// use it now. Saved while stopped too.
 fn set_duty(web: &Web, value: &str) -> Response {
@@ -655,10 +687,19 @@ fn choices(cfg: Option<&Config>) -> Value {
         _ => Preset::all()
             .into_iter()
             .filter(|p| !p.is_radio_tnc())
-            .filter(|p| {
-                !cfg.is_some_and(|c| c.modem.is_bt_audio()) || crate::btaudio::preset_allowed(*p)
+            .filter(|p| cfg.is_none_or(|c| c.modem.link_allows(*p)))
+            .map(|p| {
+                // QA #392: vhf-fast on a Bluetooth radio is experimental.
+                if p == Preset::VhfFast && cfg.is_some_and(|c| c.modem.is_bt_audio()) {
+                    json!({
+                        "value": p.as_str(),
+                        "name": "vhf-fast (experimental)",
+                        "about": crate::btaudio::VHF_FAST_WARNING,
+                    })
+                } else {
+                    json!({ "value": p.as_str(), "about": p.description() })
+                }
             })
-            .map(|p| json!({ "value": p.as_str(), "about": p.description() }))
             .collect(),
     };
     json!({ "modes": modes, "presets": presets })
@@ -724,9 +765,16 @@ async fn gateway(State(web): State<Web>) -> Json<Value> {
     let file_send = cfg.as_ref().map(|c| c.rf.file_send.clone());
     // Radio type for rests between long TX (QA #365), from wcr.toml.
     let duty = cfg.as_ref().map(|c| c.rf.duty.clone());
+    // Experimental vhf-fast over Bluetooth (QA #392): only on a Bluetooth
+    // audio radio, from wcr.toml so it shows while stopped.
+    let bt_vhf_fast = cfg
+        .as_ref()
+        .filter(|c| c.modem.is_bt_audio())
+        .map(|c| json!({ "on": c.modem.experimental_bt_vhf_fast, "warning": crate::btaudio::VHF_FAST_WARNING }));
     Json(json!({
         "file_send": file_send,
         "duty": duty,
+        "bt_vhf_fast": bt_vhf_fast,
         "frequency": frequency,
         "mail_gateway": mail_gateway,
         "gateway_mode": gateway_mode,
@@ -1567,5 +1615,50 @@ mod tests {
     fn the_station_is_read_on_loopback() {
         assert_eq!(local_base("127.0.0.1:8074"), "http://127.0.0.1:8074");
         assert_eq!(local_base("0.0.0.0:9000"), "http://127.0.0.1:9000");
+    }
+
+    /// QA #392: the Pi page offers vhf-fast on a Bluetooth audio radio only
+    /// with the experimental setting, and tags it; hf-good never.
+    #[test]
+    fn bluetooth_picker_offers_vhf_fast_only_on_the_experimental_setting() {
+        let mut cfg = Config::default();
+        cfg.modem.ptt = "bluetooth".into();
+        let names = |c: &Config| -> Vec<String> {
+            choices(Some(c))["presets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p["value"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let off = names(&cfg);
+        assert!(!off.contains(&"vhf-fast".to_string()), "{off:?}");
+        assert!(!off.contains(&"hf-good".to_string()), "{off:?}");
+        cfg.modem.experimental_bt_vhf_fast = true;
+        let on = names(&cfg);
+        assert!(on.contains(&"vhf-fast".to_string()), "{on:?}");
+        assert!(!on.contains(&"hf-good".to_string()), "{on:?}");
+        let fast = choices(Some(&cfg))["presets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["value"] == "vhf-fast")
+            .cloned()
+            .unwrap();
+        assert_eq!(fast["name"], "vhf-fast (experimental)");
+        assert!(fast["about"]
+            .as_str()
+            .unwrap()
+            .contains("untested over Bluetooth"));
+        // A cabled radio is unchanged: vhf-fast with no tag.
+        cfg.modem.ptt = "digirig".into();
+        let fast = choices(Some(&cfg))["presets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["value"] == "vhf-fast")
+            .cloned()
+            .unwrap();
+        assert!(fast.get("name").is_none());
     }
 }
