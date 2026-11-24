@@ -72,7 +72,7 @@ The second way to use these radios: WeeChat Radio sends **modem73 audio** over t
 2. In setup choose **VR-N76 / UV-PRO / GA-5WB (Bluetooth audio, modem73)** or **VR-N7600 (Bluetooth audio, modem73)**, press **Find radio** (macOS: pair the radio in System Settings → Bluetooth first), then **Save and start**.
 3. **RADIO** reads `VR-N76 linked` in green, or `lost, reconnecting…` in red; the app reconnects by itself every 5 s.
 
-Presets: `vhf-fm` (default), `hf-poor`, `hf-weak` and `hf-deep`. `hf-good` and `vhf-fast` are refused: the radio's Bluetooth audio codec (SBC) breaks 8PSK, and QAM16 is denser still.
+Presets: `vhf-fm` (default), `hf-poor`, `hf-weak` and `hf-deep`. `hf-good` is refused: the radio's Bluetooth audio codec (SBC) breaks 8PSK. `vhf-fast` (QAM16, denser still) is refused too, unless you turn on **Experimental: allow vhf-fast over Bluetooth** in the desktop STATION panel or the Pi page (`[modem] experimental_bt_vhf_fast = true` in `wcr.toml`, `/btfast on` in chat). It is untested over Bluetooth; if QAM16 does not get through, the modem falls back to slower modes.
 
 ```toml
 [modem]

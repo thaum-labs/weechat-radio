@@ -92,7 +92,7 @@
         <ul class="cards">
           <li><strong>Cabled PTT is the most reliable</strong><span>A Digirig, a CM108 sound card, or CAT. There is no VOX lead, so the short 1&nbsp;s frame is not clipped at the start.</span></li>
           <li><strong>VOX works on a strong link</strong><span>Once the level is set as in the <a href="/guides/vox.html">VOX guide</a>. An RT-900 at squelch 1, VOX 4 sent and took <code>vhf-fast</code> first time. If the start of frames gets clipped, use <code>vhf-fm</code> or a cabled PTT.</span></li>
-          <li><strong>Untested over Bluetooth</strong><span>Bluetooth audio, for example a VR-N76, has not been tested on air with <code>vhf-fast</code>. The current app does not offer this preset on a Bluetooth audio radio. Use a cable or VOX to try it.</span></li>
+          <li><strong>Untested over Bluetooth</strong><span>Bluetooth audio, for example a VR-N76, has not been tested on air with <code>vhf-fast</code>. It is offered there only when you turn on <strong>Experimental: allow vhf-fast over Bluetooth</strong> (desktop STATION panel, the Pi page's <em>Dial, mode and preset</em> box, or <code>[modem] experimental_bt_vhf_fast = true</code> in <code>wcr.toml</code>). The radio's audio compression (SBC) may break QAM16, and the modem then falls back to slower modes. A cable or VOX is the tested way.</span></li>
         </ul>
       </section>
 

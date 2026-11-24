@@ -914,12 +914,17 @@ impl GuiApp {
                 freq_cmd = Some(format!("/qsy {}", crate::band::fmt_mhz(c.khz)));
             }
         }
-        if !s.tnc.is_empty() {
+        // A radio's own TNC is fixed at afsk-1200; Bluetooth audio runs
+        // modem73, so it gets the picker (QA #392).
+        if !s.tnc.is_empty() && !s.bt_audio() {
             station_kv(ui, "PRESET", text(&s.preset, M_FG));
-        } else if let Some(next) = preset_pick(ui, &s.preset, key_cell) {
+        } else if let Some(next) = preset_pick(ui, &s, key_cell) {
             if next != s.preset {
                 preset_cmd = Some(format!("/preset {next}"));
             }
+        }
+        if let Some(c) = bt_fast_row(ui, &s, key_cell, M_GOLD) {
+            preset_cmd = Some(c);
         }
         let file_cmd = file_send_row(ui, &s, key_cell).or(duty_row(ui, &s, key_cell));
         if let Some(note) = s.preset_pending_note() {

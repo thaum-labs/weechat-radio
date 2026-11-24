@@ -181,6 +181,11 @@ impl Chat {
                 rf.set_file_send(value)?;
                 format!("/filesend {}", rf.file_send)
             }
+            // Experimental vhf-fast over Bluetooth (QA #392): the same /btfast.
+            "bt_vhf_fast" => {
+                let on = crate::config::parse_on_off(value)?;
+                format!("/btfast {}", if on { "on" } else { "off" })
+            }
             // Radio type (QA #365): the same /duty.
             "duty" => {
                 let mut rf = crate::config::RfConfig::default();
@@ -195,7 +200,7 @@ impl Chat {
                 format!("/freq {}", crate::band::fmt_mhz(khz))
             }
             _ => return Err(
-                "only mode, preset, dial, levels, file send and gateway mode can be changed here"
+                "only mode, preset, dial, levels, file send, Bluetooth vhf-fast and gateway mode can be changed here"
                     .into(),
             ),
         };

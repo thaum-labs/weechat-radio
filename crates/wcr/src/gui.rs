@@ -2223,11 +2223,18 @@ impl eframe::App for GuiApp {
                             }
                             if !s.tnc.is_empty() {
                                 kv(ui, "RADIO", &s.tnc, if s.tnc_ok { GREEN } else { ORANGE });
+                            }
+                            // A radio's own TNC is fixed at afsk-1200; Bluetooth
+                            // audio runs modem73, so it gets the picker (QA #392).
+                            if !s.tnc.is_empty() && !s.bt_audio() {
                                 kv(ui, "PRESET", &s.preset, PURPLE);
-                            } else if let Some(next) = preset_pick(ui, &s.preset, station_key) {
+                            } else if let Some(next) = preset_pick(ui, s, station_key) {
                                 if next != s.preset {
                                     preset_cmd = Some(format!("/preset {next}"));
                                 }
+                            }
+                            if let Some(c) = bt_fast_row(ui, s, station_key, ORANGE) {
+                                preset_cmd = Some(c);
                             }
                             file_cmd = file_send_row(ui, s, station_key);
                             if let Some(c) = duty_row(ui, s, station_key) {
@@ -3916,6 +3923,59 @@ fn tower_toggle(ui: &mut egui::Ui, on: bool, key: KeyFn) -> Option<bool> {
     flipped
 }
 
+/// The BT FAST row (QA #392): experimental vhf-fast over Bluetooth audio.
+/// Shown only on a Bluetooth audio radio. Returns the `/btfast` command when
+/// the operator flips it. While on, a one-line warning sits under it.
+pub(crate) fn bt_fast_row(
+    ui: &mut egui::Ui,
+    s: &StatusSnapshot,
+    key: KeyFn,
+    warn: Color32,
+) -> Option<String> {
+    if !s.bt_audio() {
+        return None;
+    }
+    let on = s.bt_vhf_fast;
+    let mut chosen = None;
+    let inner = ui.horizontal(|ui| {
+        key(ui, "BT FAST");
+        let w = ui.available_width();
+        let h = ui.spacing().interact_size.y;
+        let label = if on {
+            "vhf-fast on (experimental)"
+        } else {
+            "off"
+        };
+        let color = if on { warn } else { DIM };
+        let btn = ui.add_sized(
+            [w, h],
+            egui::Button::new(RichText::new(label).color(color).monospace())
+                .fill(Color32::TRANSPARENT)
+                .stroke(hairline(if on { warn } else { LINE })),
+        );
+        if btn.clicked() {
+            chosen = Some(format!("/btfast {}", if on { "off" } else { "on" }));
+        }
+    });
+    let resp = ui.interact(
+        inner.response.rect,
+        ui.id().with("bt_fast_row"),
+        egui::Sense::hover(),
+    );
+    hover_tip(
+        &resp,
+        "Experimental: offer vhf-fast (QAM16) on this Bluetooth radio. Untested over Bluetooth. hf-good stays refused. Saved in wcr.toml as [modem] experimental_bt_vhf_fast.",
+    );
+    if on {
+        ui.label(
+            RichText::new(crate::btaudio::VHF_FAST_WARNING)
+                .color(warn)
+                .small(),
+        );
+    }
+    chosen
+}
+
 /// The FILES row (QA #365): how a file in a direct chat goes out. Shown
 /// on the presets that carry files. Returns the command to send.
 fn file_send_row(ui: &mut egui::Ui, s: &StatusSnapshot, key: KeyFn) -> Option<String> {
@@ -4011,24 +4071,31 @@ fn duty_row(ui: &mut egui::Ui, s: &StatusSnapshot, key: KeyFn) -> Option<String>
     chosen
 }
 
-fn preset_pick(ui: &mut egui::Ui, current: &str, key: KeyFn) -> Option<String> {
+fn preset_pick(ui: &mut egui::Ui, s: &StatusSnapshot, key: KeyFn) -> Option<String> {
+    let current = s.preset.as_str();
+    let shown = Preset::parse(current).map_or_else(|| current.to_string(), |p| s.preset_label(p));
     let mut chosen = None;
     ui.horizontal(|ui| {
         key(ui, "PRESET");
         let w = ui.available_width();
         egui::ComboBox::from_id_salt("preset_pick")
-            .selected_text(RichText::new(current).color(PURPLE).monospace())
+            .selected_text(RichText::new(shown).color(PURPLE).monospace())
             .width(w)
             .truncate()
             .show_ui(ui, |ui| {
                 ui.set_min_width(w.max(160.0));
-                for p in Preset::all() {
+                for p in s.offered_presets() {
                     let value = p.as_str();
                     let row = ui.selectable_label(
                         value == current,
-                        RichText::new(value).color(PURPLE).monospace(),
+                        RichText::new(s.preset_label(p)).color(PURPLE).monospace(),
                     );
-                    hover_tip(&row, p.description());
+                    let tip = if p == Preset::VhfFast && s.bt_audio() {
+                        crate::btaudio::VHF_FAST_WARNING
+                    } else {
+                        p.description()
+                    };
+                    hover_tip(&row, tip);
                     if row.clicked() {
                         chosen = Some(value.to_string());
                     }

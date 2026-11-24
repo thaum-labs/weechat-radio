@@ -177,6 +177,11 @@ pub struct ModemConfig {
     /// turns down: modem73's audio already peaks at full scale. Set the
     /// radio's own mic gain for more deviation.
     pub tx_level_db: f32,
+    /// Experimental (QA #392): offer `vhf-fast` on a Bluetooth audio radio
+    /// (VR-N76 and friends). Off by default. Untested over the air: the
+    /// radio's SBC audio may break QAM16, and the modem then falls back to
+    /// slower modes. `hf-good` stays refused either way.
+    pub experimental_bt_vhf_fast: bool,
 }
 
 impl Default for ModemConfig {
@@ -205,6 +210,7 @@ impl Default for ModemConfig {
             csma_mode: "auto".into(),
             rx_gain_db: None,
             tx_level_db: 0.0,
+            experimental_bt_vhf_fast: false,
         }
     }
 }
@@ -217,6 +223,15 @@ pub enum CsmaMode {
     /// Only another station's modem signal is busy (modem73's DCD: OFDM or
     /// ROBUST sync, or a lead tone). Open-squelch hiss is not.
     Sync,
+}
+
+/// `on` / `off` from a page or command (QA #392).
+pub fn parse_on_off(value: &str) -> std::result::Result<bool, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "on" | "yes" | "true" => Ok(true),
+        "off" | "no" | "false" => Ok(false),
+        _ => Err(format!("{value} is not on or off")),
+    }
 }
 
 impl ModemConfig {
@@ -280,6 +295,23 @@ impl ModemConfig {
         crate::presets::Preset::parse(&self.preset).is_some_and(|p| p.is_hf())
     }
 
+    /// Whether preset `p` may run on this link's audio. Only a Bluetooth
+    /// audio radio limits it: the presets that survive its FM + SBC path,
+    /// plus `vhf-fast` while `experimental_bt_vhf_fast` is on (QA #392).
+    pub fn link_allows(&self, p: crate::presets::Preset) -> bool {
+        !self.is_bt_audio()
+            || crate::btaudio::preset_allowed(p)
+            || (p == crate::presets::Preset::VhfFast && self.experimental_bt_vhf_fast)
+    }
+
+    /// `vhf-fast` is running over Bluetooth audio on the experimental
+    /// setting (QA #392): the pickers tag it and `/status` says so.
+    pub fn bt_vhf_fast_active(&self) -> bool {
+        self.is_bt_audio()
+            && self.experimental_bt_vhf_fast
+            && crate::presets::Preset::parse(&self.preset) == Some(crate::presets::Preset::VhfFast)
+    }
+
     /// Why this link cannot run preset `p`, or `None` when it can. The node's
     /// `/preset` and the web page's picker both answer with this (#235).
     pub fn preset_refusal(&self, p: crate::presets::Preset) -> Option<String> {
@@ -288,7 +320,7 @@ impl ModemConfig {
                 "preset is fixed at afsk-1200: the radio's own TNC does the modulation".into(),
             );
         }
-        if self.is_bt_audio() && !crate::btaudio::preset_allowed(p) {
+        if !self.link_allows(p) {
             return Some(format!(
                 "{} does not survive the radio's Bluetooth audio. Use vhf-fm, hf-poor, hf-weak or hf-deep.",
                 p.as_str()
@@ -1002,8 +1034,9 @@ impl Config {
             // wcr runs modem73 against its own Bluetooth bridge. 8PSK and
             // faster fail over the radio's FM + SBC audio path (#202).
             self.modem.manage = true;
+            // `vhf-fast` is kept while the experimental setting is on (QA #392).
             if !crate::presets::Preset::parse(&self.modem.preset)
-                .is_some_and(crate::btaudio::preset_allowed)
+                .is_some_and(|p| self.modem.link_allows(p))
             {
                 self.modem.preset = crate::presets::Preset::VhfFm.as_str().into();
             }
@@ -1202,6 +1235,46 @@ mod tests {
         m.ptt = "bluetooth".into();
         let why = m.preset_refusal(Preset::VhfFast).unwrap();
         assert!(why.starts_with("vhf-fast does not survive"), "{why}");
+    }
+
+    /// QA #392: `[modem] experimental_bt_vhf_fast` lets a Bluetooth audio
+    /// radio pick vhf-fast; hf-good stays refused, cables and VOX unchanged.
+    #[test]
+    fn experimental_setting_allows_vhf_fast_over_bluetooth_only() {
+        use super::ModemConfig;
+        use crate::presets::Preset;
+        // Off by default, and an older wcr.toml without the key reads as off.
+        assert!(!ModemConfig::default().experimental_bt_vhf_fast);
+        let c: Config = toml::from_str("[modem]\nptt = \"bluetooth\"\n").unwrap();
+        assert!(!c.modem.experimental_bt_vhf_fast);
+        let mut m = ModemConfig {
+            ptt: "bluetooth".into(),
+            experimental_bt_vhf_fast: true,
+            ..ModemConfig::default()
+        };
+        assert_eq!(m.preset_refusal(Preset::VhfFast), None);
+        let why = m.preset_refusal(Preset::HfGood).unwrap();
+        assert!(why.starts_with("hf-good does not survive"), "{why}");
+        assert!(!m.bt_vhf_fast_active(), "still on vhf-fm");
+        m.preset = "vhf-fast".into();
+        assert!(m.bt_vhf_fast_active());
+        // A cabled radio is not affected by the setting.
+        m.ptt = "digirig".into();
+        assert!(!m.bt_vhf_fast_active());
+        assert_eq!(m.preset_refusal(Preset::HfGood), None);
+        // It round-trips through wcr.toml.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wcr.toml");
+        std::fs::write(&path, "[modem]\nptt = \"bluetooth\"\n").unwrap();
+        let mut cfg = Config::load(&path).unwrap();
+        cfg.modem.experimental_bt_vhf_fast = true;
+        cfg.modem.preset = "vhf-fast".into();
+        cfg.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("experimental_bt_vhf_fast = true"), "{text}");
+        let back = Config::load(&path).unwrap();
+        assert!(back.modem.experimental_bt_vhf_fast);
+        assert_eq!(back.modem.preset, "vhf-fast");
     }
 
     #[test]

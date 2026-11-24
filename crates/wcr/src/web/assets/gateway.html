@@ -75,6 +75,15 @@
         </fieldset>
         <p class="meta" id="duty-how"></p>
       </div>
+      <div id="btfast-box" class="mailgw" hidden>
+        <fieldset class="pickers">
+          <legend>Experimental</legend>
+          <label class="inline"><input type="checkbox" id="btfast-on"> Allow vhf-fast over Bluetooth</label>
+          <button type="button" id="btfast-save" class="quiet">Save</button>
+        </fieldset>
+        <p class="meta">Off by default. vhf-fast is untested over Bluetooth; hf-good stays refused either way.</p>
+        <p class="warn" id="btfast-warn" role="status"></p>
+      </div>
       <div id="mailgw-box" class="mailgw" hidden>
         <fieldset class="pickers">
           <legend>Mail gateway</legend>

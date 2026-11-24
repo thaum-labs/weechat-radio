@@ -167,6 +167,10 @@ pub struct StatusSnapshot {
     /// `[rf] duty` (QA #365): `handheld`, `mobile` or `base`.
     #[serde(default)]
     pub duty: String,
+    /// `[modem] experimental_bt_vhf_fast` (QA #392): offer vhf-fast on a
+    /// Bluetooth audio radio. Only matters when `ptt` is `bluetooth`.
+    #[serde(default)]
+    pub bt_vhf_fast: bool,
     /// Frames this process has relayed for another station (not our own sends).
     /// Repeats of the same message each count.
     #[serde(default)]
@@ -380,6 +384,36 @@ impl StatusSnapshot {
     /// link while modem73 is the modem (QA #284).
     pub fn builtin_tnc(&self) -> bool {
         self.ptt.eq_ignore_ascii_case("tnc")
+    }
+
+    /// modem73 runs over the radio's Bluetooth audio (VR-N76 and friends).
+    pub fn bt_audio(&self) -> bool {
+        self.ptt.eq_ignore_ascii_case("bluetooth")
+    }
+
+    /// The presets the desktop picker offers on this link. A Bluetooth audio
+    /// radio gets only the ones that survive it, plus `vhf-fast` on the
+    /// experimental setting (QA #392).
+    pub fn offered_presets(&self) -> Vec<crate::presets::Preset> {
+        use crate::presets::Preset;
+        Preset::all()
+            .into_iter()
+            .filter(|&p| {
+                !self.bt_audio()
+                    || crate::btaudio::preset_allowed(p)
+                    || (p == Preset::VhfFast && self.bt_vhf_fast)
+            })
+            .collect()
+    }
+
+    /// The picker's name for preset `p`: `vhf-fast` over Bluetooth audio is
+    /// tagged experimental (QA #392).
+    pub fn preset_label(&self, p: crate::presets::Preset) -> String {
+        if p == crate::presets::Preset::VhfFast && self.bt_audio() {
+            format!("{} (experimental)", p.as_str())
+        } else {
+            p.as_str().to_string()
+        }
     }
 
     /// The RX GAIN and TX LVL sliders apply: a radio station whose modem
@@ -680,6 +714,7 @@ impl Default for StatusSnapshot {
             gateway_mode: String::new(),
             file_send: String::new(),
             duty: String::new(),
+            bt_vhf_fast: false,
             relayed: 0,
             relayed_unique: 0,
             pid: std::process::id(),
@@ -838,6 +873,27 @@ mod tests {
 
     /// QA #284: the Mac's live /status in VR-N76 Bluetooth audio mode. `tnc`
     /// names the Bluetooth link, but modem73 is the modem, so the sliders show.
+    #[test]
+    fn desktop_picker_offers_vhf_fast_over_bluetooth_only_when_set() {
+        use crate::presets::Preset;
+        let mut s = StatusSnapshot {
+            ptt: "bluetooth".into(),
+            tnc: "VR-N76 linked".into(),
+            ..StatusSnapshot::default()
+        };
+        assert!(s.bt_audio() && !s.builtin_tnc());
+        assert!(!s.offered_presets().contains(&Preset::VhfFast));
+        assert!(!s.offered_presets().contains(&Preset::HfGood));
+        s.bt_vhf_fast = true;
+        assert!(s.offered_presets().contains(&Preset::VhfFast));
+        assert!(!s.offered_presets().contains(&Preset::HfGood));
+        assert_eq!(s.preset_label(Preset::VhfFast), "vhf-fast (experimental)");
+        // A cabled radio lists every preset, untagged, as before.
+        s.ptt = "digirig".into();
+        assert_eq!(s.offered_presets(), Preset::all());
+        assert_eq!(s.preset_label(Preset::VhfFast), "vhf-fast");
+    }
+
     #[test]
     fn bluetooth_audio_shows_the_level_sliders() {
         let mut v = serde_json::to_value(StatusSnapshot::default()).unwrap();

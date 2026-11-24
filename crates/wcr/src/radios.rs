@@ -482,12 +482,21 @@ mod tests {
             ("hf-weak", "hf-weak"),
             ("hf-deep", "hf-deep"),
             ("hf-good", "vhf-fm"),
+            ("vhf-fast", "vhf-fm"),
             ("vox-safe", "vhf-fm"),
             ("afsk-1200", "vhf-fm"),
         ] {
             cfg.modem.preset = asked.into();
             cfg.normalize();
             assert_eq!(cfg.modem.preset, kept, "{asked}");
+        }
+        // QA #392: the experimental setting keeps a saved vhf-fast across a
+        // restart; hf-good is still moved to vhf-fm.
+        cfg.modem.experimental_bt_vhf_fast = true;
+        for (asked, kept) in [("vhf-fast", "vhf-fast"), ("hf-good", "vhf-fm")] {
+            cfg.modem.preset = asked.into();
+            cfg.normalize();
+            assert_eq!(cfg.modem.preset, kept, "{asked} with the setting on");
         }
     }
 

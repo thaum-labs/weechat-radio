@@ -158,7 +158,7 @@
               <tr><th>Preset</th><th>First mode</th><th>If it retries</th><th>Use when</th></tr>
             </thead>
             <tbody>
-              <tr><td><code>vhf-fast</code></td><td>OFDM QAM16 1/2</td><td>QPSK 1/2, RDM-1200S, RDM-600S</td><td>Local 2 m / 70 cm FM, a strong signal with no hiss. Chat lines and receipts go in about 1 s frames, mail about twice as fast as <code>vhf-fm</code>. Not offered on Bluetooth radios</td></tr>
+              <tr><td><code>vhf-fast</code></td><td>OFDM QAM16 1/2</td><td>QPSK 1/2, RDM-1200S, RDM-600S</td><td>Local 2 m / 70 cm FM, a strong signal with no hiss. Chat lines and receipts go in about 1 s frames, mail about twice as fast as <code>vhf-fm</code>. On Bluetooth radios only with the experimental setting (untested)</td></tr>
               <tr><td><code>vhf-fm</code></td><td>OFDM QPSK 1/2</td><td>RDM-1200S, RDM-600S, RDM-300S</td><td>Local VHF/UHF FM, a clean signal</td></tr>
               <tr><td><code>hf-good</code></td><td>OFDM QPSK 1/2</td><td>RDM-1200S, RDM-600S, RDM-300S</td><td>Steady HF SSB</td></tr>
               <tr><td><code>hf-poor</code></td><td>RDM-600S</td><td>RDM-300S, then MFSK-32R</td><td>Fading HF / NVIS (the usual HF calling preset)</td></tr>
@@ -245,7 +245,7 @@
         </div>
         <p>These are textbook figures for a steady signal. A simple check: if every line on <code>vhf-fm</code> gets <code>[ok]</code> first time and the received SNR stays at 10&nbsp;dB or more, try <code>vhf-fast</code>. If lines start to need a second try, go back.</p>
         <ul>
-          <li><strong>Best with cabled PTT:</strong> a Digirig, CM108 sound card or CAT. VOX works on a strong link with VOX tuned as in the <a href="/guides/vox.html">VOX guide</a> (an RT-900 on VOX sent and took vhf-fast first time); if the start of frames gets clipped, use <code>vhf-fm</code>. It is not offered on Bluetooth radios: the radio's audio codec breaks dense modes.</li>
+          <li><strong>Best with cabled PTT:</strong> a Digirig, CM108 sound card or CAT. VOX works on a strong link with VOX tuned as in the <a href="/guides/vox.html">VOX guide</a> (an RT-900 on VOX sent and took vhf-fast first time); if the start of frames gets clipped, use <code>vhf-fm</code>. On Bluetooth radios it is offered only with the <em>Experimental: allow vhf-fast over Bluetooth</em> setting, and is untested there: the radio's audio codec may break dense modes.</li>
           <li><strong>Only the sender needs it.</strong> A station on <code>vhf-fm</code> hears <code>vhf-fast</code> lines, as long as the signal is strong.</li>
           <li><strong>2 m and 70 cm FM.</strong> Not for HF: QAM16 falls apart with fading.</li>
         </ul>

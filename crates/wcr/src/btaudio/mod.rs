@@ -55,9 +55,15 @@ const RX_LOG_EVERY: Duration = Duration::from_secs(10);
 const TX_LEVEL_MIN_DB: f32 = -20.0;
 const TX_LEVEL_MAX_DB: f32 = 0.0;
 
+/// The one-line warning shown wherever `vhf-fast` is offered over Bluetooth
+/// audio on the experimental setting (QA #392).
+pub const VHF_FAST_WARNING: &str = "Experimental, untested over Bluetooth: the radio's Bluetooth audio compression (SBC) may break QAM16, and the modem then falls back to slower modes.";
+
 /// Presets that survive the radio's FM + SBC audio path. 8PSK (`hf-good`)
 /// fails over the air (HTCommander's measurements, #202); `vox-safe` is for
-/// VOX keying, which this path does not use.
+/// VOX keying, which this path does not use. `vhf-fast` (QAM16) is added
+/// only by `[modem] experimental_bt_vhf_fast`, see
+/// [`crate::config::ModemConfig::link_allows`] (QA #392).
 pub fn preset_allowed(p: crate::presets::Preset) -> bool {
     use crate::presets::Preset;
     matches!(

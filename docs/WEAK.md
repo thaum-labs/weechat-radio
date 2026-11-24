@@ -20,7 +20,7 @@ Switch with `/radio preset <name>` or `/preset <name>` in the window.
 
 | Preset | First mode | If it retries | Use when |
 |--------|------------|---------------|----------|
-| `vhf-fast` | OFDM QAM16 1/2 | QPSK 1/2, RDM-1200S, RDM-600S | Local 2 m / 70 cm FM, a strong signal with no hiss. Chat lines and receipts go in about 1 s frames, mail about twice as fast as `vhf-fm`. Not offered on Bluetooth radios |
+| `vhf-fast` | OFDM QAM16 1/2 | QPSK 1/2, RDM-1200S, RDM-600S | Local 2 m / 70 cm FM, a strong signal with no hiss. Chat lines and receipts go in about 1 s frames, mail about twice as fast as `vhf-fm`. On Bluetooth radios only with the experimental setting (untested) |
 | `vhf-fm` | OFDM QPSK 1/2 | RDM-1200S, RDM-600S, RDM-300S | Local VHF/UHF FM, a clean signal |
 | `hf-good` | OFDM QPSK 1/2 | RDM-1200S, RDM-600S, RDM-300S | Steady HF SSB |
 | `hf-poor` | RDM-600S | RDM-300S, then MFSK-32R | Fading HF / NVIS (the usual HF calling preset) |

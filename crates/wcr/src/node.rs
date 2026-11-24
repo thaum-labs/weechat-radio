@@ -399,6 +399,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         s.gateway_mode = Runtime::gateway_mode_word(&cfg);
         s.file_send = cfg.rf.file_send.clone();
         s.duty = cfg.rf.duty.clone();
+        s.bt_vhf_fast = cfg.modem.experimental_bt_vhf_fast;
     }
 
     // Bind chat and status before opening the store. A locked SQLite (old
@@ -4950,6 +4951,12 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
             cfg.modem.audio_output = ports.audio_device();
             cfg.modem.rigctl = ports.rigctl_addr();
             rt.snap.lock().ptt = "bluetooth".into();
+            if cfg.modem.bt_vhf_fast_active() {
+                tracing::warn!(
+                    "experimental: vhf-fast over Bluetooth audio (untested). {}",
+                    crate::btaudio::VHF_FAST_WARNING
+                );
+            }
         }
         // RX gain onto the sound card, busy test and levels into the status (#241).
         crate::levels::apply_at_start(&cfg, &rt.snap);
@@ -5273,13 +5280,19 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                     cfg.lock().modem.preset = pr.as_str().into();
                     snap.lock().preset = pr.as_str().into();
                     persist_cfg(&cfg.lock());
+                    // QA #392: vhf-fast over Bluetooth is experimental.
+                    let warn = if cfg.lock().modem.bt_vhf_fast_active() {
+                        format!(" {}", crate::btaudio::VHF_FAST_WARNING)
+                    } else {
+                        String::new()
+                    };
                     if request_modem_restart(rt) {
                         format!(
-                            "preset {}: restarting modem… (once the radio is idle)",
+                            "preset {}: restarting modem… (once the radio is idle){warn}",
                             pr.as_str()
                         )
                     } else {
-                        format!("preset {}", pr.as_str())
+                        format!("preset {}{warn}", pr.as_str())
                     }
                 } else {
                     "unknown preset. Use vhf-fm, vhf-fast, hf-good, hf-poor, hf-weak, hf-deep, vox-safe, afsk-1200.".into()
@@ -5309,6 +5322,12 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
                 String::new()
             } else {
                 format!(" | gateway {}", s.gateway_mode)
+            };
+            // QA #392: say when vhf-fast runs on the experimental setting.
+            let gateway = if cfg.lock().modem.bt_vhf_fast_active() {
+                format!("{gateway} | experimental: vhf-fast over Bluetooth")
+            } else {
+                gateway
             };
             format!(
                 "{} | {} | {} {} | {} | SNR {} | tx {} | retry {} | audio {} | q {}/{} | occ {}% air {} | beacon {} | hold {} | relayed {} unique {} | groups {} | hub {}{}{}",
@@ -5541,6 +5560,39 @@ async fn radio_cmd(rt: &Runtime, client_id: u64, args: &str) -> String {
             } else {
                 let s = snap.lock();
                 crate::band::describe(s.freq_khz)
+            }
+        }
+        "btfast" => {
+            // QA #392: experimental vhf-fast over Bluetooth audio.
+            if let Some(v) = sp.next() {
+                let Ok(on) = crate::config::parse_on_off(v) else {
+                    return "use /btfast on or /btfast off".into();
+                };
+                let mut restart = false;
+                {
+                    let mut c = cfg.lock();
+                    c.modem.experimental_bt_vhf_fast = on;
+                    // Off again: a Bluetooth radio left on vhf-fast goes back
+                    // to vhf-fm, exactly as before the setting existed.
+                    if !on
+                        && c.modem.is_bt_audio()
+                        && Preset::parse(&c.modem.preset) == Some(Preset::VhfFast)
+                    {
+                        c.modem.preset = Preset::VhfFm.as_str().into();
+                        snap.lock().preset = c.modem.preset.clone();
+                        restart = true;
+                    }
+                    snap.lock().bt_vhf_fast = on;
+                    persist_cfg(&c);
+                }
+                if restart && request_modem_restart(rt) {
+                    return "experimental vhf-fast over Bluetooth off: back to vhf-fm, restarting modem… (once the radio is idle)".into();
+                }
+            }
+            if cfg.lock().modem.experimental_bt_vhf_fast {
+                format!("experimental vhf-fast over Bluetooth on: {}", crate::btaudio::VHF_FAST_WARNING)
+            } else {
+                "experimental vhf-fast over Bluetooth off".into()
             }
         }
         "filesend" => {
