@@ -13,7 +13,8 @@
      7. Live diagram         .live-dgm figure, .setup-switch, .live-status, .setup-panel, .app-win
      8. Diagram glyphs       laptop, handheld radio, base station, house
      9. Packets              .seg + .pkt animation, .btn-replay
-    10. App comparison       #apps-table (docs/apps.html) */
+    10. App comparison       #apps-table (docs/apps.html)
+    11. VARA comparison      #vara-table (docs/vara.html) */
 
 .page-panel {
   --body: #c8c0d8;
@@ -1023,3 +1024,49 @@ body.cmp-page .page-panel { min-width: 0; }
 .fr-frame { position: absolute; top: 2px; bottom: 2px; left: 2px; border: 1px dashed var(--accent); }
 .fr-frame b { display: block; height: 100%; background: var(--accent); }
 .at-key span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* --- 11. VARA comparison (docs/vara.html) ------------------------------- */
+/* Three equal product columns, score first in every cell, sideways scroll
+   on a phone with a sticky label column. */
+
+.page-panel #vara-table {
+  width: 100%;
+  table-layout: fixed;
+  line-height: 1.4;
+}
+.page-panel #vara-table th,
+.page-panel #vara-table td {
+  vertical-align: top;
+  padding: 10px 12px;
+}
+.page-panel #vara-table thead th { text-align: left; }
+.page-panel #vara-table tbody th {
+  width: 16%;
+  color: var(--fg);
+  font-weight: 400;
+}
+.page-panel #vara-table thead th:first-child { width: 16%; }
+.page-panel #vara-table thead th:nth-child(n+2),
+.page-panel #vara-table td {
+  width: 28%;
+}
+.page-panel #vara-table .cmp-score {
+  display: block;
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+@media (max-width: 720px) {
+  .page-panel #vara-table { min-width: 680px; }
+  .page-panel #vara-table thead th:first-child,
+  .page-panel #vara-table tbody th {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--bg, #07070a);
+    box-shadow: 6px 0 8px rgba(0, 0, 0, 0.45);
+  }
+  .page-panel #vara-table thead th:first-child { z-index: 2; }
+}

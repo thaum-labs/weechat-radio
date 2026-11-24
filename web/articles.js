@@ -56,6 +56,7 @@
     { href: "/docs/store-forward.html", cat: "signals-and-modes", title: "Store and forward", desc: "Where a message waits when the other station is not there yet, and for how long.", keywords: "store-and-forward store forward offline queue outbox waiting held retry relay receipt ack delivery later missed asleep" },
     { href: "/docs/compare.html", cat: "signals-and-modes", title: "Compare modes", desc: "WeeChat Radio HF vs JS8, FT8, Olivia, PSK31, APRS. Sortable scores.", keywords: "js8 ft8 olivia psk31 aprs digital modes" },
     { href: "/docs/apps.html", cat: "signals-and-modes", title: "Compare apps", desc: "WeeChat Radio vs Winlink, JS8Call, VarAC, Fldigi, Meshtastic and more.", keywords: "winlink pat js8call varac fldigi freedata meshtastic" },
+    { href: "/docs/vara.html", cat: "signals-and-modes", title: "Compared with VARA", desc: "How WeeChat Radio compares with VARA FM and VarAC, for people already on VARA.", keywords: "vara varac fm chat modem" },
     // docs: For developers and hub operators
     { href: "/docs/protocol.html", cat: "developers", title: "Wire protocol", desc: "What a message looks like on radio and on the internet.", keywords: "frame format packet bytes" },
     { href: "/docs/api.html", cat: "developers", title: "Public API", desc: "Live map data. No key to read. Writes are signed.", keywords: "api rest json openapi map data" },

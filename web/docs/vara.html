@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Compared with VARA — WeeChat Radio</title>
+  <meta name="description" content="Already on VARA? How WeeChat Radio compares with VARA FM and VarAC: speed, chat, mail, platforms, and what you would give up." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="WeeChat Radio" />
+  <meta property="og:title" content="Compared with VARA — WeeChat Radio" />
+  <meta property="og:description" content="Already on VARA? How WeeChat Radio compares with VARA FM and VarAC: speed, chat, mail, platforms, and what you would give up." />
+  <meta property="og:url" content="https://weechatradio.com/docs/vara.html" />
+  <meta property="og:image" content="https://weechatradio.com/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="WeeChat Radio. Live messaging chat powered by radio." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://weechatradio.com/og.png" />
+  <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=59" />
+  <link rel="stylesheet" href="/docs.css?v=7" />
+</head>
+<body class="page-doc cmp-page">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav aria-label="Main">
+      <a href="/why.html">why</a>
+      <a href="/docs/vara.html">vs VARA</a>
+      <a href="/guides.html">guides</a>
+      <a href="/guides/band.html">plan</a>
+      <a href="/map.html">map</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+      <a class="nav-github" href="https://github.com/thaum-labs/weechat-radio" aria-label="WeeChat Radio on GitHub"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-4 1.5-4-2-6-2.5M15 21v-3.5a3 3 0 0 0-.8-2.3c2.7-.3 5.6-1.3 5.6-6a4.7 4.7 0 0 0-1.3-3.2 4.4 4.4 0 0 0-.1-3.2s-1-.3-3.4 1.3a11.6 11.6 0 0 0-6 0C6.6 2.5 5.6 2.8 5.6 2.8a4.4 4.4 0 0 0-.1 3.2A4.7 4.7 0 0 0 4.2 9.2c0 4.6 2.9 5.7 5.6 6a3 3 0 0 0-.8 2.3V21"/></svg><span class="nav-github-text">github</span></a>
+      <a class="nav-cta" href="/downloads.html">download</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/docs.html">docs</a> › <a href="/docs.html#signals-and-modes">Signals and modes</a> › <span aria-current="page">Compared with VARA</span></p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> Compared with VARA</h1>
+      <p class="lead">Already on VARA? Here is how WeeChat Radio compares with VARA FM and with VarAC.</p>
+
+      <section class="article-section article-section--first" aria-labelledby="summaryH">
+        <h2 id="summaryH">Who wins at what</h2>
+        <ul class="cards">
+          <li><strong>VARA FM is faster on a strong, licensed link</strong><span>With a paid key, Narrow is up to 12,750&nbsp;bps in about 3&nbsp;kHz. Wide is up to 25,210&nbsp;bps on the author’s 4.0 chart (about 6&nbsp;kHz, and it needs a 9600-baud data port). WeeChat Radio’s fastest VHF/UHF preset, <code>vhf-fast</code>, is about 2,100–3,200&nbsp;bps after error correction, and it fits a normal FM voice channel through the microphone socket.</span></li>
+          <li><strong>WeeChat Radio is the all-in-one app</strong><span>The modem, live chat, mail, a map, a frequency planner and a Raspberry&nbsp;Pi gateway live in one open-source program. It is free, and it runs on Windows, macOS, Linux and a Pi. You do not need a separate modem or a speed licence.</span></li>
+          <li><strong>VarAC is the chat layer on the VARA modem</strong><span>It is a popular, free Windows chat and messaging program by 4Z1AC. It needs VARA (HF or FM) installed beside it, and a paid VARA licence for full speed. WeeChat Radio does not talk to VarAC or Winlink on the air: the protocols are different.</span></li>
+        </ul>
+      </section>
+
+      <div class="warn-box">
+        <h2>Our reading of each project’s own docs</h2>
+        <p>These figures and features come from WeeChat Radio’s repository and from official VARA and VarAC pages, as of 24&nbsp;Nov&nbsp;2026. Apps change. If a row is wrong, tell us on <a href="https://github.com/thaum-labs/weechat-radio/issues">GitHub</a> and we will fix it. Sources are at the foot of this page.</p>
+      </div>
+
+      <section class="article-section" aria-labelledby="tableH">
+        <h2 id="tableH">Feature by feature</h2>
+        <div class="cmp-legend">
+          <ol class="cmp-scale" aria-label="Score from 1 poor red to 5 strong green">
+            <li data-s="1"><b>1</b> poor</li>
+            <li data-s="2"><b>2</b> weak</li>
+            <li data-s="3"><b>3</b> mid</li>
+            <li data-s="4"><b>4</b> good</li>
+            <li data-s="5"><b>5</b> strong</li>
+          </ol>
+          <ul class="cmp-legend-notes">
+            <li>How to read the scores: these are our own operator ratings, based on the sourced facts on this page, as of 24&nbsp;Nov&nbsp;2026. They are not lab measurements. Colour is 1 red (poor) to 5 green (strong), the same scale as on <a href="/docs/compare.html">compare modes</a>.</li>
+            <li>On a phone, slide the table sideways. The first column stays in view.</li>
+          </ul>
+        </div>
+        <div class="table-wrap">
+          <table id="vara-table">
+            <caption class="sr-only">WeeChat Radio compared with VARA FM and VarAC. Each cell has a score from 1 poor to 5 strong, then a short note.</caption>
+            <thead>
+              <tr>
+                <th scope="col"></th>
+                <th scope="col">WeeChat Radio</th>
+                <th scope="col">VARA FM</th>
+                <th scope="col">VarAC</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">All-in-one</th>
+                <td data-s="5"><b class="cmp-score">5</b> A complete station app: modem, chat, mail, map and gateway in one</td>
+                <td data-s="1"><b class="cmp-score">1</b> A sound-card modem only. You pair it with a program such as Winlink Express or VarAC</td>
+                <td data-s="4"><b class="cmp-score">4</b> A chat and messaging app that uses the VARA modem (HF, FM or SAT)</td>
+              </tr>
+              <tr>
+                <th scope="row">Live chat</th>
+                <td data-s="5"><b class="cmp-score">5</b> Yes: rooms and one-to-one, with delivery marks</td>
+                <td data-s="1"><b class="cmp-score">1</b> No: the modem has no chat window of its own</td>
+                <td data-s="5"><b class="cmp-score">5</b> Yes: keyboard-to-keyboard chat, CQ, beacons, broadcasts, and a typing indicator</td>
+              </tr>
+              <tr>
+                <th scope="row">Email</th>
+                <td data-s="5"><b class="cmp-score">5</b> Its own mail, at <code>callsign@mail.weechatradio.com</code>. Not Winlink</td>
+                <td data-s="5"><b class="cmp-score">5</b> Used a great deal with Winlink for radio email</td>
+                <td data-s="4"><b class="cmp-score">4</b> VMail between stations, plus its own email gateway (SMTP and IMAP through another VarAC station). Not Winlink</td>
+              </tr>
+              <tr>
+                <th scope="row">Files</th>
+                <td data-s="4"><b class="cmp-score">4</b> Small chat files; mail can carry several files, up to 512&nbsp;KB in all, over the radio on <code>vhf-fast</code></td>
+                <td data-s="5"><b class="cmp-score">5</b> File and email throughput is what the modem is built for, through the program you pair it with</td>
+                <td data-s="5"><b class="cmp-score">5</b> File and image transfer, plus VMail attachments (from version 16.1.8)</td>
+              </tr>
+              <tr>
+                <th scope="row">Fastest VHF/UHF speed</th>
+                <td data-s="3"><b class="cmp-score">3</b> About 2,100–3,200&nbsp;bps after error correction on <code>vhf-fast</code>. A 1&nbsp;KB mail is about 9&nbsp;seconds</td>
+                <td data-s="5"><b class="cmp-score">5</b> Narrow: up to 12,750&nbsp;bps in about 3&nbsp;kHz. Wide: up to 25,210&nbsp;bps on the author’s 4.0 chart (the current website lists Wide at 19,200&nbsp;bps), in about 6&nbsp;kHz</td>
+                <td data-s="5"><b class="cmp-score">5</b> The speed of the VARA modem you have pointed it at. Full speed needs a paid VARA licence</td>
+              </tr>
+              <tr>
+                <th scope="row">How you connect the radio</th>
+                <td data-s="5"><b class="cmp-score">5</b> Digirig or similar cabled PTT, a VOX lead, CAT on supported HF radios, or Bluetooth on a VR-N76 / UV-PRO. <code>vhf-fast</code> is not offered on Bluetooth yet</td>
+                <td data-s="4"><b class="cmp-score">4</b> A sound-card interface. Narrow works on a microphone or 1200-baud pin, including many handhelds. Wide needs a 9600-baud or other flat-audio data port</td>
+                <td data-s="4"><b class="cmp-score">4</b> The same VARA hookup, plus CAT, RTS/DTR, OmniRig, FLrig or Hamlib for PTT and tuning. VOX is possible but not recommended</td>
+              </tr>
+              <tr>
+                <th scope="row">When the path gets worse</th>
+                <td data-s="5"><b class="cmp-score">5</b> The preset ladder steps down: <code>vhf-fast</code> to <code>vhf-fm</code>, then the slower RDM modes. Receipts and resends. HF has its own weak-signal presets</td>
+                <td data-s="5"><b class="cmp-score">5</b> Many adaptive speed levels, with ARQ retries</td>
+                <td data-s="5"><b class="cmp-score">5</b> Inherits VARA’s adaptive modes and ARQ. VMail can wait at a mediator station if the other end is not there</td>
+              </tr>
+              <tr>
+                <th scope="row">HF</th>
+                <td data-s="5"><b class="cmp-score">5</b> HF presets in the same app</td>
+                <td data-s="1"><b class="cmp-score">1</b> A separate product, VARA HF</td>
+                <td data-s="5"><b class="cmp-score">5</b> Yes, with VARA HF (and VARA SAT for QO-100)</td>
+              </tr>
+              <tr>
+                <th scope="row">Map and planning</th>
+                <td data-s="5"><b class="cmp-score">5</b> A live range map, a frequency planner, and a range-test log</td>
+                <td data-s="1"><b class="cmp-score">1</b> None: it is a modem</td>
+                <td data-s="4"><b class="cmp-score">4</b> A live activity map of beacons, CQs, contacts and broadcasts (from version 16.1.8)</td>
+              </tr>
+              <tr>
+                <th scope="row">Gateway</th>
+                <td data-s="5"><b class="cmp-score">5</b> Your own Raspberry&nbsp;Pi gateway, with a web interface for status, chat and mail</td>
+                <td data-s="5"><b class="cmp-score">5</b> Winlink RMS stations, when you use it with Winlink</td>
+                <td data-s="4"><b class="cmp-score">4</b> Any VarAC station can run an email gateway. VARA FM also supports digipeaters</td>
+              </tr>
+              <tr>
+                <th scope="row">Platforms</th>
+                <td data-s="5"><b class="cmp-score">5</b> Windows, macOS, Linux, and Raspberry&nbsp;Pi, natively</td>
+                <td data-s="2"><b class="cmp-score">2</b> Windows. The author is working on native macOS and Linux versions</td>
+                <td data-s="3"><b class="cmp-score">3</b> Windows officially. Linux, a Pi or a Mac can use Wine, and there is a native beta</td>
+              </tr>
+              <tr>
+                <th scope="row">Cost</th>
+                <td data-s="5"><b class="cmp-score">5</b> Free</td>
+                <td data-s="3"><b class="cmp-score">3</b> Closed shareware. A $75&nbsp;USD key covers VARA HF, VARA FM and VARA SAT, and unlocks full speed, compression and unlimited Winlink sessions</td>
+                <td data-s="4"><b class="cmp-score">4</b> Free for licensed amateur operators. You still need a legal copy of VARA, paid if you want full speed</td>
+              </tr>
+              <tr>
+                <th scope="row">Open source</th>
+                <td data-s="5"><b class="cmp-score">5</b> Yes, Apache-2.0 (the optional WeeChat script is GPL-3.0)</td>
+                <td data-s="1"><b class="cmp-score">1</b> No</td>
+                <td data-s="1"><b class="cmp-score">1</b> No. The terms give you no rights in the source, and they forbid copying or reverse engineering</td>
+              </tr>
+              <tr>
+                <th scope="row">Community</th>
+                <td data-s="2"><b class="cmp-score">2</b> A young project, with no claimed user numbers to match VarAC</td>
+                <td data-s="4"><b class="cmp-score">4</b> Widely used with Winlink and other clients</td>
+                <td data-s="5"><b class="cmp-score">5</b> Reports more than 90,000 operators in over 100 countries, with published calling frequencies and nets</td>
+              </tr>
+              <tr>
+                <th scope="row">Works with Winlink</th>
+                <td data-s="1"><b class="cmp-score">1</b> No</td>
+                <td data-s="5"><b class="cmp-score">5</b> Yes. Officially integrated with Winlink</td>
+                <td data-s="1"><b class="cmp-score">1</b> No. Its email gateway is a separate system, which VarAC compares with Winlink RMS</td>
+              </tr>
+              <tr>
+                <th scope="row">Works with the other two</th>
+                <td data-s="1"><b class="cmp-score">1</b> No. Different on-air protocol</td>
+                <td data-s="5"><b class="cmp-score">5</b> Yes, as the modem under VarAC, Winlink and other clients</td>
+                <td data-s="3"><b class="cmp-score">3</b> Talks to other VarAC (and, with limits, Vara-Chat) stations over VARA. Not to WeeChat Radio</td>
+              </tr>
+              <tr>
+                <th scope="row">Clear on the air</th>
+                <td data-s="5"><b class="cmp-score">5</b> Chat and mail on RF are readable, as amateur rules require. The body is never encrypted</td>
+                <td data-s="5"><b class="cmp-score">5</b> An encryption option is listed for commercial use, not for amateur radio</td>
+                <td data-s="5"><b class="cmp-score">5</b> Not offered for amateur use in the official feature list</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="article-section" aria-labelledby="gainH">
+        <h2 id="gainH">What you would gain</h2>
+        <ul>
+          <li>One program instead of a modem plus a separate chat or mail client.</li>
+          <li>The same app on a Mac, a Linux box or a Raspberry&nbsp;Pi, without Wine.</li>
+          <li>No paid key for full speed. The source is open.</li>
+          <li>The fastest VHF/UHF preset works through the microphone socket. You do not need a 9600-baud data port.</li>
+          <li>Live group chat, hops between stations that are not all in range, and an internet mode so people with no radio can join.</li>
+          <li>Your own mail address, a Pi gateway with a browser interface, a range map, a frequency planner and a range test.</li>
+        </ul>
+      </section>
+
+      <section class="article-section" aria-labelledby="giveH">
+        <h2 id="giveH">What you would give up</h2>
+        <ul>
+          <li><strong>Raw speed.</strong> On a strong, clean FM path, licensed VARA FM is faster than <code>vhf-fast</code>. That is expected: it is built for file and email throughput on FM.</li>
+          <li><strong>The Winlink network.</strong> If you use VARA today to reach Winlink RMS gateways, WeeChat Radio will not do that. Its mail system is separate.</li>
+          <li><strong>VarAC’s existing users.</strong> VarAC reports more than 90,000 operators in over 100 countries, with published calling frequencies and nets. WeeChat Radio cannot join that on-air network.</li>
+          <li><strong>Some VarAC-only features,</strong> such as CQ calls and beacons on those shared frequencies, broadcast and relay messaging in the VarAC style, HamPlay, and VARA SAT for QO-100.</li>
+        </ul>
+        <p>You do not have to give those things up for good. VARA, VarAC and WeeChat Radio can all stay installed. Use one program on the radio at a time.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="tryH">
+        <h2 id="tryH">Trying it alongside VARA</h2>
+        <p>Keep your present VARA or VarAC setup. Install WeeChat Radio from the <a href="/downloads.html">download page</a> and point it at the same radio and interface: a Digirig, a VOX lead, or a supported Bluetooth handheld. Start with two computers and no radio if you like, or with a local FM test on a quiet channel.</p>
+        <p>Do not let both programs key the radio at once. Stop one before you start the other.</p>
+        <p><code>vhf-fast</code> is the closest preset to what VARA FM users expect on a strong local link. It is not offered on Bluetooth audio yet, so try it on a cable or VOX first. Setup asks for your callsign. Nothing on the air is encrypted.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="faqH">
+        <h2 id="faqH">FAQ</h2>
+        <ul class="cards">
+          <li><strong>Can I chat with VarAC or Winlink stations from WeeChat Radio?</strong><span>No. The on-air protocols are different. To reach those networks, use VARA with VarAC or Winlink as you do today.</span></li>
+          <li><strong>Can I leave VARA installed?</strong><span>Yes. Treat them as two complete setups that share a radio, and run only one at a time.</span></li>
+          <li><strong>Do I need to pay for full speed?</strong><span>Not for WeeChat Radio. VARA’s unpaid copy is shareware with restrictions; a $75&nbsp;USD key unlocks full speed. VarAC itself is free, but it still uses that modem.</span></li>
+          <li><strong>Will <code>vhf-fast</code> work over Bluetooth?</strong><span>Not yet. The current app does not offer that preset on a Bluetooth audio radio. A cabled PTT or a carefully set VOX lead will run it.</span></li>
+          <li><strong>Is mail private on the radio?</strong><span>No. WeeChat Radio never encrypts the body on RF, so mail is as readable as chat. That matches amateur-radio rules.</span></li>
+          <li><strong>Where do the speed figures come from?</strong><span>WeeChat Radio’s numbers are from this project’s own <a href="/docs/vhf-fast.html">vhf-fast</a> page. VARA FM’s Narrow 12,750&nbsp;bps and Wide 25,210&nbsp;bps come from the author’s VARA FM 4.0 features chart. The current <a href="https://varamodem.com/">VARA website</a> lists Wide at 19,200&nbsp;bps, so both figures are shown above.</span></li>
+        </ul>
+      </section>
+
+      <section class="article-section" aria-labelledby="srcH">
+        <h2 id="srcH">Sources</h2>
+        <ul>
+          <li>WeeChat Radio: the <a href="/docs/vhf-fast.html">vhf-fast</a>, <a href="/docs/email.html">email</a>, <a href="/docs/protocol.html">wire protocol</a>, <a href="/docs/compare.html">compare modes</a> and <a href="/docs/apps.html">compare apps</a> pages, plus the project README and Apache-2.0 licence.</li>
+          <li>VARA: <a href="https://varamodem.com/">varamodem.com</a>, the <a href="https://w4cae.com/wp-content/uploads/2020/12/VARA-FM-4.0-Features.pdf">VARA FM 4.0 features chart</a>, a <a href="https://winlink.org/sites/default/files/RMSE_FORMS/vara_fm_for_winlink_with_signalink_on_windows_v4_0.pdf">Winlink VARA FM setup note</a>, and <a href="https://rosmodem.wordpress.com/">EA5HVK’s site</a>.</li>
+          <li>VarAC: the official <a href="https://www.varac-hamradio.com/">home page</a>, <a href="https://www.varac-hamradio.com/faq">FAQ</a>, <a href="https://www.varac-hamradio.com/download">download and prerequisites</a>, <a href="https://www.varac-hamradio.com/varac-terms-of-use">terms of use</a>, <a href="https://www.varac-hamradio.com/varac-email-gateway">email gateway</a>, <a href="https://www.varac-hamradio.com/post/varac-varafm-configuration">VARA FM configuration note</a>, and the <a href="https://www.varac-hamradio.com/post/varac-v16-1-8-is-here">V16.1.8 release notes</a>.</li>
+        </ul>
+      </section>
+
+      <p class="next">How the radio presets sit next to other modes: <a href="/docs/compare.html">compare modes</a>. WeeChat Radio next to Winlink, JS8Call, VarAC and others: <a href="/docs/apps.html">compare apps</a>. The fastest VHF/UHF preset: <a href="/docs/vhf-fast.html">vhf-fast</a>. Install: <a href="/downloads.html">download</a>.</p>
+    </main>
+  </div>
+  <script src="/copy.js?v=1"></script>
+  <script src="/shell.js?v=15"></script>
+  <script src="/articles.js?v=10"></script>
+</body>
+</html>
