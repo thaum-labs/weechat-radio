@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#07070a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>vhf-fast — WeeChat Radio</title>
+  <meta name="description" content="Live messaging chat powered by radio. HF, VHF, UHF and handhelds via VOX. Non-ham operators can get involved with just an internet connection." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="WeeChat Radio" />
+  <meta property="og:title" content="vhf-fast — WeeChat Radio" />
+  <meta property="og:description" content="Live messaging chat powered by radio. HF, VHF, UHF and handhelds via VOX. Non-ham operators can get involved with just an internet connection." />
+  <meta property="og:url" content="https://weechatradio.com/docs/vhf-fast.html" />
+  <meta property="og:image" content="https://weechatradio.com/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="WeeChat Radio. Live messaging chat powered by radio." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://weechatradio.com/og.png" />
+  <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/styles.css?v=58" />
+  <link rel="stylesheet" href="/docs.css?v=6" />
+</head>
+<body class="page-doc">
+  <div id="scan"></div>
+  <div id="boot_screen" hidden><pre id="boot_log"></pre></div>
+  <header class="topbar">
+    <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
+    <nav aria-label="Main">
+      <a href="/why.html">why</a>
+      <a href="/guides.html">guides</a>
+      <a href="/guides/band.html">plan</a>
+      <a href="/map.html">map</a>
+      <a href="/docs.html">docs</a>
+      <a href="/status.html">hub</a>
+      <a href="/changelog.html">changelog</a>
+      <a class="nav-github" href="https://github.com/thaum-labs/weechat-radio" aria-label="WeeChat Radio on GitHub"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-4 1.5-4-2-6-2.5M15 21v-3.5a3 3 0 0 0-.8-2.3c2.7-.3 5.6-1.3 5.6-6a4.7 4.7 0 0 0-1.3-3.2 4.4 4.4 0 0 0-.1-3.2s-1-.3-3.4 1.3a11.6 11.6 0 0 0-6 0C6.6 2.5 5.6 2.8 5.6 2.8a4.4 4.4 0 0 0-.1 3.2A4.7 4.7 0 0 0 4.2 9.2c0 4.6 2.9 5.7 5.6 6a3 3 0 0 0-.8 2.3V21"/></svg><span class="nav-github-text">github</span></a>
+      <a class="nav-cta" href="/downloads.html">download</a>
+    </nav>
+    <div class="clock-mod">
+      <div id="clock-utc">UTC --:--:--</div>
+      <div class="sub" id="clock-local">LCL --:--</div>
+    </div>
+  </header>
+  <div class="page-wrap">
+    <main class="page-panel">
+      <p class="crumb"><a href="/docs.html">docs</a> › <a href="/docs.html#signals-and-modes">Signals and modes</a> › <span aria-current="page">vhf-fast</span></p>
+      <h1><span class="who">weechat-radio</span><span class="sym">:$</span> vhf-fast</h1>
+      <p class="lead">The fastest VHF/UHF preset. Use it on a strong, clean local 2&nbsp;m or 70&nbsp;cm FM link, when there is no hiss on the signal.</p>
+
+      <section class="article-section article-section--first" aria-labelledby="whatH">
+        <h2 id="whatH">What it is</h2>
+        <p>Switch with <code>/preset vhf-fast</code> or <code>/radio preset vhf-fast</code>. The first mode is OFDM QAM16 at code rate 1/2: four bits in each symbol instead of two, with half the bits used for error correction. The modem picks a short frame when the data fits, so a chat line or a receipt keys in about 1&nbsp;s instead of 2.6&nbsp;s on <code>vhf-fm</code>.</p>
+        <p>If a receipt is missed, the next try steps down the ladder: QPSK 1/2, then RDM-1200S, then RDM-600S, and on down if needed. Near the edge of range it is no worse than <code>vhf-fm</code>. A station still set to <code>vhf-fm</code> can hear <code>vhf-fast</code> lines, as long as the signal is strong. Only the sender needs the preset.</p>
+        <p>It is for 2&nbsp;m and 70&nbsp;cm FM. Not for HF: QAM16 falls apart with fading.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="speedH">
+        <h2 id="speedH">How fast is it?</h2>
+        <p>Speed is the modem's own rate after error correction. You get about a third to a half of it, because every frame takes its full time even when it is nearly empty, and every line waits for a receipt.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th></th><th><code>vhf-fast</code></th><th><code>vhf-fm</code></th></tr>
+            </thead>
+            <tbody>
+              <tr><td>First mode</td><td>OFDM QAM16 1/2</td><td>OFDM QPSK 1/2</td></tr>
+              <tr><td>Speed</td><td>2,100–3,200 bps, like a 2400 modem</td><td>1,580 bps, like a 1200 modem</td></tr>
+              <tr><td>Chat / receipt frame</td><td>256-byte short frame in 0.96&nbsp;s</td><td>512-byte frame in 2.6&nbsp;s</td></tr>
+              <tr><td>A 100-character line + receipt</td><td>~3&nbsp;s</td><td>~6&nbsp;s</td></tr>
+              <tr><td>A 1&nbsp;KB mail</td><td>~9&nbsp;s</td><td>~17&nbsp;s</td></tr>
+              <tr><td>Needs about</td><td>9&nbsp;dB SNR, no hiss (full quieting)</td><td>3&nbsp;dB SNR, works with some hiss</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Those times are for a clear channel with the first try getting through. Retries and a busy channel add to it. A 1&nbsp;KB mail is cut into pieces that fit the short frame, which is why it is about twice as fast as on <code>vhf-fm</code>. Big files on <code>vhf-fast</code> can use a normal QAM16 frame of up to 1&nbsp;KB, about 2.6&nbsp;s on the air.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="snrH">
+        <h2 id="snrH">How strong the signal needs to be</h2>
+        <p>9&nbsp;dB is a textbook figure for QAM16 1/2 on a steady signal, not a lab measurement of this radio path. A simple check: if every line on <code>vhf-fm</code> gets <code>[ok]</code> first time and the received SNR stays at 10&nbsp;dB or more, try <code>vhf-fast</code>. If lines start to need a second try, go back.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="radioH">
+        <h2 id="radioH">How to connect the radio</h2>
+        <ul class="cards">
+          <li><strong>Cabled PTT is the most reliable</strong><span>A Digirig, a CM108 sound card, or CAT. There is no VOX lead, so the short 1&nbsp;s frame is not clipped at the start.</span></li>
+          <li><strong>VOX works on a strong link</strong><span>Once the level is set as in the <a href="/guides/vox.html">VOX guide</a>. An RT-900 at squelch 1, VOX 4 sent and took <code>vhf-fast</code> first time. If the start of frames gets clipped, use <code>vhf-fm</code> or a cabled PTT.</span></li>
+          <li><strong>Untested over Bluetooth</strong><span>Bluetooth audio, for example a VR-N76, has not been tested on air with <code>vhf-fast</code>. The current app does not offer this preset on a Bluetooth audio radio. Use a cable or VOX to try it.</span></li>
+        </ul>
+      </section>
+
+      <section class="article-section" aria-labelledby="filesH">
+        <h2 id="filesH">Files and mail</h2>
+        <ul>
+          <li>Pictures in a direct chat are shrunk to fit 8&nbsp;KB. Other small chat files stay at 4&nbsp;KB.</li>
+          <li>On <code>vhf-fast</code>, a chat file goes in one burst. The other end says which pieces it missed, and only those go again. An 8&nbsp;KB picture takes about 45&nbsp;s.</li>
+          <li>Email can carry several files, up to 512&nbsp;KB in all, over the radio on <code>vhf-fast</code>. On any other radio preset, files with mail are refused (a gateway sending over the internet can still take them on any preset).</li>
+        </ul>
+      </section>
+
+      <section class="article-section" aria-labelledby="tipsH">
+        <h2 id="tipsH">Tips</h2>
+        <ul>
+          <li>Start on <code>vhf-fm</code>. Switch to <code>vhf-fast</code> only when the path is fully quiet.</li>
+          <li>Watch <code>[ok]</code> and the received SNR. A rising <strong>RETRY</strong> count, or a <strong>TX</strong> field that has stepped down to QPSK, means the link is not clean enough. Go back to <code>vhf-fm</code>.</li>
+          <li>The receiver already hears every preset. You can send <code>vhf-fast</code> while they stay on <code>vhf-fm</code>.</li>
+          <li>On a handheld, take short rests between long mail blocks so the radio can cool.</li>
+        </ul>
+      </section>
+
+      <p class="next">How this sits next to JS8, FT8, Olivia, and APRS: <a href="/docs/compare.html">compare modes</a>. Retries and the other presets: <a href="/docs/weak.html">weak signals</a>. Cabled handheld: <a href="/guides/handheld.html">handheld + Digirig</a>. VOX setup: <a href="/guides/vox.html">any radio with VOX</a>.</p>
+    </main>
+  </div>
+  <script src="/copy.js?v=1"></script>
+  <script src="/shell.js?v=15"></script>
+  <script src="/articles.js?v=9"></script>
+</body>
+</html>

@@ -54,9 +54,9 @@
       <p class="lead">How WeeChat Radio’s radio presets sit next to other ham text modes in noise. Click a column header to sort.</p>
 
       <div class="ok">
-        <h2>The two HF chat presets</h2>
+        <h2>The WeeChat Radio presets</h2>
         <p>Orange rows are WeeChat Radio on HF: <code>hf-weak</code> / <code>hf-poor</code> for normal noisy chat, and <code>hf-deep</code> when the path is almost gone.</p>
-        <p><code>vhf-fm</code> / handheld is also WeeChat Radio, but it is 1200 baud FM packet — closer to APRS than to FT8.</p>
+        <p>Indigo names are WeeChat Radio on VHF/UHF FM. <code>vhf-fm</code> is the usual local FM preset. <code>vhf-fast</code> is the fastest VHF/UHF preset, for a strong clean link — details on the <a href="/docs/vhf-fast.html">vhf-fast</a> page.</p>
       </div>
 
       <div class="warn-box">
@@ -76,7 +76,7 @@
         </ol>
         <ul class="cmp-legend-notes">
           <li>Colour is that column only. 1 red (poor) → 5 green (strong). The number is always shown.</li>
-          <li>Orange row = WeeChat Radio HF. Indigo name = handheld. Those are not scores.</li>
+          <li>Orange row = WeeChat Radio HF. Indigo name = VHF/UHF (<code>vhf-fast</code>, <code>vhf-fm</code>). Those are not scores.</li>
         </ul>
       </div>
       </section>
@@ -110,6 +110,11 @@
               <td><span class="cmp-tag">wcr</span> hf-deep</td>
               <td>Last-resort HF</td>
               <td data-s="4">4</td><td data-s="4">4</td><td data-s="4">4</td><td data-s="1">1</td><td data-s="5">5</td><td data-s="4">4</td><td data-s="1">1</td>
+            </tr>
+            <tr class="cmp-wcr-vhf" data-name="WeeChat Radio vhf-fast" data-role="Fast local VHF/UHF FM" data-snr="1" data-fade="2" data-qrm="2" data-speed="5" data-recovery="4" data-open="4" data-vhf="5">
+              <td><span class="cmp-tag vhf">wcr</span> vhf-fast</td>
+              <td>Fast local VHF/UHF FM</td>
+              <td data-s="1">1</td><td data-s="2">2</td><td data-s="2">2</td><td data-s="5">5</td><td data-s="4">4</td><td data-s="4">4</td><td data-s="5">5</td>
             </tr>
             <tr class="cmp-wcr-vhf" data-name="WeeChat Radio vhf-fm / handheld" data-role="Local VHF/UHF FM" data-snr="1" data-fade="2" data-qrm="2" data-speed="4" data-recovery="4" data-open="4" data-vhf="5">
               <td><span class="cmp-tag vhf">wcr</span> vhf-fm / handheld</td>
@@ -192,7 +197,7 @@
             </tr>
             <tr>
               <td>Speed</td>
-              <td>1200 baud packet or adaptive OFDM (VARA)</td>
+              <td>vhf-fast short frames (~1&nbsp;s, about twice vhf-fm)</td>
               <td>WSPR 2 min beacon; FT8 15 s / FT4 7.5 s tiny payloads; JS8 / hf-deep chat</td>
             </tr>
             <tr>
@@ -221,6 +226,7 @@
       <ul class="cards">
         <li><strong><code>hf-weak</code> / <code>hf-poor</code></strong><span>Mid SNR (3), strong fading recovery and retries (5), usable speed (3). Start on <code>hf-poor</code>. Drop to <code>hf-weak</code> when they are faint. This is the usual noisy-HF chat setting.</span></li>
         <li><strong><code>hf-deep</code></strong><span>SNR 4, next to Olivia, below FT8/WSPR. Speed is 1. A short 1:1 line is about 2–5 seconds of PTT. The same line to <code>#bulletin</code> is about 10–15 seconds because HF groups send three Reed–Solomon pieces.</span></li>
+        <li><strong><code>vhf-fast</code></strong><span>The fastest VHF/UHF preset (speed 5). OFDM QAM16 1/2 on a strong, clean FM link: about 9&nbsp;dB SNR, no hiss. Lines and receipts in about 1&nbsp;s frames; a 1&nbsp;KB mail about 9&nbsp;s. Details: <a href="/docs/vhf-fast.html">vhf-fast</a>.</span></li>
         <li><strong><code>vhf-fm</code> / handheld</strong><span>Same air as APRS (low SNR/fade/QRM). Auto recover is 4 because of ACKs and retries. Use it on a quiet FM channel, not as an HF weak-signal mode.</span></li>
       </ul>
       <p class="section-lead section-lead--after">WSPR, FT8, and FT4 are weak-signal benchmarks. They do not carry a typed chat line.</p>
@@ -234,7 +240,7 @@
       </ul>
       </section>
 
-      <p class="next">Operator steps when the path is faint: <a href="/docs/weak.html">weak signals</a>. How internet vs radio is allowed: <a href="/docs/modes.html">modes</a>. Whole apps side by side: <a href="/docs/apps.html">compare apps</a>. Same text offline: <code>wcr help compare</code>.</p>
+      <p class="next">The fastest VHF/UHF preset: <a href="/docs/vhf-fast.html">vhf-fast</a>. Operator steps when the path is faint: <a href="/docs/weak.html">weak signals</a>. How internet vs radio is allowed: <a href="/docs/modes.html">modes</a>. Whole apps side by side: <a href="/docs/apps.html">compare apps</a>. Same text offline: <code>wcr help compare</code>.</p>
     </main>
   </div>
   <script src="/copy.js?v=1"></script>
