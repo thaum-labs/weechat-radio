@@ -5,6 +5,7 @@ import { expect, test } from "@playwright/test";
 
 const NAV = [
   ["why", "/why.html"],
+  ["vs VARA", "/docs/vara.html"],
   ["guides", "/guides.html"],
   ["plan", "/guides/band.html"],
   ["map", "/map.html"],
@@ -19,6 +20,7 @@ const NAV = [
 const PAGES: [string, string | null][] = [
   ["/", null],
   ["/why.html", "why"],
+  ["/docs/vara.html", "vs VARA"],
   ["/map.html", "map"],
   ["/downloads.html", "download"],
   ["/status.html", "hub"],
@@ -140,7 +142,7 @@ test("the phone menu takes keyboard focus while it is open", async ({ page }) =>
   const focused = () => page.evaluate(() => document.activeElement!.textContent!.trim());
   expect(await focused()).toBe("why");
   await page.keyboard.press("Tab");
-  expect(await focused()).toBe("guides");
+  expect(await focused()).toBe("vs VARA");
   await page.keyboard.press("Shift+Tab");
   await page.keyboard.press("Shift+Tab");
   await expect(toggle).toBeFocused();

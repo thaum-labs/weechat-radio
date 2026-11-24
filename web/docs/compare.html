@@ -23,7 +23,7 @@
   <link rel="icon" type="image/svg+xml" href="/icons/mark-accent.svg" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-  <link rel="stylesheet" href="/styles.css?v=58" />
+  <link rel="stylesheet" href="/styles.css?v=59" />
   <link rel="stylesheet" href="/docs.css?v=6" />
 </head>
 <body class="page-doc cmp-page">
@@ -33,6 +33,7 @@
     <div class="prompt"><span class="who">weechat-radio</span><span class="sym">:$</span></div>
     <nav aria-label="Main">
       <a href="/why.html">why</a>
+      <a href="/docs/vara.html">vs VARA</a>
       <a href="/guides.html">guides</a>
       <a href="/guides/band.html">plan</a>
       <a href="/map.html">map</a>
@@ -244,7 +245,7 @@
         <li><strong>VARA HF</strong><span>The HF row already in the table. Adaptive OFDM in a voice-width SSB channel, with ARQ. Closed (open 1).</span></li>
         <li><strong>VARA FM</strong><span>The VHF/UHF row. Narrow (about 3&nbsp;kHz of audio, up to 12,750&nbsp;bps) works on a microphone or 1200-baud data pin. Wide (about 6&nbsp;kHz, up to 25,210&nbsp;bps on the author’s published chart) needs a radio with a 9600-baud or other flat-audio data port. Both have ARQ and many adaptive speed levels. Narrow and Wide can talk to each other.</span></li>
       </ul>
-      <p>On a strong, clean FM path, licensed VARA FM is faster than <code>vhf-fast</code>. That is expected: VARA FM is built for file and email throughput on FM. WeeChat Radio is an open chat system, not a Winlink modem.</p>
+      <p>On a strong, clean FM path, licensed VARA FM is faster than <code>vhf-fast</code>. That is expected: VARA FM is built for file and email throughput on FM. WeeChat Radio is an open chat system, not a Winlink modem. A product-level comparison, including VarAC: <a href="/docs/vara.html">compared with VARA</a>.</p>
       </section>
 
       <section class="article-section" aria-labelledby="noiseH">
@@ -255,12 +256,12 @@
       </ul>
       </section>
 
-      <p class="next">WeeChat Radio’s fastest VHF/UHF preset: <a href="/docs/vhf-fast.html">vhf-fast</a>. Operator steps when the path is faint: <a href="/docs/weak.html">weak signals</a>. How internet vs radio is allowed: <a href="/docs/modes.html">modes</a>. Whole apps side by side: <a href="/docs/apps.html">compare apps</a>. Same text offline: <code>wcr help compare</code>.</p>
+      <p class="next">WeeChat Radio’s fastest VHF/UHF preset: <a href="/docs/vhf-fast.html">vhf-fast</a>. Operator steps when the path is faint: <a href="/docs/weak.html">weak signals</a>. How internet vs radio is allowed: <a href="/docs/modes.html">modes</a>. Already on VARA or VarAC: <a href="/docs/vara.html">compared with VARA</a>. Whole apps side by side: <a href="/docs/apps.html">compare apps</a>. Same text offline: <code>wcr help compare</code>.</p>
     </main>
   </div>
   <script src="/copy.js?v=1"></script>
   <script src="/shell.js?v=15"></script>
-  <script src="/articles.js?v=9"></script>
+  <script src="/articles.js?v=10"></script>
   <script>
     (function () {
       const table = document.getElementById("cmp-table");
