@@ -206,10 +206,15 @@
         <h2 id="gainH">What you would gain</h2>
         <ul>
           <li>One program instead of a modem plus a separate chat or mail client.</li>
+          <li>Setup is a short guided walk: run <code>wcr setup</code>, which asks for your callsign, grid and whether you have a radio. To update, click the version at the bottom left of the app and press <strong>Update</strong>, or run <code>wcr update</code>.</li>
           <li>The same app on a Mac, a Linux box or a Raspberry&nbsp;Pi, without Wine.</li>
+          <li>A modern, clean interface, in the same indigo and orange look as this site.</li>
           <li>No paid key for full speed. The source is open.</li>
           <li>The fastest VHF/UHF preset works through the microphone socket. You do not need a 9600-baud data port.</li>
+          <li>A VR-N76, UV-PRO or similar can run over Bluetooth, with no cable: the radio’s own packet TNC, or modem73 audio over the same link. The <a href="/guides/vr-n76.html">VR-N76 / UV-PRO guide</a> covers both. <code>vhf-fast</code> over Bluetooth audio is experimental in v1.0.22, off by default and untested on air.</li>
           <li>Live group chat, hops between stations that are not all in range, and an internet mode so people with no radio can join.</li>
+          <li>Type <code>/report CALL</code>, or just <code>/report</code> in a direct chat, to ask that station for a signal report. The other station answers on its own with the SNR it heard you at (WeeChat Radio v0.1.109 or later), at most once every 5 minutes. <code>/report auto off</code> stops yours answering. Details: <a href="/guides/start.html#reportsH">signal reports</a>.</li>
+          <li>Each line shows how far it got: marks such as <code>[tx]</code>, <code>[rl]</code> and <code>[ok]</code>, plus a retry count when a line is keyed again. In the desktop app, the <strong>key</strong> button above the chat explains them, and a hover does the same. Lines that reached you by radio also show the SNR, for example <code>-4 dB</code>. The full list is under <a href="/docs/protocol.html#delivery-marks">delivery marks</a>.</li>
           <li>Your own mail address, a Pi gateway with a browser interface, a range map, a frequency planner and a range test.</li>
         </ul>
       </section>
