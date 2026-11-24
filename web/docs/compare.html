@@ -146,9 +146,14 @@
               <td>HF typed chat</td>
               <td data-s="4">4</td><td data-s="4">4</td><td data-s="4">4</td><td data-s="1">1</td><td data-s="2">2</td><td data-s="5">5</td><td data-s="1">1</td>
             </tr>
-            <tr data-name="VARA HF" data-role="Winlink / files" data-snr="4" data-fade="4" data-qrm="3" data-speed="4" data-recovery="5" data-open="1" data-vhf="1">
+            <tr data-name="VARA FM" data-role="VHF/UHF Winlink / files" data-snr="1" data-fade="2" data-qrm="2" data-speed="5" data-recovery="5" data-open="1" data-vhf="5">
+              <td>VARA FM</td>
+              <td>VHF/UHF Winlink / files</td>
+              <td data-s="1">1</td><td data-s="2">2</td><td data-s="2">2</td><td data-s="5">5</td><td data-s="5">5</td><td data-s="1">1</td><td data-s="5">5</td>
+            </tr>
+            <tr data-name="VARA HF" data-role="HF Winlink / files" data-snr="4" data-fade="4" data-qrm="3" data-speed="4" data-recovery="5" data-open="1" data-vhf="1">
               <td>VARA HF</td>
-              <td>Winlink / files</td>
+              <td>HF Winlink / files</td>
               <td data-s="4">4</td><td data-s="4">4</td><td data-s="3">3</td><td data-s="4">4</td><td data-s="5">5</td><td data-s="1">1</td><td data-s="1">1</td>
             </tr>
             <tr data-name="PSK31" data-role="Live keyboard HF" data-snr="3" data-fade="1" data-qrm="1" data-speed="3" data-recovery="1" data-open="5" data-vhf="1">
@@ -197,7 +202,7 @@
             </tr>
             <tr>
               <td>Speed</td>
-              <td>vhf-fast short frames (~1&nbsp;s, about twice vhf-fm)</td>
+              <td>Licensed VARA FM, or vhf-fast short frames (~1&nbsp;s)</td>
               <td>WSPR 2 min beacon; FT8 15 s / FT4 7.5 s tiny payloads; JS8 / hf-deep chat</td>
             </tr>
             <tr>
@@ -226,10 +231,20 @@
       <ul class="cards">
         <li><strong><code>hf-weak</code> / <code>hf-poor</code></strong><span>Mid SNR (3), strong fading recovery and retries (5), usable speed (3). Start on <code>hf-poor</code>. Drop to <code>hf-weak</code> when they are faint. This is the usual noisy-HF chat setting.</span></li>
         <li><strong><code>hf-deep</code></strong><span>SNR 4, next to Olivia, below FT8/WSPR. Speed is 1. A short 1:1 line is about 2–5 seconds of PTT. The same line to <code>#bulletin</code> is about 10–15 seconds because HF groups send three Reed–Solomon pieces.</span></li>
-        <li><strong><code>vhf-fast</code></strong><span>The fastest VHF/UHF preset (speed 5). OFDM QAM16 1/2 on a strong, clean FM link: about 9&nbsp;dB SNR, no hiss. Lines and receipts in about 1&nbsp;s frames; a 1&nbsp;KB mail about 9&nbsp;s. Details: <a href="/docs/vhf-fast.html">vhf-fast</a>.</span></li>
+        <li><strong><code>vhf-fast</code></strong><span>WeeChat Radio’s fastest VHF/UHF preset (speed 5). OFDM QAM16 1/2 on a strong, clean FM link: about 9&nbsp;dB SNR, no hiss. Lines and receipts in about 1&nbsp;s frames; a 1&nbsp;KB mail about 9&nbsp;s. Details: <a href="/docs/vhf-fast.html">vhf-fast</a>.</span></li>
         <li><strong><code>vhf-fm</code> / handheld</strong><span>Same air as APRS (low SNR/fade/QRM). Auto recover is 4 because of ACKs and retries. Use it on a quiet FM channel, not as an HF weak-signal mode.</span></li>
       </ul>
       <p class="section-lead section-lead--after">WSPR, FT8, and FT4 are weak-signal benchmarks. They do not carry a typed chat line.</p>
+      </section>
+
+      <section class="article-section" aria-labelledby="varaH">
+      <h2 id="varaH">VARA HF and VARA FM</h2>
+      <p>VARA is a closed sound-card modem by EA5HVK, used a lot for Winlink email and files. The official program is for Windows; the author is working on native macOS and Linux versions. A paid licence unlocks the full speed, compression, and using a digipeater. The unpaid copy is shareware with restrictions.</p>
+      <ul class="cards">
+        <li><strong>VARA HF</strong><span>The HF row already in the table. Adaptive OFDM in a voice-width SSB channel, with ARQ. Closed (open 1).</span></li>
+        <li><strong>VARA FM</strong><span>The VHF/UHF row. Narrow (about 3&nbsp;kHz of audio, up to 12,750&nbsp;bps) works on a microphone or 1200-baud data pin. Wide (about 6&nbsp;kHz, up to 25,210&nbsp;bps on the author’s published chart) needs a radio with a 9600-baud or other flat-audio data port. Both have ARQ and many adaptive speed levels. Narrow and Wide can talk to each other.</span></li>
+      </ul>
+      <p>On a strong, clean FM path, licensed VARA FM is faster than <code>vhf-fast</code>. That is expected: VARA FM is built for file and email throughput on FM. WeeChat Radio is an open chat system, not a Winlink modem.</p>
       </section>
 
       <section class="article-section" aria-labelledby="noiseH">
@@ -240,7 +255,7 @@
       </ul>
       </section>
 
-      <p class="next">The fastest VHF/UHF preset: <a href="/docs/vhf-fast.html">vhf-fast</a>. Operator steps when the path is faint: <a href="/docs/weak.html">weak signals</a>. How internet vs radio is allowed: <a href="/docs/modes.html">modes</a>. Whole apps side by side: <a href="/docs/apps.html">compare apps</a>. Same text offline: <code>wcr help compare</code>.</p>
+      <p class="next">WeeChat Radio’s fastest VHF/UHF preset: <a href="/docs/vhf-fast.html">vhf-fast</a>. Operator steps when the path is faint: <a href="/docs/weak.html">weak signals</a>. How internet vs radio is allowed: <a href="/docs/modes.html">modes</a>. Whole apps side by side: <a href="/docs/apps.html">compare apps</a>. Same text offline: <code>wcr help compare</code>.</p>
     </main>
   </div>
   <script src="/copy.js?v=1"></script>
