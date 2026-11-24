@@ -3868,7 +3868,9 @@ type KeyFn = fn(&mut egui::Ui, &str);
 /// widens the panel's layout past what is shown, and the pickers then
 /// ran off the right side and got cropped (Tobias 2026-11-24).
 fn row_width(ui: &egui::Ui) -> f32 {
-    let visible = ui.clip_rect().right() - ui.cursor().min.x;
+    // A few points short of the edge, so the box's own right border is
+    // drawn inside the clip and not cut off (Tobias 2026-11-24, on a Mac).
+    let visible = ui.clip_rect().right() - ui.cursor().min.x - 3.0;
     ui.available_width().min(visible).max(40.0)
 }
 
