@@ -3863,11 +3863,20 @@ fn cheat_sheet(ui: &mut egui::Ui) {
 /// own left-aligned key column.
 type KeyFn = fn(&mut egui::Ui, &str);
 
+/// Width left for a STATION picker or button on its row. Capped at the
+/// panel's visible edge: one wide row (a long callsign, a narrow window)
+/// widens the panel's layout past what is shown, and the pickers then
+/// ran off the right side and got cropped (Tobias 2026-11-24).
+fn row_width(ui: &egui::Ui) -> f32 {
+    let visible = ui.clip_rect().right() - ui.cursor().min.x;
+    ui.available_width().min(visible).max(40.0)
+}
+
 fn mode_pick(ui: &mut egui::Ui, current: Mode, key: KeyFn) -> Option<Mode> {
     let mut chosen = None;
     ui.horizontal(|ui| {
         key(ui, "MODE");
-        let w = ui.available_width();
+        let w = row_width(ui);
         egui::ComboBox::from_id_salt("mode_pick")
             .selected_text(
                 RichText::new(current.as_str())
@@ -3897,7 +3906,7 @@ fn tower_toggle(ui: &mut egui::Ui, on: bool, key: KeyFn) -> Option<bool> {
     let mut flipped = None;
     let inner = ui.horizontal(|ui| {
         key(ui, "TOWER");
-        let w = ui.available_width();
+        let w = row_width(ui);
         let h = ui.spacing().interact_size.y;
         let label = if on { "on" } else { "off" };
         let color = if on { GREEN } else { DIM };
@@ -3939,17 +3948,14 @@ pub(crate) fn bt_fast_row(
     let mut chosen = None;
     let inner = ui.horizontal(|ui| {
         key(ui, "BT FAST");
-        let w = ui.available_width();
+        let w = row_width(ui);
         let h = ui.spacing().interact_size.y;
-        let label = if on {
-            "vhf-fast on (experimental)"
-        } else {
-            "off"
-        };
+        let label = if on { "on (experimental)" } else { "off" };
         let color = if on { warn } else { DIM };
         let btn = ui.add_sized(
             [w, h],
             egui::Button::new(RichText::new(label).color(color).monospace())
+                .truncate()
                 .fill(Color32::TRANSPARENT)
                 .stroke(hairline(if on { warn } else { LINE })),
         );
@@ -3962,17 +3968,15 @@ pub(crate) fn bt_fast_row(
         ui.id().with("bt_fast_row"),
         egui::Sense::hover(),
     );
+    // The SBC warning lives in the hover tip only: as a line under the
+    // row it was messy (Tobias 2026-11-24).
     hover_tip(
         &resp,
-        "Experimental: offer vhf-fast (QAM16) on this Bluetooth radio. Untested over Bluetooth. hf-good stays refused. Saved in wcr.toml as [modem] experimental_bt_vhf_fast.",
+        format!(
+            "{} hf-good stays refused. Saved in wcr.toml as [modem] experimental_bt_vhf_fast.",
+            crate::btaudio::VHF_FAST_WARNING
+        ),
     );
-    if on {
-        ui.label(
-            RichText::new(crate::btaudio::VHF_FAST_WARNING)
-                .color(warn)
-                .small(),
-        );
-    }
     chosen
 }
 
@@ -3991,7 +3995,7 @@ fn file_send_row(ui: &mut egui::Ui, s: &StatusSnapshot, key: KeyFn) -> Option<St
     let mut chosen = None;
     let inner = ui.horizontal(|ui| {
         key(ui, "FILES");
-        let w = ui.available_width();
+        let w = row_width(ui);
         egui::ComboBox::from_id_salt("file_send_pick")
             .selected_text(RichText::new(&current).color(PURPLE).monospace())
             .width(w)
@@ -4042,7 +4046,7 @@ fn duty_row(ui: &mut egui::Ui, s: &StatusSnapshot, key: KeyFn) -> Option<String>
     let mut chosen = None;
     let inner = ui.horizontal(|ui| {
         key(ui, "RADIO");
-        let w = ui.available_width();
+        let w = row_width(ui);
         egui::ComboBox::from_id_salt("duty_pick")
             .selected_text(RichText::new(&rf.duty).color(PURPLE).monospace())
             .width(w)
@@ -4077,7 +4081,7 @@ fn preset_pick(ui: &mut egui::Ui, s: &StatusSnapshot, key: KeyFn) -> Option<Stri
     let mut chosen = None;
     ui.horizontal(|ui| {
         key(ui, "PRESET");
-        let w = ui.available_width();
+        let w = row_width(ui);
         egui::ComboBox::from_id_salt("preset_pick")
             .selected_text(RichText::new(shown).color(PURPLE).monospace())
             .width(w)
@@ -4143,12 +4147,13 @@ fn freq_pick(
     };
     ui.horizontal(|ui| {
         key(ui, "FREQ");
-        let w = ui.available_width();
+        let w = row_width(ui);
         let popup_id = ui.make_persistent_id("freq_pick_popup");
         // Text left-aligned like the MODE and PRESET pickers' (a button
         // places its text by the layout it sits in).
         let button = ui
             .with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.set_max_width(w);
                 ui.add(
                     egui::Button::new(
                         RichText::new(format!("{current_label}  ▾"))
