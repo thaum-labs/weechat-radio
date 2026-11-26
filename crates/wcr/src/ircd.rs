@@ -103,7 +103,8 @@ struct Inner {
 
 /// The pieces of one long message this station sent. Their marks reach the
 /// client as one mark on the first piece's id, with `+radio/parts=k/n`: how
-/// many pieces are on the air (#365).
+/// many pieces are on the air (#365), `+radio/acked=k/n`: how many have their
+/// own receipt, and `+radio/part-states`: one letter per piece (#403).
 #[derive(Default)]
 struct SentParts {
     states: Vec<String>,
@@ -142,6 +143,45 @@ impl SentParts {
             .filter(|(k, s)| **k || mark_rank(s) >= delivered)
             .count()
     }
+
+    /// Pieces whose own receipt came back (#403).
+    fn acked(&self) -> usize {
+        self.states.iter().filter(|s| piece_acked(s)).count()
+    }
+
+    /// One letter per piece, in order (#403): `a` its receipt came back,
+    /// `f` it failed after every retry, `s` on the air and waiting for its
+    /// receipt, `q` not on the air yet.
+    fn letters(&self) -> String {
+        self.states
+            .iter()
+            .zip(&self.keyed)
+            .map(|(s, keyed)| {
+                if piece_acked(s) {
+                    'a'
+                } else if s == "failed" {
+                    'f'
+                } else if *keyed || mark_rank(s) > mark_rank("queued") {
+                    's'
+                } else {
+                    'q'
+                }
+            })
+            .collect()
+    }
+}
+
+/// A piece's own receipt came back: delivered (or heard by all).
+fn piece_acked(state: &str) -> bool {
+    matches!(state, "delivered" | "all")
+}
+
+/// How far the pieces of one long message got, for its delivery mark.
+struct PartsMark {
+    on_air: usize,
+    acked: usize,
+    total: usize,
+    letters: String,
 }
 
 const OFFERED_CAPS: &[&str] = &[
@@ -846,7 +886,13 @@ impl IrcServer {
                 }
             }
             let tries = p.tries.iter().copied().max().filter(|n| *n > 0);
-            (state, tries, (p.on_air(), p.states.len()))
+            let parts = PartsMark {
+                on_air: p.on_air(),
+                acked: p.acked(),
+                total: p.states.len(),
+                letters: p.letters(),
+            };
+            (state, tries, parts)
         };
         let Some((id, target)) = self.bind_delivery(first) else {
             return;
@@ -909,14 +955,18 @@ impl IrcServer {
         state: &str,
         tries: Option<u32>,
         via: Option<&str>,
-        parts: Option<(usize, usize)>,
+        parts: Option<PartsMark>,
     ) {
         let mut tags = format!("msgid={msgid};+radio/delivery={state};+radio/msgid={msgid}");
         if let Some(n) = tries.filter(|n| *n > 0) {
             tags.push_str(&format!(";+radio/tries={n}"));
         }
-        if let Some((k, n)) = parts {
-            tags.push_str(&format!(";+radio/parts={k}/{n}"));
+        if let Some(p) = parts {
+            let n = p.total;
+            tags.push_str(&format!(
+                ";+radio/parts={}/{n};+radio/acked={}/{n};+radio/part-states={}",
+                p.on_air, p.acked, p.letters
+            ));
         }
         if let Some(via) = via.filter(|v| !v.is_empty()) {
             tags.push_str(&format!(";+radio/via={via}"));
@@ -1285,4 +1335,30 @@ fn flood_allows(inner: &Arc<Mutex<Inner>>, id: u64, cmd: &str) -> bool {
     }
     c.flood_tokens -= 1.0;
     true
+}
+
+#[cfg(test)]
+mod part_states_tests {
+    use super::SentParts;
+
+    /// Each piece keeps its own state (#403): a later piece's receipt turns
+    /// its letter to `a` while an earlier one still waits.
+    #[test]
+    fn pieces_report_their_own_receipts() {
+        let mut p = SentParts::new(4);
+        assert_eq!(p.letters(), "qqqq");
+        p.keyed[0] = true;
+        p.keyed[1] = true;
+        assert_eq!(p.letters(), "ssqq");
+        p.states[1] = "delivered".into();
+        assert_eq!(p.letters(), "saqq");
+        assert_eq!(p.acked(), 1);
+        p.keyed[2] = true;
+        p.keyed[3] = true;
+        p.states[0] = "delivered".into();
+        p.states[3] = "failed".into();
+        assert_eq!(p.letters(), "aasf");
+        assert_eq!(p.acked(), 2);
+        assert_eq!(p.mark(), "failed");
+    }
 }

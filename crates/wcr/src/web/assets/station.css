@@ -6,7 +6,7 @@
   color-scheme: dark;
   --bg: #0b0b10; --card: #14141c; --raised: #1b1b26; --line: #262a3d; --fg: #e4def0; --dim: #8d87a0;
   --accent: #8aa4ff; --orange: #ff8a4d; --purple: #c4b5fd; --green: #4ade80;
-  --amber: #fbbf24; --red: #f87171; --cyan: #22d3ee;
+  --amber: #fbbf24; --red: #f87171; --cyan: #22d3ee; --pending: #e3cf96;
   --meter-low: #1b1f30; --meter-good: #173d1f; --meter-busy: #3d3416; --meter-high: #4a2418;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
@@ -240,6 +240,20 @@ main.wide { max-width: 1100px; }
 .lines .status-row { text-align: right; }
 .lines .parts-foot { margin-left: 6px; font-size: 12px; font-family: var(--mono); white-space: nowrap; display: inline-block; }
 .lines .progress { color: var(--amber); } .lines .done { color: var(--green); } .lines .missing { color: var(--red); }
+/* Our own line still waiting for its receipt (#403): pale gold, apart from
+   system lines and times (grey). */
+.lines .mine.pending .text { color: var(--pending); }
+/* One block per piece of our long message (#403). */
+.lines .part-blocks { font-family: var(--mono); font-size: 13px; letter-spacing: 1px; white-space: nowrap; margin-left: 6px; }
+.lines .part-block.queued, .lines .part-block.sending { color: var(--amber); }
+.lines .part-block.confirmed { color: var(--green); } .lines .part-block.failed { color: var(--red); }
+/* A heard callsign opens a private chat (#403). */
+button.call-link { border: 0; padding: 0; min-height: 0; background: none; color: var(--fg); font-weight: 600; text-align: left; cursor: pointer; max-width: 100%; }
+button.call-link:hover:not(:disabled) { background: none; color: var(--accent); text-decoration: underline; }
+dialog.ask { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; max-width: min(360px, calc(100vw - 32px)); }
+dialog.ask::backdrop { background: rgb(0 0 0 / .55); }
+dialog.ask p { margin: 0 0 12px; }
+dialog.ask .row { display: flex; gap: 8px; justify-content: flex-end; }
 .compose { display: flex; gap: 8px; align-items: flex-end; }
 .compose textarea { margin: 0; flex: 1; min-height: 44px; }
 /* File matches Send: same height and padding (QA #365 rc11). */

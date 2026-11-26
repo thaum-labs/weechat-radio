@@ -13,6 +13,27 @@ function el(tag, cls, text) {
   return e;
 }
 
+// "Open a private chat with CALL?" with Open and Cancel (#403). Esc or a
+// click on Cancel leaves things as they are.
+function askChat(call, onOpen) {
+  const d = el("dialog", "ask");
+  d.setAttribute("aria-label", "Open a private chat");
+  d.append(el("p", "", `Open a private chat with ${call}?`));
+  const row = el("div", "row");
+  const open = el("button", "primary", "Open");
+  open.type = "button";
+  const cancel = el("button", "quiet", "Cancel");
+  cancel.type = "button";
+  open.onclick = () => { d.close(); onOpen(); };
+  cancel.onclick = () => d.close();
+  d.addEventListener("close", () => d.remove());
+  row.append(open, cancel);
+  d.append(row);
+  document.body.append(d);
+  d.showModal();
+  open.focus();
+}
+
 function ago(secs) {
   if (secs < 60) return `${secs}s`;
   if (secs < 3600) return `${Math.floor(secs / 60)}m`;
@@ -468,7 +489,13 @@ function drawLists(d) {
     const li = el("li");
     const age = h.last_heard ? ago(Math.max(0, d.now - h.last_heard)) : "";
     const what = el("span", "what");
-    what.append(el("span", "subject mono", `${h.callsign}${h.gateway ? " (gateway)" : ""}`), el("span", "who", [h.band || medium(h.medium), h.grid].filter(Boolean).join(" · ")));
+    // The callsign asks to open a private chat with that station in the
+    // app view (#403), the same as Reply on the air list.
+    const call = el("button", "subject mono call-link", `${h.callsign}${h.gateway ? " (gateway)" : ""}`);
+    call.type = "button";
+    call.title = `Open a private chat with ${h.callsign}`;
+    call.onclick = () => askChat(h.callsign, () => { location.href = `/app#dm=${encodeURIComponent(h.callsign)}`; });
+    what.append(call, el("span", "who", [h.band || medium(h.medium), h.grid].filter(Boolean).join(" · ")));
     li.append(el("span", "when", age), what);
     if (h.snr !== null && h.snr !== undefined) {
       // 10 dB or more with the radios in one room; under 6 dB, check levels.

@@ -51,8 +51,8 @@ struct ChatLine {
     emergency: bool,
     /// A long message received as pieces: one entry, updated in place (#365).
     parts: Option<crate::chat_parts::Parts>,
-    /// A long message we send as pieces: pieces on the air of all.
-    sending: Option<(usize, usize)>,
+    /// A long message we send as pieces: how far each piece got.
+    sending: Option<crate::chat_line::Sending>,
 }
 
 struct Buffer {
@@ -954,21 +954,23 @@ fn tui_group_footer(l: &ChatLine, now: u64) -> Option<(String, Color)> {
         };
         return Some((p.footer(now), c));
     }
-    let (k, n) = l.sending?;
-    let failed = l.ticks.contains("[no]");
-    let delivered = !failed
-        && (l.ticks.contains("[ok]") || l.ticks.contains("[all]") || l.ticks.contains("VV"));
-    let (tail, c) = if failed {
-        ("  ⚠ not all pieces delivered", Color::Red)
-    } else if delivered && k >= n {
-        ("  delivered", Color::Green)
-    } else {
-        ("  … awaiting receipt", TUI_AMBER)
+    // One block per piece (#403): ■ on the air or answered, □ not yet; the
+    // words say how many have their own receipt.
+    let s = l.sending.as_ref()?;
+    let (_, footer, tone) = crate::chat_line::sending_footer(s, &l.ticks);
+    let blocks: String = crate::chat_line::sending_blocks(s, &l.ticks)
+        .iter()
+        .map(|b| match b {
+            crate::chat_line::PartBlock::Queued => '□',
+            _ => '■',
+        })
+        .collect();
+    let c = match tone {
+        crate::chat_line::FooterTone::InProgress => TUI_AMBER,
+        crate::chat_line::FooterTone::Done => Color::Green,
+        crate::chat_line::FooterTone::Missing => Color::Red,
     };
-    Some((
-        format!("{}{tail}", crate::chat_parts::sending_line(k, n)),
-        c,
-    ))
+    Some((format!("{blocks}  {footer}"), c))
 }
 
 fn panel<'a>(title: &'a str, meta: &'a str, app: &App) -> Block<'a> {
