@@ -1229,8 +1229,7 @@ impl GuiApp {
         crate::service::stop_job();
         if let Some(mut c) = self.node.take() {
             OWN_NODE.store(0, Ordering::SeqCst);
-            kill_pid_tree(c.id());
-            let _ = c.kill();
+            stop_node_child(&mut c);
         }
         stop_attached_station();
         self.irc_tx = None;
@@ -1934,8 +1933,7 @@ impl eframe::App for GuiApp {
         crate::service::forget_login_agent();
         if let Some(mut c) = self.node.take() {
             OWN_NODE.store(0, Ordering::SeqCst);
-            kill_pid_tree(c.id());
-            let _ = c.kill();
+            stop_node_child(&mut c);
         }
         stop_attached_station();
     }
@@ -2372,6 +2370,11 @@ impl eframe::App for GuiApp {
                                         .small()
                                         .monospace(),
                                 );
+                            }
+                            // QA #402: modem down, a station not answering,
+                            // or a long queue: said, not just counted.
+                            if let Some(w) = s.send_warning() {
+                                ui.label(RichText::new(w).color(ORANGE).small().monospace());
                             }
                             if s.clock_warn {
                                 ui.label(
@@ -4801,6 +4804,27 @@ fn start_tray_watch() {
             request_show();
         }
     }));
+}
+
+/// How long Stop waits for the station to close modem73 and the radio
+/// link by itself (modem73 gets 5 s, the Bluetooth channel 3 s).
+const NODE_STOP_WAIT: Duration = Duration::from_secs(9);
+
+/// Stop the station this window started. It gets time to stop modem73 and
+/// close the radio's Bluetooth channel before a kill: killed at once, it
+/// left both half closed, the next start attached to the dying modem73 and
+/// found the radio silent (QA #402).
+fn stop_node_child(c: &mut Child) {
+    kill_pid_tree(c.id());
+    let began = Instant::now();
+    while began.elapsed() < NODE_STOP_WAIT {
+        if matches!(c.try_wait(), Ok(Some(_))) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let _ = c.kill();
+    let _ = c.wait();
 }
 
 fn kill_pid_tree(pid: u32) {

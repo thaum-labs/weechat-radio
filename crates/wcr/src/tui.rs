@@ -1167,8 +1167,12 @@ fn draw(f: &mut Frame, app: &App) {
         ),
         (
             "queue",
-            snap.map(|s| format!("{} air {}", s.queue_out, s.queue_air))
-                .unwrap_or_else(|| "—".into()),
+            snap.map(|s| match s.send_warning() {
+                // QA #402: modem down, a station not answering, a long queue.
+                Some(w) => format!("{} air {} · {w}", s.queue_out, s.queue_air),
+                None => format!("{} air {}", s.queue_out, s.queue_air),
+            })
+            .unwrap_or_else(|| "—".into()),
         ),
         (
             "beacon",

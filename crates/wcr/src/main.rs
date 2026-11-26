@@ -72,6 +72,9 @@ async fn real_main(cli: Cli) -> Result<()> {
                 _ = stop_signal() => {
                     // Exiting here skips the drop that ends modem73.
                     wcr::modem::supervise::stop_managed();
+                    // Close the radio's Bluetooth audio channel cleanly, so
+                    // the next start does not find it half open (QA #402).
+                    wcr::btaudio::shutdown(std::time::Duration::from_secs(3));
                 }
             }
         }

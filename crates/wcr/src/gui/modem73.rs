@@ -360,15 +360,16 @@ impl State {
                     <= Duration::from_millis(activity_bars::TONE_HOLD_MS)
             });
             let level_db = match s {
-                Some(s) if crate::presets::audio_meter_live(&s.audio_label) => {
-                    // While keyed, the burst shows the level going out.
-                    if tone {
-                        s.audio_in_db.max(s.audio_out_db)
-                    } else {
-                        s.audio_in_db
-                    }
-                }
-                _ => activity_bars::EMPTY_DB,
+                Some(s) => activity_bars::sample_level(
+                    crate::presets::audio_meter_live(&s.audio_label),
+                    // While keyed, the burst shows the level going out,
+                    // whatever the receive label says (QA #402).
+                    tone,
+                    s.bt_meters && s.modem_down.is_empty(),
+                    s.audio_in_db,
+                    s.audio_out_db,
+                ),
+                None => activity_bars::EMPTY_DB,
             };
             self.activity.push(Sample {
                 level_db,
@@ -1254,6 +1255,10 @@ impl GuiApp {
         let Some(s) = self.status.clone() else {
             return row_w;
         };
+        // QA #402: modem down, a station not answering, or a long queue.
+        if let Some(w) = s.send_warning() {
+            ui.label(text(w, M_RED).size(12.0));
+        }
         let now = crate::status::unix_now_f64();
         let beacon = s.beacon_lane(now);
         let (hub, _) = hub_row(s.mode, s.hub_ok);

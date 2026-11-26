@@ -144,6 +144,9 @@ struct Runtime {
     traffic: crate::traffic::Shared,
     /// `/rangetest`: probes to one station and the drive log.
     range_test: Arc<Mutex<crate::range_test::RangeTest>>,
+    /// Stations that stopped answering our direct lines, and since when:
+    /// their retries wait until they are heard again (QA #402).
+    quiet_peers: Arc<Mutex<HashMap<String, u32>>>,
 }
 
 /// A beacon handed to the air queue that has not reached the modem yet.
@@ -160,6 +163,10 @@ struct PendingBeacon {
 /// sense cap (15 s). One gone this long without reaching it never will: the
 /// radio restarted under it.
 const BEACON_LOST_S: u32 = 60;
+
+/// How long a modem73 found already running must keep its KISS link open
+/// before the station uses it instead of starting its own.
+const ATTACH_SETTLE: Duration = Duration::from_millis(500);
 
 /// How many copies of someone else's line we have handed to the modem, and
 /// when the last one went (after its slot delay).
@@ -422,6 +429,8 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
 
     let mail_slot: crate::mail::MailSlot = Arc::new(Mutex::new(None));
     let traffic = crate::traffic::new_shared();
+    // `wcr restart` asks for the radio (modem73) to be restarted (QA #402).
+    let radio_restart = Arc::new(tokio::sync::Notify::new());
     let status_bind = cfg.status.bind.clone();
     match tokio::net::TcpListener::bind(&status_bind).await {
         Ok(listener) => {
@@ -429,7 +438,9 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             crate::update::note_running_station(&status_bind);
             let snap_s = snap.clone();
             let slot = mail_slot.clone();
-            let extra = crate::mail::router(slot).merge(crate::traffic::router(traffic.clone()));
+            let extra = crate::mail::router(slot)
+                .merge(crate::traffic::router(traffic.clone()))
+                .merge(radio_restart_router(radio_restart.clone()));
             tokio::spawn(async move { status::serve_listener_with(listener, snap_s, extra).await });
         }
         Err(e) => tracing::warn!("status HTTP {status_bind}: {e}"),
@@ -536,6 +547,7 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
         burst_rx: Arc::new(Mutex::new(HashMap::new())),
         burst_reports: Arc::new(Mutex::new(HashMap::new())),
         range_test: Arc::new(Mutex::new(crate::range_test::RangeTest::new())),
+        quiet_peers: Arc::new(Mutex::new(HashMap::new())),
         last_rx_snr,
         radio_lock: Arc::new(tokio::sync::Mutex::new(())),
         ack_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -593,29 +605,41 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
             tick.tick().await;
             loop {
                 tick.tick().await;
-                let want = rt_w.cfg.lock().mode.uses_radio();
-                let modem_dead = {
-                    let mut txp = rt_w.txp.lock();
-                    txp.modem.as_mut().is_some_and(|m| m.exited())
-                };
-                if want && (rt_w.kiss().is_none() || modem_dead) {
-                    if modem_dead {
-                        let note = rt_w
-                            .txp
-                            .lock()
-                            .modem
-                            .as_mut()
-                            .and_then(|m| m.exit_note())
-                            .unwrap_or_else(|| "modem73 exited; restarting radio".into());
-                        tracing::warn!("{note}");
-                        stop_radio(&rt_w);
-                    } else {
+                if !rt_w.cfg.lock().mode.uses_radio() {
+                    continue;
+                }
+                // One radio start or stop at a time: a preset restart in
+                // progress must not race this check (QA #402: the watchdog
+                // attached to the modem73 still shutting down, and the
+                // restart then found the radio "already started").
+                let _guard = rt_w.radio_lock.lock().await;
+                match radio_health(&rt_w) {
+                    RadioHealth::Up => continue,
+                    RadioHealth::NotStarted => {
                         tracing::warn!("radio sound engine not connected; retrying");
                     }
-                    if let Err(e) = start_radio(&rt_w).await {
-                        tracing::warn!("{e}");
+                    RadioHealth::Down(note) => {
+                        tracing::warn!("{note}; starting it again");
+                        stop_radio(&rt_w);
+                        note_modem_down(&rt_w, &format!("{note}, starting it again"));
+                        rt_w.irc
+                            .notice_all(&format!("{note}: starting it again…"))
+                            .await;
                     }
                 }
+                if let Err(e) = start_radio_locked(&rt_w).await {
+                    tracing::warn!("{e}");
+                    note_modem_down(&rt_w, &e.to_string());
+                }
+            }
+        });
+    }
+    {
+        let rt_x = rt.clone();
+        tokio::spawn(async move {
+            loop {
+                radio_restart.notified().await;
+                restart_radio(&rt_x).await;
             }
         });
     }
@@ -735,8 +759,13 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     s.queue_hold = h;
                 }
                 if let Ok(next) = rt_h.store.next_hold(&our, max) {
+                    let quiet = !rt_h.quiet_peers.lock().is_empty();
                     let mut s = rt_h.snap.lock();
                     match next {
+                        // QA #402: own retries held for a station that stopped answering.
+                        Some(h) if quiet && h.kind == "retry" => {
+                            s.set_hold_due(h.due, "peer quiet", now)
+                        }
                         Some(h) => s.set_hold_due(h.due, h.kind, now),
                         None => s.set_hold_due(0, "", now),
                     }
@@ -766,6 +795,9 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         rt_r.irc.tagmsg_delivery(&id.hex(), "failed").await;
                     }
                 }
+                // Lines that found no modem go first once it is back (QA #402).
+                send_waiting_lines(&rt_r, now, &our).await;
+                refresh_quiet_peers(&rt_r, now, max_age).await;
                 if let Ok(due) = rt_r.store.retry_due(now, &our, max) {
                     let held = relay::startup_hold_s(
                         now,
@@ -842,6 +874,23 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                         } else if !still_awaiting_ack(&rt_r.store, &m.env.msg_id) {
                             let _ = rt_r.store.set_hold(&m.env.msg_id, 0, 0);
                             continue;
+                        }
+                        // QA #402: the addressee stopped answering. Hold its
+                        // retries until it is heard again, so a weak or dead
+                        // link does not keep costing air time.
+                        if !walking && is_line(&m.env) && relay::is_direct_line(&m.env) {
+                            match quiet_peer_check(&rt_r, &m.env, retries, now) {
+                                QuietPeer::Answering => {}
+                                QuietPeer::Held => continue,
+                                QuietPeer::NowQuiet(dest) => {
+                                    rt_r.irc
+                                        .notice_all(&format!(
+                                            "{dest} not answering: retries to {dest} paused until it is heard again"
+                                        ))
+                                        .await;
+                                    continue;
+                                }
+                            }
                         }
                         if channel_blocks_own_retry(rt_r.sense().map(|s| s.state())) {
                             continue;
@@ -1827,7 +1876,11 @@ async fn send_chat_lines(
                 .add_part(&piece_ids[0].hex(), &env.msg_id.hex(), piece_ids.len() - 1);
         }
         if rf_only {
-            dispatch_rf_at(rt, &env, 0, Duration::ZERO, 0).await?;
+            if let Err(e) = dispatch_rf_at(rt, &env, 0, Duration::ZERO, 0).await {
+                if !is_modem_not_running(&e) {
+                    return Err(e);
+                }
+            }
         } else {
             if let Some(reason) = hub_refusal(rt) {
                 if !cfg_g.mode.uses_radio() {
@@ -1840,6 +1893,14 @@ async fn send_chat_lines(
                     .await;
             }
             dispatch(rt, &env).await?;
+        }
+        // QA #402: no modem, and the radio was this line's only way out. It
+        // stays queued, not sent, with no retry spent; the ARQ task sends
+        // it once the modem is back.
+        if (rf_only || !cfg_g.mode.uses_internet()) && waits_for_modem(rt, &env) {
+            hold_for_modem(rt, &env).await;
+            ids.push(env.msg_id);
+            continue;
         }
         rt.store.set_delivery(&env.msg_id, Delivery::Sent)?;
         if env.flags.req_ack() && cfg_g.mode.uses_radio() {
@@ -2758,6 +2819,23 @@ async fn enqueue_rf(
     enqueue_air(rt, rf_env, frames, preset, opts).await
 }
 
+/// What [`enqueue_air`] returns when no modem is there to key (QA #402).
+const MODEM_NOT_RUNNING: &str = "modem not running";
+
+fn modem_not_running() -> crate::error::Error {
+    crate::error::Error::Modem(MODEM_NOT_RUNNING.into())
+}
+
+fn is_modem_not_running(e: &crate::error::Error) -> bool {
+    matches!(e, crate::error::Error::Modem(m) if m == MODEM_NOT_RUNNING)
+}
+
+/// A modem (modem73 or the radio's own TNC) is connected and has not
+/// closed its link: a frame handed over now can go on the air.
+fn radio_ready(rt: &Runtime) -> bool {
+    rt.kiss().is_some_and(|k| k.is_open())
+}
+
 /// Hand a frame other than a receipt to the air queue.
 async fn enqueue_air(
     rt: &Runtime,
@@ -2766,6 +2844,11 @@ async fn enqueue_air(
     preset: Preset,
     opts: EnqueueOpts,
 ) -> Result<bool> {
+    // QA #402: with no modem nothing goes on the air. Say so, so the line
+    // stays queued with its retries unspent, instead of counting it as sent.
+    if !radio_ready(rt) {
+        return Err(modem_not_running());
+    }
     let Some(air) = rt.air() else {
         if let Some(k) = rt.kiss() {
             for f in &frames {
@@ -2879,6 +2962,187 @@ fn restart_retry_timer(rt: &Runtime, env: &Envelope) {
     let next =
         relay::next_retry_hold_jittered(retries, crate::proto::now_ts(), env.priority(), jitter);
     let _ = rt.store.set_hold(&id, next, row.env.hops_left);
+}
+
+/// What [`quiet_peer_check`] decided for one due retry.
+enum QuietPeer {
+    /// Send the retry.
+    Answering,
+    /// The addressee is still not answering: the retry waits.
+    Held,
+    /// The addressee just counted as not answering (its call): the retry waits.
+    NowQuiet(String),
+}
+
+/// QA #402: is the addressee of our direct line still answering? Marks it
+/// quiet after [`relay::QUIET_AFTER_RETRIES`] retries with nothing heard
+/// from it, and releases it as soon as any frame from it is heard. A held
+/// line looks again every [`relay::QUIET_RECHECK_S`]; no retry is spent.
+fn quiet_peer_check(rt: &Runtime, env: &Envelope, retries: u32, now: u32) -> QuietPeer {
+    let dest = env.dest.as_str().to_ascii_uppercase();
+    let heard = rt.store.last_heard(&dest).unwrap_or(0);
+    let verdict = {
+        let mut q = rt.quiet_peers.lock();
+        match q.get(&dest).copied() {
+            Some(since) if relay::peer_heard_again(since, heard) => {
+                q.remove(&dest);
+                tracing::info!("{dest} heard again: retries to it resume");
+                QuietPeer::Answering
+            }
+            Some(_) => QuietPeer::Held,
+            None if relay::peer_not_answering(retries, env.ts, heard) => {
+                q.insert(dest.clone(), now);
+                tracing::warn!(
+                    "{dest} not answering (nothing heard since line {} went, {retries} retries): retries paused until it is heard",
+                    env.msg_id.hex()
+                );
+                QuietPeer::NowQuiet(dest)
+            }
+            None => QuietPeer::Answering,
+        }
+    };
+    let mut quiet: Vec<String> = rt.quiet_peers.lock().keys().cloned().collect();
+    quiet.sort();
+    rt.snap.lock().quiet_peers = quiet;
+    if !matches!(verdict, QuietPeer::Answering) {
+        let _ = rt.store.set_hold(
+            &env.msg_id,
+            now.saturating_add(relay::QUIET_RECHECK_S),
+            env.hops_left,
+        );
+    }
+    verdict
+}
+
+/// Releases quiet stations heard again (their held lines go on the next
+/// tick) or quiet for longer than a line may wait, and puts the list in
+/// `/status` (QA #402).
+async fn refresh_quiet_peers(rt: &Runtime, now: u32, max_age: u32) {
+    let released: Vec<String> = {
+        let mut q = rt.quiet_peers.lock();
+        let gone: Vec<String> = q
+            .iter()
+            .filter(|(call, since)| {
+                let heard = rt.store.last_heard(call).unwrap_or(0);
+                relay::peer_heard_again(**since, heard)
+                    || (max_age > 0 && now.saturating_sub(**since) > max_age)
+            })
+            .map(|(call, _)| call.clone())
+            .collect();
+        for call in &gone {
+            q.remove(call);
+        }
+        gone
+    };
+    if released.is_empty() {
+        return;
+    }
+    // Their held lines go now, not at the next recheck.
+    if let Ok(rows) = rt.store.retry_due(
+        now.saturating_add(relay::QUIET_RECHECK_S),
+        &rt.engine.our_call,
+        u32::MAX,
+    ) {
+        for (m, _) in rows {
+            if released
+                .iter()
+                .any(|c| c.eq_ignore_ascii_case(m.env.dest.as_str()))
+            {
+                let _ = rt.store.set_hold(&m.env.msg_id, now, m.env.hops_left);
+            }
+        }
+    }
+    let mut quiet: Vec<String> = rt.quiet_peers.lock().keys().cloned().collect();
+    quiet.sort();
+    rt.snap.lock().quiet_peers = quiet;
+    for call in released {
+        tracing::info!("{call} heard again: retries to it resume");
+        rt.irc
+            .notice_all(&format!("{call} heard again: held lines to {call} go now"))
+            .await;
+    }
+}
+
+/// Our own line that has just found no modem to key it (QA #402): it was
+/// not handed to the modem and is not waiting out the start-up hold.
+fn waits_for_modem(rt: &Runtime, env: &Envelope) -> bool {
+    !radio_ready(rt) && rt.store.rf_tx_of(&env.msg_id).unwrap_or(0) == 0 && !own_line_held(rt, env)
+}
+
+/// How often a line waiting for the modem looks again.
+const MODEM_WAIT_POLL_S: u32 = 2;
+
+/// Keep a line that found no modem queued (not sent, no retry spent) and
+/// say so on it; [`send_waiting_lines`] keys it once the modem is back.
+async fn hold_for_modem(rt: &Runtime, env: &Envelope) {
+    let now = crate::proto::now_ts();
+    let _ = rt.store.set_hold(
+        &env.msg_id,
+        now.saturating_add(MODEM_WAIT_POLL_S),
+        env.hops_left,
+    );
+    tracing::warn!(
+        "line {} to {} kept in the queue: modem not running",
+        env.msg_id.hex(),
+        env.dest
+    );
+    rt.irc
+        .tagmsg_progress(&env.msg_id.hex(), "queued", None)
+        .await;
+    rt.irc
+        .notice_all(
+            "modem not running: your line is kept in the queue and goes once the modem is back",
+        )
+        .await;
+}
+
+/// Lines kept back by [`hold_for_modem`]: key their first copy once the
+/// modem is back, then they retry like any line. No retry is spent while
+/// they wait.
+async fn send_waiting_lines(rt: &Runtime, now: u32, our: &str) {
+    let Ok(waiting) = rt.store.waiting_for_modem(now, our) else {
+        return;
+    };
+    for m in waiting {
+        if !is_line(&m.env) {
+            continue;
+        }
+        if !radio_ready(rt) {
+            let _ = rt.store.set_hold(
+                &m.env.msg_id,
+                now.saturating_add(MODEM_WAIT_POLL_S),
+                m.env.hops_left,
+            );
+            continue;
+        }
+        match dispatch_rf_at(rt, &m.env, 0, Duration::ZERO, 0).await {
+            Ok(true) => {}
+            Ok(false) | Err(_) => {
+                let _ = rt.store.set_hold(
+                    &m.env.msg_id,
+                    now.saturating_add(MODEM_WAIT_POLL_S),
+                    m.env.hops_left,
+                );
+                continue;
+            }
+        }
+        tracing::info!(
+            "line {} handed to the modem now it is back",
+            m.env.msg_id.hex()
+        );
+        let _ = rt.store.set_delivery(&m.env.msg_id, Delivery::Sent);
+        if m.env.flags.req_ack() {
+            let jitter = rt.cfg.lock().rf.retry_jitter;
+            let hold = relay::next_retry_hold_jittered(0, now, m.env.priority(), jitter);
+            let _ = rt.store.set_hold(&m.env.msg_id, hold, m.env.hops_left);
+        } else {
+            let _ = rt.store.set_hold(&m.env.msg_id, 0, m.env.hops_left);
+        }
+        let tries = rt.store.rf_tx_of(&m.env.msg_id).ok().filter(|n| *n > 0);
+        rt.irc
+            .tagmsg_progress(&m.env.msg_id.hex(), "sent", tries)
+            .await;
+    }
 }
 
 fn is_line(env: &Envelope) -> bool {
@@ -4828,12 +5092,17 @@ fn request_modem_restart(rt: &Runtime) -> bool {
             .await;
         let managed = rt.txp.lock().modem.is_some();
         let done = if managed {
+            // Held from the stop to the new modem73 being up, so the radio
+            // watchdog cannot attach to the old one while it shuts down
+            // (QA #402).
+            let _guard = rt.radio_lock.lock().await;
             let old = rt.txp.lock().modem.take();
             stop_radio(&rt);
             if let Some(m) = old {
                 m.stop().await;
             }
-            start_radio(&rt).await.map(|()| "restarted")
+            note_modem_down(&rt, &format!("restarting modem73 for {to}"));
+            start_radio_locked(&rt).await.map(|()| "restarted")
         } else {
             // A modem73 this station found running: set it over its
             // control port instead.
@@ -4909,6 +5178,105 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
         return Ok(());
     }
     let _guard = rt.radio_lock.lock().await;
+    let r = start_radio_locked(rt).await;
+    if let Err(e) = &r {
+        note_modem_down(rt, &e.to_string());
+    }
+    r
+}
+
+/// The header `wcr restart` sends with `POST /radio/restart`. A web page
+/// cannot add it without a preflight the station never answers, so a page
+/// open in a browser cannot restart the radio.
+pub const RADIO_RESTART_HEADER: &str = "x-wcr-restart";
+
+fn radio_restart_router(ask: Arc<tokio::sync::Notify>) -> axum::Router {
+    use axum::http::{HeaderMap, StatusCode};
+    axum::Router::new().route(
+        "/radio/restart",
+        axum::routing::post(move |headers: HeaderMap| {
+            let ask = ask.clone();
+            async move {
+                if !headers.contains_key(RADIO_RESTART_HEADER) {
+                    return (StatusCode::FORBIDDEN, "missing x-wcr-restart header");
+                }
+                ask.notify_one();
+                (StatusCode::ACCEPTED, "restarting the radio")
+            }
+        }),
+    )
+}
+
+/// `wcr restart` on a station run by the desktop app (QA #402): stop the
+/// radio and its modem73, then start both again on the saved settings.
+async fn restart_radio(rt: &Runtime) {
+    if !rt.cfg.lock().mode.uses_radio() {
+        return;
+    }
+    tracing::info!("radio restart asked (wcr restart)");
+    rt.irc.notice_all("restarting the radio and modem…").await;
+    let _guard = rt.radio_lock.lock().await;
+    let old = rt.txp.lock().modem.take();
+    stop_radio(rt);
+    if let Some(m) = old {
+        m.stop().await;
+    }
+    note_modem_down(rt, "restarting");
+    let note = match start_radio_locked(rt).await {
+        Ok(()) => {
+            let p = rt.snap.lock().preset_live().to_string();
+            format!("radio restarted, modem running {p}")
+        }
+        Err(e) => {
+            note_modem_down(rt, &e.to_string());
+            format!("radio restart failed: {e}")
+        }
+    };
+    tracing::info!("{note}");
+    rt.irc.notice_all(&note).await;
+}
+
+/// How the radio link stands, for the watchdog.
+enum RadioHealth {
+    Up,
+    /// Never started, or stopped: start it.
+    NotStarted,
+    /// It was up and is gone: why.
+    Down(String),
+}
+
+fn radio_health(rt: &Runtime) -> RadioHealth {
+    let mut txp = rt.txp.lock();
+    if let Some(m) = txp.modem.as_mut() {
+        if m.exited() {
+            return RadioHealth::Down(m.exit_note().unwrap_or_else(|| "modem73 exited".into()));
+        }
+    }
+    match &txp.kiss {
+        None => RadioHealth::NotStarted,
+        // modem73 closed its KISS port: it shut down or crashed, whether
+        // this station started it or found it running (QA #402).
+        Some(k) if !k.is_open() => {
+            RadioHealth::Down("modem73 is not running (its KISS link closed)".into())
+        }
+        Some(_) => RadioHealth::Up,
+    }
+}
+
+/// `/status` `modem_down` and the meters say the modem is not running, so
+/// nothing reads "linked" while frames cannot go out (QA #402).
+fn note_modem_down(rt: &Runtime, why: &str) {
+    if rt.cfg.lock().modem.uses_tnc() {
+        return;
+    }
+    let mut s = rt.snap.lock();
+    s.modem_down = why.to_string();
+    s.preset_running.clear();
+    s.audio_label = "no modem".into();
+}
+
+/// [`start_radio`] for a caller that already holds `radio_lock`.
+async fn start_radio_locked(rt: &Runtime) -> Result<()> {
     if rt.kiss().is_some() {
         return Ok(());
     }
@@ -4961,7 +5329,18 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
         // RX gain onto the sound card, busy test and levels into the status (#241).
         crate::levels::apply_at_start(&cfg, &rt.snap);
         let kiss_addr = format!("{}:{}", cfg.modem.host, cfg.modem.kiss_port);
-        let already = KissClient::connect(&kiss_addr).await.ok();
+        let mut already = KissClient::connect(&kiss_addr).await.ok();
+        // A modem73 still shutting down (the station or the app just stopped
+        // it) accepts the connection and then closes it. Attaching to it
+        // left the station with no modem at all (QA #402).
+        if let Some((k, _)) = &already {
+            tokio::time::sleep(ATTACH_SETTLE).await;
+            if !k.is_open() {
+                tracing::info!("modem73 on {kiss_addr} closed straight away (shutting down); starting a new one");
+                already = None;
+                tokio::time::sleep(ATTACH_SETTLE).await;
+            }
+        }
         {
             let mut txp = rt.txp.lock();
             if txp.modem.as_mut().is_some_and(|m| m.exited()) {
@@ -5121,6 +5500,9 @@ async fn start_radio(rt: &Runtime) -> Result<()> {
         txp.air = Some(air_q);
         txp.sense = Some(sense);
         txp.radio_cancel = Some(cancel);
+        let mut s = rt.snap.lock();
+        s.modem_down.clear();
+        s.radio_starts = s.radio_starts.wrapping_add(1);
     }
     let mut swap = rt.io_swap.lock();
     swap.kiss_rx = kiss_rx;

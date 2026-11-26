@@ -35,6 +35,23 @@ pub struct StatusSnapshot {
     /// not fail; only then is the operator asked to stop and start.
     #[serde(default)]
     pub modem_restart_failed: String,
+    /// Why modem73 is not running right now (QA #402), empty while it runs
+    /// or when this station has no modem73 (hub only, a radio's own TNC).
+    /// While set, nothing goes on the air: lines wait in the queue.
+    #[serde(default)]
+    pub modem_down: String,
+    /// Stations that stopped answering our direct lines: their retries are
+    /// paused until they are heard again (QA #402).
+    #[serde(default)]
+    pub quiet_peers: Vec<String>,
+    /// Bluetooth audio links that opened but brought no audio from the
+    /// radio, since the last one that did (QA #402). 0 while audio flows.
+    #[serde(default)]
+    pub bt_rx_stalls: u32,
+    /// Times the radio link (modem73 or the radio's TNC) came up since the
+    /// station started; `wcr restart` waits for it to move (QA #402).
+    #[serde(default)]
+    pub radio_starts: u32,
     pub frequency: String,
     pub snr: f32,
     /// Unix seconds of the decode `snr` comes from; 0 before the first.
@@ -347,6 +364,9 @@ impl StatusSnapshot {
     /// itself, "stop and start to apply" only when that restart failed.
     /// None when the preset shown is the preset running.
     pub fn preset_pending_note(&self) -> Option<String> {
+        if !self.modem_down.is_empty() {
+            return Some(format!("modem not running: {}", self.modem_down));
+        }
         if !self.modem_restart_failed.is_empty() {
             return Some("modem restart failed: stop and start to apply".into());
         }
@@ -371,12 +391,37 @@ impl StatusSnapshot {
         let to = &self.preset;
         match self.preset_pending_note() {
             None => live.to_string(),
-            Some(note) if live == to => format!("{live} ({note})"),
+            Some(note) if live == to || !self.modem_down.is_empty() => format!("{live} ({note})"),
             Some(_) if !self.modem_restart_failed.is_empty() => {
                 format!("{live} (modem restart failed: stop and start to apply {to})")
             }
             Some(_) => format!("{live} (restarting modem for {to}…)"),
         }
+    }
+
+    /// One warning line for the app and the terminal UI, most urgent first:
+    /// the modem is down, a station stopped answering, or many lines wait
+    /// (QA #402). None when all is well.
+    pub fn send_warning(&self) -> Option<String> {
+        if !self.modem_down.is_empty() {
+            return Some(format!(
+                "Modem not running ({}). Lines wait in the queue and go once it is back.",
+                self.modem_down
+            ));
+        }
+        if !self.quiet_peers.is_empty() {
+            return Some(format!(
+                "{} not answering, retries paused until heard again.",
+                self.quiet_peers.join(", ")
+            ));
+        }
+        if self.queue_out >= QUEUE_OUT_WARN {
+            return Some(format!(
+                "{} lines waiting to go out. Check the other station is on the air.",
+                self.queue_out
+            ));
+        }
+        None
     }
 
     /// True when the radio's own KISS TNC does the modem work (no modem73).
@@ -666,6 +711,10 @@ impl Default for StatusSnapshot {
             preset_running: String::new(),
             modem_restart_pending: false,
             modem_restart_failed: String::new(),
+            modem_down: String::new(),
+            quiet_peers: Vec::new(),
+            bt_rx_stalls: 0,
+            radio_starts: 0,
             frequency: String::new(),
             snr: 0.0,
             snr_ts: 0,
@@ -794,6 +843,9 @@ pub fn label_for(word: &str, level_db: f32) -> &'static str {
     }
 }
 
+/// `queue_out` at which the app warns (a soft cap: nothing is dropped).
+pub const QUEUE_OUT_WARN: u64 = 10;
+
 pub type SharedStatus = Mutex<StatusSnapshot>;
 
 pub fn new_shared() -> Arc<SharedStatus> {
@@ -862,6 +914,36 @@ mod tests {
 
     /// QA #365 rc11: /status said 12.019596 for 25 min; it is the last
     /// decode's SNR, and now says how old it is.
+    /// QA #402: with modem73 gone, /status said `preset_running: "vhf-fm"`
+    /// and nothing about the modem while `queue_out` grew.
+    #[test]
+    fn a_stopped_modem_is_said_before_anything_else() {
+        let mut s = StatusSnapshot {
+            preset: "vhf-fm".into(),
+            preset_running: "vhf-fm".into(),
+            ..StatusSnapshot::default()
+        };
+        assert_eq!(s.send_warning(), None);
+        assert_eq!(s.preset_status(), "vhf-fm");
+        s.queue_out = QUEUE_OUT_WARN;
+        assert!(s.send_warning().unwrap().starts_with("10 lines waiting"));
+        s.quiet_peers = vec!["M7TJF".into()];
+        assert_eq!(
+            s.send_warning().unwrap(),
+            "M7TJF not answering, retries paused until heard again."
+        );
+        s.modem_down = "modem73 exited".into();
+        s.preset_running.clear();
+        assert!(s
+            .send_warning()
+            .unwrap()
+            .starts_with("Modem not running (modem73 exited)"));
+        assert_eq!(
+            s.preset_status(),
+            "vhf-fm (modem not running: modem73 exited)"
+        );
+    }
+
     #[test]
     fn snr_says_how_old_it_is() {
         assert_eq!(snr_with_age(12.02, 0, 1000), "—");

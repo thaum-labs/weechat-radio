@@ -764,6 +764,26 @@ impl Store {
         Ok(out)
     }
 
+    /// Our own lines that never reached the modem because none was running
+    /// (QA #402): still `queued`, never keyed, held for a retry check.
+    pub fn waiting_for_modem(&self, now: u32, origin: &str) -> Result<Vec<StoredMsg>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT msg_id, kind, origin, dest, flags, hops_left, ts, seq, body, signature, rx_time, delivery
+             FROM messages
+             WHERE upper(origin) = upper(?1)
+               AND delivery = 'queued' AND rf_tx = 0 AND suppressed = 0
+               AND hold_until > 0 AND hold_until <= ?2
+             ORDER BY rowid",
+        )?;
+        let rows = stmt.query_map(params![origin, now as i64], map_full_row)?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
     /// Last keyed copy is out. The hold is one more retry interval; when it
     /// fires, mark `[no]` without keying again.
     pub fn ack_wait_due(&self, now: u32, origin: &str, max_retries: u32) -> Result<Vec<StoredMsg>> {
@@ -956,6 +976,20 @@ impl Store {
                 }
             })
             .collect())
+    }
+
+    /// When `callsign` was last heard on any medium, 0 for never.
+    pub fn last_heard(&self, callsign: &str) -> Result<u32> {
+        let conn = self.conn.lock().unwrap();
+        let last: Option<i64> = conn
+            .query_row(
+                "SELECT MAX(last_heard) FROM heard WHERE upper(callsign) = upper(?1)",
+                params![callsign],
+                |r| r.get(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(last.unwrap_or(0).max(0) as u32)
     }
 
     pub fn recently_heard(&self, callsign: &str, within_secs: u32) -> Result<bool> {
