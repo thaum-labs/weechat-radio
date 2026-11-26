@@ -1,0 +1,91 @@
+name: macos-signing
+# Proves the Apple Silicon signing on a real arm64 Mac (#404). Runs only when
+# the signing or install files change, or from the Actions tab.
+on:
+  pull_request:
+    paths:
+      - scripts/macos_sign.sh
+      - install/install.sh
+      - web/install.sh
+      - .github/workflows/release.yml
+      - .github/workflows/macos-signing.yml
+  workflow_dispatch:
+concurrency:
+  group: macos-signing-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+jobs:
+  # The same steps release.yml runs for wcr-macos-aarch64.tar.gz, then the
+  # tarball is unpacked again and the programs started from there.
+  release-build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: modem73 from the latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release download --repo "${GITHUB_REPOSITORY}" --pattern modem73-macos-aarch64.tar.gz
+          mkdir -p dist
+          tar -xzf modem73-macos-aarch64.tar.gz -C dist
+      - name: build
+        run: cargo build --release --target aarch64-apple-darwin -p wcr
+      - name: before signing (what v1.0.24 shipped)
+        run: codesign -dv --verbose=4 target/aarch64-apple-darwin/release/wcr 2>&1 | grep -E '^(Identifier|CodeDirectory|flags)' || true
+      - name: sign, check and pack
+        run: |
+          set -euo pipefail
+          cp target/aarch64-apple-darwin/release/wcr target/aarch64-apple-darwin/release/wcr-gui dist/
+          sh scripts/macos_sign.sh dist
+          tar -czf wcr-macos-aarch64.tar.gz -C dist .
+      - name: unpack and check again
+        run: |
+          set -euo pipefail
+          mkdir unpacked
+          tar -xzf wcr-macos-aarch64.tar.gz -C unpacked
+          sh scripts/macos_sign.sh unpacked
+  # The new install.sh on the latest release. Up to v1.0.24 its wcr and
+  # wcr-gui only carry the linker's signature; the installer signs them.
+  installer:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: latest release as shipped (for the record, never fails)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir shipped
+          gh release download --repo "${GITHUB_REPOSITORY}" --pattern wcr-macos-aarch64.tar.gz --dir shipped
+          tar -xzf shipped/wcr-macos-aarch64.tar.gz -C shipped
+          codesign -dv --verbose=4 shipped/wcr 2>&1 | grep -E '^(Identifier|CodeDirectory|flags)' || true
+          RC=0
+          shipped/wcr --version || RC=$?
+          echo "shipped wcr --version exit $RC"
+      - name: install
+        env:
+          PREFIX: ${{ runner.temp }}/bin
+          WCR_SKIP_WEECHAT: "1"
+        run: sh install/install.sh
+      - name: check the installed programs
+        env:
+          PREFIX: ${{ runner.temp }}/bin
+        run: |
+          set -euo pipefail
+          uname -m
+          for f in "$PREFIX/wcr" "$PREFIX/wcr-gui" "$PREFIX/modem73"; do
+            echo "== $f"
+            file "$f"
+            codesign -dv --verbose=4 "$f" 2>&1 | grep -E '^(Identifier|CodeDirectory|flags)'
+            if codesign -dv --verbose=4 "$f" 2>&1 | grep -q linker-signed; then
+              echo "::error::$f is still only linker-signed"
+              exit 1
+            fi
+            codesign --verify --strict --verbose "$f"
+          done
+          "$PREFIX/wcr" --version
+          "$PREFIX/wcr" --help > /dev/null && echo "wcr --help ran"

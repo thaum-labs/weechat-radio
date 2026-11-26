@@ -227,6 +227,9 @@ jobs:
           if [ -f docs/QUICKSTART.pdf ]; then cp docs/QUICKSTART.pdf dist/; fi
           cp weechat/radio.py dist/radio.py
           cp weechat/LICENSE dist/WEECHAT-SCRIPT-LICENSE
+          # Ad-hoc sign wcr and wcr-gui, check every program, and start wcr
+          # (#404). Nothing may change the binaries after this (no strip).
+          if [ "${{ runner.os }}" = "macOS" ]; then sh scripts/macos_sign.sh dist; fi
           tar -czf ${{ matrix.asset }} -C dist .
       - name: asset checksum
         if: runner.os != 'Windows'

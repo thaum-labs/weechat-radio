@@ -127,6 +127,17 @@ if [ "$OS" = "linux" ] || [ "$OS" = "darwin" ]; then
     exit 1
   fi
   if [ "$OS" = "darwin" ]; then
+    # Sign again on this Mac (ad hoc), then clear the download flag (#404).
+    # Apple Silicon refuses a downloaded program that only carries the
+    # linker's signature, which releases up to v1.0.24 shipped.
+    codesign --force -s - --identifier com.thaum-labs.wcr "$PREFIX/wcr" || echo "Warning: could not sign $PREFIX/wcr" >&2
+    if [ -f "$PREFIX/wcr-gui" ]; then
+      codesign --force -s - --identifier com.thaum-labs.wcr-gui "$PREFIX/wcr-gui" || echo "Warning: could not sign $PREFIX/wcr-gui" >&2
+    fi
+    for f in "$PREFIX"/libs/*.dylib "$PREFIX/modem73"; do
+      [ -f "$f" ] || continue
+      codesign --force -s - "$f" || echo "Warning: could not sign $f" >&2
+    done
     xattr -dr com.apple.quarantine "$PREFIX/wcr" "$PREFIX/wcr-gui" "$PREFIX/modem73" "$PREFIX/libs" 2>/dev/null || true
   fi
 elif [ -n "$MODEM" ]; then
