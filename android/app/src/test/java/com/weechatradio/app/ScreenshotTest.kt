@@ -18,6 +18,7 @@ import com.weechatradio.app.ui.Page
 import com.weechatradio.app.ui.SetupStep
 import com.weechatradio.app.ui.SheetKind
 import com.weechatradio.app.ui.Start
+import com.weechatradio.app.ui.theme.Look
 import com.weechatradio.app.ui.theme.WeechatTheme
 import org.junit.Rule
 import org.junit.Test
@@ -27,11 +28,11 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * Pictures of every design screen (docs/design/android/material), dark and light,
+ * Pictures of every design screen (docs/design/android/material) in dark, light and the modem73 look,
  * rendered on the computer with the simulated radio. Names follow the design PNGs.
  * CI uploads app/build/screens as the "android-screens" artifact. They are for
  * looking at, not compared against saved copies. The map draws without tiles here
- * (no network in tests). Design 22, the notification, is drawn by Android itself.
+ * (no network in tests). The Map tab is the live map; the design's plan panel is now page 11. Design 22, the notification, is drawn by Android itself.
  */
 @RunWith(ParameterizedRobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -40,12 +41,13 @@ class ScreenshotTest(private val look: String) {
     companion object {
         @JvmStatic
         @ParameterizedRobolectricTestRunner.Parameters(name = "{0}")
-        fun looks() = listOf("dark", "light")
+        fun looks() = listOf("dark", "light", "modem73")
     }
 
     @get:Rule
     val compose = createComposeRule()
 
+    private val theme = if (look == "modem73") Look.Modem73 else Look.Material
     private val usb = Status()
     private val bluetooth = Status(link = Link.Bluetooth, rig = "VR-N76", preset = "vhf-fm", inLevel = 0.5f, inDb = -19)
     private val headset = bluetooth.copy(btAudio = BtAudio.HeadsetVox, rig = "UV-36 Pro", preset = "hf-poor")
@@ -54,7 +56,7 @@ class ScreenshotTest(private val look: String) {
         val radio = SimulatedRadio(status, startOnAir = onAir, live = false)
         compose.setContent {
             CompositionLocalProvider(LocalTilesOn provides false) {
-                WeechatTheme(dark = look == "dark") { App(radio, start) }
+                WeechatTheme(dark = look != "light", look = theme) { App(radio, start, theme) }
             }
         }
         compose.onRoot().captureRoboImage("build/screens/$look/$name.png")

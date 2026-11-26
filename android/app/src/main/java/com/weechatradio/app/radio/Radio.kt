@@ -13,6 +13,8 @@ interface Radio {
     val channel: String
     val channels: List<Channel>
     val heard: List<Heard>
+    /** Stations for the live map, ours first. */
+    val stations: List<MapStation>
     /** Lines of the open chat, oldest first. */
     val lines: List<Line>
     val mails: List<Mail>

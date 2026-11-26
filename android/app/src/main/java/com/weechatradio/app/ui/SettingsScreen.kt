@@ -18,11 +18,12 @@ import com.weechatradio.app.BuildConfig
 import com.weechatradio.app.radio.BtAudio
 import com.weechatradio.app.radio.Link
 import com.weechatradio.app.radio.Radio
+import com.weechatradio.app.ui.theme.Look
 
 // Design screen 21: Settings (Station, Radio, Audio, Email, Phone, About). Opens from the gear; no nav bar.
 
 @Composable
-fun SettingsScreen(radio: Radio, onBack: () -> Unit, onSetup: (SetupStep) -> Unit) {
+fun SettingsScreen(radio: Radio, look: Look, onLook: (Look) -> Unit, onBack: () -> Unit, onSetup: (SetupStep) -> Unit) {
     val s = radio.status
     val connection = when (s.link) {
         Link.Usb -> "USB · ${s.rig}"
@@ -52,6 +53,13 @@ fun SettingsScreen(radio: Radio, onBack: () -> Unit, onSetup: (SetupStep) -> Uni
             else if (s.link == Link.Bluetooth) Item("PTT method", value = if (s.btAudio == BtAudio.HeadsetVox) "the radio's VOX" else "Bluetooth") { onSetup(SetupStep.Bluetooth) }
             Item("IN / OUT level", value = "${s.inDb} dB / ${"%.1f".format(s.outSetDb)} dB") { onSetup(SetupStep.Levels) }
             Toggle("Show SNR on lines", null, s.showSnr) { on -> radio.update { it.copy(showSnr = on) } }
+            Divider()
+            Section("Look")
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+                Text("Theme", fontSize = 16.sp, lineHeight = 24.sp)
+                Text("Material follows the phone's light or dark mode; modem73 is the desktop app's dark look.", fontSize = 13.sp, color = colors().onSurfaceVariant)
+                Box(Modifier.padding(top = 10.dp)) { Segmented(Look.entries.map { it.label }, look.ordinal) { onLook(Look.entries[it]) } }
+            }
             Divider()
             Section("Email")
             Item("Copy-to", value = s.copyTo, sub = if (s.copyToConfirmed) "confirmed" else "waiting for the code") {}

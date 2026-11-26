@@ -2,12 +2,14 @@ package com.weechatradio.app.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import com.weechatradio.app.R
@@ -113,13 +115,67 @@ object WaterfallColors {
     val yourTx = Color(0xFFFF7A3D)
 }
 
+/** Settings → Look → Theme: the Material design, or the desktop app's modem73 look. Same screens. */
+enum class Look(val label: String) { Material("Material"), Modem73("modem73") }
+
+// modem73: the desktop app's modem73 look (crates/wcr/src/gui/modem73.rs).
+// Always dark, monospace, green accents.
+private val Modem73 = darkColorScheme(
+    primary = Color(0xFF18FC7C), onPrimary = Color(0xFF0A0005),
+    primaryContainer = Color(0xFF2A1030), onPrimaryContainer = Color(0xFF18FC7C),
+    secondary = Color(0xFF18FC7C), onSecondary = Color(0xFF0A0005),
+    secondaryContainer = Color(0xFF2A1030), onSecondaryContainer = Color(0xFF18FC7C),
+    tertiary = Color(0xFF00D0D0), onTertiary = Color(0xFF0A0005),
+    error = Color(0xFFFF4D4D), onError = Color(0xFF0A0005),
+    errorContainer = Color(0xFF3A0A0A), onErrorContainer = Color(0xFFFF9A9A),
+    background = Color(0xFF100008), onBackground = Color(0xFFE8E0E4),
+    surface = Color(0xFF100008), onSurface = Color(0xFFE8E0E4),
+    surfaceVariant = Color(0xFF1E0A14), onSurfaceVariant = Color(0xFF8A8286),
+    outline = Color(0xFF3A3236), outlineVariant = Color(0xFF2A2226),
+    surfaceContainerLowest = Color(0xFF0A0005), surfaceContainerLow = Color(0xFF0A0005),
+    surfaceContainer = Color(0xFF0A0005), surfaceContainerHigh = Color(0xFF16060E),
+    surfaceContainerHighest = Color(0xFF1E0A14),
+    inverseSurface = Color(0xFFE8E0E4), inverseOnSurface = Color(0xFF100008),
+    inversePrimary = Color(0xFF0A7A3C),
+)
+
+private val Modem73Radio = RadioColors(
+    tx = Color(0xFFFF7A3D), onTx = Color(0xFF0A0005), txContainer = Color(0xFF3A1408), onTxContainer = Color(0xFFFFC2A6),
+    ok = Color(0xFF18FC7C), okContainer = Color(0xFF0A3A1E),
+    warn = Color(0xFFE6B800), warnContainer = Color(0xFF2A2000), onWarnContainer = Color(0xFFFFE08A),
+    otherCall = Color(0xFF00D0D0),
+)
+
 val LocalRadioColors = staticCompositionLocalOf { DarkRadio }
 
 /** Roboto Mono: only for callsigns, frequencies, grid squares, preset codes and mail addresses. */
 val Mono = FontFamily(Font(R.font.roboto_mono))
 
+private fun Typography.mono(): Typography {
+    fun TextStyle.m() = copy(fontFamily = Mono)
+    return Typography(
+        displayLarge.m(), displayMedium.m(), displaySmall.m(),
+        headlineLarge.m(), headlineMedium.m(), headlineSmall.m(),
+        titleLarge.m(), titleMedium.m(), titleSmall.m(),
+        bodyLarge.m(), bodyMedium.m(), bodySmall.m(),
+        labelLarge.m(), labelMedium.m(), labelSmall.m(),
+    )
+}
+
+/** True while the modem73 look is on, so plain text can switch to monospace too. */
+val LocalModem73 = staticCompositionLocalOf { false }
+
 @Composable
-fun WeechatTheme(dark: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
+fun WeechatTheme(dark: Boolean = isSystemInDarkTheme(), look: Look = Look.Material, content: @Composable () -> Unit) {
+    if (look == Look.Modem73) {
+        CompositionLocalProvider(LocalRadioColors provides Modem73Radio, LocalModem73 provides true) {
+            MaterialTheme(colorScheme = Modem73, typography = Typography().mono()) {
+                // Text without its own font family takes it from here.
+                androidx.compose.material3.ProvideTextStyle(TextStyle(fontFamily = Mono), content)
+            }
+        }
+        return
+    }
     CompositionLocalProvider(LocalRadioColors provides if (dark) DarkRadio else LightRadio) {
         // Roboto is Android's own UI font, so the default typography already uses it.
         MaterialTheme(colorScheme = if (dark) Dark else Light, content = content)

@@ -69,6 +69,21 @@ data class Channel(
 
 data class Heard(val call: String, val snrDb: Int)
 
+/** A station on the live map: where it is, its mode, and when and how we last heard it. */
+data class MapStation(
+    val call: String,
+    val lat: Double,
+    val lon: Double,
+    val mode: Mode,
+    val place: String,
+    /** "22:52"; empty if never heard. */
+    val lastHeard: String,
+    /** SNR when heard by radio; null when only seen through the hub. */
+    val snrDb: Int?,
+    /** Heard by radio in the last 30 min: drawn with a live line to us. */
+    val live: Boolean,
+)
+
 enum class Folder { Inbox, Outbox, Sent }
 
 data class Attachment(val name: String, val size: String)

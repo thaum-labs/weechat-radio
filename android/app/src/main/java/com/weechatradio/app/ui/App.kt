@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import com.weechatradio.app.radio.Folder
 import com.weechatradio.app.radio.Link
 import com.weechatradio.app.radio.Radio
+import com.weechatradio.app.ui.theme.Look
 
 /** The four tabs of the bottom bar. */
 enum class HomeTab(val label: String, val icon: ImageVector) {
@@ -52,7 +53,7 @@ data class Start(
 )
 
 @Composable
-fun App(radio: Radio, start: Start = Start()) {
+fun App(radio: Radio, start: Start = Start(), look: Look = Look.Material, onLook: (Look) -> Unit = {}) {
     var tab by remember { mutableStateOf(start.tab) }
     var page by remember { mutableStateOf(start.page) }
     var sheet by remember { mutableStateOf(start.sheet) }
@@ -73,7 +74,7 @@ fun App(radio: Radio, start: Start = Start()) {
     Surface(Modifier.fillMaxSize(), color = colors().surface) {
         Box(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
             when (val f = full) {
-                FullScreen.Settings -> SettingsScreen(radio, { full = null }) { full = FullScreen.Setup(it) }
+                FullScreen.Settings -> SettingsScreen(radio, look, onLook, { full = null }) { full = FullScreen.Setup(it) }
                 is FullScreen.Setup -> SetupScreen(
                     radio, f.step,
                     onStep = { full = FullScreen.Setup(it) },
@@ -92,7 +93,7 @@ fun App(radio: Radio, start: Start = Start()) {
                             null -> when (tab) {
                                 HomeTab.Chat -> ChatScreen(radio, { sheet = SheetKind.Channels }, { sheet = SheetKind.Key }, settings)
                                 HomeTab.Mail -> MailListScreen(radio, folder, { folder = it }, { page = Page.MailOpen(it.id) }, { page = Page.Compose() }) { sheet = SheetKind.MailSettings }
-                                HomeTab.Map -> MapScreen(radio, tiles, { page = Page.PlanVhf }, settings)
+                                HomeTab.Map -> MapScreen(radio, tiles, { page = Page.PlanVhf }, { call -> radio.openChannel(call); tab = HomeTab.Chat }, settings)
                                 HomeTab.Radio -> RadioScreen(radio, { page = Page.Station }, settings) { full = FullScreen.Setup(SetupStep.Radio) }
                             }
                         }

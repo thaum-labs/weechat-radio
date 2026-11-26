@@ -29,6 +29,7 @@ class SimulatedRadio(
     override var channels by mutableStateOf(sampleChannels)
         private set
     override val heard = sampleHeard
+    override val stations: List<MapStation> get() = listOf(MapStation(status.call, 51.2308, -2.3207, status.mode, "Frome", "", null, true)) + sampleStations
     override val lines: List<Line> get() = chats[channel] ?: emptyList()
     override var mails by mutableStateOf(sampleMails)
         private set
@@ -220,6 +221,15 @@ private val sampleChannels = listOf(
 )
 
 private val sampleHeard = listOf(Heard("XX0BBB", 11), Heard("XX0AAA", 9), Heard("XX0CCC", 2), Heard("XX0DDD", 6))
+
+private val sampleStations = listOf(
+    MapStation("XX0BBB", 51.3811, -2.3590, Mode.RadioPlus, "Bath", "22:52", 11, live = true),
+    MapStation("XX0AAA", 51.2290, -2.3050, Mode.InternetRadio, "Frome (gateway)", "22:54", 9, live = true),
+    MapStation("XX0DDD", 51.3190, -2.2080, Mode.RadioPlus, "Trowbridge", "22:47", 6, live = true),
+    MapStation("XX0CCC", 51.2050, -2.1800, Mode.Radio, "Warminster", "22:31", 2, live = false),
+    MapStation("XX0EEE", 51.4545, -2.5879, Mode.Internet, "Bristol", "22:58", null, live = false),
+    MapStation("XX0FFF", 51.0688, -1.7945, Mode.Internet, "Salisbury", "21:40", null, live = false),
+)
 
 private val sampleMails = listOf(
     Mail(1, Folder.Inbox, "ann@example.com", "Photos from the Bath walk", time = "", unread = true, waiting = true, waitingSize = "18.2 KB"),

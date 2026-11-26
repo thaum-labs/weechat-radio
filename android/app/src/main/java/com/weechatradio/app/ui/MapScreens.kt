@@ -3,6 +3,9 @@ package com.weechatradio.app.ui
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
@@ -56,16 +59,6 @@ import kotlin.math.tan
 
 data class LatLon(val lat: Double, val lon: Double)
 
-private val Frome = LatLon(51.2308, -2.3207)
-private val Bath = LatLon(51.3811, -2.3590)
-
-/** Stations on the map (sample: XX0… are made-up). */
-private val MapStations = listOf(
-    "XX0BBB" to Bath,
-    "XX0AAA" to LatLon(51.2290, -2.3050),
-    "XX0CCC" to LatLon(51.2050, -2.1800),
-    "XX0DDD" to LatLon(51.3190, -2.2080),
-)
 
 private const val TILE = 256f
 
@@ -167,24 +160,37 @@ private val PathClear = Color(0xFF7D9BFF)
 private val PathMarginal = Color(0xFFFFD60A)
 private val PathBlocked = Color(0xFFFF3B6B)
 
-/** Design 10: the map with the plan to the picked station in a panel below. */
+/**
+ * The Map tab: the live map, as on the website's map page. Stations in their
+ * mode colour, ours in orange, a line to each station heard by radio in the
+ * last 30 min. Tap a station for chat or a path plan.
+ */
 @Composable
-fun MapScreen(radio: Radio, tiles: Boolean, onPlan: () -> Unit, onSettings: () -> Unit) {
-    var center by remember { mutableStateOf(LatLon(51.300, -2.300)) }
-    var zoom by remember { mutableIntStateOf(11) }
-    var band by remember { mutableStateOf(Bands.first()) }
+fun MapScreen(radio: Radio, tiles: Boolean, onPlan: () -> Unit, onChat: (String) -> Unit, onSettings: () -> Unit) {
+    val me = radio.stations.first()
+    val others = radio.stations.drop(1)
+    var center by remember { mutableStateOf(LatLon(51.30, -2.30)) }
+    var zoom by remember { mutableIntStateOf(10) }
+    var picked by remember { mutableStateOf<String?>(null) }
     val tx = radioColors().tx
-    val other = radioColors().otherCall
+    val ring = colors().surface
     Box(Modifier.fillMaxSize()) {
         TileMap(center, zoom, { center = it }, Modifier.fillMaxWidth().fillMaxHeight(0.62f), tiles) { project ->
-            val a = project(Frome)
-            val b = project(Bath)
-            drawLine(PathMarginal, a, b, strokeWidth = 4.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(18f, 10f)))
-            MapStations.forEach { (_, p) -> val o = project(p); drawCircle(Color.Black.copy(alpha = 0.5f), 8.dp.toPx(), o); drawCircle(other, 6.dp.toPx(), o) }
-            drawCircle(tx.copy(alpha = 0.3f), 13.dp.toPx(), a)
-            drawCircle(tx, 8.dp.toPx(), a)
+            val home = project(LatLon(me.lat, me.lon))
+            others.filter { it.live }.forEach { st ->
+                val p = project(LatLon(st.lat, st.lon))
+                drawLine(modeColor(st.mode).copy(alpha = 0.25f), home, p, strokeWidth = 7.dp.toPx())
+                drawLine(modeColor(st.mode).copy(alpha = 0.9f), home, p, strokeWidth = 2.dp.toPx())
+            }
+            others.forEach { st ->
+                val p = project(LatLon(st.lat, st.lon))
+                val r = if (st.call == picked) 9.dp.toPx() else 6.dp.toPx()
+                drawCircle(ring, r + 2.dp.toPx(), p)
+                drawCircle(modeColor(st.mode).copy(alpha = if (st.live || st.mode == com.weechatradio.app.radio.Mode.Internet) 1f else 0.55f), r, p)
+            }
+            drawCircle(tx.copy(alpha = 0.3f), 13.dp.toPx(), home)
+            drawCircle(tx, 8.dp.toPx(), home)
         }
-        // Search bar
         Row(
             Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp).fillMaxWidth().height(56.dp).shadow(4.dp, RoundedCornerShape(28.dp))
                 .clip(RoundedCornerShape(28.dp)).background(colors().surfaceContainerHigh).padding(start = 16.dp, end = 4.dp),
@@ -193,41 +199,82 @@ fun MapScreen(radio: Radio, tiles: Boolean, onPlan: () -> Unit, onSettings: () -
         ) {
             Icon(Icons.Filled.Search, null, tint = colors().onSurfaceVariant)
             Text("Callsign, city or grid", Modifier.weight(1f), fontSize = 15.sp, color = colors().onSurfaceVariant)
-            Chip("on air")
+            Chip("Live", container = radioColors().okContainer, content = colors().onSurface, lead = { Dot(radioColors().ok) })
             IconBtn(Icons.Filled.Settings, "Settings", onClick = onSettings)
         }
-        Row(Modifier.padding(start = 12.dp, top = 74.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf(PathClear to "clear", PathMarginal to "marginal", PathBlocked to "blocked").forEach { (col, t) ->
-                Chip(t, small = true, container = colors().surfaceContainerHigh, lead = { Box(Modifier.size(12.dp, 4.dp).clip(RoundedCornerShape(2.dp)).background(col)) })
+        Row(Modifier.padding(start = 12.dp, top = 74.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            com.weechatradio.app.radio.Mode.entries.forEach { m ->
+                Chip(m.id, small = true, container = colors().surfaceContainerHigh, lead = { Dot(modeColor(m)) })
             }
         }
-        Column(Modifier.align(Alignment.TopEnd).padding(end = 12.dp, top = 78.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.align(Alignment.TopEnd).padding(end = 12.dp, top = 108.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SmallFloatingActionButton({ zoom = (zoom + 1).coerceAtMost(16) }, containerColor = colors().surfaceContainerHigh, contentColor = colors().primary) { Icon(Icons.Filled.Add, "Zoom in") }
             SmallFloatingActionButton({ zoom = (zoom - 1).coerceAtLeast(5) }, containerColor = colors().surfaceContainerHigh, contentColor = colors().primary) { Icon(Icons.Filled.Remove, "Zoom out") }
-            SmallFloatingActionButton({ center = Frome }, Modifier.padding(top = 6.dp)) { Icon(Icons.Filled.MyLocation, "My location") }
+            SmallFloatingActionButton({ center = LatLon(me.lat, me.lon) }, Modifier.padding(top = 6.dp)) { Icon(Icons.Filled.MyLocation, "My location") }
         }
-        // Plan panel
+        // Stations panel
         Column(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(0.44f).shadow(8.dp, RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
-                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)).background(colors().surfaceContainerLow)
-                .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(0.42f).shadow(8.dp, RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)).background(colors().surfaceContainerLow),
         ) {
             Box(Modifier.padding(top = 10.dp).align(Alignment.CenterHorizontally).size(32.dp, 4.dp).clip(CircleShape).background(colors().onSurfaceVariant.copy(alpha = 0.4f)))
-            PlanVerdict(band)
-            Row(verticalAlignment = Alignment.Bottom) {
-                Box(Modifier.weight(1f)) { BigFreq(band.freq, "${band.label} · ${band.emission} · ${band.preset}", 34.sp) }
-                Text("17 km\n5 W each end", fontSize = 13.sp, lineHeight = 19.sp, color = colors().onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.End)
+            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Stations", fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                    Small("${others.count { it.live }} heard by radio in the last 30 min · ${others.size} on the map")
+                }
+                TextButton(onPlan) { Icon(Icons.Filled.Directions, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Plan a path") }
             }
-            BandChips(Bands, band.label) { band = it }
-            BandLegend()
-            Row(Modifier.padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Outlined("Plan details", Modifier.weight(1f), icon = Icons.Filled.KeyboardArrowUp, onClick = onPlan)
-                TuneButton(Modifier.weight(1.2f), "Tune radio") { radio.tune(band.freq, band.emission, band.preset) }
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 8.dp)) {
+                others.sortedWith(compareByDescending<com.weechatradio.app.radio.MapStation> { it.live }.thenByDescending { it.lastHeard }).forEach { st ->
+                    val open = st.call == picked
+                    Column(
+                        Modifier.fillMaxWidth().clickable { picked = if (open) null else st.call; if (!open) center = LatLon(st.lat, st.lon) }
+                            .background(if (open) colors().secondaryContainer else Color.Transparent).padding(horizontal = 16.dp, vertical = 8.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Dot(modeColor(st.mode), 10.dp)
+                            Column(Modifier.weight(1f)) {
+                                MonoText(st.call, color = radioColors().otherCall, size = 15.sp)
+                                Text(
+                                    "${st.place} · ${distanceKm(me, st)} km · ${st.mode.id}",
+                                    fontSize = 13.sp, color = colors().onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(st.lastHeard, fontSize = 12.sp, color = colors().onSurfaceVariant)
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    if (st.snrDb != null) {
+                                        Icon(Icons.Filled.SettingsInputAntenna, "by radio", Modifier.size(14.dp), tint = radioColors().tx)
+                                        MonoText("${st.snrDb} dB", color = colors().onSurfaceVariant, size = 12.sp)
+                                    } else {
+                                        Icon(Icons.Filled.Cloud, "hub", Modifier.size(14.dp), tint = colors().primary)
+                                        Text("hub", fontSize = 12.sp, color = colors().onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                        if (open) {
+                            Row(Modifier.padding(top = 8.dp, start = 22.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FilledTonalButton({ onChat(st.call) }) { Text("Direct chat") }
+                                Outlined("Plan a path", icon = Icons.Filled.Directions, onClick = onPlan)
+                            }
+                        }
+                    }
+                }
             }
         }
         radio.note?.let { Note(it, Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp)) }
     }
+}
+
+/** Straight-line distance in whole km (haversine). */
+private fun distanceKm(a: com.weechatradio.app.radio.MapStation, b: com.weechatradio.app.radio.MapStation): Int {
+    val r = 6371.0
+    val dLat = Math.toRadians(b.lat - a.lat)
+    val dLon = Math.toRadians(b.lon - a.lon)
+    val h = kotlin.math.sin(dLat / 2).pow(2) + cos(Math.toRadians(a.lat)) * cos(Math.toRadians(b.lat)) * kotlin.math.sin(dLon / 2).pow(2)
+    return (2 * r * kotlin.math.asin(kotlin.math.sqrt(h))).toInt()
 }
 
 /** The verdict card for a band; PMR446 also shows the core's licence-free warning. */
