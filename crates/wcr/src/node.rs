@@ -621,9 +621,12 @@ pub async fn run_node(mut cfg: Config, with_tui: bool) -> Result<()> {
                     RadioHealth::Down(note) => {
                         tracing::warn!("{note}; starting it again");
                         stop_radio(&rt_w);
-                        note_modem_down(&rt_w, &format!("{note}, starting it again"));
+                        // The first sentence ("modem73 exited (signal: 9)"):
+                        // the log tail and path stay in the station log.
+                        let short = note.split(". ").next().unwrap_or(&note).to_string();
+                        note_modem_down(&rt_w, &format!("{short}, starting it again"));
                         rt_w.irc
-                            .notice_all(&format!("{note}: starting it again…"))
+                            .notice_all(&format!("{short}: starting it again…"))
                             .await;
                     }
                 }

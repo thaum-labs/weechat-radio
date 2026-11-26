@@ -8,13 +8,17 @@
 //! hears; with nothing on the air each radio streams faint hiss, as a radio
 //! at squelch 0 does.
 //!
+//! `--squelch NAME` closes that radio's squelch: it sends silence instead
+//! of hiss while nothing is on the air. A radio always sends silence while
+//! it is keyed (half duplex), as the VR-N76 does.
+//!
 //! `--stale NAME` makes that radio behave like the Mac in QA #402: after a
 //! station's link to it goes away, the next link opens but brings no audio
 //! until the link is reset (a connection to PORT+1, which the station makes
 //! for `bluetooth::reset_link`).
 //!
 //! ```text
-//! cargo run --example sim_bt_radio -- A=47001 B=47011 [--stale A]
+//! cargo run --example sim_bt_radio -- A=47001 B=47011 [--stale A] [--squelch A]
 //! ```
 
 use std::collections::VecDeque;
@@ -42,6 +46,8 @@ struct Radio {
     /// Opens bring no audio until a link reset (QA #402's Mac).
     stale: AtomicBool,
     stale_mode: bool,
+    /// Silence instead of hiss with nothing on the air.
+    squelched: bool,
     reset_seen: AtomicBool,
 }
 
@@ -63,10 +69,13 @@ fn log(msg: &str) {
 fn main() {
     let mut radios = Vec::new();
     let mut stale = Vec::new();
+    let mut squelch = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         if a == "--stale" {
             stale.push(args.next().expect("--stale NAME"));
+        } else if a == "--squelch" {
+            squelch.push(args.next().expect("--squelch NAME"));
         } else if let Some((name, port)) = a.split_once('=') {
             radios.push((name.to_string(), port.parse::<u16>().expect("PORT")));
         }
@@ -80,6 +89,7 @@ fn main() {
         .map(|(name, port)| {
             Arc::new(Radio {
                 stale_mode: stale.contains(&name),
+                squelched: squelch.contains(&name),
                 name,
                 port,
                 client: Mutex::new(None),
@@ -204,11 +214,13 @@ fn clock(a: &Arc<Radio>, b: &Arc<Radio>) {
                 q.drain(..n).collect()
             };
             let carrier = !heard.is_empty() || other.keyed.load(Ordering::SeqCst);
-            if !carrier {
+            // Keyed: the radio hears nothing but sends silence.
+            let silent = me.keyed.load(Ordering::SeqCst) || (!carrier && me.squelched);
+            if !carrier || silent {
                 heard.clear();
             }
             while heard.len() < TICK_SAMPLES {
-                let s = if carrier {
+                let s = if carrier || silent {
                     0
                 } else {
                     noise ^= noise << 13;

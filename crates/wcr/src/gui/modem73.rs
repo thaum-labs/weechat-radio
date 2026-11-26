@@ -365,7 +365,7 @@ impl State {
                     // While keyed, the burst shows the level going out,
                     // whatever the receive label says (QA #402).
                     tone,
-                    s.bt_meters && s.modem_down.is_empty(),
+                    s.bt_audio() && s.modem_down.is_empty(),
                     s.audio_in_db,
                     s.audio_out_db,
                 ),
