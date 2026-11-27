@@ -53,7 +53,7 @@ class LiveRadio(
 
     /** Everything needed to see why the link does or does not work, as text to paste. */
     fun debugLog(): String = buildString {
-        appendLine("weechat-radio Android debug log, ${java.time.LocalDateTime.now().withNano(0)}")
+        appendLine("weechat-radio Android ${com.weechatradio.app.BuildConfig.VERSION_NAME} debug log, ${java.time.LocalDateTime.now().withNano(0)}")
         appendLine("Headline: ${headline.first} (${headline.second})")
         appendLine("\n== Radio link (app Bluetooth)")
         link.log().forEach { appendLine(it) }
