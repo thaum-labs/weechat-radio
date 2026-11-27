@@ -24,66 +24,32 @@ import com.weechatradio.app.BuildConfig
 import com.weechatradio.app.REAL_RADIO
 import com.weechatradio.app.hasBluetooth
 import com.weechatradio.app.radio.Station
-import com.weechatradio.app.radio.BtAudio
-import com.weechatradio.app.radio.Link
 import com.weechatradio.app.radio.Radio
 import com.weechatradio.app.ui.theme.Look
 
-// Design screen 21: Settings (Station, Radio, Audio, Email, Phone, About). Opens from the gear; no nav bar.
+// Settings: only what a user sets (Station, Radio, Phone). Opens from the gear; no nav bar.
 
 @Composable
 fun SettingsScreen(radio: Radio, look: Look, onLook: (Look) -> Unit, onBack: () -> Unit, onSetup: (SetupStep) -> Unit) {
     val s = radio.status
-    val connection = when (s.link) {
-        Link.Usb -> "USB · ${s.rig}"
-        Link.Bluetooth -> if (s.btAudio == BtAudio.HeadsetVox) "Bluetooth headset · VOX" else "Bluetooth · ${s.rig}"
-        Link.InternetOnly -> "Internet only"
-    }
     Column(Modifier.fillMaxSize()) {
         TopBar("Settings", lead = { BackLead(onBack) }) {
             Text("v${BuildConfig.VERSION_NAME}", Modifier.padding(end = 16.dp), fontSize = 11.sp, color = colors().onSurfaceVariant)
         }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+            // Kept short on purpose (Tobias, 2026-11-27): only what a user sets.
             Section("Station", top = 4.dp)
             Item("Callsign", value = s.call, mono = true) { onSetup(SetupStep.You) }
-            Item("Locator", value = s.grid, mono = true, after = " · from GPS") { onSetup(SetupStep.You) }
-            Item("Mode", value = s.mode.id, sub = s.mode.words) { onSetup(SetupStep.You) }
+            Item("Locator", value = s.grid, mono = true) { onSetup(SetupStep.You) }
             Divider()
             Section("Radio")
             RealRadio(s.real)
-            Item("Connection", value = connection) { onSetup(SetupStep.Radio) }
-            if (s.linked) {
-                Item("Frequency", value = s.freq, mono = true, after = " ${s.emission}") {}
-                Item("Preset", value = s.preset, mono = true) { onSetup(SetupStep.Levels) }
-                Item("TX duty", value = s.txDuty, sub = "rests 6 s between blocks") {}
-            }
-            Divider()
-            Section("Audio")
-            if (s.link == Link.Usb) Item("PTT method", value = s.ptt.name) { onSetup(SetupStep.Levels) }
-            else if (s.link == Link.Bluetooth) Item("PTT method", value = if (s.btAudio == BtAudio.HeadsetVox) "the radio's VOX" else "Bluetooth") { onSetup(SetupStep.Bluetooth) }
-            Item("IN / OUT level", value = "${s.inDb} dB / ${"%.1f".format(s.outSetDb)} dB") { onSetup(SetupStep.Levels) }
-            Toggle("Show SNR on lines", null, s.showSnr) { on -> radio.update { it.copy(showSnr = on) } }
-            Divider()
-            Section("Look")
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
-                Text("Theme", fontSize = 16.sp, lineHeight = 24.sp)
-                Text("Material follows the phone's light or dark mode; modem73 is the desktop app's dark look.", fontSize = 13.sp, color = colors().onSurfaceVariant)
-                Box(Modifier.padding(top = 10.dp)) { Segmented(Look.entries.map { it.label }, look.ordinal) { onLook(Look.entries[it]) } }
-            }
-            Divider()
-            Section("Email")
-            Item("Copy-to", value = s.copyTo, sub = if (s.copyToConfirmed) "confirmed" else "waiting for the code") {}
-            Item("Mail gateway", value = "Auto", sub = "${s.gateway} · ${s.gatewayPlace}") {}
+            Item("Frequency", value = s.freq, mono = true, after = " MHz", chevron = false) {}
+            Item("Preset", value = s.preset, mono = true) { onSetup(SetupStep.Levels) }
             Divider()
             Section("Phone")
-            Toggle("Listen in background", "persistent notification · uses battery", s.listenInBackground) { on -> radio.update { it.copy(listenInBackground = on, listening = true) } }
-            Item("Notifications", sub = "mail · direct · TX" + if (s.muted) " · muted" else "") {}
-            Item("Time", value = "UTC + local") {}
-            Divider()
-            Section("About")
-            Item("Update", value = "up to date", valueColor = radioColors().ok, chevron = false) {}
-            Item("Identity key", value = "back up") {}
-            Item("Re-run setup") { onSetup(SetupStep.Radio) }
+            Toggle("Theme: modem73", null, look == Look.Modem73) { on -> onLook(if (on) Look.Modem73 else Look.Material) }
+            Toggle("Listen in background", null, s.listenInBackground) { on -> radio.update { it.copy(listenInBackground = on, listening = true) } }
         }
     }
 }
