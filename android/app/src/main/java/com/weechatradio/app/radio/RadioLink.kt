@@ -27,7 +27,9 @@ import kotlin.concurrent.thread
  */
 class RadioLink(context: Context) {
     private val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
-    private val server = ServerSocket(0, 1, InetAddress.getLoopbackAddress())
+    // 127.0.0.1 by name: on Android getLoopbackAddress() is ::1 (IPv6), which the
+    // core's 127.0.0.1 dial never reaches ("Connection refused", Tobias's G77 log).
+    private val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
 
     /** The loopback port the core dials. */
     val port: Int get() = server.localPort
