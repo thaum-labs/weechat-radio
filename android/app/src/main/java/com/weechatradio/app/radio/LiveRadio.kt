@@ -150,7 +150,9 @@ class LiveRadio(
         val fromRadio = link.bytesFromRadio
         if (fromRadio > lastFromRadio) { lastFromRadio = fromRadio; fromRadioAt = now }
         val frames = j.optJSONObject("bt_rx_frames")
-        val confirms = (frames?.optLong("0x09") ?: 0) + (frames?.optLong("0x02") ?: 0)
+        // 0x09 is the radio echoing what it transmits (HTCommander's notes); 0x02 acks go
+        // the other way, so they prove nothing. Not yet seen from the VR-N76 on the G77.
+        val confirms = frames?.optLong("0x09") ?: 0
         if (confirms > lastConfirms) { lastConfirms = confirms; confirmAt = now }
         val keyAsked = j.optBoolean("ptt_on")
         val open = link.open && j.optBoolean("tnc_ok")
@@ -159,7 +161,7 @@ class LiveRadio(
         headline = when {
             !open -> "NO RADIO LINK" to reason.ifEmpty { "the station has not reached the radio" }
             keyAsked && now - confirmAt < 3000 -> "TRANSMITTING" to "the radio is confirming the audio it keys"
-            keyAsked -> "KEY ASKED, RADIO NOT CONFIRMING" to "audio is going to the radio but it sends no ack or TX echo"
+            keyAsked -> "SENDING TO RADIO" to "audio is going to the radio; check its TX light, it sends no TX echo"
             quietS < 0 -> "CHANNEL OPEN" to "nothing has come from the radio yet (no audio, no replies)"
             quietS <= 5 -> "LINKED" to "the radio is sending audio now"
             else -> "LINKED, RADIO QUIET" to "last audio from the radio ${quietS} s ago"
@@ -171,15 +173,17 @@ class LiveRadio(
             "Bluetooth channel" to if (link.open) "open (${link.radio?.name})" else "closed",
             "Bytes from radio" to "%,d".format(fromRadio) + if (quietS in 0..5) " · arriving now" else "",
             "Bytes to radio" to "%,d".format(link.bytesToRadio),
-            "Radio confirmations" to "$confirms (acks + TX echoes)",
+            "TX echoes from radio" to "$confirms",
             "Key asked by modem73" to if (keyAsked) "yes, now" else "no",
             "SBC errors" to "${j.optLong("sbc_decode_errors", 0)}",
             "IN / OUT" to "%.1f / %.1f dB".format(j.optDouble("audio_in_db", -90.0), j.optDouble("audio_out_db", -90.0)),
-            "modem73" to j.optString("modem73").ifEmpty { "not running yet" },
+            "modem73" to j.optString("modem_down").ifEmpty {
+                j.optString("preset_running").takeIf { it.isNotEmpty() }?.let { "running ($it)" } ?: "not running yet"
+            },
             "Preset · frequency" to j.optString("preset") + " · " + if (khz > 0) "%.3f MHz".format(khz / 1000.0) else "not set",
             "Last decode SNR" to if (j.optLong("snr_ts", 0) > 0) "%.1f dB".format(j.optDouble("snr", 0.0)) else "nothing decoded yet",
             "Waiting to send" to "${j.optInt("queue_out", 0)}",
-            "Lines sent / heard" to "$mine / $theirs",
+            "Your lines / lines heard" to "$mine / $theirs",
         )
         lastStatusJson = j.toString(1)
         heard = j.optJSONArray("heard").objects().mapNotNull { h ->
