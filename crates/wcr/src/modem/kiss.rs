@@ -2,6 +2,8 @@
 //! KISS TNC client (RFC 1055) over TCP — modem73 default port 8001.
 
 use crate::error::{Error, Result};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::TcpStream;
@@ -104,6 +106,10 @@ pub struct KissClient {
     pub tx: mpsc::Sender<Vec<u8>>,
     /// Each frame as it is written to the modem.
     keyed: broadcast::Sender<Vec<u8>>,
+    /// False once the modem closed the KISS socket (modem73 exited) or a
+    /// write to it failed (QA #402: a modem73 that shut down left the
+    /// station "linked" with a growing queue).
+    open: Arc<AtomicBool>,
 }
 
 impl Clone for KissClient {
@@ -111,6 +117,7 @@ impl Clone for KissClient {
         Self {
             tx: self.tx.clone(),
             keyed: self.keyed.clone(),
+            open: self.open.clone(),
         }
     }
 }
@@ -124,7 +131,18 @@ impl KissClient {
     /// Wrap an already-running transport (Bluetooth / serial link thread),
     /// whose writer passes each frame it writes to `keyed`.
     pub fn from_sender(tx: mpsc::Sender<Vec<u8>>, keyed: broadcast::Sender<Vec<u8>>) -> Self {
-        Self { tx, keyed }
+        Self {
+            tx,
+            keyed,
+            open: Arc::new(AtomicBool::new(true)),
+        }
+    }
+
+    /// The modem is still at the other end: its socket has not closed and
+    /// no write to it has failed. A radio's own TNC link reconnects by
+    /// itself and only reports closed when its writer has gone.
+    pub fn is_open(&self) -> bool {
+        self.open.load(Ordering::SeqCst) && !self.tx.is_closed()
     }
 
     /// Frames as they go to the modem. The air queue and the receipt path
@@ -144,9 +162,17 @@ impl KissClient {
         let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>(64);
         let (in_tx, in_rx) = mpsc::channel::<Vec<u8>>(64);
         let keyed = keyed_feed();
-        tokio::spawn(writer(write, out_rx, keyed.clone()));
-        tokio::spawn(reader(read, in_tx));
-        Ok((Self { tx: out_tx, keyed }, in_rx))
+        let open = Arc::new(AtomicBool::new(true));
+        tokio::spawn(writer(write, out_rx, keyed.clone(), open.clone()));
+        tokio::spawn(reader(read, in_tx, open.clone()));
+        Ok((
+            Self {
+                tx: out_tx,
+                keyed,
+                open,
+            },
+            in_rx,
+        ))
     }
 
     pub async fn send(&self, payload: &[u8]) -> Result<()> {
@@ -195,11 +221,13 @@ async fn writer(
     mut write: OwnedWriteHalf,
     mut rx: mpsc::Receiver<Vec<u8>>,
     keyed: broadcast::Sender<Vec<u8>>,
+    open: Arc<AtomicBool>,
 ) {
     while let Some(payload) = rx.recv().await {
         note_keyed(&payload);
         let frame = encode_frame(&payload);
         if write.write_all(&frame).await.is_err() {
+            open.store(false, Ordering::SeqCst);
             break;
         }
         let _ = write.flush().await;
@@ -207,7 +235,12 @@ async fn writer(
     }
 }
 
-async fn reader(mut read: OwnedReadHalf, tx: mpsc::Sender<Vec<u8>>) {
+async fn reader(mut read: OwnedReadHalf, tx: mpsc::Sender<Vec<u8>>, open: Arc<AtomicBool>) {
+    read_frames(&mut read, &tx).await;
+    open.store(false, Ordering::SeqCst);
+}
+
+async fn read_frames(read: &mut OwnedReadHalf, tx: &mpsc::Sender<Vec<u8>>) {
     let mut decoder = KissDecoder::new();
     let mut buf = [0u8; 2048];
     loop {
@@ -228,6 +261,25 @@ async fn reader(mut read: OwnedReadHalf, tx: mpsc::Sender<Vec<u8>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA #402: a modem73 that shuts down closes its KISS port. The station
+    /// must see that, not keep a link that silently drops every frame.
+    #[tokio::test]
+    async fn the_link_reports_closed_when_the_modem_goes() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let accept = tokio::spawn(async move { listener.accept().await.unwrap().0 });
+        let (k, _rx) = KissClient::connect(&addr).await.unwrap();
+        let modem = accept.await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(k.is_open());
+        drop(modem);
+        let began = std::time::Instant::now();
+        while k.is_open() && began.elapsed() < std::time::Duration::from_secs(2) {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(!k.is_open(), "still open after the modem closed");
+    }
 
     #[test]
     fn kiss_roundtrip() {

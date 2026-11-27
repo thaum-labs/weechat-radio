@@ -27,6 +27,28 @@ pub const DEFAULT_THRESHOLD_DB: f32 = -4.0;
 /// Level of an empty slot: below the scale, so it draws blank.
 pub const EMPTY_DB: f32 = -100.0;
 
+/// Level drawn while a Bluetooth audio station sits idle with its radio
+/// sending silence: one dot on the bottom row, so the graph shows the
+/// station is alive instead of nothing (QA #402).
+pub const ALIVE_DB: f32 = -75.0;
+
+/// The level one sample shows (QA #402). `live`: the station has a live
+/// receive level. `tone`: we are keyed (or were within [`TONE_HOLD_MS`]):
+/// the level going out shows whatever the receive side says, since on
+/// Bluetooth the radio sends silence while keyed. `bt_idle`: a Bluetooth
+/// audio station with the modem running and no receive level.
+pub fn sample_level(live: bool, tone: bool, bt_idle: bool, in_db: f32, out_db: f32) -> f32 {
+    if tone {
+        in_db.max(out_db)
+    } else if live {
+        in_db
+    } else if bt_idle {
+        ALIVE_DB
+    } else {
+        EMPTY_DB
+    }
+}
+
 /// The glyphs of a part-filled cell, by quarter.
 pub const PARTIALS: [char; 5] = [' ', '.', ':', '|', '#'];
 
@@ -172,6 +194,36 @@ pub fn cell(level_db: f32, row: usize, thresh_row: usize, tint: Tint) -> Cell {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA #402: live /status during a Bluetooth TX had `audio_label: "—"`,
+    /// `audio_in_peak_db: -100` and `audio_out_db: -9.07`, and drew nothing.
+    #[test]
+    fn a_bluetooth_transmission_draws_red_bars_and_idle_draws_the_floor() {
+        // Keyed, no receive label: the OUT level shows.
+        let keyed = sample_level(false, true, true, -100.0, -9.07);
+        assert!(close(keyed, -9.07));
+        let s = Sample {
+            level_db: keyed,
+            dcd: false,
+            tone: true,
+        };
+        assert_eq!(tint(&s, DEFAULT_THRESHOLD_DB), Tint::Tone);
+        assert!(matches!(
+            cell(keyed, ROWS - 1, 0, Tint::Tone),
+            Cell::Full(Tint::Tone)
+        ));
+        // Idle on Bluetooth: one dot on the bottom row, never blank.
+        let idle = sample_level(false, false, true, -100.0, -80.0);
+        assert_eq!(
+            cell(idle, ROWS - 1, 0, Tint::Quiet),
+            Cell::Partial('.', Tint::Quiet)
+        );
+        // No modem, not Bluetooth: blank as before.
+        let none = sample_level(false, false, false, -100.0, -80.0);
+        assert_eq!(cell(none, ROWS - 1, 0, Tint::Quiet), Cell::Blank);
+        // A live receive level shows as it is.
+        assert!(close(sample_level(true, false, true, -30.0, -80.0), -30.0));
+    }
 
     fn close(a: f32, b: f32) -> bool {
         (a - b).abs() < 0.01

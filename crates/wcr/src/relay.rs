@@ -398,6 +398,24 @@ pub fn relay_copy_gap_s(priority: Priority) -> u32 {
     next_retry_hold_base(0, 0, priority)
 }
 
+/// Retries of a direct line after which its addressee counts as not
+/// answering, when nothing at all was heard from it since (QA #402).
+pub const QUIET_AFTER_RETRIES: u32 = 2;
+/// How often a line held for a quiet station looks again.
+pub const QUIET_RECHECK_S: u32 = 5;
+
+/// The addressee of our direct line has stopped answering: `retries` copies
+/// after the first have gone, and nothing was heard from it (no receipt, no
+/// beacon, no frame) since the line was written at `line_ts`.
+pub fn peer_not_answering(retries: u32, line_ts: u32, last_heard: u32) -> bool {
+    retries >= QUIET_AFTER_RETRIES && last_heard < line_ts
+}
+
+/// A station marked not answering at `quiet_since` has been heard since.
+pub fn peer_heard_again(quiet_since: u32, last_heard: u32) -> bool {
+    last_heard >= quiet_since && last_heard > 0
+}
+
 /// A line to one station (a direct message or an invite), not a channel line
 /// or a receipt. Only its addressee's ACK says it arrived.
 pub fn is_direct_line(env: &Envelope) -> bool {
@@ -1123,6 +1141,26 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA #402: with the other station off, retries stop once it counts as
+    /// not answering, and start again as soon as anything is heard from it.
+    #[test]
+    fn a_station_that_stops_answering_pauses_retries_until_heard() {
+        let line_ts = 1_000;
+        // Heard before the line went, then nothing: quiet after 2 retries.
+        assert!(!peer_not_answering(0, line_ts, 990));
+        assert!(!peer_not_answering(1, line_ts, 990));
+        assert!(peer_not_answering(2, line_ts, 990));
+        assert!(peer_not_answering(2, line_ts, 0));
+        // Heard since the line went (a receipt for another line, a
+        // beacon): it is answering, the line just did not get through.
+        assert!(!peer_not_answering(2, line_ts, 1_010));
+        // Marked at 1_100: released once heard at or after that.
+        assert!(!peer_heard_again(1_100, 990));
+        assert!(peer_heard_again(1_100, 1_100));
+        assert!(peer_heard_again(1_100, 1_250));
+        assert!(!peer_heard_again(1_100, 0));
+    }
     use crate::proto::{Callsign, Envelope, Flags};
 
     #[test]

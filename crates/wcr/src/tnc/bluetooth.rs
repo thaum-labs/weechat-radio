@@ -150,7 +150,7 @@ pub fn find_radio(wanted: &str) -> FindOutcome {
     }
 }
 
-pub use imp::{connect, connect_audio, discover, pair, paired_devices};
+pub use imp::{connect, connect_audio, discover, pair, paired_devices, reset_link};
 
 #[cfg(windows)]
 mod imp {
@@ -363,6 +363,15 @@ mod imp {
         connect_service(dev, AUDIO_UUID, AUDIO_FALLBACK_CHANNEL)
     }
 
+    /// Windows has no call to drop one device's baseband link: closing the
+    /// socket (done before this) is all it can do.
+    pub fn reset_link(_dev: &BtDevice) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Windows cannot drop a Bluetooth link from here",
+        ))
+    }
+
     fn connect_service(dev: &BtDevice, service: GUID, fallback: u32) -> io::Result<Connection> {
         unsafe {
             let mut wsa: WSADATA = std::mem::zeroed();
@@ -515,7 +524,24 @@ mod imp {
                 AUDIO_FALLBACK_CHANNEL
             }
         };
-        connect_channel(dev, channel)
+        let conn = connect_channel(dev, channel)?;
+        Ok(conn)
+    }
+
+    /// Drop the whole Bluetooth link to the radio (every channel on it), so
+    /// a half-open audio channel cannot outlive a reconnect (QA #402).
+    pub fn reset_link(dev: &BtDevice) -> io::Result<()> {
+        let out = std::process::Command::new("bluetoothctl")
+            .args(["disconnect", &dev.addr_str()])
+            .stdin(std::process::Stdio::null())
+            .output()?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(io::Error::other(
+                String::from_utf8_lossy(&out.stdout).trim().to_string(),
+            ))
+        }
     }
 
     fn connect_channel(dev: &BtDevice, channel: u8) -> io::Result<Connection> {
@@ -533,7 +559,11 @@ mod imp {
             &sa as *const SockaddrRc as *const libc::sockaddr,
             std::mem::size_of::<SockaddrRc>(),
         )?;
-        let stream = Arc::new(unsafe { UnixStream::from_raw_fd(fd) });
+        let stream = unsafe { UnixStream::from_raw_fd(fd) };
+        // Wake once a second with nothing, like the other platforms, so a
+        // link that brings no audio is noticed (QA #243, #402).
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
+        let stream = Arc::new(stream);
         Ok(Connection {
             reader: Box::new(Shared(stream.clone())),
             writer: Box::new(Shared(stream)),
@@ -666,6 +696,36 @@ mod imp {
     /// Open the radio's audio channel (SBC audio, see `crate::btaudio`).
     pub fn connect_audio(dev: &BtDevice) -> io::Result<Connection> {
         open(dev, AUDIO_UUID, AUDIO_FALLBACK_CHANNEL)
+    }
+
+    /// Drop the whole Bluetooth link to the radio (`closeConnection`: the
+    /// baseband, with every RFCOMM channel on it), so a half-open audio
+    /// channel left by a station that was killed cannot outlive the
+    /// reconnect (QA #402: only a reboot of the Mac cleared it).
+    pub fn reset_link(dev: &BtDevice) -> io::Result<()> {
+        let address = dev.addr_str().replace(':', "-");
+        let rc = on_main(MAIN_WAIT, move || {
+            pooled(|| unsafe {
+                let device: Id = msg_send![class!(IOBluetoothDevice),
+                    deviceWithAddressString: nsstring(&address)];
+                if device.is_null() {
+                    return None;
+                }
+                let rc: i32 = msg_send![device, closeConnection];
+                Some(rc)
+            })
+        })
+        .ok_or_else(main_not_running)?;
+        match rc {
+            None => Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "unknown Bluetooth address",
+            )),
+            Some(0) => Ok(()),
+            Some(rc) => Err(io::Error::other(format!(
+                "closeConnection returned IOReturn {rc:#x}"
+            ))),
+        }
     }
 
     /// Data from the radio, or `None` once the channel closed.
@@ -1126,6 +1186,10 @@ mod imp {
     }
 
     pub fn connect_audio(_dev: &BtDevice) -> io::Result<Connection> {
+        Err(unsupported())
+    }
+
+    pub fn reset_link(_dev: &BtDevice) -> io::Result<()> {
         Err(unsupported())
     }
 }

@@ -93,6 +93,12 @@ async fn restart_and_check(cfg_path: &Path, want: &str, after_update: bool) -> R
                 snap.version
             ));
         }
+        // The desktop app runs this station: its process stays, and the
+        // radio with its modem73 is restarted in it (QA #402: this used to
+        // say "Restarted" and leave a stopped modem73 stopped).
+        if !after_update {
+            return Ok(restart_radio_in_place(&http, &base, &snap, want).await);
+        }
         return Ok(final_line(&http, &base, want, after_update).await);
     }
     Ok(format!(
@@ -129,9 +135,87 @@ async fn final_line(http: &reqwest::Client, base: &str, want: &str, after_update
 }
 
 fn radio_words(s: &StatusSnapshot) -> String {
+    if !s.modem_down.is_empty() {
+        return format!("but the modem is not running ({})", s.modem_down);
+    }
     match restart::busy_reason(s, restart::unix_now()) {
         None => "radio idle".into(),
         Some(why) => format!("radio busy ({why})"),
+    }
+}
+
+/// How long `wcr restart` waits for the radio to come back up.
+const RADIO_RESTART_WAIT: Duration = Duration::from_secs(45);
+
+/// `wcr restart` on a station the desktop app runs: wait for a quiet radio,
+/// ask the station to restart its radio and modem73, then say how it came
+/// back (QA #402).
+async fn restart_radio_in_place(
+    http: &reqwest::Client,
+    base: &str,
+    before: &StatusSnapshot,
+    want: &str,
+) -> String {
+    if !before.mode.uses_radio() {
+        return final_line(http, base, want, false).await;
+    }
+    if let Err(e) = wait_quiet(http, base).await {
+        return e.to_string();
+    }
+    let started_before = restart::fetch_status(http, base)
+        .await
+        .map_or(before.radio_starts, |s| s.radio_starts);
+    println!("Restarting the radio and modem in the running station…");
+    let asked = http
+        .post(format!("{base}/radio/restart"))
+        .header(crate::node::RADIO_RESTART_HEADER, "1")
+        .send()
+        .await;
+    match asked {
+        Ok(r) if r.status().is_success() => {}
+        Ok(r) if r.status() == reqwest::StatusCode::NOT_FOUND => {
+            return format!(
+                "The station on {base} runs {want} but cannot restart its radio from here: stop and start it in the desktop app."
+            );
+        }
+        Ok(r) => {
+            return format!(
+                "The station on {base} refused the radio restart ({}).",
+                r.status()
+            )
+        }
+        Err(e) => return format!("Could not reach the station on {base}: {e}"),
+    }
+    let began = Instant::now();
+    let mut last = None;
+    while began.elapsed() < RADIO_RESTART_WAIT {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let Some(s) = restart::fetch_status(http, base).await else {
+            continue;
+        };
+        let up = s.radio_starts != started_before && s.modem_down.is_empty();
+        last = Some(s);
+        if up {
+            break;
+        }
+    }
+    match last {
+        Some(s) if s.radio_starts != started_before && s.modem_down.is_empty() => {
+            let modem = if s.builtin_tnc() {
+                "radio TNC linked".to_string()
+            } else {
+                format!("modem running {}", s.preset_live())
+            };
+            format!("Restarted the radio on {want}: {modem}, {}.", radio_words(&s))
+        }
+        Some(s) if !s.modem_down.is_empty() => format!(
+            "Restarted on {want}, but the modem is not running: {}. The station keeps trying every few seconds.",
+            s.modem_down
+        ),
+        _ => format!(
+            "Asked the station on {base} to restart its radio, but it did not come back within {} s. Check /status.",
+            RADIO_RESTART_WAIT.as_secs()
+        ),
     }
 }
 

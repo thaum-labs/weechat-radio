@@ -262,6 +262,51 @@ fn no_audio_since_linked(linked_for: Duration, bytes: u64) -> bool {
 /// Last radio link state, put back after the station clears its status.
 static LAST_STATUS: Mutex<(String, bool)> = Mutex::new((String::new(), false));
 
+/// Silent links in a row after which the next open drops the whole
+/// Bluetooth link first (QA #402: the link flapped every 10 s with 0 bytes
+/// until both computers were rebooted).
+const RESET_AFTER_STALLS: u32 = 2;
+/// Wait after dropping the link before opening it again.
+const LINK_RESET_PAUSE: Duration = Duration::from_secs(3);
+/// The next radio open drops the Bluetooth link first.
+static RESET_LINK: AtomicBool = AtomicBool::new(false);
+/// The station is stopping: close the radio link and do not reopen it.
+static STOPPING: AtomicBool = AtomicBool::new(false);
+/// The radio link is closed (or was never opened).
+static RELEASED: AtomicBool = AtomicBool::new(true);
+
+/// The station is stopping (SIGTERM, the app's Stop): close the radio's
+/// audio channel cleanly and wait, at most `wait`, until it is closed, so
+/// the next start does not find a half-open channel (QA #402).
+pub fn shutdown(wait: Duration) {
+    if RUNNING.get().is_none() {
+        return;
+    }
+    STOPPING.store(true, Ordering::SeqCst);
+    let began = Instant::now();
+    while !RELEASED.load(Ordering::SeqCst) && began.elapsed() < wait {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    tracing::info!(
+        "btaudio: radio audio link {} after {} ms",
+        if RELEASED.load(Ordering::SeqCst) {
+            "closed"
+        } else {
+            "still open"
+        },
+        began.elapsed().as_millis()
+    );
+}
+
+/// What the station shows for a link that opened but brought no audio.
+fn stall_status(label: &str, stalls: u32) -> String {
+    if stalls >= RESET_AFTER_STALLS {
+        format!("{label} linked but no audio ({stalls}x): resetting the Bluetooth link…")
+    } else {
+        format!("{label} linked but no audio, reconnecting…")
+    }
+}
+
 /// Starts the bridge for the radio in `cfg.tnc` once per process; later calls
 /// return the same ports. The bridge reconnects to the radio by itself.
 pub fn ensure_started(cfg: &crate::config::Config, snap: Arc<SharedStatus>) -> io::Result<Ports> {
@@ -276,22 +321,75 @@ pub fn ensure_started(cfg: &crate::config::Config, snap: Arc<SharedStatus>) -> i
     let tnc = cfg.tnc.clone();
     let snap_c = snap.clone();
     let level = tnc.bt_tx_level_db;
-    let connector: Connector = Box::new(move || connect_radio(&tnc, &snap_c));
+    let connector: Connector =
+        Box::new(move || connect_radio(&tnc, &snap_c, RESET_LINK.swap(false, Ordering::SeqCst)));
     let ports = start_with_level(connector, snap, level)?;
     Ok(*RUNNING.get_or_init(|| ports))
+}
+
+/// QA sim: `WCR_TEST_BT_RADIO=HOST:PORT` swaps the radio's Bluetooth
+/// audio channel for a TCP socket that speaks the same framing, and a link
+/// reset for a connection to PORT+1. Lets the bridge, the watchdog and a
+/// real modem73 run end to end on a machine with no radio (QA #402).
+pub const TEST_RADIO_ENV: &str = "WCR_TEST_BT_RADIO";
+
+fn test_radio_addr() -> Option<std::net::SocketAddr> {
+    std::env::var(TEST_RADIO_ENV).ok()?.parse().ok()
+}
+
+fn connect_test_radio(addr: std::net::SocketAddr, reset: bool) -> Result<Connection, String> {
+    if reset {
+        let mut r = addr;
+        r.set_port(addr.port() + 1);
+        TcpStream::connect(r).map_err(|e| format!("sim radio link reset: {e}"))?;
+    }
+    let stream =
+        TcpStream::connect(addr).map_err(|e| format!("SIM-RADIO audio not answering: {e}"))?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
+    let stream = Arc::new(stream);
+    Ok(Connection {
+        reader: Box::new(crate::tnc::link::Shared(stream.clone())),
+        writer: Box::new(crate::tnc::link::Shared(stream)),
+        zero_is_eof: true,
+        label: "SIM-RADIO".into(),
+    })
 }
 
 fn connect_radio(
     tnc: &crate::config::TncConfig,
     snap: &SharedStatus,
+    reset: bool,
 ) -> Result<Connection, String> {
     use crate::tnc::bluetooth;
+    if let Some(addr) = test_radio_addr() {
+        return connect_test_radio(addr, reset);
+    }
     let wanted = match tnc.bt_name.trim() {
         "" => "VR-N76",
         n => n,
     };
     set_status(snap, format!("searching for {wanted}…"), false);
     let dev = bluetooth::resolve(tnc)?;
+    if reset {
+        // Links that opened and brought nothing: drop the whole Bluetooth
+        // link (every channel on it) before opening again (QA #402).
+        set_status(
+            snap,
+            format!("resetting the Bluetooth link to {}…", dev.label()),
+            false,
+        );
+        match bluetooth::reset_link(&dev) {
+            Ok(()) => tracing::warn!(
+                "btaudio: Bluetooth link to {} dropped, reopening",
+                dev.label()
+            ),
+            Err(e) => tracing::warn!(
+                "btaudio: could not drop the Bluetooth link to {}: {e}",
+                dev.label()
+            ),
+        }
+        std::thread::sleep(LINK_RESET_PAUSE);
+    }
     set_status(snap, format!("connecting to {}…", dev.label()), false);
     bluetooth::connect_audio(&dev).map_err(|e| {
         format!(
@@ -415,7 +513,12 @@ fn serve_rigctl(conn: TcpStream, sh: &Shared) {
 /// Keeps the radio's audio channel open: reads its audio into the RX queue
 /// and runs a writer for what the clock sends it.
 fn radio_manager(mut connector: Connector, sh: &Shared, snap: &Arc<SharedStatus>) {
+    let mut stalls = 0u32;
     loop {
+        if STOPPING.load(Ordering::SeqCst) {
+            RELEASED.store(true, Ordering::SeqCst);
+            return;
+        }
         let conn = match connector() {
             Ok(c) => c,
             Err(why) => {
@@ -431,8 +534,10 @@ fn radio_manager(mut connector: Connector, sh: &Shared, snap: &Arc<SharedStatus>
             zero_is_eof,
             label,
         } = conn;
+        RELEASED.store(false, Ordering::SeqCst);
         let (tx, rx) = mpsc::channel::<Vec<u8>>();
         *sh.to_radio.lock() = Some(tx);
+        let (writer_done_tx, writer_done) = mpsc::channel::<()>();
         std::thread::spawn(move || {
             for bytes in rx {
                 if writer
@@ -443,6 +548,10 @@ fn radio_manager(mut connector: Connector, sh: &Shared, snap: &Arc<SharedStatus>
                     break;
                 }
             }
+            // Dropping the writer closes the channel (macOS: on the main
+            // run loop), before the next open is tried.
+            drop(writer);
+            let _ = writer_done_tx.send(());
         });
         set_status(snap, format!("{label} linked"), true);
         tracing::info!("btaudio: {label} audio linked");
@@ -460,6 +569,9 @@ fn radio_manager(mut connector: Connector, sh: &Shared, snap: &Arc<SharedStatus>
         let mut got_bytes = 0u64;
         let mut clips = ClipCount::default();
         let why = loop {
+            if STOPPING.load(Ordering::SeqCst) {
+                break "station stopping".to_string();
+            }
             if no_audio_since_linked(linked_at.elapsed(), got_bytes) {
                 break format!(
                     "no audio from the radio within {} s of linking",
@@ -471,7 +583,9 @@ fn radio_manager(mut connector: Connector, sh: &Shared, snap: &Arc<SharedStatus>
                 Ok(0) => continue,
                 Ok(n) => {
                     got_bytes += n as u64;
+                    stalls = 0;
                     let mut stats = snap.lock();
+                    stats.bt_rx_stalls = 0;
                     stats.bt_rx_bytes += n as u64;
                     types.push(&buf[..n], &mut stats.bt_rx_frames);
                     deframer.push(&buf[..n], |m| {
@@ -502,9 +616,41 @@ fn radio_manager(mut connector: Connector, sh: &Shared, snap: &Arc<SharedStatus>
             q.drain(..over);
         };
         linked.store(false, Ordering::SeqCst);
+        // Close the old channel fully before anything else (QA #402): the
+        // writer drops its end, then the reader goes with this iteration.
         *sh.to_radio.lock() = None;
-        tracing::warn!("btaudio: {label} audio lost ({why}), reconnecting");
-        set_status(snap, format!("{label} lost, reconnecting…"), false);
+        let _ = writer_done.recv_timeout(Duration::from_secs(3));
+        drop(reader);
+        if STOPPING.load(Ordering::SeqCst) {
+            // Let the platform finish closing (macOS closes on the main
+            // run loop) before the process goes.
+            std::thread::sleep(Duration::from_millis(300));
+            RELEASED.store(true, Ordering::SeqCst);
+            set_status(snap, format!("{label} closed"), false);
+            return;
+        }
+        RELEASED.store(true, Ordering::SeqCst);
+        if got_bytes == 0 {
+            stalls += 1;
+            snap.lock().bt_rx_stalls = stalls;
+            if stalls >= RESET_AFTER_STALLS {
+                RESET_LINK.store(true, Ordering::SeqCst);
+            }
+            tracing::warn!(
+                "btaudio: {label} linked but no audio came ({why}), stall {stalls}{}",
+                if stalls >= RESET_AFTER_STALLS {
+                    ", resetting the Bluetooth link"
+                } else {
+                    ", reconnecting"
+                }
+            );
+            set_status(snap, stall_status(&label, stalls), false);
+        } else {
+            stalls = 0;
+            snap.lock().bt_rx_stalls = 0;
+            tracing::warn!("btaudio: {label} audio lost ({why}), reconnecting");
+            set_status(snap, format!("{label} lost, reconnecting…"), false);
+        }
         std::thread::sleep(RETRY);
     }
 }
