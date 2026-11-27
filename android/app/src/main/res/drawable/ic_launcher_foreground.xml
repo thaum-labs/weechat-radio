@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The weechat-radio mark (prompt, cursor, radio waves), as on the desktop app icon
+     and crates/wcr/src/web/assets/favicon.svg, centred in the adaptive-icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:translateX="28.4" android:translateY="30" android:scaleX="0.8" android:scaleY="0.8">
+        <path android:strokeColor="#D8D0E8" android:strokeWidth="5"
+            android:strokeLineCap="round" android:strokeLineJoin="round"
+            android:pathData="M8,20 L20,30 L8,40" />
+        <path android:fillColor="#7D9BFF"
+            android:pathData="M26,36h13a1,1 0,0 1,1 1v3a1,1 0,0 1,-1 1h-13a1,1 0,0 1,-1 -1v-3a1,1 0,0 1,1 -1z" />
+        <path android:strokeColor="#7D9BFF" android:strokeWidth="4" android:strokeLineCap="round"
+            android:pathData="M40,29 A7,7 0,0 1,47 36" />
+        <path android:strokeColor="#7D9BFF" android:strokeWidth="4" android:strokeLineCap="round"
+            android:strokeAlpha="0.7" android:pathData="M40,23 A13,13 0,0 1,53 36" />
+        <path android:strokeColor="#7D9BFF" android:strokeWidth="4" android:strokeLineCap="round"
+            android:strokeAlpha="0.4" android:pathData="M40,17 A19,19 0,0 1,59 36" />
+    </group>
+</vector>

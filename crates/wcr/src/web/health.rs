@@ -159,13 +159,14 @@ fn cpu() -> Value {
 }
 
 fn load() -> Option<[f64; 3]> {
-    #[cfg(unix)]
+    // Android's libc has no getloadavg.
+    #[cfg(all(unix, not(target_os = "android")))]
     {
         let mut l = [0f64; 3];
         let n = unsafe { libc::getloadavg(l.as_mut_ptr(), 3) };
         (n == 3).then_some(l)
     }
-    #[cfg(not(unix))]
+    #[cfg(any(not(unix), target_os = "android"))]
     {
         None
     }

@@ -1,0 +1,88 @@
+# Builds the Android app (android/) and offers the APK as a download on the run.
+# Its own workflow with a path filter, so it never slows the main CI.
+#
+# Signing: with the four ANDROID_* secrets set, the APK is the signed release
+# build; without them it is a debug build (installs fine, but each one is
+# signed with a throwaway key, so a later build may need an uninstall first).
+name: android
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - android/**
+      - third_party/modem73/**
+      - .github/workflows/android.yml
+  push:
+    branches: [main]
+    paths:
+      - android/**
+      - third_party/modem73/**
+      - .github/workflows/android.yml
+concurrency:
+  group: android-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+permissions:
+  contents: read
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # The app targets Java 17; Gradle itself runs on 21.
+          java-version: 21
+      - name: core tests
+        working-directory: android/core
+        run: cargo test --release
+      - name: native libraries (wcr core, Kotlin bindings, modem73)
+        run: |
+          # The runner image ships the NDK; this is its newest one.
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          cargo install cargo-ndk --version 4.1.2 --locked
+          android/build-native.sh
+      - name: signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+            echo "APK_KIND=release" >> "$GITHUB_ENV"
+          else
+            echo "::notice::No ANDROID_KEYSTORE_BASE64 secret: building a debug APK."
+            echo "APK_KIND=debug" >> "$GITHUB_ENV"
+          fi
+      - name: build APK
+        working-directory: android
+        env:
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ "$APK_KIND" = release ]; then task=assembleRelease; else task=assembleDebug; fi
+          ./gradlew --no-daemon "$task"
+          apk=$(ls app/build/outputs/apk/$APK_KIND/*.apk)
+          version=$(grep -m1 '^version = ' ../Cargo.toml | cut -d'"' -f2)
+          mkdir -p ../out
+          cp "$apk" "../out/weechat-radio-android-$version-$APK_KIND.apk"
+          unzip -l "$apk" | grep -E "lib/arm64-v8a/lib(wcr_mobile|modem73)\.so"
+      - name: screenshots of every design screen (dark, light, modem73)
+        working-directory: android
+        run: ./gradlew --no-daemon testDebugUnitTest
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-screens
+          path: android/app/build/screens/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: weechat-radio-android
+          path: out/*.apk
+          if-no-files-found: error
