@@ -90,7 +90,9 @@ class RadioLink(context: Context) {
             else "station asked for the radio: opening ${dev.name} ${dev.address}",
         )
         val bt: BluetoothSocket? = dev?.let { d ->
-            adapter?.cancelDiscovery()
+            // Needs BLUETOOTH_SCAN on Android 12+, which we do not ask for; a scan is
+            // rarely running anyway, so a refusal here must not stop the connect.
+            runCatching { adapter?.cancelDiscovery() }
             // By the channel's UUID; if the radio's service list does not answer,
             // straight to channel 2, where the desktop app finds it on these radios.
             open(d, "uuid") { d.createInsecureRfcommSocketToServiceRecord(AUDIO_CHANNEL) }
