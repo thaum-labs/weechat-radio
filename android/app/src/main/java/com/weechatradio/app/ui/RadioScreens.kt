@@ -102,7 +102,7 @@ private fun RealRadioPanel(radio: LiveRadio) {
     val context = LocalContext.current
     val (word, why) = radio.headline
     val tone = when (word) {
-        "TRANSMITTING" -> radioColors().tx
+        "TRANSMITTING", "SENDING TO RADIO" -> radioColors().tx
         "LINKED" -> radioColors().ok
         else -> radioColors().warn
     }
