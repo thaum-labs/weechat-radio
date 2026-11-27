@@ -4044,6 +4044,7 @@ dependencies = [
  "parking_lot 0.12.5",
  "serde_json",
  "tokio",
+ "tracing-subscriber",
  "uniffi",
  "wcr",
 ]

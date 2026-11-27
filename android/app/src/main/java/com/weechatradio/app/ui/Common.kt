@@ -246,7 +246,16 @@ fun StationStrip(s: Status, tx: Boolean) {
         MonoText(s.call, color = fg, weight = FontWeight.Medium)
         if (s.linked) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                Dot(radioColors().ok); Text(s.rig, color = fg, fontSize = 13.sp, maxLines = 1)
+                // Green only when the station reports the radio's channel open; never assumed.
+                Dot(if (s.real && s.radioUp) radioColors().ok else radioColors().warn)
+                Text(
+                    when {
+                        !s.real -> "sample data"
+                        s.radioUp -> s.rig
+                        else -> "no radio link"
+                    },
+                    color = fg, fontSize = 13.sp, maxLines = 1,
+                )
             }
             if (tx) Text("PTT TX", color = radioColors().tx, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             else Row { Text("PTT ", color = colors().onSurfaceVariant, fontSize = 13.sp); Text("RX", color = fg, fontSize = 13.sp, fontWeight = FontWeight.Medium) }

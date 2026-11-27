@@ -83,6 +83,7 @@ pub fn start_station(setup: StationSetup) -> Option<String> {
 fn start(setup: StationSetup) -> Result<Running, String> {
     std::env::set_var("WCR_HOME", &setup.home);
     wcr::config::ensure_dirs().map_err(|e| e.to_string())?;
+    log_to_file();
     let path = Config::default_path();
     let mut cfg = Config::load(&path).unwrap_or_default();
     apply(&mut cfg, &setup)?;
@@ -120,6 +121,32 @@ fn start(setup: StationSetup) -> Result<Running, String> {
         chat,
         status_url: format!("http://{}/status", loopback(&cfg.status.bind)),
     })
+}
+
+/// The station's log file (the desktop prints it to the terminal).
+fn log_path() -> std::path::PathBuf {
+    wcr::config::default_data_dir().join("phone.log")
+}
+
+/// Send the core's log lines to [`log_path`], started fresh each app run.
+fn log_to_file() {
+    let Ok(file) = std::fs::File::create(log_path()) else {
+        return;
+    };
+    let _ = tracing_subscriber::fmt()
+        .with_writer(std::sync::Mutex::new(file))
+        .with_ansi(false)
+        .with_max_level(tracing_subscriber::filter::LevelFilter::INFO)
+        .try_init();
+}
+
+/// The last `lines` lines of the station's log, for Copy debug log.
+#[uniffi::export]
+pub fn station_log(lines: u32) -> String {
+    let text = std::fs::read_to_string(log_path()).unwrap_or_default();
+    let all: Vec<&str> = text.lines().collect();
+    let from = all.len().saturating_sub(lines as usize);
+    all[from..].join("\n")
 }
 
 /// The settings the phone owns. Everything else keeps the file's value.

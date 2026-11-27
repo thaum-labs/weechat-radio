@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.LaunchedEffect
@@ -27,12 +28,20 @@ fun hasBluetooth(context: Context) = Build.VERSION.SDK_INT < Build.VERSION_CODES
     ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
 
 class MainActivity : ComponentActivity() {
+    private val askBluetooth = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) Station.useReal(this, true)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val prefs = getSharedPreferences("settings", MODE_PRIVATE)
-        // Back on the real radio if it was on last time and Bluetooth is still allowed.
-        if (prefs.getBoolean(REAL_RADIO, false) && hasBluetooth(this)) Station.useReal(this, true)
+        // The real radio is the default; the sample data only shows when it is
+        // switched off in Settings. Bluetooth is asked for once if needed.
+        if (prefs.getBoolean(REAL_RADIO, true)) {
+            if (hasBluetooth(this)) Station.useReal(this, true)
+            else askBluetooth.launch(Manifest.permission.BLUETOOTH_CONNECT)
+        }
         setContent {
             val radio = Station.radio
             var look by remember { mutableStateOf(runCatching { Look.valueOf(prefs.getString("look", "")!!) }.getOrDefault(Look.Material)) }

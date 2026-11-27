@@ -32,15 +32,39 @@ class RadioLink(context: Context) {
     /** The loopback port the core dials. */
     val port: Int get() = server.localPort
 
+    /** What the link did, newest last, for Copy debug log. */
+    private val events = ArrayDeque<String>()
+
+    /** Bytes passed each way since the app started. */
+    @Volatile var bytesFromRadio = 0L
+        private set
+    @Volatile var bytesToRadio = 0L
+        private set
+    /** True while the radio's channel is open. */
+    @Volatile var open = false
+        private set
+
+    fun log(): List<String> = synchronized(events) { events.toList() }
+
+    private fun note(text: String) {
+        Log.i(TAG, text)
+        val line = java.time.LocalTime.now().withNano(0).toString() + " " + text
+        synchronized(events) {
+            events.addLast(line)
+            while (events.size > 80) events.removeFirst()
+        }
+    }
+
     /** The radio this link opens, from the paired devices; null if none is paired. */
     @Volatile var radio: BluetoothDevice? = null
         private set
 
     fun start() {
+        note("link ready on 127.0.0.1:$port, Bluetooth ${if (adapter?.isEnabled == true) "on" else "OFF"}")
         thread(name = "radio-link", isDaemon = true) {
             while (true) {
                 val core = runCatching { server.accept() }.getOrNull() ?: break
-                runCatching { serve(core) }.onFailure { Log.w(TAG, "link ended: $it") }
+                runCatching { serve(core) }.onFailure { note("link error: $it") }
             }
         }
     }
@@ -56,8 +80,13 @@ class RadioLink(context: Context) {
     @SuppressLint("MissingPermission")
     private fun serve(core: Socket) {
         core.tcpNoDelay = true
-        val dev = pairedRadios().firstOrNull()
+        val paired = pairedRadios()
+        val dev = paired.firstOrNull()
         radio = dev
+        note(
+            if (dev == null) "station asked for the radio: no paired radio found (paired: ${pairedNames()})"
+            else "station asked for the radio: opening ${dev.name} ${dev.address}",
+        )
         val bt: BluetoothSocket? = dev?.let { d ->
             adapter?.cancelDiscovery()
             // By the channel's UUID; if the radio's service list does not answer,
@@ -69,40 +98,52 @@ class RadioLink(context: Context) {
                 }
         }
         if (bt == null) {
+            if (dev != null) note("${dev.name}: audio channel did not open")
             runCatching { core.getOutputStream().write(0) }
             core.close()
             return
         }
         core.getOutputStream().apply { write(1); flush() }
-        Log.i(TAG, "linked to ${dev.name}")
+        note("${dev.name}: audio channel OPEN")
+        open = true
         val both = listOf<Closeable>(core, bt)
-        pump(bt.inputStream, core.getOutputStream(), both)
-        pump(core.getInputStream(), bt.outputStream, both)
+        pump(bt.inputStream, core.getOutputStream(), both, fromRadio = true)
+        pump(core.getInputStream(), bt.outputStream, both, fromRadio = false)
     }
 
     @SuppressLint("MissingPermission")
     private fun open(d: BluetoothDevice, how: String, make: () -> BluetoothSocket): BluetoothSocket? =
         runCatching { make().also { it.connect() } }
-            .onFailure { Log.w(TAG, "${d.name} audio channel by $how: $it") }
+            .onFailure { note("${d.name} by $how: ${it.message ?: it}") }
             .getOrNull()
 
     /** Copy one way until either side closes, then close both. */
-    private fun pump(from: InputStream, to: OutputStream, both: List<Closeable>) {
+    private fun pump(from: InputStream, to: OutputStream, both: List<Closeable>, fromRadio: Boolean) {
         thread(name = "radio-pump", isDaemon = true) {
             val buf = ByteArray(4096)
+            var why = "closed"
             try {
                 while (true) {
                     val n = from.read(buf)
                     if (n < 0) break
                     to.write(buf, 0, n)
                     to.flush()
+                    if (fromRadio) bytesFromRadio += n else bytesToRadio += n
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                why = e.message ?: "$e"
             } finally {
+                if (open) note("audio channel CLOSED (${if (fromRadio) "radio side" else "station side"}: $why)")
+                open = false
                 both.forEach { runCatching { it.close() } }
             }
         }
     }
+
+    @SuppressLint("MissingPermission")
+    private fun pairedNames(): String = runCatching {
+        adapter?.bondedDevices.orEmpty().joinToString { it.name ?: it.address }.ifEmpty { "none" }
+    }.getOrDefault("cannot read: Bluetooth permission?")
 
     companion object {
         private const val TAG = "RadioLink"

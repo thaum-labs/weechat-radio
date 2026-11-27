@@ -14,6 +14,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -94,28 +95,33 @@ fun RadioScreen(radio: Radio, onStation: () -> Unit, onSettings: () -> Unit, onS
     }
 }
 
-/** The real radio (Phase 0): only facts the station reports, one per row. */
+/** The real radio (Phase 0): one headline from hard evidence, the facts behind it, and the log. */
 @Composable
 private fun RealRadioPanel(radio: LiveRadio) {
     val s = radio.status
+    val context = LocalContext.current
+    val (word, why) = radio.headline
+    val tone = when (word) {
+        "TRANSMITTING" -> radioColors().tx
+        "LINKED" -> radioColors().ok
+        else -> radioColors().warn
+    }
     Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        val tx = radio.onAir != null
-        val (word, tone) = when {
-            tx -> "TRANSMITTING" to radioColors().tx
-            s.radioUp -> "LINKED" to radioColors().ok
-            else -> "NOT LINKED" to radioColors().warn
-        }
         Card(color = colors().surfaceContainer, padding = PaddingValues(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Dot(tone); Text(word, fontSize = 22.sp, fontWeight = FontWeight.Medium, color = tone)
+                Dot(tone); Text(word, fontSize = 20.sp, fontWeight = FontWeight.Medium, color = tone)
             }
-            Text("Real radio test · ${s.rig}", Modifier.padding(top = 4.dp), fontSize = 13.sp, color = colors().onSurfaceVariant)
+            Text(why, Modifier.padding(top = 4.dp), fontSize = 14.sp, lineHeight = 20.sp)
         }
+        Button({
+            val clip = context.getSystemService(android.content.ClipboardManager::class.java)
+            clip?.setPrimaryClip(android.content.ClipData.newPlainText("weechat-radio debug log", radio.debugLog()))
+            android.widget.Toast.makeText(context, "Debug log copied: paste it in the chat", android.widget.Toast.LENGTH_SHORT).show()
+        }, Modifier.fillMaxWidth()) { Text("Copy debug log") }
         Column {
             radio.facts.forEach { (k, v) -> KvRow(k, v, mono = true, modifier = Modifier.padding(vertical = 5.dp)) }
         }
         MeterRow("IN", s.inLevel, s.inDb)
-        MeterRow("OUT", s.outLevel, s.outDb)
     }
 }
 

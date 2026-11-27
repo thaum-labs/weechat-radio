@@ -47,6 +47,24 @@ class LiveRadio(
     override val frames: List<Frame> = emptyList()
     override val stations: List<MapStation> get() = emptyList()
 
+    /** The big line on the Radio tab and why, from hard evidence only. */
+    var headline by mutableStateOf("NO RADIO LINK" to "starting the station…")
+        private set
+
+    /** Everything needed to see why the link does or does not work, as text to paste. */
+    fun debugLog(): String = buildString {
+        appendLine("weechat-radio Android debug log, ${java.time.LocalDateTime.now().withNano(0)}")
+        appendLine("Headline: ${headline.first} (${headline.second})")
+        appendLine("\n== Radio link (app Bluetooth)")
+        link.log().forEach { appendLine(it) }
+        appendLine("\n== Facts")
+        facts.forEach { (k, v) -> appendLine("$k: $v") }
+        appendLine("\n== Station log (last 150 lines)")
+        appendLine(runCatching { uniffi.wcr_mobile.stationLog(150u) }.getOrElse { "cannot read: $it" })
+        appendLine("\n== Station status")
+        appendLine(lastStatusJson)
+    }
+
     /** The test panel on the Radio tab: plain facts from the station, nothing made up. */
     var facts by mutableStateOf(listOf("Station" to "starting…"))
         private set
@@ -54,7 +72,11 @@ class LiveRadio(
     private var chats by mutableStateOf(emptyMap<String, List<Line>>())
     override val lines: List<Line> get() = chats[channel].orEmpty()
 
-    private var lastRxBytes = 0L
+    private var lastFromRadio = 0L
+    private var fromRadioAt = 0L
+    private var lastConfirms = 0L
+    private var confirmAt = 0L
+    private var lastStatusJson = "(the station has not answered)"
     private val main = Handler(Looper.getMainLooper())
     private val link = RadioLink(context)
 
@@ -78,7 +100,7 @@ class LiveRadio(
             val err = runCatching { startStation(setup) }.getOrElse { it.message ?: "$it" }
             if (err != null) {
                 Log.w(TAG, "station did not start: $err")
-                main.post { status = status.copy(radioUp = false, radioNote = err); facts = listOf("Station" to "did not start: $err"); show(err) }
+                main.post { status = status.copy(radioUp = false, radioNote = err); facts = listOf("Station" to "did not start: $err"); headline = "STATION DID NOT START" to err; show(err) }
                 return@thread
             }
             while (true) {
@@ -93,12 +115,14 @@ class LiveRadio(
     private fun apply(statusJson: String, chatJson: String) {
         tick++
         if (statusJson.isNotEmpty()) runCatching { applyStatus(JSONObject(statusJson)) }
+        else if (!headline.first.startsWith("STATION")) headline = "NO RADIO LINK" to "the station is not answering yet"
         if (chatJson.isNotEmpty()) runCatching { applyChat(JSONObject(chatJson)) }
     }
 
     private fun applyStatus(j: JSONObject) {
         j.optString("stopped").takeIf { it.isNotEmpty() }?.let {
             status = status.copy(radioUp = false, radioNote = "station stopped: $it")
+            headline = "STATION STOPPED" to it
             return
         }
         val inDb = j.optDouble("audio_in_db", -90.0)
@@ -120,25 +144,44 @@ class LiveRadio(
             hubUp = j.optBoolean("hub_ok", false),
         )
         onAir = if (j.optBoolean("ptt_on")) OnAir(lineId = -1, piece = 1, of = 1, seconds = 0, progress = 0f) else null
-        val rxBytes = j.optLong("bt_rx_bytes", 0)
+        // Only hard evidence: the Bluetooth socket this app holds, bytes it
+        // actually passed, and the radio's own replies (0x02 ack, 0x09 TX echo).
+        val now = android.os.SystemClock.elapsedRealtime()
+        val fromRadio = link.bytesFromRadio
+        if (fromRadio > lastFromRadio) { lastFromRadio = fromRadio; fromRadioAt = now }
+        val frames = j.optJSONObject("bt_rx_frames")
+        val confirms = (frames?.optLong("0x09") ?: 0) + (frames?.optLong("0x02") ?: 0)
+        if (confirms > lastConfirms) { lastConfirms = confirms; confirmAt = now }
+        val keyAsked = j.optBoolean("ptt_on")
+        val open = link.open && j.optBoolean("tnc_ok")
+        val quietS = if (fromRadioAt > 0) (now - fromRadioAt) / 1000 else -1
+        val reason = j.optString("tnc").ifEmpty { link.log().lastOrNull().orEmpty() }
+        headline = when {
+            !open -> "NO RADIO LINK" to reason.ifEmpty { "the station has not reached the radio" }
+            keyAsked && now - confirmAt < 3000 -> "TRANSMITTING" to "the radio is confirming the audio it keys"
+            keyAsked -> "KEY ASKED, RADIO NOT CONFIRMING" to "audio is going to the radio but it sends no ack or TX echo"
+            quietS < 0 -> "CHANNEL OPEN" to "nothing has come from the radio yet (no audio, no replies)"
+            quietS <= 5 -> "LINKED" to "the radio is sending audio now"
+            else -> "LINKED, RADIO QUIET" to "last audio from the radio ${quietS} s ago"
+        }
+        status = status.copy(radioUp = open, radioNote = headline.first.lowercase())
         val mine = chats.values.flatten().count { it.mine }
         val theirs = chats.values.flatten().count { !it.mine && it.kind == LineKind.Message }
         facts = listOf(
-            "Radio link" to if (j.optBoolean("tnc_ok")) "linked · ${status.rig}" else j.optString("tnc").ifEmpty { "not linked" },
-            "Transmitting" to if (j.optBoolean("ptt_on")) "YES, keyed now" else "no",
-            "Audio from radio" to "%,d bytes".format(rxBytes) + if (rxBytes > lastRxBytes) " · arriving" else " · quiet",
+            "Bluetooth channel" to if (link.open) "open (${link.radio?.name})" else "closed",
+            "Bytes from radio" to "%,d".format(fromRadio) + if (quietS in 0..5) " · arriving now" else "",
+            "Bytes to radio" to "%,d".format(link.bytesToRadio),
+            "Radio confirmations" to "$confirms (acks + TX echoes)",
+            "Key asked by modem73" to if (keyAsked) "yes, now" else "no",
             "SBC errors" to "${j.optLong("sbc_decode_errors", 0)}",
-            "IN level" to "%.1f dB".format(j.optDouble("audio_in_db", -90.0)),
-            "OUT level" to "%.1f dB".format(j.optDouble("audio_out_db", -90.0)),
+            "IN / OUT" to "%.1f / %.1f dB".format(j.optDouble("audio_in_db", -90.0), j.optDouble("audio_out_db", -90.0)),
             "modem73" to j.optString("modem73").ifEmpty { "not running yet" },
-            "Preset" to j.optString("preset"),
-            "Frequency" to if (khz > 0) "%.3f MHz".format(khz / 1000.0) else "not set",
-            "Last SNR" to if (j.optLong("snr_ts", 0) > 0) "%.1f dB".format(j.optDouble("snr", 0.0)) else "nothing decoded yet",
+            "Preset · frequency" to j.optString("preset") + " · " + if (khz > 0) "%.3f MHz".format(khz / 1000.0) else "not set",
+            "Last decode SNR" to if (j.optLong("snr_ts", 0) > 0) "%.1f dB".format(j.optDouble("snr", 0.0)) else "nothing decoded yet",
             "Waiting to send" to "${j.optInt("queue_out", 0)}",
             "Lines sent / heard" to "$mine / $theirs",
-            "Internet hub" to if (j.optBoolean("hub_ok")) "connected" else "not connected",
         )
-        lastRxBytes = rxBytes
+        lastStatusJson = j.toString(1)
         heard = j.optJSONArray("heard").objects().mapNotNull { h ->
             h.optDouble("snr").takeIf { !it.isNaN() }?.let { Heard(h.optString("callsign"), it.toInt()) }
         }
