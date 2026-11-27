@@ -1,5 +1,9 @@
 package com.weechatradio.app.ui
 
+import android.Manifest
+import android.content.Context
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -8,6 +12,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -15,6 +21,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.weechatradio.app.BuildConfig
+import com.weechatradio.app.REAL_RADIO
+import com.weechatradio.app.hasBluetooth
+import com.weechatradio.app.radio.Station
 import com.weechatradio.app.radio.BtAudio
 import com.weechatradio.app.radio.Link
 import com.weechatradio.app.radio.Radio
@@ -41,6 +50,7 @@ fun SettingsScreen(radio: Radio, look: Look, onLook: (Look) -> Unit, onBack: () 
             Item("Mode", value = s.mode.id, sub = s.mode.words) { onSetup(SetupStep.You) }
             Divider()
             Section("Radio")
+            RealRadio(s.real)
             Item("Connection", value = connection) { onSetup(SetupStep.Radio) }
             if (s.linked) {
                 Item("Frequency", value = s.freq, mono = true, after = " ${s.emission}") {}
@@ -120,5 +130,27 @@ private fun Toggle(title: String, sub: String?, on: Boolean, onChange: (Boolean)
             if (sub != null) Text(sub, fontSize = 13.sp, color = colors().onSurfaceVariant)
         }
         Switch(on, onChange)
+    }
+}
+
+/**
+ * Phase 0: run the real station with the VR-N76 paired to this phone instead
+ * of the simulated radio. Asks for Bluetooth first. Remembered across restarts.
+ */
+@Composable
+private fun RealRadio(on: Boolean) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("settings", Context.MODE_PRIVATE) }
+    fun set(value: Boolean) {
+        prefs.edit().putBoolean(REAL_RADIO, value).apply()
+        Station.useReal(context, value)
+    }
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (granted) set(true) }
+    Toggle("Use the real radio", "test: the VR-N76 paired with this phone, over Bluetooth", on) { want ->
+        when {
+            !want -> set(false)
+            hasBluetooth(context) -> set(true)
+            else -> ask.launch(Manifest.permission.BLUETOOTH_CONNECT)
+        }
     }
 }

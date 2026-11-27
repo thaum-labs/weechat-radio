@@ -195,6 +195,17 @@ pub fn fill_levels(st: &mut crate::modem::control::ModemStatus) {
 }
 
 static RUNNING: OnceLock<Ports> = OnceLock::new();
+
+/// A radio connector handed in by the app that hosts the station. The Android
+/// app opens the radio's Bluetooth channel itself (Android has no raw
+/// Bluetooth sockets) and passes it here; desktop builds never set it.
+static HOST_CONNECTOR: Mutex<Option<Connector>> = Mutex::new(None);
+
+/// Use `connector` instead of this crate's own Bluetooth code the next time
+/// the bridge starts. Call it before the station starts.
+pub fn use_host_connector(connector: Connector) {
+    *HOST_CONNECTOR.lock() = Some(connector);
+}
 /// Gain on the radio's received audio (`[tnc] bt_rx_level_db`, #241), as
 /// f32 bits. Read for every block, so the RX slider takes effect at once.
 static RX_GAIN_BITS: AtomicU32 = AtomicU32::new(0x3f80_0000); // 1.0
@@ -321,8 +332,12 @@ pub fn ensure_started(cfg: &crate::config::Config, snap: Arc<SharedStatus>) -> i
     let tnc = cfg.tnc.clone();
     let snap_c = snap.clone();
     let level = tnc.bt_tx_level_db;
-    let connector: Connector =
-        Box::new(move || connect_radio(&tnc, &snap_c, RESET_LINK.swap(false, Ordering::SeqCst)));
+    let connector: Connector = match HOST_CONNECTOR.lock().take() {
+        Some(host) => host,
+        None => {
+            Box::new(move || connect_radio(&tnc, &snap_c, RESET_LINK.swap(false, Ordering::SeqCst)))
+        }
+    };
     let ports = start_with_level(connector, snap, level)?;
     Ok(*RUNNING.get_or_init(|| ports))
 }

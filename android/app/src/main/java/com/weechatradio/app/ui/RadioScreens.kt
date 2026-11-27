@@ -105,7 +105,8 @@ private fun DeviceCard(s: Status, onSetup: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text(s.rig, fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Dot(radioColors().ok); Text("linked", fontSize = 13.sp, color = radioColors().ok)
+                    val tone = if (s.radioUp) radioColors().ok else radioColors().warn
+                    Dot(tone); Text(if (s.radioUp) "linked" else s.radioNote.ifEmpty { "not linked" }, fontSize = 13.sp, color = tone, maxLines = 2)
                 }
             }
         }

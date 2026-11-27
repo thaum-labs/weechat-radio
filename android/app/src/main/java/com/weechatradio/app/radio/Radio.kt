@@ -1,5 +1,10 @@
 package com.weechatradio.app.radio
 
+import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+
 /**
  * Everything the screens need from a station. [SimulatedRadio] fakes it until
  * the real link to the radio (Phase 0) is built; the screens never know which.
@@ -42,7 +47,20 @@ interface Radio {
     fun dismissNote()
 }
 
-/** One station for the app's whole life, shared by the screens and the listening service. */
+/**
+ * One station for the app's whole life, shared by the screens and the
+ * listening service. It starts on the simulated radio; Settings → Radio →
+ * "Use the real radio" switches to [LiveRadio] (Phase 0). The real station
+ * starts once per app run, so switching back only hides it.
+ */
 object Station {
-    val radio: Radio by lazy { SimulatedRadio() }
+    private val simulated by lazy { SimulatedRadio() }
+    private var live: LiveRadio? = null
+
+    var radio: Radio by mutableStateOf<Radio>(simulated)
+        private set
+
+    fun useReal(context: Context, on: Boolean) {
+        radio = if (on) live ?: LiveRadio(context.applicationContext, simulated.status).also { live = it } else simulated
+    }
 }

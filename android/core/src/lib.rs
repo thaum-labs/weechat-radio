@@ -7,6 +7,9 @@
 
 use wcr::{band, grid, presets, presets::Preset};
 
+mod station;
+pub use station::*;
+
 uniffi::setup_scaffolding!();
 
 /// The wcr core version built into the app, e.g. "1.0.21".
