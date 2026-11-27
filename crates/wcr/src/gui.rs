@@ -40,6 +40,8 @@ const ACCENT: Color32 = Color32::from_rgb(125, 155, 255);
 const ORANGE: Color32 = Color32::from_rgb(255, 122, 61);
 const PURPLE: Color32 = Color32::from_rgb(196, 181, 253);
 const DIM: Color32 = Color32::from_rgb(122, 115, 136);
+/// Our own chat line still waiting for its receipt (#403).
+const PENDING: Color32 = Color32::from_rgb(0xe3, 0xcf, 0x96);
 const LINE: Color32 = Color32::from_rgb(33, 40, 64);
 const GREEN: Color32 = Color32::from_rgb(57, 255, 20);
 const AMBER: Color32 = Color32::from_rgb(255, 196, 61);
@@ -437,8 +439,8 @@ enum IrcEvent {
         tries: u32,
         /// How the receipt behind an `[ok]` came back (`rf`, `inet`, `lan`).
         via: Option<String>,
-        /// A long message: pieces on the air of all (#365).
-        parts: Option<(usize, usize)>,
+        /// A long message: how far each piece got (#365, #403).
+        parts: Option<crate::chat_line::Sending>,
     },
     /// A file transfer moved along: the bar to show on line `msgid`.
     FileProgress {
@@ -695,6 +697,9 @@ struct GuiApp {
     auto_started: bool,
     palette_i: usize,
     confirm_radio: bool,
+    /// A callsign clicked in a HEARD list: "Open a private chat with it?"
+    /// waits for Open or Cancel (#403).
+    chat_ask: Option<String>,
     tray: Option<TrayIcon>,
     tray_show: MenuId,
     tray_stop: MenuId,
@@ -863,6 +868,7 @@ impl GuiApp {
             auto_started: false,
             palette_i: 0,
             confirm_radio: false,
+            chat_ask: None,
             tray: None,
             tray_show: MenuId::new(""),
             tray_stop: MenuId::new(""),
@@ -1827,6 +1833,69 @@ impl GuiApp {
         self.persist_session();
     }
 
+    /// A callsign clicked in a HEARD list (#403): asks "Open a private chat
+    /// with CALL?" first, or just switches when that chat is already open.
+    fn heard_clicked(&mut self, call: &str) {
+        let call = call.trim().to_ascii_uppercase();
+        if self.direct.iter().any(|c| c.eq_ignore_ascii_case(&call)) {
+            self.open_direct(&call);
+            self.center = CenterView::Chat;
+        } else {
+            self.chat_ask = Some(call);
+        }
+    }
+
+    /// The "Open a private chat with CALL?" box (#403). Open does what the
+    /// direct box does; Cancel (or Esc) leaves the current chat.
+    fn paint_chat_ask(&mut self, ctx: &egui::Context, look: AskLook) {
+        let Some(call) = self.chat_ask.clone() else {
+            return;
+        };
+        let (mut open, mut cancel) = (false, false);
+        ctx.input_mut(|i| {
+            open = i.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
+            cancel = i.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
+        });
+        let font = FontId::monospace(look.size);
+        egui::Window::new(
+            RichText::new("PRIVATE CHAT")
+                .color(look.dim)
+                .font(FontId::monospace(12.0)),
+        )
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .frame(chrome(look.bg))
+        .show(ctx, |ui| {
+            ui.label(
+                RichText::new(format!("Open a private chat with {call}?"))
+                    .color(look.fg)
+                    .font(font.clone()),
+            );
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let btn = |t: &str, c: Color32| {
+                    egui::Button::new(RichText::new(t).color(c).font(font.clone()))
+                        .fill(Color32::TRANSPARENT)
+                        .stroke(hairline(c))
+                };
+                if ui.add(btn("Open", look.go)).clicked() {
+                    open = true;
+                }
+                if ui.add(btn("Cancel", look.fg)).clicked() {
+                    cancel = true;
+                }
+            });
+        });
+        if open {
+            self.chat_ask = None;
+            self.open_direct(&call);
+            self.center = CenterView::Chat;
+        } else if cancel {
+            self.chat_ask = None;
+        }
+    }
+
     /// Take a direct chat off the list; its lines stay on the station.
     fn close_direct(&mut self) {
         let peer = self.active_channel.clone();
@@ -2450,6 +2519,16 @@ impl eframe::App for GuiApp {
         self.paint_mail_get(ctx);
         self.paint_mail_new(ctx);
         self.paint_confirm_radio(ctx);
+        self.paint_chat_ask(
+            ctx,
+            AskLook {
+                bg: TOPBAR,
+                fg: FG,
+                dim: DIM,
+                go: ORANGE,
+                size: 13.0,
+            },
+        );
 
         let palette_h = if suggestions.is_empty() {
             0.0
@@ -2785,6 +2864,7 @@ impl eframe::App for GuiApp {
                             .font(FontId::monospace(11.0)),
                     );
                 }
+                let mut heard_click: Option<String> = None;
                 if let Some(s) = &self.status {
                     let ch = self.active_channel.clone();
                     let rows: Vec<&crate::status::HeardBrief> = {
@@ -2812,21 +2892,33 @@ impl eframe::App for GuiApp {
                         ui.add_space(4.0);
                         ui.label(RichText::new("stations").color(DIM).monospace());
                         for h in rows {
-                            ui.label(
-                                // Same word as the line tags ([net] [rf] [lan]).
-                                RichText::new(format!(
-                                    "{} [{}]",
-                                    h.callsign,
-                                    match h.band_tag() {
-                                        "inet" => "net",
-                                        tag => tag,
-                                    }
-                                ))
-                                    .color(ACCENT)
-                                    .font(FontId::monospace(12.0)),
-                            );
+                            let row = ui
+                                .add(
+                                    egui::Label::new(
+                                        // Same word as the line tags ([net] [rf] [lan]).
+                                        RichText::new(format!(
+                                            "{} [{}]",
+                                            h.callsign,
+                                            match h.band_tag() {
+                                                "inet" => "net",
+                                                tag => tag,
+                                            }
+                                        ))
+                                        .color(ACCENT)
+                                        .font(FontId::monospace(12.0)),
+                                    )
+                                    .sense(egui::Sense::click()),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                .on_hover_text(format!("open a private chat with {}", h.callsign));
+                            if row.clicked() {
+                                heard_click = Some(h.callsign.clone());
+                            }
                         }
                     }
+                }
+                if let Some(call) = heard_click {
+                    self.heard_clicked(&call);
                 }
                 ui.add_space(6.0);
                 let active = self.active_channel.clone();
@@ -2958,9 +3050,19 @@ impl eframe::App for GuiApp {
                                                                 .monospace(),
                                                         );
                                                     }
+                                                    // Still waiting for its receipt:
+                                                    // pale gold (#403).
+                                                    let body = if crate::chat_line::unconfirmed(
+                                                        line,
+                                                        &self.callsign,
+                                                    ) {
+                                                        PENDING
+                                                    } else {
+                                                        FG
+                                                    };
                                                     ui.label(
                                                         RichText::new(shown_text(ui, &line.text))
-                                                            .color(FG)
+                                                            .color(body)
                                                             .monospace(),
                                                     );
                                                 }
@@ -7967,6 +8069,15 @@ const MARK_KEY: &[(&str, &str)] = &[
     ),
 ];
 
+/// Colours of the "Open a private chat?" box, per layout (#403).
+pub(crate) struct AskLook {
+    pub(crate) bg: Color32,
+    pub(crate) fg: Color32,
+    pub(crate) dim: Color32,
+    pub(crate) go: Color32,
+    pub(crate) size: f32,
+}
+
 /// The progress of a long message received or sent as pieces (#365):
 /// amber while it is coming or going out, green when done, red when a
 /// piece is missing. Since rc4 it sits on the line's own marks row, next to
@@ -7989,6 +8100,30 @@ pub(crate) fn group_footer_label(
         FooterTone::Done => tones[1],
         FooterTone::Missing => tones[2],
     };
+    if line.sending.is_some() {
+        // Our own long message (#403): one block per piece, yellow on the
+        // air, green when that piece's receipt is back, red when it failed,
+        // then "k of n parts confirmed".
+        let mut job = egui::text::LayoutJob::default();
+        for b in crate::chat_line::part_blocks(line) {
+            let (glyph, c) = part_block_look(b, tones);
+            job.append(glyph, 0.0, egui::TextFormat::simple(font.clone(), c));
+        }
+        // Beside the marks only the count; which part failed is on hover
+        // (the red block shows it too), so the message keeps its width.
+        job.append(
+            &drawable(ui, &format!(" {}", sending_short(&footer))),
+            0.0,
+            egui::TextFormat::simple(font, colour),
+        );
+        ui.label(job).on_hover_text(format!(
+            "{footer}\none long message sent as {} pieces, one block each:\n\
+             yellow on the air, green when that piece's receipt is back,\n\
+             red when it failed after every retry, hollow not sent yet",
+            badge.split('/').nth(1).unwrap_or("?")
+        ));
+        return;
+    }
     // Short form beside the marks, full words on hover (Tobias's pick C
     // for rc5).
     let short = drawable(ui, &group_short(line, tone));
@@ -8004,44 +8139,52 @@ pub(crate) fn group_footer_label(
     }
 }
 
+/// The footer of our long message up to its first ` · `: `2 of 3 parts
+/// confirmed`, without the failed parts' numbers.
+fn sending_short(footer: &str) -> &str {
+    footer.split(" · ").next().unwrap_or(footer)
+}
+
+/// A piece's block and its colour (#403); `tones` is amber, green, red.
+fn part_block_look(b: crate::chat_line::PartBlock, tones: [Color32; 3]) -> (&'static str, Color32) {
+    use crate::chat_line::PartBlock;
+    match b {
+        PartBlock::Queued => ("□", tones[0]),
+        PartBlock::Sending => ("■", tones[0]),
+        PartBlock::Confirmed => ("■", tones[1]),
+        PartBlock::Failed => ("■", tones[2]),
+    }
+}
+
 /// How wide [`group_footer_label`] draws for `line`, with its gap; 0 for an
 /// ordinary line.
 pub(crate) fn group_footer_width(ui: &egui::Ui, line: &ChatLine, font: &FontId) -> f32 {
-    let Some((_, _, tone)) = crate::chat_line::group_footer(line, crate::chat_parts::unix_now())
+    let Some((_, footer, tone)) =
+        crate::chat_line::group_footer(line, crate::chat_parts::unix_now())
     else {
         return 0.0;
     };
     let w = ui.fonts(|f| f.glyph_width(font, 'M'));
-    (group_short(line, tone).chars().count() as f32 + 1.0) * w + ui.spacing().item_spacing.x
+    let chars = match &line.sending {
+        Some(s) => s.total + 1 + sending_short(&footer).chars().count(),
+        None => group_short(line, tone).chars().count(),
+    };
+    (chars as f32 + 1.0) * w + ui.spacing().item_spacing.x
 }
 
-/// The short progress beside a long message's marks: `■□ 1/2` going out,
-/// `2/2` delivered, `⋯ 2/3` arriving, `3/3` complete (no tick, Tobias: the
-/// marks already say it), `⚠ 2/3` when a
-/// piece is missing or undelivered.
+/// The short progress beside a long message we received: `⋯ 2/3` arriving,
+/// `3/3` complete (no tick, Tobias: the marks already say it), `⚠ 2/3` when
+/// a piece is missing. Our own long messages show blocks instead (#403).
 pub(crate) fn group_short(line: &ChatLine, tone: crate::chat_line::FooterTone) -> String {
     use crate::chat_line::FooterTone;
-    if let Some(p) = &line.parts {
-        let (k, n) = (p.received(), p.total());
-        return match tone {
-            FooterTone::InProgress => format!("⋯ {k}/{n}"),
-            FooterTone::Done => format!("{n}/{n}"),
-            FooterTone::Missing => format!("⚠ {k}/{n}"),
-        };
-    }
-    let Some((k, n)) = line.sending else {
+    let Some(p) = &line.parts else {
         return String::new();
     };
-    let k = k.min(n);
+    let (k, n) = (p.received(), p.total());
     match tone {
-        FooterTone::Missing => format!("⚠ {k}/{n}"),
+        FooterTone::InProgress => format!("⋯ {k}/{n}"),
         FooterTone::Done => format!("{n}/{n}"),
-        FooterTone::InProgress => {
-            let bar: String = (0..n.min(20))
-                .map(|i| if i < k { '■' } else { '□' })
-                .collect();
-            format!("{bar} {k}/{n}")
-        }
+        FooterTone::Missing => format!("⚠ {k}/{n}"),
     }
 }
 

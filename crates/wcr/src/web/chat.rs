@@ -55,6 +55,11 @@ pub struct LineView {
     /// show the line as incomplete, and the footer it then reads.
     pub parts_late_at: u64,
     pub parts_late_footer: String,
+    /// Our own long message (#403): one letter per piece, in order. `q` not
+    /// on the air yet, `s` on the air, `a` its receipt is back, `f` failed.
+    pub parts_blocks: String,
+    /// Our own line still waiting for its receipt (#403).
+    pub pending: bool,
 }
 
 struct Conv {
@@ -462,7 +467,7 @@ impl Chat {
         state: &str,
         tries: u32,
         via: Option<&str>,
-        parts: Option<(usize, usize)>,
+        parts: Option<chat_line::Sending>,
     ) {
         let changed: Vec<LineView> = {
             let mut st = self.state.lock();
@@ -625,13 +630,13 @@ impl Chat {
 
 /// What a mark can change on a line.
 #[allow(clippy::type_complexity)]
-fn marks(l: &ChatLine) -> (String, String, u32, String, Option<(usize, usize)>) {
+fn marks(l: &ChatLine) -> (String, String, u32, String, Option<chat_line::Sending>) {
     (
         l.msgid.clone(),
         l.ticks.clone(),
         l.tries,
         l.via.clone(),
-        l.sending,
+        l.sending.clone(),
     )
 }
 
@@ -672,6 +677,11 @@ fn view(me: &str, conv: &str, seq: u64, l: &ChatLine) -> LineView {
             .to_string(),
         parts_late_at: late.as_ref().map(|x| x.0).unwrap_or(0),
         parts_late_footer: late.map(|x| x.1).unwrap_or_default(),
+        parts_blocks: chat_line::part_blocks(l)
+            .iter()
+            .map(|b| b.letter())
+            .collect(),
+        pending: chat_line::unconfirmed(l, me),
     }
 }
 
@@ -785,6 +795,8 @@ mod tests {
                 parts_tone: v["parts_tone"].as_str().unwrap_or("").into(),
                 parts_late_at: v["parts_late_at"].as_u64().unwrap_or(0),
                 parts_late_footer: v["parts_late_footer"].as_str().unwrap_or("").into(),
+                parts_blocks: v["parts_blocks"].as_str().unwrap_or("").into(),
+                pending: v["pending"].as_bool().unwrap_or(false),
             })
             .collect()
     }
@@ -861,7 +873,9 @@ mod tests {
             "@msgid=f1;+radio/delivery=queued;+radio/msgid=f1;+radio/parts=0/3 TAGMSG #bulletin",
         );
         let l = &lines(&c, "#bulletin")[0];
-        assert_eq!(l.parts_footer, "sending 0/3  □□□  … awaiting receipt");
+        assert_eq!(l.parts_footer, "sending 0/3 · awaiting receipt");
+        assert_eq!(l.parts_blocks, "qqq");
+        assert!(l.pending);
         c.handle(
             "@msgid=f1;+radio/delivery=sent;+radio/msgid=f1;+radio/parts=3/3 TAGMSG #bulletin",
         );
@@ -870,8 +884,42 @@ mod tests {
         );
         let l = &lines(&c, "#bulletin")[0];
         assert_eq!(l.ticks, "[ok]");
-        assert_eq!(l.parts_footer, "sent 3/3  ■■■  delivered");
+        assert_eq!(l.parts_footer, "delivered");
+        assert_eq!(l.parts_blocks, "aaa");
         assert_eq!(l.parts_tone, "done");
+        assert!(!l.pending);
+    }
+
+    /// Each piece's own receipt turns its block green, in whatever order
+    /// they come; a piece out of retries turns red (#403).
+    #[test]
+    fn each_piece_of_a_long_message_shows_its_own_receipt() {
+        let c = chat();
+        c.send("#bulletin", &"word ".repeat(150)).unwrap();
+        let mark = |state: &str, parts: &str, acked: &str, letters: &str| {
+            format!(
+                "@msgid=f1;+radio/delivery={state};+radio/msgid=f1;+radio/parts={parts};\
+                 +radio/acked={acked};+radio/part-states={letters} TAGMSG #bulletin"
+            )
+        };
+        c.handle(&mark("sent", "3/3", "0/3", "sss"));
+        let l = &lines(&c, "#bulletin")[0];
+        assert_eq!(l.parts_blocks, "sss");
+        assert_eq!(l.parts_footer, "0 of 3 parts confirmed");
+        assert_eq!(l.parts_tone, "progress");
+        // Piece 2's receipt comes back before piece 1's.
+        c.handle(&mark("sent", "3/3", "1/3", "sas"));
+        let l = &lines(&c, "#bulletin")[0];
+        assert_eq!(l.parts_blocks, "sas");
+        assert_eq!(l.parts_footer, "1 of 3 parts confirmed");
+        c.handle(&mark("failed", "3/3", "2/3", "aaf"));
+        let l = &lines(&c, "#bulletin")[0];
+        assert_eq!(l.parts_blocks, "aaf");
+        assert_eq!(
+            l.parts_footer,
+            "2 of 3 parts confirmed · ⚠ part 3 not delivered"
+        );
+        assert_eq!(l.parts_tone, "missing");
     }
 
     #[test]

@@ -72,6 +72,9 @@ const M_RED: Color32 = Color32::from_rgb(0xff, 0x4d, 0x4d);
 const M_GOLD: Color32 = Color32::from_rgb(0xe6, 0xb8, 0x00);
 const M_CYAN: Color32 = Color32::from_rgb(0x00, 0xd0, 0xd0);
 const M_MAGENTA: Color32 = Color32::from_rgb(0xb8, 0x4c, 0xc4);
+/// Our own chat line still waiting for its receipt (#403): pale gold, apart
+/// from system lines (M_MUTE) and timestamps (M_DIM).
+const M_PENDING: Color32 = Color32::from_rgb(0xe3, 0xcf, 0x96);
 const M_PLUS: Color32 = Color32::from_rgb(0xff, 0x4d, 0xff);
 /// Other stations' callsigns in the chat log.
 const M_PEER: Color32 = Color32::from_rgb(0xc8, 0xb4, 0xf0);
@@ -406,6 +409,16 @@ impl GuiApp {
         self.paint_mail_get(ctx);
         self.paint_mail_new(ctx);
         self.paint_confirm_radio(ctx);
+        self.paint_chat_ask(
+            ctx,
+            super::AskLook {
+                bg: M_BG,
+                fg: M_FG,
+                dim: M_DIM,
+                go: M_GREEN,
+                size: 13.0,
+            },
+        );
         match self.center {
             CenterView::Email => {
                 egui::CentralPanel::default()
@@ -966,7 +979,9 @@ impl GuiApp {
                 text(format!("● {}", s.gps.trim_start_matches("GPS: ")), c),
             );
         }
-        m73_heard(ui, &s.heard);
+        if let Some(call) = m73_heard(ui, &s.heard) {
+            self.heard_clicked(&call);
+        }
         for cmd in [mode_cmd, tower_cmd, preset_cmd, file_cmd, freq_cmd]
             .into_iter()
             .flatten()
@@ -1648,7 +1663,6 @@ impl GuiApp {
                         continue;
                     }
                     let mine = line.nick.eq_ignore_ascii_case(&self.callsign);
-                    let in_flight = mine && line.ticks.contains("[tx]");
                     // The marks column, wider on a long message so its
                     // progress sits on the same line as [tx] / [rf] (#365 rc4).
                     let marks_w = 120.0 + super::group_footer_width(ui, line, &mono(13.0));
@@ -1668,7 +1682,11 @@ impl GuiApp {
                                     if mine { M_FG } else { M_CYAN },
                                 );
                                 ui.label(if mine { nick.strong() } else { nick });
-                                let body = if in_flight { M_MUTE } else { M_FG };
+                                let body = if crate::chat_line::unconfirmed(line, &self.callsign) {
+                                    M_PENDING
+                                } else {
+                                    M_FG
+                                };
                                 match crate::chat_line::saved_file(&line.text) {
                                     Some((lead, path)) => {
                                         ui.label(text(lead.trim_end(), body));
@@ -1812,6 +1830,7 @@ impl GuiApp {
                         for (mark, meaning) in key {
                             ui.label(text(format!("{mark} {meaning}"), M_DIM).size(11.0));
                         }
+                        let mut heard_click: Option<String> = None;
                         if let Some(s) = &self.status {
                             if !s.heard.is_empty() {
                                 ui.add_space(10.0);
@@ -1821,11 +1840,26 @@ impl GuiApp {
                                         "inet" => "net",
                                         tag => tag,
                                     };
-                                    ui.label(
-                                        text(format!("{} [{tag}]", h.callsign), M_PEER).size(12.0),
-                                    );
+                                    let row =
+                                        ui.add(
+                                            egui::Label::new(
+                                                text(format!("{} [{tag}]", h.callsign), M_PEER)
+                                                    .size(12.0),
+                                            )
+                                            .sense(egui::Sense::click()),
+                                        )
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .on_hover_text(
+                                            format!("open a private chat with {}", h.callsign),
+                                        );
+                                    if row.clicked() {
+                                        heard_click = Some(h.callsign.clone());
+                                    }
                                 }
                             }
+                        }
+                        if let Some(call) = heard_click {
+                            self.heard_clicked(&call);
                         }
                     });
             });
@@ -2085,10 +2119,12 @@ const HEARD_ROW_H: f32 = 15.0;
 
 /// STATION's lower part (Tobias on rc1: use the empty space): the stations
 /// heard most recently, as many as fit. Same list as the email HEARD.
-fn m73_heard(ui: &mut egui::Ui, heard: &[crate::status::HeardBrief]) {
+/// A click on a row asks to open a private chat with that station (#403):
+/// the callsign clicked comes back.
+fn m73_heard(ui: &mut egui::Ui, heard: &[crate::status::HeardBrief]) -> Option<String> {
     let room = ui.available_height() - 6.0 - HEARD_ROW_H;
     if room < HEARD_ROW_H {
-        return;
+        return None;
     }
     ui.add_space(6.0);
     ui.horizontal(|ui| {
@@ -2099,8 +2135,9 @@ fn m73_heard(ui: &mut egui::Ui, heard: &[crate::status::HeardBrief]) {
     });
     if heard.is_empty() {
         ui.label(text("nobody yet", M_DIM).size(12.0));
-        return;
+        return None;
     }
+    let mut clicked = None;
     let now = crate::status::unix_now_f64() as i64;
     let fits = (room / HEARD_ROW_H).floor().max(1.0) as usize;
     for h in heard.iter().take(fits) {
@@ -2110,18 +2147,31 @@ fn m73_heard(ui: &mut egui::Ui, heard: &[crate::status::HeardBrief]) {
         };
         let snr = h.snr.map(|v| format!("{v:.0} dB")).unwrap_or_default();
         let ago = ago_short(now - h.last_heard as i64);
-        ui.horizontal(|ui| {
-            ui.set_height(HEARD_ROW_H - 1.0);
-            key_cell(ui, &h.callsign);
-            ui.label(text(format!("{tag:<5}"), M_MUTE).size(12.0));
-            reading(ui, |ui| {
-                ui.label(text(format!("{ago:>4}"), M_DIM).size(12.0));
-                if !snr.is_empty() {
-                    ui.label(text(snr, M_GOLD).size(12.0));
-                }
-            });
-        });
+        let row = ui
+            .horizontal(|ui| {
+                ui.set_height(HEARD_ROW_H - 1.0);
+                key_cell(ui, &h.callsign);
+                ui.label(text(format!("{tag:<5}"), M_MUTE).size(12.0));
+                reading(ui, |ui| {
+                    ui.label(text(format!("{ago:>4}"), M_DIM).size(12.0));
+                    if !snr.is_empty() {
+                        ui.label(text(snr, M_GOLD).size(12.0));
+                    }
+                });
+            })
+            .response
+            .interact(egui::Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(format!("open a private chat with {}", h.callsign));
+        if row.hovered() {
+            ui.painter()
+                .rect_stroke(row.rect.expand(1.0), 2.0, hairline(M_LINE));
+        }
+        if row.clicked() {
+            clicked = Some(h.callsign.clone());
+        }
     }
+    clicked
 }
 
 /// "12s", "4m", "2h", "3d".

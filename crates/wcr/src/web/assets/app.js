@@ -13,6 +13,27 @@ function el(tag, cls, text) {
   return e;
 }
 
+// "Open a private chat with CALL?" with Open and Cancel (#403). Esc or a
+// click on Cancel leaves things as they are.
+function askChat(call, onOpen) {
+  const d = el("dialog", "ask");
+  d.setAttribute("aria-label", "Open a private chat");
+  d.append(el("p", "", `Open a private chat with ${call}?`));
+  const row = el("div", "row");
+  const open = el("button", "primary", "Open");
+  open.type = "button";
+  const cancel = el("button", "quiet", "Cancel");
+  cancel.type = "button";
+  open.onclick = () => { d.close(); onOpen(); };
+  cancel.onclick = () => d.close();
+  d.addEventListener("close", () => d.remove());
+  row.append(open, cancel);
+  d.append(row);
+  document.body.append(d);
+  d.showModal();
+  open.focus();
+}
+
 function clock(ts) {
   if (!ts) return "";
   const d = new Date(ts * 1000);
@@ -192,8 +213,23 @@ function textNode(text) {
   return span;
 }
 
+// Our own long message (#403): one block per piece, in order. Yellow on
+// the air, green when that piece's own receipt is back, red when it failed
+// after every retry, hollow while it waits for the air.
+const BLOCK = { q: ["queued", "□", "not on the air yet"], s: ["sending", "■", "on the air, waiting for its receipt"], a: ["confirmed", "■", "receipt back"], f: ["failed", "■", "failed after every retry"] };
+function partBlocks(letters) {
+  const span = el("span", "part-blocks");
+  [...letters].forEach((c, i) => {
+    const [cls, glyph, what] = BLOCK[c] || BLOCK.q;
+    const b = el("span", `part-block ${cls}`, glyph);
+    b.title = `Part ${i + 1}: ${what}`;
+    span.append(b);
+  });
+  return span;
+}
+
 function lineNode(l) {
-  const li = el("li", l.sys ? "sys" : l.mine ? "mine" : "");
+  const li = el("li", l.sys ? "sys" : l.mine ? (l.pending ? "mine pending" : "mine") : "");
   li.dataset.seq = l.seq;
   li.append(el("span", "when", lineWhen(l.when)));
   if (!l.sys) li.append(el("span", "nick", l.nick));
@@ -205,7 +241,8 @@ function lineNode(l) {
     tone = "missing";
     footer = l.parts_late_footer;
   }
-  if (l.parts_badge) {
+  const blocks = l.mine && l.parts_blocks;
+  if (l.parts_badge && !blocks) {
     if (!l.mine && tone !== "done") li.append(el("span", `parts-mark ${tone}`, tone === "missing" ? "⚠" : "⋯"));
     const badge = el("span", `parts-badge ${tone}`, l.parts_badge);
     badge.title = "One long message, sent as pieces";
@@ -246,6 +283,7 @@ function lineNode(l) {
     // progress on one right-aligned row under the text, the same on a phone.
     const row = el("div", "status-row");
     if (m) row.append(m);
+    if (blocks) row.append(partBlocks(l.parts_blocks));
     row.append(el("span", `parts-foot ${tone}`, footer.trim()));
     li.append(row);
   } else if (m) {
@@ -368,6 +406,14 @@ $("open-form").onsubmit = async (e) => {
     $("chat-note").textContent = err.message;
   }
 };
+
+// A callsign clicked in a heard list (#403): "Open a private chat with
+// CALL?" first, or straight there when that chat is already open.
+function askOpenDm(call) {
+  const id = call.trim().toUpperCase();
+  if (chat.order.includes(id)) { openDm(id); return; }
+  askChat(id, () => openDm(id));
+}
 
 function openDm(call) {
   const id = call.trim().toUpperCase();
@@ -932,8 +978,13 @@ async function loadStations() {
     const snr = h.snr === null || h.snr === undefined ? "" : ` ${Math.round(h.snr)} dB`;
     const age = h.last_heard ? ago(Math.max(0, d.now - h.last_heard)) : "";
     const what = el("span", "what");
+    // The callsign asks to open a private chat with that station (#403).
+    const call = el("button", "subject call-link", `${h.callsign}${h.gateway ? " (gateway)" : ""}`);
+    call.type = "button";
+    call.title = `Open a private chat with ${h.callsign}`;
+    call.onclick = () => askOpenDm(h.callsign);
     what.append(
-      el("span", "subject", `${h.callsign}${h.gateway ? " (gateway)" : ""}`),
+      call,
       el("span", "who", `${h.band || (h.medium === "inet" ? "internet" : h.medium) || ""}${snr}${h.grid ? ` · ${h.grid}` : ""}`),
     );
     const msg = el("button", "quiet", "Message");
