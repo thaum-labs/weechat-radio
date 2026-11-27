@@ -20,8 +20,9 @@ android {
         targetSdk = 35
         // Bumped by CI from the run number; 1 for local builds.
         versionCode = (System.getenv("ANDROID_VERSION_CODE") ?: "1").toInt()
-        versionName = wcrVersion
-        // Only 64-bit ARM phones for now (the Moto G17 and nearly every phone since 2019).
+        // "1.0.25 build 123": the wcr version plus the CI run, so every APK can be told apart.
+        versionName = System.getenv("ANDROID_VERSION_CODE")?.let { "$wcrVersion build $it" } ?: wcrVersion
+        // Only 64-bit ARM phones for now (the Moto G77 and nearly every phone since 2019).
         ndk { abiFilters += "arm64-v8a" }
     }
 

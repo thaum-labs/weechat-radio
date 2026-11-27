@@ -55,6 +55,7 @@ private fun Avatar(peer: String) {
 @Composable
 fun MailListScreen(radio: Radio, folder: Folder, onFolder: (Folder) -> Unit, onOpen: (Mail) -> Unit, onCompose: () -> Unit, onSettings: () -> Unit) {
     val s = radio.status
+    if (s.real) return NotOnRealRadio("Email", "Email")
     val inboxUnread = radio.mails.count { it.folder == Folder.Inbox && it.unread }
     val shown = radio.mails.filter { it.folder == folder }
     Box(Modifier.fillMaxSize()) {

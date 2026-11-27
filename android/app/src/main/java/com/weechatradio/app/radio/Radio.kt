@@ -1,5 +1,11 @@
 package com.weechatradio.app.radio
 
+import android.content.Context
+import android.content.Intent
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+
 /**
  * Everything the screens need from a station. [SimulatedRadio] fakes it until
  * the real link to the radio (Phase 0) is built; the screens never know which.
@@ -42,7 +48,48 @@ interface Radio {
     fun dismissNote()
 }
 
-/** One station for the app's whole life, shared by the screens and the listening service. */
+/**
+ * One station for the app's whole life, shared by the screens and the
+ * listening service. It starts on the simulated radio; Settings → Radio →
+ * "Use the real radio" switches to [LiveRadio] (Phase 0). The real station
+ * starts once per app run, so switching back only hides it.
+ */
 object Station {
-    val radio: Radio by lazy { SimulatedRadio() }
+    private val simulated by lazy { SimulatedRadio() }
+    private var live: LiveRadio? = null
+
+    var radio: Radio by mutableStateOf<Radio>(simulated)
+        private set
+
+    fun useReal(context: Context, on: Boolean) {
+        radio = if (on) live ?: LiveRadio(context.applicationContext, withIdentity(context, simulated.status)).also { live = it } else simulated
+    }
+
+    /** What the user saved in Settings: callsign, locator, frequency and preset. */
+    private fun withIdentity(context: Context, s: Status): Status {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        fun saved(key: String, now: String) = prefs.getString(key, null)?.takeIf { it.isNotBlank() } ?: now
+        return s.copy(
+            call = saved(CALL, s.call),
+            grid = saved(GRID, s.grid),
+            freq = saved(FREQ, s.freq),
+            preset = saved(PRESET, s.preset),
+        )
+    }
+
+    const val PREFS = "settings"
+    const val CALL = "call"
+    const val GRID = "grid"
+    const val FREQ = "freq"
+    const val PRESET = "preset"
+
+    /**
+     * Start the app again from scratch. The station reads its callsign once at
+     * start (as on the desktop), so a new callsign needs a fresh start.
+     */
+    fun restartApp(context: Context) {
+        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return
+        context.startActivity(Intent.makeRestartActivityTask(launch.component).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        Runtime.getRuntime().exit(0)
+    }
 }

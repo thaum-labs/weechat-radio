@@ -18,6 +18,12 @@ name = "wcr_mobile"
 wcr = { path = "../../crates/wcr", default-features = false }
 # Keep in step with UNIFFI_VERSION in android/build-native.sh.
 uniffi = "=0.32.2"
+# The station runs on its own runtime inside the app.
+tokio = { version = "1.44", features = ["rt-multi-thread"] }
+parking_lot = "0.12"
+serde_json = "1"
+# The station's log goes to a file the app can copy (Copy debug log).
+tracing-subscriber = "0.3"
 
 [profile.release]
 # Keep symbols: uniffi-bindgen reads its metadata from them.

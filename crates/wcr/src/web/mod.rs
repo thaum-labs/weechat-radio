@@ -8,7 +8,7 @@
 //! unless `[web] allow_public` is set.
 
 mod auth;
-mod chat;
+pub mod chat;
 mod health;
 pub mod software;
 mod station;

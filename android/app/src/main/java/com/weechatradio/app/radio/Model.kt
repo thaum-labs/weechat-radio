@@ -55,6 +55,10 @@ data class Line(
     val piecesHeard: Int = pieces,
     /** While keying: the piece on the air now (1-based), 0 = not on air. */
     val sendingPiece: Int = 0,
+    /** A file that came in on this line: where the station saved it. */
+    val filePath: String = "",
+    /** A file on its way, as the station draws it: "[████░░░░] 3/15". */
+    val progress: String = "",
 )
 
 enum class ChannelKind { Room, Closed, Direct }
@@ -171,6 +175,11 @@ data class Status(
     val copyToConfirmed: Boolean = true,
     val txDuty: String = "handheld",
     val setUp: Boolean = true,
+    /** The real station: is the radio's audio channel open, and if not, what the core says. */
+    val radioUp: Boolean = true,
+    val radioNote: String = "",
+    /** True when the real station runs (Phase 0); false on the simulated radio. */
+    val real: Boolean = false,
 ) {
     val mailAddress: String get() = "$call@mail.weechatradio.com"
     val linked: Boolean get() = link != Link.InternetOnly

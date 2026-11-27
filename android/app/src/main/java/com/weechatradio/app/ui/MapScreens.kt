@@ -167,10 +167,12 @@ private val PathBlocked = Color(0xFFFF3B6B)
  */
 @Composable
 fun MapScreen(radio: Radio, tiles: Boolean, onPlan: () -> Unit, onChat: (String) -> Unit, onSettings: () -> Unit) {
+    // On the real radio: us from our locator, and every station heard that sent its locator. No search, no planner.
+    val real = radio.status.real
     val me = radio.stations.first()
     val others = radio.stations.drop(1)
-    var center by remember { mutableStateOf(LatLon(51.30, -2.30)) }
-    var zoom by remember { mutableIntStateOf(10) }
+    var center by remember { mutableStateOf(if (real) LatLon(me.lat, me.lon) else LatLon(51.30, -2.30)) }
+    var zoom by remember { mutableIntStateOf(if (real) 8 else 10) }
     var picked by remember { mutableStateOf<String?>(null) }
     val tx = radioColors().tx
     val ring = colors().surface
@@ -197,8 +199,12 @@ fun MapScreen(radio: Radio, tiles: Boolean, onPlan: () -> Unit, onChat: (String)
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Icon(Icons.Filled.Search, null, tint = colors().onSurfaceVariant)
-            Text("Callsign, city or grid", Modifier.weight(1f), fontSize = 15.sp, color = colors().onSurfaceVariant)
+            if (real) {
+                Text("${radio.status.call} · ${radio.status.grid}", Modifier.weight(1f), fontSize = 15.sp, fontFamily = com.weechatradio.app.ui.theme.Mono)
+            } else {
+                Icon(Icons.Filled.Search, null, tint = colors().onSurfaceVariant)
+                Text("Callsign, city or grid", Modifier.weight(1f), fontSize = 15.sp, color = colors().onSurfaceVariant)
+            }
             Chip("Live", container = radioColors().okContainer, content = colors().onSurface, lead = { Dot(radioColors().ok) })
             IconBtn(Icons.Filled.Settings, "Settings", onClick = onSettings)
         }
@@ -223,7 +229,13 @@ fun MapScreen(radio: Radio, tiles: Boolean, onPlan: () -> Unit, onChat: (String)
                     Text("Stations", fontSize = 18.sp, fontWeight = FontWeight.Medium)
                     Small("${others.count { it.live }} heard by radio in the last 30 min · ${others.size} on the map")
                 }
-                TextButton(onPlan) { Icon(Icons.Filled.Directions, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Plan a path") }
+                if (!real) TextButton(onPlan) { Icon(Icons.Filled.Directions, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Plan a path") }
+            }
+            if (real && others.isEmpty()) {
+                Text(
+                    "No stations on the map yet. A station shows here once it is heard with its locator (its beacon carries it).",
+                    Modifier.padding(16.dp), fontSize = 14.sp, lineHeight = 20.sp, color = colors().onSurfaceVariant,
+                )
             }
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 8.dp)) {
                 others.sortedWith(compareByDescending<com.weechatradio.app.radio.MapStation> { it.live }.thenByDescending { it.lastHeard }).forEach { st ->
@@ -257,7 +269,7 @@ fun MapScreen(radio: Radio, tiles: Boolean, onPlan: () -> Unit, onChat: (String)
                         if (open) {
                             Row(Modifier.padding(top = 8.dp, start = 22.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 FilledTonalButton({ onChat(st.call) }) { Text("Direct chat") }
-                                Outlined("Plan a path", icon = Icons.Filled.Directions, onClick = onPlan)
+                                if (!real) Outlined("Plan a path", icon = Icons.Filled.Directions, onClick = onPlan)
                             }
                         }
                     }

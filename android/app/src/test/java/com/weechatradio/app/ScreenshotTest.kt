@@ -62,10 +62,11 @@ class ScreenshotTest(private val look: String) {
         compose.onRoot().captureRoboImage("build/screens/$look/$name.png")
     }
 
-    @Test fun chat() = shot("01-chat", Start())
-    @Test fun chatOnAir() = shot("02-chat-tx", Start(), onAir = true)
-    @Test fun chatRooms() = shot("03-chat-rooms", Start(sheet = SheetKind.Channels))
-    @Test fun chatKey() = shot("04-chat-key", Start(sheet = SheetKind.Key))
+    @Test fun chats() = shot("01-chats", Start())
+    @Test fun chat() = shot("02-chat", Start(page = Page.Conversation("#bulletin")))
+    @Test fun chatOnAir() = shot("02b-chat-tx", Start(page = Page.Conversation("#bulletin")), onAir = true)
+    @Test fun chatDirect() = shot("03-chat-direct", Start(page = Page.Conversation("XX0BBB")))
+    @Test fun newChat() = shot("04-new-chat", Start(sheet = SheetKind.NewChat))
     @Test fun mailList() = shot("05-mail-list", Start(HomeTab.Mail))
     @Test fun mailOpen() = shot("06-mail-open", Start(HomeTab.Mail, Page.MailOpen(3)))
     @Test fun mailOpenSent() = shot("07-mail-open-sent", Start(HomeTab.Mail, Page.MailOpen(7), folder = Folder.Sent))
