@@ -167,6 +167,7 @@ private val PathBlocked = Color(0xFFFF3B6B)
  */
 @Composable
 fun MapScreen(radio: Radio, tiles: Boolean, onPlan: () -> Unit, onChat: (String) -> Unit, onSettings: () -> Unit) {
+    if (radio.status.real) return NotOnRealRadio("Map", "The map")
     val me = radio.stations.first()
     val others = radio.stations.drop(1)
     var center by remember { mutableStateOf(LatLon(51.30, -2.30)) }

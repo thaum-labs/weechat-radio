@@ -25,6 +25,7 @@ import com.weechatradio.app.core.Core
 import com.weechatradio.app.radio.BtAudio
 import com.weechatradio.app.radio.FrameKind
 import com.weechatradio.app.radio.Link
+import com.weechatradio.app.radio.LiveRadio
 import com.weechatradio.app.radio.Radio
 import com.weechatradio.app.radio.Status
 import com.weechatradio.app.ui.theme.ModeColors
@@ -51,6 +52,10 @@ fun RadioScreen(radio: Radio, onStation: () -> Unit, onSettings: () -> Unit, onS
         Column(Modifier.fillMaxSize()) {
             TopBar("Radio", if (s.linked) "${s.rig} · linked" else "no radio", lead = { LogoLead() }) {
                 IconBtn(Icons.Filled.Settings, "Settings", onClick = onSettings)
+            }
+            if (radio is LiveRadio) {
+                RealRadioPanel(radio)
+                return@Column
             }
             if (!s.linked) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -86,6 +91,31 @@ fun RadioScreen(radio: Radio, onStation: () -> Unit, onSettings: () -> Unit, onS
             }
         }
         radio.note?.let { Note(it, Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp)) }
+    }
+}
+
+/** The real radio (Phase 0): only facts the station reports, one per row. */
+@Composable
+private fun RealRadioPanel(radio: LiveRadio) {
+    val s = radio.status
+    Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        val tx = radio.onAir != null
+        val (word, tone) = when {
+            tx -> "TRANSMITTING" to radioColors().tx
+            s.radioUp -> "LINKED" to radioColors().ok
+            else -> "NOT LINKED" to radioColors().warn
+        }
+        Card(color = colors().surfaceContainer, padding = PaddingValues(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Dot(tone); Text(word, fontSize = 22.sp, fontWeight = FontWeight.Medium, color = tone)
+            }
+            Text("Real radio test · ${s.rig}", Modifier.padding(top = 4.dp), fontSize = 13.sp, color = colors().onSurfaceVariant)
+        }
+        Column {
+            radio.facts.forEach { (k, v) -> KvRow(k, v, mono = true, modifier = Modifier.padding(vertical = 5.dp)) }
+        }
+        MeterRow("IN", s.inLevel, s.inDb)
+        MeterRow("OUT", s.outLevel, s.outDb)
     }
 }
 

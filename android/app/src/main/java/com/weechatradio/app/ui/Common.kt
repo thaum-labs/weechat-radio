@@ -525,3 +525,16 @@ fun Outlined(text: String, modifier: Modifier = Modifier, icon: ImageVector? = n
         Text(text, maxLines = 1)
     }
 }
+
+/** Mail and Map with the real radio on: nothing made up, just this. */
+@Composable
+fun NotOnRealRadio(title: String, what: String) {
+    Column(Modifier.fillMaxSize()) {
+        TopBar(title, "real radio test")
+        Text(
+            "$what is not on the real radio yet. This test covers the radio link and chat; " +
+                "turn off Settings → Use the real radio to see the sample screens.",
+            Modifier.padding(16.dp), fontSize = 15.sp, lineHeight = 22.sp, color = colors().onSurfaceVariant,
+        )
+    }
+}

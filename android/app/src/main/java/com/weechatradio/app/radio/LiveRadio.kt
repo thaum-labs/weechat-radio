@@ -20,9 +20,9 @@ import kotlin.concurrent.thread
 
 /**
  * The real station (Phase 0): the wcr node and modem73 run on the phone and
- * reach the radio over [RadioLink]. Radio status and chat are real; mail,
- * the map and the "On the air" list still come from the sample data in
- * [sample] until their turn comes.
+ * reach the radio over [RadioLink]. Only real things show: radio status,
+ * chat and heard stations. Mail, the map and the "On the air" list are empty
+ * here (no sample data) until their turn comes.
  */
 class LiveRadio(
     context: Context,
@@ -43,9 +43,18 @@ class LiveRadio(
         private set
     override var tick by mutableIntStateOf(0)
         private set
+    override val mails: List<Mail> = emptyList()
+    override val frames: List<Frame> = emptyList()
+    override val stations: List<MapStation> get() = emptyList()
+
+    /** The test panel on the Radio tab: plain facts from the station, nothing made up. */
+    var facts by mutableStateOf(listOf("Station" to "starting…"))
+        private set
+
     private var chats by mutableStateOf(emptyMap<String, List<Line>>())
     override val lines: List<Line> get() = chats[channel].orEmpty()
 
+    private var lastRxBytes = 0L
     private val main = Handler(Looper.getMainLooper())
     private val link = RadioLink(context)
 
@@ -69,7 +78,7 @@ class LiveRadio(
             val err = runCatching { startStation(setup) }.getOrElse { it.message ?: "$it" }
             if (err != null) {
                 Log.w(TAG, "station did not start: $err")
-                main.post { status = status.copy(radioUp = false, radioNote = err); show(err) }
+                main.post { status = status.copy(radioUp = false, radioNote = err); facts = listOf("Station" to "did not start: $err"); show(err) }
                 return@thread
             }
             while (true) {
@@ -111,6 +120,25 @@ class LiveRadio(
             hubUp = j.optBoolean("hub_ok", false),
         )
         onAir = if (j.optBoolean("ptt_on")) OnAir(lineId = -1, piece = 1, of = 1, seconds = 0, progress = 0f) else null
+        val rxBytes = j.optLong("bt_rx_bytes", 0)
+        val mine = chats.values.flatten().count { it.mine }
+        val theirs = chats.values.flatten().count { !it.mine && it.kind == LineKind.Message }
+        facts = listOf(
+            "Radio link" to if (j.optBoolean("tnc_ok")) "linked · ${status.rig}" else j.optString("tnc").ifEmpty { "not linked" },
+            "Transmitting" to if (j.optBoolean("ptt_on")) "YES, keyed now" else "no",
+            "Audio from radio" to "%,d bytes".format(rxBytes) + if (rxBytes > lastRxBytes) " · arriving" else " · quiet",
+            "SBC errors" to "${j.optLong("sbc_decode_errors", 0)}",
+            "IN level" to "%.1f dB".format(j.optDouble("audio_in_db", -90.0)),
+            "OUT level" to "%.1f dB".format(j.optDouble("audio_out_db", -90.0)),
+            "modem73" to j.optString("modem73").ifEmpty { "not running yet" },
+            "Preset" to j.optString("preset"),
+            "Frequency" to if (khz > 0) "%.3f MHz".format(khz / 1000.0) else "not set",
+            "Last SNR" to if (j.optLong("snr_ts", 0) > 0) "%.1f dB".format(j.optDouble("snr", 0.0)) else "nothing decoded yet",
+            "Waiting to send" to "${j.optInt("queue_out", 0)}",
+            "Lines sent / heard" to "$mine / $theirs",
+            "Internet hub" to if (j.optBoolean("hub_ok")) "connected" else "not connected",
+        )
+        lastRxBytes = rxBytes
         heard = j.optJSONArray("heard").objects().mapNotNull { h ->
             h.optDouble("snr").takeIf { !it.isNaN() }?.let { Heard(h.optString("callsign"), it.toInt()) }
         }
@@ -186,6 +214,11 @@ class LiveRadio(
         }
     }
 
+    override fun getMail(id: Long) = show(NO_MAIL)
+    override fun readMail(id: Long) {}
+    override fun sendMail(to: String, subject: String, body: String, attachment: Attachment?) = show(NO_MAIL)
+    override fun deleteMail(id: Long) {}
+
     override fun dismissNote() {
         note = null
     }
@@ -200,6 +233,7 @@ class LiveRadio(
         private const val TAG = "LiveRadio"
         private const val POLL_MS = 500L
         private val NOTE = Any()
+        private const val NO_MAIL = "Mail is not on the real radio yet"
         /** Presets that survive the radio's Bluetooth audio (wcr btaudio::preset_allowed). */
         val BT_PRESETS = setOf("vhf-fm", "hf-poor", "hf-weak", "hf-deep")
 
