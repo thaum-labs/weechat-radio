@@ -107,6 +107,7 @@ private fun RealRadioPanel(radio: LiveRadio) {
         else -> radioColors().warn
     }
     Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        RestartForCallsign(radio)
         Card(color = colors().surfaceContainer, padding = PaddingValues(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Dot(tone); Text(word, fontSize = 20.sp, fontWeight = FontWeight.Medium, color = tone)

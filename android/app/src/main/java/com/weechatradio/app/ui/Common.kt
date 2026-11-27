@@ -547,3 +547,22 @@ fun NotOnRealRadio(title: String, what: String) {
         )
     }
 }
+
+/**
+ * Shown after the callsign or locator changes on the real radio: the station
+ * reads them once at start, so it keeps using the old ones until restarted.
+ */
+@Composable
+fun RestartForCallsign(radio: com.weechatradio.app.radio.Radio, modifier: Modifier = Modifier) {
+    val live = radio as? com.weechatradio.app.radio.LiveRadio ?: return
+    if (!live.restartNeeded) return
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val s = live.status
+    Card(modifier, color = radioColors().warnContainer, padding = PaddingValues(16.dp)) {
+        Text(
+            "Saved as ${s.call} · ${s.grid}. The station still runs as ${live.runningCall} · ${live.runningGrid} until it restarts.",
+            fontSize = 14.sp, lineHeight = 20.sp, color = radioColors().onWarnContainer,
+        )
+        Button({ com.weechatradio.app.radio.Station.restartApp(context) }, Modifier.padding(top = 10.dp)) { Text("Restart station now") }
+    }
+}

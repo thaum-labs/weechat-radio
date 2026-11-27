@@ -25,7 +25,7 @@ import kotlin.concurrent.thread
  * here (no sample data) until their turn comes.
  */
 class LiveRadio(
-    context: Context,
+    private val context: Context,
     start: Status,
     private val sample: Radio = SimulatedRadio(start, live = false),
 ) : Radio by sample {
@@ -237,8 +237,22 @@ class LiveRadio(
         )
     }
 
+    /** The callsign and locator the station is running with (read once at start). */
+    val runningCall = start.call
+    val runningGrid = start.grid
+
+    /** The user changed callsign or locator; the station uses it after a restart. */
+    val restartNeeded: Boolean get() = status.call != runningCall || status.grid != runningGrid
+
     override fun update(change: (Status) -> Status) {
+        val before = status
         status = change(status)
+        if (status.call != before.call || status.grid != before.grid) {
+            context.getSharedPreferences(Station.PREFS, Context.MODE_PRIVATE).edit()
+                .putString(Station.CALL, status.call.trim().uppercase())
+                .putString(Station.GRID, status.grid.trim())
+                .apply()
+        }
     }
 
     override fun openChannel(name: String) {

@@ -41,6 +41,7 @@ fun SettingsScreen(radio: Radio, look: Look, onLook: (Look) -> Unit, onBack: () 
             Section("Station", top = 4.dp)
             Item("Callsign", value = s.call, mono = true) { onSetup(SetupStep.You) }
             Item("Locator", value = s.grid, mono = true) { onSetup(SetupStep.You) }
+            RestartForCallsign(radio, Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
             Divider()
             Section("Radio")
             RealRadio(s.real)

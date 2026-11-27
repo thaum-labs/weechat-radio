@@ -1,6 +1,7 @@
 package com.weechatradio.app.radio
 
 import android.content.Context
+import android.content.Intent
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -61,6 +62,29 @@ object Station {
         private set
 
     fun useReal(context: Context, on: Boolean) {
-        radio = if (on) live ?: LiveRadio(context.applicationContext, simulated.status).also { live = it } else simulated
+        radio = if (on) live ?: LiveRadio(context.applicationContext, withIdentity(context, simulated.status)).also { live = it } else simulated
+    }
+
+    /** The callsign and locator the user saved (Settings → Callsign / Locator). */
+    private fun withIdentity(context: Context, s: Status): Status {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return s.copy(
+            call = prefs.getString(CALL, null)?.takeIf { it.isNotBlank() } ?: s.call,
+            grid = prefs.getString(GRID, null)?.takeIf { it.isNotBlank() } ?: s.grid,
+        )
+    }
+
+    const val PREFS = "settings"
+    const val CALL = "call"
+    const val GRID = "grid"
+
+    /**
+     * Start the app again from scratch. The station reads its callsign once at
+     * start (as on the desktop), so a new callsign needs a fresh start.
+     */
+    fun restartApp(context: Context) {
+        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return
+        context.startActivity(Intent.makeRestartActivityTask(launch.component).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        Runtime.getRuntime().exit(0)
     }
 }
