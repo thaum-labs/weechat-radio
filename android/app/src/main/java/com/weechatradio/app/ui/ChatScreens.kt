@@ -7,6 +7,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,6 +27,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -38,6 +40,7 @@ import com.weechatradio.app.radio.Channel
 import com.weechatradio.app.radio.ChannelKind
 import com.weechatradio.app.radio.Line
 import com.weechatradio.app.radio.LineKind
+import com.weechatradio.app.radio.LiveRadio
 import com.weechatradio.app.radio.Mark
 import com.weechatradio.app.radio.Radio
 import com.weechatradio.app.radio.Via
@@ -122,6 +125,11 @@ fun ConversationScreen(radio: Radio, name: String, onBack: () -> Unit) {
     val s = radio.status
     val m73 = console()
     val room = name.startsWith("#")
+    // Files go in a direct chat on the real radio: a picture is made small enough for the air first.
+    val live = radio as? LiveRadio
+    val attach = if (live != null && !room && !name.startsWith("&")) rememberFilePicker { f -> sendChatFile(live, name, f) } else null
+    val save = rememberFileSaver()
+    val list = rememberLazyListState()
     val how = if (s.linked) "by radio" else "over the hub"
     val sub = if (m73) (if (room) "everyone · $how" else "direct · $how") else if (room) "Everyone can read · $how" else "Direct chat · $how"
     Box(Modifier.fillMaxSize()) {
@@ -129,6 +137,8 @@ fun ConversationScreen(radio: Radio, name: String, onBack: () -> Unit) {
             TopBar(name, sub, lead = { BackLead(onBack) })
             if (m73) Box(Modifier.fillMaxWidth().underline(colors().outline))
             val lines = radio.lines
+            // The newest line is at the bottom: follow it when a line comes in or changes.
+            LaunchedEffect(lines.size, lines.lastOrNull()?.id) { if (lines.isNotEmpty()) list.animateScrollToItem(0) }
             if (lines.isEmpty()) {
                 Box(Modifier.weight(1f).fillMaxWidth().padding(24.dp), contentAlignment = if (m73) Alignment.CenterStart else Alignment.Center) {
                     Text(
@@ -138,14 +148,19 @@ fun ConversationScreen(radio: Radio, name: String, onBack: () -> Unit) {
                 }
             } else {
                 LazyColumn(
-                    Modifier.weight(1f).fillMaxWidth(), reverseLayout = true,
+                    Modifier.weight(1f).fillMaxWidth(), state = list, reverseLayout = true,
                     contentPadding = PaddingValues(start = if (m73) 16.dp else 12.dp, end = if (m73) 16.dp else 12.dp, top = 8.dp, bottom = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(if (m73) 14.dp else 10.dp),
                 ) {
-                    items(lines.asReversed(), key = { it.id }) { if (m73) ConsoleLine(it, s.call) else LineRow(it) }
+                    items(lines.asReversed(), key = { it.id }) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            if (m73) ConsoleLine(it, s.call) else LineRow(it)
+                            if (it.filePath.isNotEmpty() || it.progress.isNotEmpty()) FileUnder(it, m73, save)
+                        }
+                    }
                 }
             }
-            if (m73) ConsoleComposer("message $name", radio::send) else Composer("Message $name", radio::send)
+            if (m73) ConsoleComposer("message $name", attach, radio::send) else Composer("Message $name", attach, radio::send)
         }
         radio.note?.let { Note(it, Modifier.align(Alignment.BottomCenter).padding(bottom = 72.dp)) }
     }
@@ -260,10 +275,11 @@ private fun ConsoleLine(l: Line, me: String) {
 }
 
 @Composable
-private fun Composer(hint: String, onSend: (String) -> Unit) {
+private fun Composer(hint: String, onAttach: (() -> Unit)?, onSend: (String) -> Unit) {
     var text by rememberSaveable { mutableStateOf("") }
     val send = { if (text.isNotBlank()) { onSend(text); text = "" } }
     Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (onAttach != null) IconButton(onAttach, Modifier.size(40.dp)) { Icon(Icons.Filled.AttachFile, "Send a picture or file", tint = colors().onSurfaceVariant) }
         Box(Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(24.dp)).background(colors().surfaceContainerHigh).padding(horizontal = 20.dp), contentAlignment = Alignment.CenterStart) {
             if (text.isEmpty()) Text(hint, color = colors().onSurfaceVariant, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             BasicTextField(
@@ -280,7 +296,7 @@ private fun Composer(hint: String, onSend: (String) -> Unit) {
 
 /** The console prompt: "$ [message] SEND". */
 @Composable
-private fun ConsoleComposer(hint: String, onSend: (String) -> Unit) {
+private fun ConsoleComposer(hint: String, onAttach: (() -> Unit)?, onSend: (String) -> Unit) {
     var text by rememberSaveable { mutableStateOf("") }
     val send = { if (text.isNotBlank()) { onSend(text); text = "" } }
     val line = colors().outline
@@ -290,7 +306,8 @@ private fun ConsoleComposer(hint: String, onSend: (String) -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text("$", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Console.green)
+        if (onAttach != null) Text("+F", Modifier.clickable(onClick = onAttach).padding(vertical = 8.dp), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Console.gold)
+        else Text("$", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Console.green)
         Box(Modifier.weight(1f).height(40.dp).border(1.dp, line).background(colors().surfaceContainer).padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
             if (text.isEmpty()) Text(hint, color = colors().onSurfaceVariant, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             BasicTextField(
@@ -302,6 +319,33 @@ private fun ConsoleComposer(hint: String, onSend: (String) -> Unit) {
             )
         }
         ConsoleButton("SEND", Modifier.height(40.dp), color = Console.green, border = Console.green, onClick = send)
+    }
+}
+
+/** The biggest file a chat carries (the station's own limit). */
+private const val CHAT_FILE_MAX = 8192
+
+/** Send a picked file in a direct chat; a picture is shrunk to fit first. */
+private fun sendChatFile(radio: LiveRadio, to: String, f: Picked) {
+    if (f.data.size <= CHAT_FILE_MAX) return radio.sendFile(to, f.name, f.data)
+    if (!isPicture(f.name)) return radio.say("${f.name} is ${com.weechatradio.app.radio.sizeText(f.data.size)}. A chat carries files up to 8 KB: send it by mail instead.")
+    val small = shrinkPicture(f.data, CHAT_FILE_MAX) ?: return radio.say("Could not make ${f.name} small enough for the air.")
+    radio.sendFile(to, f.name.substringBeforeLast('.') + ".jpg", small)
+}
+
+/** Under a file line: the picture itself, Save, or how far it has come. */
+@Composable
+private fun FileUnder(l: Line, m73: Boolean, save: (String) -> Unit) {
+    val side = if (l.mine) Alignment.End else Alignment.Start
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = if (m73) Alignment.Start else side, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (l.progress.isNotEmpty()) Text(l.progress, fontSize = 12.sp, fontFamily = Mono, color = if (m73) Console.orange else colors().onSurfaceVariant)
+        if (l.filePath.isEmpty()) return@Column
+        if (isPicture(l.filePath)) {
+            val pic = remember(l.filePath) { runCatching { android.graphics.BitmapFactory.decodeFile(l.filePath)?.asImageBitmap() }.getOrNull() }
+            if (pic != null) androidx.compose.foundation.Image(pic, l.text, Modifier.widthIn(max = 240.dp).heightIn(max = 240.dp).clip(RoundedCornerShape(if (m73) 0.dp else 12.dp)))
+        }
+        if (m73) Text("[SAVE]", Modifier.clickable { save(l.filePath) }.padding(vertical = 4.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = Console.green)
+        else TextButton({ save(l.filePath) }) { Icon(Icons.Filled.Download, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Save a copy") }
     }
 }
 

@@ -11,6 +11,8 @@ import androidx.compose.runtime.setValue
 import org.json.JSONArray
 import org.json.JSONObject
 import uniffi.wcr_mobile.StationSetup
+import uniffi.wcr_mobile.chatSendFile
+import uniffi.wcr_mobile.stationCall
 import uniffi.wcr_mobile.chatSend
 import uniffi.wcr_mobile.chatSnapshot
 import uniffi.wcr_mobile.radioSetting
@@ -21,8 +23,8 @@ import kotlin.concurrent.thread
 /**
  * The real station (Phase 0): the wcr node and modem73 run on the phone and
  * reach the radio over [RadioLink]. Only real things show: radio status,
- * chat and heard stations. Mail, the map and the "On the air" list are empty
- * here (no sample data) until their turn comes.
+ * chat, mail, the frames on the air and the stations heard, all from the
+ * station itself. Nothing here is sample data.
  */
 class LiveRadio(
     private val context: Context,
@@ -45,7 +47,39 @@ class LiveRadio(
         private set
     override val mails: List<Mail> = emptyList()
     override val frames: List<Frame> = emptyList()
-    override val stations: List<MapStation> get() = emptyList()
+    /** Us first, then every station heard that sent its grid. */
+    override val stations: List<MapStation>
+        get() {
+            val me = gridToLatLon(status.grid) ?: (51.5 to -0.1)
+            val now = System.currentTimeMillis() / 1000
+            return listOf(MapStation(status.call, me.first, me.second, status.mode, status.grid, "", null, false)) +
+                heardAll.mapNotNull { h ->
+                    val (lat, lon) = gridToLatLon(h.grid) ?: return@mapNotNull null
+                    MapStation(
+                        h.call, lat, lon, Mode.entries.firstOrNull { it.id == h.mode } ?: Mode.Radio, h.grid,
+                        whenText(h.lastHeard), h.snr?.toInt(),
+                        live = h.medium != "inet" && h.medium != "lan" && now - h.lastHeard < 1800,
+                    )
+                }
+        }
+
+    /** Mail in the station's store, newest first. */
+    var inbox by mutableStateOf(emptyList<LiveMail>())
+        private set
+    /** Mail we sent or are sending (outbox and sent), newest first. */
+    var sentMail by mutableStateOf(emptyList<LiveMail>())
+        private set
+    /** Headers waiting at the gateway (Radio+). */
+    var waitingMail by mutableStateOf(emptyList<WaitingMail>())
+        private set
+    var mailTab by mutableStateOf(MailTab())
+        private set
+    /** Frames heard and sent, newest first. */
+    var traffic by mutableStateOf(emptyList<TrafficRow>())
+        private set
+    /** Every station heard, newest first. */
+    var heardAll by mutableStateOf(emptyList<HeardRow>())
+        private set
 
     /** The big line on the Radio tab and why, from hard evidence only. */
     var headline by mutableStateOf("NOT LINKED" to "starting the station…")
@@ -111,10 +145,14 @@ class LiveRadio(
                 main.post { status = status.copy(radioUp = false, radioNote = err); facts = listOf("Station" to "did not start: $err"); headline = "STATION DID NOT START" to err; show(err) }
                 return@thread
             }
+            var n = 0
             while (true) {
                 val st = runCatching { stationStatus() }.getOrDefault("")
                 val chat = runCatching { chatSnapshot() }.getOrDefault("")
                 main.post { apply(st, chat) }
+                if (n % 4 == 0) fetchTraffic()
+                if (n % 6 == 0) fetchMail()
+                n++
                 Thread.sleep(POLL_MS)
             }
         }
@@ -196,6 +234,7 @@ class LiveRadio(
         )
         lastStatusJson = j.toString(1)
         val heardRows = j.optJSONArray("heard").objects()
+        heardAll = heardRows.map(LiveJson::heard).sortedByDescending { it.lastHeard }
         heard = heardRows.mapNotNull { h ->
             h.optDouble("snr").takeIf { !it.isNaN() }?.let { Heard(h.optString("callsign"), it.toInt()) }
         }
@@ -229,11 +268,14 @@ class LiveRadio(
         val snr = l.optDouble("snr").takeIf { !it.isNaN() }?.toInt()
         val via = l.optString("via")
         val ticks = l.optString("ticks")
+        val raw = l.optString("text")
+        // A file that came in: "📎 name (size) saved to PATH". Show the name, keep the path for Save.
+        val saved = if (raw.startsWith("📎") && " saved to " in raw) raw.substringAfterLast(" saved to ").trim() else ""
         return Line(
             id = l.optLong("seq"),
             time = l.optString("when").takeLast(5),
             from = l.optString("nick"),
-            text = l.optString("text"),
+            text = if (saved.isNotEmpty()) raw.substringBeforeLast(" saved to ") else raw,
             mine = l.optBoolean("mine"),
             kind = if (l.optBoolean("sys")) LineKind.Note else LineKind.Message,
             via = when {
@@ -243,6 +285,8 @@ class LiveRadio(
             },
             snrDb = snr,
             keyed = l.optInt("tries", 0),
+            filePath = saved,
+            progress = l.optString("progress"),
             mark = when {
                 "[all]" in ticks -> Mark.AllMembers
                 "[ok]" in ticks -> Mark.Delivered
@@ -255,6 +299,107 @@ class LiveRadio(
             },
         )
     }
+
+    // ---- Mail, On air and files: the station's own loopback HTTP ----
+
+    private fun call(method: String, path: String, body: String = ""): Pair<Int, String> =
+        runCatching { stationCall(method, path, body).let { it.code.toInt() to it.body } }
+            .getOrElse { 503 to (it.message ?: "$it") }
+
+    /** Runs off the main thread; [done] gets the station's answer on the main thread. */
+    private fun ask(method: String, path: String, body: String = "", done: (Int, String) -> Unit) {
+        thread(name = "station-call", isDaemon = true) {
+            val (code, text) = call(method, path, body)
+            main.post { done(code, text) }
+        }
+    }
+
+    /** The reason in an error reply, in plain words. */
+    private fun why(code: Int, text: String): String =
+        runCatching { JSONObject(text).optString("error") }.getOrNull()?.takeIf { it.isNotEmpty() }
+            ?: text.ifEmpty { "the station answered $code" }
+
+    private fun fetchMail() {
+        val (c1, inboxJson) = call("GET", "/mail/list?folder=inbox")
+        if (c1 != 200) return
+        val out = call("GET", "/mail/list?folder=outbox").second
+        val sent = call("GET", "/mail/list?folder=sent").second
+        val wait = call("GET", "/mail/waiting").second
+        val tab = call("GET", "/mail/tab").second
+        fun rows(t: String) = runCatching { JSONArray(t).objects().map(LiveJson::mail) }.getOrDefault(emptyList())
+        val i = rows(inboxJson).sortedByDescending { it.ts }
+        val s = (rows(out) + rows(sent)).distinctBy { it.id }.sortedByDescending { it.ts }
+        val w = runCatching { JSONArray(wait).objects().map(LiveJson::waiting) }.getOrDefault(emptyList())
+        val t = runCatching { LiveJson.tab(JSONObject(tab)) }.getOrNull()
+        main.post {
+            inbox = i
+            sentMail = s
+            waitingMail = w
+            if (t != null) mailTab = t
+        }
+    }
+
+    private var trafficLast = 0L
+
+    private fun fetchTraffic() {
+        val (code, text) = call("GET", "/traffic?since=$trafficLast")
+        if (code != 200) return
+        val j = runCatching { JSONObject(text) }.getOrNull() ?: return
+        val rows = j.optJSONArray("rows").objects().map(LiveJson::traffic)
+        trafficLast = j.optLong("last", trafficLast)
+        if (rows.isEmpty()) return
+        main.post { traffic = (rows.sortedByDescending { it.seq } + traffic).distinctBy { it.seq }.take(300) }
+    }
+
+    /** Open one mail (marks it read). */
+    fun openMail(id: String, done: (LiveMail?) -> Unit) =
+        ask("GET", "/mail/open?id=" + java.net.URLEncoder.encode(id, "UTF-8")) { code, text ->
+            done(if (code == 200) runCatching { LiveJson.mail(JSONObject(text)) }.getOrNull() else null)
+            thread(isDaemon = true) { fetchMail() }
+        }
+
+    /** Queue a mail; [files] are (name, bytes). The station shrinks pictures and says if it cannot go. */
+    fun composeMail(to: String, subject: String, body: String, files: List<Pair<String, ByteArray>>, done: (Boolean) -> Unit) {
+        val j = JSONObject().put("to", to.trim()).put("subject", subject).put("body", body)
+            .put("files", JSONArray(files.map { (name, data) -> JSONObject().put("name", name).put("data", android.util.Base64.encodeToString(data, android.util.Base64.NO_WRAP)) }))
+        ask("POST", "/mail/compose", j.toString()) { code, text ->
+            if (code == 200) { show("Queued. It goes out when the channel is clear."); thread(isDaemon = true) { fetchMail() } } else show(why(code, text))
+            done(code == 200)
+        }
+    }
+
+    /** Ask the gateway, over the radio, which mail is waiting (headers only). */
+    fun checkMail() = ask("POST", "/mail/check", "{}") { code, text ->
+        show(if (code == 200) "Asking the gateway over the radio what is waiting…" else why(code, text))
+    }
+
+    /** Pull waiting mail through the gateway. */
+    fun getWaiting(ids: List<String>) = ask("POST", "/mail/get", JSONObject().put("ids", JSONArray(ids)).toString()) { code, text ->
+        show(if (code == 200) "Asking the gateway for ${if (ids.size == 1) "the mail" else "${ids.size} mails"}…" else why(code, text))
+    }
+
+    fun deleteLiveMail(id: String) = ask("POST", "/mail/delete", JSONObject().put("id", id).toString()) { code, text ->
+        if (code == 200) { inbox = inbox.filterNot { it.id == id }; sentMail = sentMail.filterNot { it.id == id }; waitingMail = waitingMail.filterNot { it.id == id }; show("Deleted") } else show(why(code, text))
+    }
+
+    fun retryMail(id: String) = ask("POST", "/mail/retry", JSONObject().put("id", id).toString()) { code, text ->
+        show(if (code == 200) "Trying again" else why(code, text))
+    }
+
+    fun cancelMail(id: String) = ask("POST", "/mail/cancel", JSONObject().put("id", id).toString()) { code, text ->
+        show(if (code == 200) "Stopped" else why(code, text))
+    }
+
+    /** Send a small file in a direct chat. */
+    fun sendFile(to: String, name: String, data: ByteArray) {
+        thread(isDaemon = true) {
+            val err = runCatching { chatSendFile(to, name, data) }.getOrElse { it.message ?: "$it" }
+            main.post { show(err ?: "Sending $name to $to") }
+        }
+    }
+
+    /** Show a short note (the snackbar). */
+    fun say(text: String) = show(text)
 
     /** The callsign and locator the station is running with (read once at start). */
     val runningCall = start.call
@@ -340,7 +485,5 @@ class LiveRadio(
         /** dBFS to the 0..1 meter: -60 dB is empty, 0 dB full. */
         private fun level(db: Double) = ((db + 60) / 60).coerceIn(0.0, 1.0).toFloat()
 
-        private fun JSONArray?.objects(): List<JSONObject> =
-            if (this == null) emptyList() else (0 until length()).mapNotNull { optJSONObject(it) }
     }
 }

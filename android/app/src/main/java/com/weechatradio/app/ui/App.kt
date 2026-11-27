@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.sp
 import com.weechatradio.app.ui.theme.Console
 import com.weechatradio.app.radio.Folder
 import com.weechatradio.app.radio.Link
+import com.weechatradio.app.radio.LiveRadio
 import com.weechatradio.app.radio.Radio
 import com.weechatradio.app.ui.theme.Look
 
@@ -43,6 +44,9 @@ sealed interface Page {
     data class Conversation(val name: String) : Page
     data class MailOpen(val id: Long) : Page
     data class Compose(val to: String = "", val subject: String = "", val body: String = "", val file: com.weechatradio.app.radio.Attachment? = null) : Page
+    /** Real radio: one mail from the station's store, and a new mail. */
+    data class LiveMailOpen(val id: String) : Page
+    data class LiveCompose(val to: String = "", val subject: String = "") : Page
     data object PlanVhf : Page
     data object PlanHf : Page
     data object Station : Page
@@ -107,10 +111,12 @@ fun App(radio: Radio, start: Start = Start(), look: Look = Look.Material, onLook
                                 is Page.Compose -> ComposeScreen(radio, p.to, p.subject, p.body, p.file, { page = null }) { full = FullScreen.Setup(SetupStep.Radio) }
                                 Page.PlanVhf -> PlanVhfScreen(radio, { page = null }) { page = Page.PlanHf }
                                 Page.PlanHf -> PlanHfScreen(radio) { page = Page.PlanVhf }
-                                Page.Station -> StationScreen(radio, { page = null }, settings)
+                                is Page.LiveMailOpen -> (radio as? LiveRadio)?.let { live -> LiveMailOpenScreen(live, p.id, { page = null }) { to, subj -> page = Page.LiveCompose(to, subj) } }
+                                is Page.LiveCompose -> (radio as? LiveRadio)?.let { live -> LiveComposeScreen(live, p.to, p.subject) { page = null } }
+                                Page.Station -> if (radio is LiveRadio) OnAirScreen(radio, { page = null }, openChat) else StationScreen(radio, { page = null }, settings)
                                 null -> when (tab) {
                                     HomeTab.Chat -> ChatsScreen(radio, openChat) { sheet = SheetKind.NewChat }
-                                    HomeTab.Mail -> MailListScreen(radio, folder, { folder = it }, { page = Page.MailOpen(it.id) }, { page = Page.Compose() }) { sheet = SheetKind.MailSettings }
+                                    HomeTab.Mail -> if (radio is LiveRadio) LiveMailScreen(radio, { page = Page.LiveMailOpen(it) }) { page = Page.LiveCompose() } else MailListScreen(radio, folder, { folder = it }, { page = Page.MailOpen(it.id) }, { page = Page.Compose() }) { sheet = SheetKind.MailSettings }
                                     HomeTab.Map -> MapScreen(radio, tiles, { page = Page.PlanVhf }, openChat, settings)
                                     HomeTab.Radio -> RadioScreen(radio, { page = Page.Station }, settings) { full = FullScreen.Setup(SetupStep.Radio) }
                                 }
@@ -159,7 +165,7 @@ private fun ConsoleHeader(radio: Radio) {
 /** The console's bottom bar: words, a green line over the open tab, the radio's state as a square. */
 @Composable
 private fun ConsoleBar(radio: Radio, tab: HomeTab, onTab: (HomeTab) -> Unit) {
-    val mailUnread = radio.mails.count { it.folder == Folder.Inbox && it.unread }
+    val mailUnread = mailUnread(radio)
     val chatUnread = radio.channels.any { it.unread > 0 }
     val line = colors().outline
     val green = radioColors().ok
@@ -187,7 +193,7 @@ private fun ConsoleBar(radio: Radio, tab: HomeTab, onTab: (HomeTab) -> Unit) {
 
 @Composable
 private fun BottomBar(radio: Radio, tab: HomeTab, onTab: (HomeTab) -> Unit) {
-    val mailUnread = radio.mails.count { it.folder == Folder.Inbox && it.unread }
+    val mailUnread = mailUnread(radio)
     val chatUnread = radio.channels.any { it.unread > 0 }
     val state = radioState(radio).color()
     NavigationBar(containerColor = colors().surfaceContainer, windowInsets = WindowInsets(0)) {
@@ -210,3 +216,7 @@ private fun BottomBar(radio: Radio, tab: HomeTab, onTab: (HomeTab) -> Unit) {
         }
     }
 }
+
+/** Unread mail for the tab badge: the station's own count on the real radio. */
+private fun mailUnread(radio: Radio): Int =
+    (radio as? LiveRadio)?.mailTab?.unread ?: radio.mails.count { it.folder == Folder.Inbox && it.unread }

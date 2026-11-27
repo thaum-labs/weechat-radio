@@ -55,6 +55,10 @@ data class Line(
     val piecesHeard: Int = pieces,
     /** While keying: the piece on the air now (1-based), 0 = not on air. */
     val sendingPiece: Int = 0,
+    /** A file that came in on this line: where the station saved it. */
+    val filePath: String = "",
+    /** A file on its way, as the station draws it: "[████░░░░] 3/15". */
+    val progress: String = "",
 )
 
 enum class ChannelKind { Room, Closed, Direct }

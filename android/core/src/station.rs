@@ -245,13 +245,82 @@ pub fn station_status() -> String {
 fn get(url: &str) -> Option<String> {
     let rest = url.strip_prefix("http://")?;
     let (host, path) = rest.split_once('/').map(|(h, p)| (h, format!("/{p}")))?;
+    match http(host, "GET", &path, "")? {
+        (200..=299, body) => Some(body),
+        _ => None,
+    }
+}
+
+/// One HTTP/1.0 request to a loopback address: the status code and body.
+fn http(host: &str, method: &str, path: &str, body: &str) -> Option<(u16, String)> {
     let mut s = TcpStream::connect(host).ok()?;
-    s.set_read_timeout(Some(Duration::from_secs(2))).ok();
-    write!(s, "GET {path} HTTP/1.0\r\nHost: {host}\r\n\r\n").ok()?;
-    let mut body = String::new();
-    s.read_to_string(&mut body).ok()?;
-    let (head, body) = body.split_once("\r\n\r\n")?;
-    head.starts_with("HTTP/1.").then(|| body.to_string())
+    s.set_read_timeout(Some(Duration::from_secs(10))).ok();
+    let mut req = format!("{method} {path} HTTP/1.0\r\nHost: {host}\r\n");
+    if method != "GET" {
+        req.push_str(&format!(
+            "Content-Type: application/json\r\nContent-Length: {}\r\n",
+            body.len()
+        ));
+    }
+    req.push_str("\r\n");
+    req.push_str(body);
+    s.write_all(req.as_bytes()).ok()?;
+    let mut reply = Vec::new();
+    s.read_to_end(&mut reply).ok()?;
+    let reply = String::from_utf8_lossy(&reply);
+    let (head, body) = reply.split_once("\r\n\r\n")?;
+    let code = head.split_whitespace().nth(1)?.parse().ok()?;
+    head.starts_with("HTTP/1.").then(|| (code, body.to_string()))
+}
+
+/// The answer to [`station_call`].
+#[derive(uniffi::Record)]
+pub struct StationReply {
+    /// The HTTP status: 200 when it worked, 503 when the station is not
+    /// running or not answering.
+    pub code: u16,
+    /// The reply, usually JSON; a plain reason when it failed.
+    pub body: String,
+}
+
+/// One call to the station's own loopback HTTP, the same the desktop app's
+/// Email tab and traffic list use: `GET /mail/list?folder=inbox`,
+/// `POST /mail/compose` with a JSON body, `GET /traffic?since=0` and so on.
+#[uniffi::export]
+pub fn station_call(method: String, path: String, body: String) -> StationReply {
+    let down = |why: &str| StationReply {
+        code: 503,
+        body: why.to_string(),
+    };
+    let Some(r) = RUNNING.get() else {
+        return down("the station is not running");
+    };
+    if !path.starts_with('/') {
+        return down("the path must start with /");
+    }
+    let host = r
+        .status_url
+        .strip_prefix("http://")
+        .and_then(|rest| rest.split('/').next())
+        .unwrap_or_default();
+    match http(host, &method, &path, &body) {
+        Some((code, body)) => StationReply { code, body },
+        None => down("the station is not answering"),
+    }
+}
+
+/// Send a small file (a picture is shrunk to fit) in a direct chat, the
+/// way the station's web page does. Returns an error text, or None.
+#[uniffi::export]
+pub fn chat_send_file(to: String, name: String, data: Vec<u8>) -> Option<String> {
+    let Some(r) = RUNNING.get() else {
+        return Some("the station is not running".into());
+    };
+    let store = Config::load(&Config::default_path())
+        .map(|c| c.store.path)
+        .unwrap_or_else(|_| wcr::config::default_data_dir().join("wcr.db"));
+    let dir = wcr::proto::file::data_files_dir(&store);
+    r.chat.send_file(&to, &name, &data, &dir).err()
 }
 
 #[cfg(test)]
@@ -265,6 +334,26 @@ mod tests {
     fn loopback_keeps_the_port() {
         assert_eq!(loopback("0.0.0.0:6667"), "127.0.0.1:6667");
         assert_eq!(loopback("127.0.0.1:8074"), "127.0.0.1:8074");
+    }
+
+    #[test]
+    fn a_post_reaches_the_station_whole_and_its_answer_comes_back() {
+        let station = TcpListener::bind("127.0.0.1:0").unwrap();
+        let host = station.local_addr().unwrap().to_string();
+        let seen = std::thread::spawn(move || {
+            let (mut s, _) = station.accept().unwrap();
+            let mut buf = [0u8; 1024];
+            let n = s.read(&mut buf).unwrap();
+            s.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\nno such mail")
+                .unwrap();
+            String::from_utf8_lossy(&buf[..n]).to_string()
+        });
+        let reply = http(&host, "POST", "/mail/delete", r#"{"id":"x"}"#);
+        let request = seen.join().unwrap();
+        assert!(request.starts_with("POST /mail/delete HTTP/1.0\r\n"), "{request}");
+        assert!(request.contains("Content-Length: 10\r\n"), "{request}");
+        assert!(request.ends_with("\r\n\r\n{\"id\":\"x\"}"), "{request}");
+        assert_eq!(reply, Some((400, "no such mail".to_string())));
     }
 
     #[test]

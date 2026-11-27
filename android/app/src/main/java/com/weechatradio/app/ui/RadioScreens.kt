@@ -51,7 +51,7 @@ fun presetsFor(s: Status): List<String> = when {
 fun RadioScreen(radio: Radio, onStation: () -> Unit, onSettings: () -> Unit, onSetup: () -> Unit) {
     val s = radio.status
     val bt = s.link == Link.Bluetooth
-    if (radio is LiveRadio) return RealRadioScreen(radio, onSettings)
+    if (radio is LiveRadio) return RealRadioScreen(radio, onSettings, onStation)
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             TopBar("Radio", if (s.linked) "${s.rig} · linked" else "no radio") {
@@ -103,7 +103,7 @@ private data class Fact(val label: String, val value: String, val edit: Boolean 
  * else the station knows goes into the debug log, not on the screen.
  */
 @Composable
-private fun RealRadioScreen(radio: LiveRadio, onSettings: () -> Unit) {
+private fun RealRadioScreen(radio: LiveRadio, onSettings: () -> Unit, onAir: () -> Unit) {
     val context = LocalContext.current
     val copyLog = {
         val clip = context.getSystemService(android.content.ClipboardManager::class.java)
@@ -168,6 +168,10 @@ private fun RealRadioScreen(radio: LiveRadio, onSettings: () -> Unit) {
                         }
                     }
                 }
+                val heard = radio.heardAll.count { it.medium == "rf" }
+                val airWords = "On the air · " + if (heard == 1) "1 station heard" else "$heard stations heard"
+                if (m73) ConsoleButton("> " + airWords.uppercase(), Modifier.fillMaxWidth().height(44.dp), color = radioColors().ok, onClick = onAir)
+                else Outlined(airWords, Modifier.fillMaxWidth().height(48.dp), icon = Icons.Filled.Podcasts, onClick = onAir)
                 if (!m73) Outlined("Copy debug log", Modifier.fillMaxWidth().height(48.dp), icon = Icons.Filled.ContentCopy, onClick = copyLog)
             }
         }
