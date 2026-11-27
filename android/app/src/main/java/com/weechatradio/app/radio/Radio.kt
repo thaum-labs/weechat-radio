@@ -65,18 +65,23 @@ object Station {
         radio = if (on) live ?: LiveRadio(context.applicationContext, withIdentity(context, simulated.status)).also { live = it } else simulated
     }
 
-    /** The callsign and locator the user saved (Settings → Callsign / Locator). */
+    /** What the user saved in Settings: callsign, locator, frequency and preset. */
     private fun withIdentity(context: Context, s: Status): Status {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        fun saved(key: String, now: String) = prefs.getString(key, null)?.takeIf { it.isNotBlank() } ?: now
         return s.copy(
-            call = prefs.getString(CALL, null)?.takeIf { it.isNotBlank() } ?: s.call,
-            grid = prefs.getString(GRID, null)?.takeIf { it.isNotBlank() } ?: s.grid,
+            call = saved(CALL, s.call),
+            grid = saved(GRID, s.grid),
+            freq = saved(FREQ, s.freq),
+            preset = saved(PRESET, s.preset),
         )
     }
 
     const val PREFS = "settings"
     const val CALL = "call"
     const val GRID = "grid"
+    const val FREQ = "freq"
+    const val PRESET = "preset"
 
     /**
      * Start the app again from scratch. The station reads its callsign once at

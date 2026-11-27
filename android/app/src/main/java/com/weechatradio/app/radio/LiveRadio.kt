@@ -48,7 +48,7 @@ class LiveRadio(
     override val stations: List<MapStation> get() = emptyList()
 
     /** The big line on the Radio tab and why, from hard evidence only. */
-    var headline by mutableStateOf("NO RADIO LINK" to "starting the station…")
+    var headline by mutableStateOf("NOT LINKED" to "starting the station…")
         private set
 
     /** Everything needed to see why the link does or does not work, as text to paste. */
@@ -65,7 +65,15 @@ class LiveRadio(
         appendLine(lastStatusJson)
     }
 
-    /** The test panel on the Radio tab: plain facts from the station, nothing made up. */
+    /** True while audio from the radio is arriving now (the last 5 s). */
+    var hearing by mutableStateOf(false)
+        private set
+
+    /** The station heard most recently by radio, and how long ago: "XX0BBB · 2 min ago". */
+    var lastHeard by mutableStateOf("nobody yet")
+        private set
+
+    /** Everything the station reports, for Copy debug log: plain facts, nothing made up. */
     var facts by mutableStateOf(listOf("Station" to "starting…"))
         private set
 
@@ -115,7 +123,7 @@ class LiveRadio(
     private fun apply(statusJson: String, chatJson: String) {
         tick++
         if (statusJson.isNotEmpty()) runCatching { applyStatus(JSONObject(statusJson)) }
-        else if (!headline.first.startsWith("STATION")) headline = "NO RADIO LINK" to "the station is not answering yet"
+        else if (!headline.first.startsWith("STATION")) headline = "NOT LINKED" to "the station is not answering yet"
         if (chatJson.isNotEmpty()) runCatching { applyChat(JSONObject(chatJson)) }
     }
 
@@ -157,9 +165,10 @@ class LiveRadio(
         val keyAsked = j.optBoolean("ptt_on")
         val open = link.open && j.optBoolean("tnc_ok")
         val quietS = if (fromRadioAt > 0) (now - fromRadioAt) / 1000 else -1
+        hearing = open && quietS in 0..5
         val reason = j.optString("tnc").ifEmpty { link.log().lastOrNull().orEmpty() }
         headline = when {
-            !open -> "NO RADIO LINK" to reason.ifEmpty { "the station has not reached the radio" }
+            !open -> "NOT LINKED" to reason.ifEmpty { "the station has not reached the radio" }
             keyAsked && now - confirmAt < 3000 -> "TRANSMITTING" to "the radio is confirming the audio it keys"
             keyAsked -> "SENDING TO RADIO" to "audio is going to the radio; check its TX light, it sends no TX echo"
             quietS < 0 -> "CHANNEL OPEN" to "nothing has come from the radio yet (no audio, no replies)"
@@ -186,9 +195,19 @@ class LiveRadio(
             "Your lines / lines heard" to "$mine / $theirs",
         )
         lastStatusJson = j.toString(1)
-        heard = j.optJSONArray("heard").objects().mapNotNull { h ->
+        val heardRows = j.optJSONArray("heard").objects()
+        heard = heardRows.mapNotNull { h ->
             h.optDouble("snr").takeIf { !it.isNaN() }?.let { Heard(h.optString("callsign"), it.toInt()) }
         }
+        lastHeard = heardRows.maxByOrNull { it.optLong("last_heard") }?.let { h ->
+            val ago = System.currentTimeMillis() / 1000 - h.optLong("last_heard")
+            h.optString("callsign") + " · " + when {
+                h.optLong("last_heard") <= 0 -> "heard"
+                ago < 60 -> "just now"
+                ago < 3600 -> "${ago / 60} min ago"
+                else -> "${ago / 3600} h ago"
+            }
+        } ?: "nobody yet"
     }
 
     private fun applyChat(j: JSONObject) {
@@ -200,7 +219,7 @@ class LiveRadio(
             Channel(
                 n,
                 if (n.startsWith("#")) ChannelKind.Room else ChannelKind.Direct,
-                last?.let { "${it.from}: ${it.text}" }.orEmpty(),
+                last?.let { if (it.mine) "You: ${it.text}" else if (n.startsWith("#")) "${it.from}: ${it.text}" else it.text }.orEmpty(),
                 last?.time.orEmpty(),
             )
         }
@@ -268,10 +287,28 @@ class LiveRadio(
 
     override fun undoQueued() = show("Undo is not wired to the real radio yet")
 
+    /**
+     * Settings → Frequency or Preset. The station uses it now and the app keeps
+     * it for the next start. Bluetooth audio cannot tune the radio, so the
+     * frequency is dialled on the radio by hand.
+     */
     override fun tune(freq: String, emission: String, preset: String) {
+        val p = if (preset in BT_PRESETS) preset else status.preset
+        context.getSharedPreferences(Station.PREFS, Context.MODE_PRIVATE).edit()
+            .putString(Station.FREQ, freq).putString(Station.PRESET, p).apply()
+        val freqChanged = freq != status.freq
+        status = status.copy(freq = freq, preset = p)
         thread {
-            val err = radioSetting("freq", freq) ?: radioSetting("preset", preset)
-            main.post { show(err ?: "Set the radio to $freq MHz $emission by hand; the station now uses $preset") }
+            val err = radioSetting("freq", freq) ?: radioSetting("preset", p)
+            main.post {
+                show(
+                    when {
+                        err != null -> "Saved for the next start. The station said: $err"
+                        freqChanged -> "Now $freq MHz. Dial $freq on the ${status.rig} by hand."
+                        else -> "Now running $p"
+                    },
+                )
+            }
         }
     }
 

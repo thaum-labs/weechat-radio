@@ -69,27 +69,31 @@ data class RadioColors(
     val onTxContainer: Color,
     /** Delivered, linked, MAIL GW up. */
     val ok: Color,
+    val onOk: Color,
     val okContainer: Color,
+    val onOkContainer: Color,
     /** Untested, marginal, battery, licence notes. */
     val warn: Color,
     val warnContainer: Color,
     val onWarnContainer: Color,
     /** Other stations' callsigns. */
     val otherCall: Color,
+    /** Your own callsign (modem73 console lines). */
+    val mine: Color,
 )
 
 private val DarkRadio = RadioColors(
     tx = Color(0xFFFF8A50), onTx = Color(0xFF2A0D00), txContainer = Color(0xFF5D2C12), onTxContainer = Color(0xFFFFDBC9),
-    ok = Color(0xFF78DC66), okContainer = Color(0xFF1B5220),
+    ok = Color(0xFF78DC66), onOk = Color(0xFF0E3A12), okContainer = Color(0xFF1B5220), onOkContainer = Color(0xFFCFF5C4),
     warn = Color(0xFFFFD166), warnContainer = Color(0xFF574300), onWarnContainer = Color(0xFFFFE9B0),
-    otherCall = Color(0xFF5FD3E0),
+    otherCall = Color(0xFF5FD3E0), mine = Color(0xFFB5C4FF),
 )
 
 private val LightRadio = RadioColors(
     tx = Color(0xFFB3410A), onTx = Color.White, txContainer = Color(0xFFFFDBC9), onTxContainer = Color(0xFF5D2C12),
-    ok = Color(0xFF1D7A22), okContainer = Color(0xFFC8F0BE),
+    ok = Color(0xFF1D7A22), onOk = Color.White, okContainer = Color(0xFFC8F0BE), onOkContainer = Color(0xFF0B3D0F),
     warn = Color(0xFF7A5900), warnContainer = Color(0xFFFFE9B0), onWarnContainer = Color(0xFF3D2E00),
-    otherCall = Color(0xFF006A73),
+    otherCall = Color(0xFF006A73), mine = Color(0xFF4C5C92),
 )
 
 /** The same in both themes, as on the desktop and the website. */
@@ -115,35 +119,61 @@ object WaterfallColors {
     val yourTx = Color(0xFFFF7A3D)
 }
 
-/** Settings → Look → Theme: the Material design, or the desktop app's modem73 look. Same screens. */
-enum class Look(val label: String) { Material("Material"), Modem73("modem73") }
+/** Settings → Phone → Theme: stock Android (follows the phone's light or dark), or the modem73 console. */
+enum class Look(val label: String) { Material("Standard"), Modem73("modem73") }
 
-// modem73: the desktop app's modem73 look (crates/wcr/src/gui/modem73.rs).
-// Always dark, monospace, green accents.
+// modem73 console (design canvas "Android app themes", artboard Console, approved by
+// Tobias 2026-11-27): always dark, monospace, square, lines instead of cards.
+object Console {
+    val bg = Color(0xFF100008)
+    val deep = Color(0xFF0A0005)
+    val fg = Color(0xFFE8E0E4)
+    val mute = Color(0xFF8A8286)
+    val line = Color(0xFF3A3236)
+    val green = Color(0xFF5DC97A)
+    val red = Color(0xFFFF4D4D)
+    val orange = Color(0xFFFF7A3D)
+    val gold = Color(0xFFE6B800)
+    val cyan = Color(0xFF00D0D0)
+    val peer = Color(0xFFC8B4F0)
+    val me = Color(0xFF7D9BFF)
+    val pending = Color(0xFFE3CF96)
+    val lilac = Color(0xFFC4B5FD)
+}
+
 private val Modem73 = darkColorScheme(
-    primary = Color(0xFF18FC7C), onPrimary = Color(0xFF0A0005),
-    primaryContainer = Color(0xFF2A1030), onPrimaryContainer = Color(0xFF18FC7C),
-    secondary = Color(0xFF18FC7C), onSecondary = Color(0xFF0A0005),
-    secondaryContainer = Color(0xFF2A1030), onSecondaryContainer = Color(0xFF18FC7C),
-    tertiary = Color(0xFF00D0D0), onTertiary = Color(0xFF0A0005),
-    error = Color(0xFFFF4D4D), onError = Color(0xFF0A0005),
-    errorContainer = Color(0xFF3A0A0A), onErrorContainer = Color(0xFFFF9A9A),
-    background = Color(0xFF100008), onBackground = Color(0xFFE8E0E4),
-    surface = Color(0xFF100008), onSurface = Color(0xFFE8E0E4),
-    surfaceVariant = Color(0xFF1E0A14), onSurfaceVariant = Color(0xFF8A8286),
-    outline = Color(0xFF3A3236), outlineVariant = Color(0xFF2A2226),
-    surfaceContainerLowest = Color(0xFF0A0005), surfaceContainerLow = Color(0xFF0A0005),
-    surfaceContainer = Color(0xFF0A0005), surfaceContainerHigh = Color(0xFF16060E),
+    primary = Console.green, onPrimary = Console.bg,
+    primaryContainer = Color(0xFF0A2214), onPrimaryContainer = Console.green,
+    secondary = Console.green, onSecondary = Console.bg,
+    secondaryContainer = Color(0xFF0A2214), onSecondaryContainer = Console.green,
+    tertiary = Console.cyan, onTertiary = Console.bg,
+    error = Console.red, onError = Console.bg,
+    errorContainer = Color(0xFF2A0A0A), onErrorContainer = Console.red,
+    background = Console.bg, onBackground = Console.fg,
+    surface = Console.bg, onSurface = Console.fg,
+    surfaceVariant = Color(0xFF1E0A14), onSurfaceVariant = Console.mute,
+    outline = Console.line, outlineVariant = Color(0xFF2A2226),
+    surfaceContainerLowest = Console.deep, surfaceContainerLow = Console.deep,
+    surfaceContainer = Console.deep, surfaceContainerHigh = Color(0xFF16060E),
     surfaceContainerHighest = Color(0xFF1E0A14),
-    inverseSurface = Color(0xFFE8E0E4), inverseOnSurface = Color(0xFF100008),
-    inversePrimary = Color(0xFF0A7A3C),
+    inverseSurface = Console.fg, inverseOnSurface = Console.bg,
+    inversePrimary = Color(0xFF2E7D46),
 )
 
 private val Modem73Radio = RadioColors(
-    tx = Color(0xFFFF7A3D), onTx = Color(0xFF0A0005), txContainer = Color(0xFF3A1408), onTxContainer = Color(0xFFFFC2A6),
-    ok = Color(0xFF18FC7C), okContainer = Color(0xFF0A3A1E),
-    warn = Color(0xFFE6B800), warnContainer = Color(0xFF2A2000), onWarnContainer = Color(0xFFFFE08A),
-    otherCall = Color(0xFF00D0D0),
+    tx = Console.orange, onTx = Console.bg, txContainer = Color(0xFF2A1206), onTxContainer = Console.orange,
+    ok = Console.green, onOk = Console.bg, okContainer = Color(0xFF0A2214), onOkContainer = Console.green,
+    warn = Console.gold, warnContainer = Color(0xFF2A2000), onWarnContainer = Color(0xFFFFE08A),
+    otherCall = Console.peer, mine = Console.me,
+)
+
+/** The console has square corners everywhere. */
+private val Square = androidx.compose.material3.Shapes(
+    extraSmall = androidx.compose.foundation.shape.RoundedCornerShape(0),
+    small = androidx.compose.foundation.shape.RoundedCornerShape(0),
+    medium = androidx.compose.foundation.shape.RoundedCornerShape(0),
+    large = androidx.compose.foundation.shape.RoundedCornerShape(0),
+    extraLarge = androidx.compose.foundation.shape.RoundedCornerShape(0),
 )
 
 val LocalRadioColors = staticCompositionLocalOf { DarkRadio }
@@ -169,7 +199,7 @@ val LocalModem73 = staticCompositionLocalOf { false }
 fun WeechatTheme(dark: Boolean = isSystemInDarkTheme(), look: Look = Look.Material, content: @Composable () -> Unit) {
     if (look == Look.Modem73) {
         CompositionLocalProvider(LocalRadioColors provides Modem73Radio, LocalModem73 provides true) {
-            MaterialTheme(colorScheme = Modem73, typography = Typography().mono()) {
+            MaterialTheme(colorScheme = Modem73, typography = Typography().mono(), shapes = Square) {
                 // Text without its own font family takes it from here.
                 androidx.compose.material3.ProvideTextStyle(TextStyle(fontFamily = Mono), content)
             }

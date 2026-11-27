@@ -1,6 +1,7 @@
 package com.weechatradio.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -10,11 +11,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Help
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -23,123 +22,253 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.weechatradio.app.radio.Channel
 import com.weechatradio.app.radio.ChannelKind
 import com.weechatradio.app.radio.Line
 import com.weechatradio.app.radio.LineKind
 import com.weechatradio.app.radio.Mark
 import com.weechatradio.app.radio.Radio
 import com.weechatradio.app.radio.Via
+import com.weechatradio.app.ui.theme.Console
 import com.weechatradio.app.ui.theme.Mono
 
-// Design screens 01–04: chat, chat on air, channels sheet, marks key sheet.
+// Chats tab (design canvas "Android app themes", approved 2026-11-27): the list
+// of chats, then one conversation. Stock bubbles, or console lines in modem73.
 
 @Composable
-fun ChatScreen(radio: Radio, onChannels: () -> Unit, onKey: () -> Unit, onSettings: () -> Unit) {
-    val s = radio.status
-    val air = radio.onAir
-    val ch = radio.channels.firstOrNull { it.name == radio.channel }
-    val sub = when (ch?.kind) {
-        ChannelKind.Closed -> "closed room · [all] receipts"
-        ChannelKind.Direct -> "direct · ${if (s.linked) "radio + hub" else "hub"}"
-        else -> "everyone can read · ${if (s.linked) "radio + hub" else "hub"}"
-    }
+fun ChatsScreen(radio: Radio, onOpen: (String) -> Unit, onNew: () -> Unit) {
+    val m73 = console()
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            TopBar(
-                radio.channel, sub, lead = { LogoLead() }, onTitle = onChannels,
-                titleTrail = { Icon(Icons.Filled.ArrowDropDown, "Channels", tint = colors().onSurfaceVariant) },
-            ) {
-                IconBtn(Icons.AutoMirrored.Filled.Help, "What the marks mean", onClick = onKey)
-                IconBtn(Icons.Filled.Settings, "Settings", onClick = onSettings)
+            TopBar("Chats") { if (m73) ConsoleButton("+ NEW", onClick = onNew) }
+            LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(bottom = 88.dp)) {
+                items(radio.channels, key = { it.name }) { ch -> if (m73) ConsoleChatRow(ch) { onOpen(ch.name) } else ChatRow(ch) { onOpen(ch.name) } }
             }
-            if (air != null) OnAirBanner(s, air, radio::stopTx)
-            StationStrip(s, tx = air != null)
+        }
+        if (!m73) {
+            ExtendedFloatingActionButton(
+                onClick = onNew, modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                icon = { Icon(Icons.Filled.Edit, null) }, text = { Text("New chat") },
+                containerColor = colors().primaryContainer, contentColor = colors().onPrimaryContainer,
+            )
+        }
+        radio.note?.let { Note(it, Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp)) }
+    }
+}
+
+@Composable
+private fun ChatRow(ch: Channel, onClick: () -> Unit) {
+    val room = ch.kind != ChannelKind.Direct
+    val unread = ch.unread > 0
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).heightIn(min = 72.dp).padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Box(
+            Modifier.size(40.dp).clip(CircleShape).background(if (room) colors().secondaryContainer else colors().primaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                if (room) "#" else ch.name.replace(Regex("^[A-Z0-9]*[0-9]"), "").take(1).ifEmpty { ch.name.take(1) },
+                fontSize = 16.sp, fontWeight = FontWeight.Medium,
+                color = if (room) colors().onSecondaryContainer else colors().onPrimaryContainer,
+            )
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(ch.name, fontSize = 16.sp, lineHeight = 24.sp, fontFamily = if (room) null else Mono, fontWeight = if (unread) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(ch.summary.ifEmpty { "Nothing yet" }, fontSize = 14.sp, lineHeight = 20.sp, color = if (unread) colors().onSurface else colors().onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(ch.time, fontSize = 12.sp, lineHeight = 16.sp, color = colors().onSurfaceVariant)
+            if (unread) Badge(containerColor = colors().primary, contentColor = colors().onPrimary) { Text("${ch.unread}") }
+        }
+    }
+}
+
+@Composable
+private fun ConsoleChatRow(ch: Channel, onClick: () -> Unit) {
+    val room = ch.kind != ChannelKind.Direct
+    val unread = ch.unread > 0
+    Column(
+        Modifier.fillMaxWidth().underline(colors().outline).clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(ch.name, Modifier.weight(1f), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = if (room) colors().onSurface else Console.peer, maxLines = 1)
+            Text(ch.time, fontSize = 12.sp, color = colors().onSurfaceVariant)
+            if (unread) Text("[${ch.unread}]", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Console.gold)
+        }
+        Text(ch.summary.ifEmpty { "nothing yet" }, fontSize = 13.sp, lineHeight = 18.sp, color = if (unread) colors().onSurface else colors().onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** One chat: a room like #bulletin, or a direct chat with a callsign. */
+@Composable
+fun ConversationScreen(radio: Radio, name: String, onBack: () -> Unit) {
+    LaunchedEffect(name) { if (radio.channel != name) radio.openChannel(name) }
+    val s = radio.status
+    val m73 = console()
+    val room = name.startsWith("#")
+    val how = if (s.linked) "by radio" else "over the hub"
+    val sub = if (m73) (if (room) "everyone · $how" else "direct · $how") else if (room) "Everyone can read · $how" else "Direct chat · $how"
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            TopBar(name, sub, lead = { BackLead(onBack) })
+            if (m73) Box(Modifier.fillMaxWidth().underline(colors().outline))
             val lines = radio.lines
-            LazyColumn(Modifier.weight(1f).fillMaxWidth(), reverseLayout = true, contentPadding = PaddingValues(bottom = 6.dp)) {
-                items(lines.asReversed(), key = { it.id }) { LineRow(it, s.showSnr) }
+            if (lines.isEmpty()) {
+                Box(Modifier.weight(1f).fillMaxWidth().padding(24.dp), contentAlignment = if (m73) Alignment.CenterStart else Alignment.Center) {
+                    Text(
+                        if (room) "Nothing in $name yet. What you send here goes out to everyone listening." else "No messages with $name yet.",
+                        fontSize = if (m73) 13.sp else 14.sp, lineHeight = 20.sp, color = colors().onSurfaceVariant, textAlign = if (m73) TextAlign.Start else TextAlign.Center,
+                    )
+                }
+            } else {
+                LazyColumn(
+                    Modifier.weight(1f).fillMaxWidth(), reverseLayout = true,
+                    contentPadding = PaddingValues(start = if (m73) 16.dp else 12.dp, end = if (m73) 16.dp else 12.dp, top = 8.dp, bottom = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (m73) 14.dp else 10.dp),
+                ) {
+                    items(lines.asReversed(), key = { it.id }) { if (m73) ConsoleLine(it, s.call) else LineRow(it) }
+                }
             }
-            Composer(if (radio.channel.startsWith("#")) "Message ${radio.channel} or /command" else "Message ${radio.channel}", radio::send)
+            if (m73) ConsoleComposer("message $name", radio::send) else Composer("Message $name", radio::send)
         }
-        radio.note?.let { Note(it, Modifier.align(Alignment.BottomCenter).padding(bottom = 72.dp), "UNDO".takeIf { _ -> it.startsWith("Queued") }) { radio.undoQueued() } }
+        radio.note?.let { Note(it, Modifier.align(Alignment.BottomCenter).padding(bottom = 72.dp)) }
     }
 }
 
 @Composable
-private fun LineRow(l: Line, showSnr: Boolean) {
+private fun LineRow(l: Line) {
     when (l.kind) {
-        LineKind.Day -> Box(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 2.dp), contentAlignment = Alignment.Center) {
-            Chip(l.text, small = true, container = colors().surfaceContainerHigh)
-        }
-        LineKind.Note -> Text(l.text, Modifier.fillMaxWidth().padding(top = 8.dp), fontSize = 12.sp, color = colors().onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-        LineKind.Rest -> Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
-            Chip(l.text, small = true, icon = Icons.Filled.Schedule, container = colors().surfaceContainerHigh)
-        }
-        LineKind.Message -> Bubble(l, showSnr)
+        LineKind.Message -> Bubble(l)
+        else -> Text(l.text, Modifier.fillMaxWidth(), fontSize = 12.sp, color = colors().onSurfaceVariant, textAlign = TextAlign.Center)
+    }
+}
+
+/** What happened to a line you sent, in words, with its colour. */
+@Composable
+private fun sentStatus(l: Line): Pair<String, Color> = when {
+    l.sendingPiece > 0 -> "sending ${l.sendingPiece} of ${l.pieces}" to radioColors().tx
+    else -> when (l.mark) {
+        Mark.Queued -> "waiting to send" to radioColors().warn
+        Mark.Sent -> (if (l.keyed > 1) "sent ×${l.keyed}" else "sent") to colors().onPrimaryContainer
+        Mark.Relayed -> "heard again" to colors().onPrimaryContainer
+        Mark.Gateway -> "at the gateway" to colors().onPrimaryContainer
+        Mark.Delivered -> "delivered" to radioColors().ok
+        Mark.AllMembers -> "everyone got it" to radioColors().ok
+        Mark.Refused -> "not delivered" to colors().error
+        null -> "" to colors().onPrimaryContainer
     }
 }
 
 @Composable
-private fun Bubble(l: Line, showSnr: Boolean) {
-    val bg = if (l.mine) colors().primaryContainer else colors().surfaceContainerHigh
-    val fg = if (l.mine) colors().onPrimaryContainer else colors().onSurface
-    val shape = if (l.mine) RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp) else RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp)
-    Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 6.dp), horizontalArrangement = if (l.mine) Arrangement.End else Arrangement.Start) {
-        Column(Modifier.widthIn(max = 330.dp).clip(shape).background(bg).padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 6.dp)) {
-            if (!l.mine) MonoText(l.from, Modifier.padding(bottom = 2.dp), color = radioColors().otherCall, size = 12.sp, weight = FontWeight.Medium)
-            Text(l.text, color = fg, fontSize = 14.5.sp, lineHeight = 20.sp)
-            if (l.sendingPiece > 0) {
-                Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                        repeat(l.pieces) { i ->
-                            Box(Modifier.weight(1f).height(4.dp).clip(RoundedCornerShape(2.dp)).background(if (i < l.sendingPiece) radioColors().tx else fg.copy(alpha = 0.18f)))
-                        }
+private fun Bubble(l: Line) {
+    if (!l.mine) {
+        Row(Modifier.fillMaxWidth()) {
+            Column(
+                Modifier.fillMaxWidth(0.82f).wrapContentWidth(Alignment.Start).clip(RoundedCornerShape(4.dp, 18.dp, 18.dp, 18.dp))
+                    .background(colors().surfaceContainerHigh).padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                MonoText(l.from, color = radioColors().otherCall, size = 12.sp, weight = FontWeight.Medium)
+                Text(l.text, fontSize = 15.sp, lineHeight = 21.sp)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Icon(if (l.via == Via.Internet) Icons.Filled.Cloud else Icons.Filled.SettingsInputAntenna, null, Modifier.size(12.dp), tint = colors().onSurfaceVariant)
+                    Text(listOfNotNull(l.time, l.snrDb?.let { "$it dB" }, if (l.pieces > 1) "${l.piecesHeard} of ${l.pieces} parts" else null).joinToString(" · "), fontSize = 11.sp, lineHeight = 16.sp, color = colors().onSurfaceVariant)
+                }
+            }
+        }
+        return
+    }
+    val (status, tone) = sentStatus(l)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        Column(
+            Modifier.fillMaxWidth(0.82f).wrapContentWidth(Alignment.End).clip(RoundedCornerShape(18.dp, 4.dp, 18.dp, 18.dp))
+                .background(colors().primaryContainer).padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(l.text, fontSize = 15.sp, lineHeight = 21.sp, color = colors().onPrimaryContainer)
+            if (l.sendingPiece > 0 && l.pieces > 1) {
+                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    repeat(l.pieces) { i ->
+                        Box(Modifier.weight(1f).height(4.dp).clip(RoundedCornerShape(2.dp)).background(if (i < l.sendingPiece) radioColors().ok else colors().onPrimaryContainer.copy(alpha = 0.3f)))
                     }
-                    Text("sending ${l.sendingPiece} of ${l.pieces}", fontSize = 11.sp, color = radioColors().tx, fontWeight = FontWeight.Medium)
                 }
             }
-            Row(Modifier.align(Alignment.End).padding(top = 3.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(l.time, fontSize = 11.sp, color = colors().onSurfaceVariant)
-                when (l.via) {
-                    Via.Radio -> Icon(Icons.Filled.SettingsInputAntenna, "by radio", Modifier.size(14.dp), tint = radioColors().tx)
-                    Via.Internet -> Icon(Icons.Filled.Cloud, "over the internet", Modifier.size(14.dp), tint = colors().primary)
-                    null -> {}
+            Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(listOf(l.time, status).filter { it.isNotEmpty() }.joinToString(" · "), fontSize = 11.sp, lineHeight = 16.sp, fontWeight = FontWeight.Medium, color = tone)
+                when (l.mark) {
+                    Mark.Sent -> Icon(Icons.Filled.Done, null, Modifier.size(14.dp), tint = tone)
+                    Mark.Delivered, Mark.AllMembers -> Icon(Icons.Filled.DoneAll, null, Modifier.size(16.dp), tint = tone)
+                    else -> {}
                 }
-                if (showSnr && l.snrDb != null) MonoText("${l.snrDb} dB", color = colors().onSurfaceVariant, size = 10.5.sp)
-                if (l.pieces > 1 && !l.mine) PiecesChip(l.piecesHeard, l.pieces)
-                if (l.mine) MonoText(if (l.mark == Mark.Queued && l.keyed == 0) "queued" else "×${l.keyed}", color = colors().onSurfaceVariant, size = 10.5.sp)
-                l.mark?.let { MarkIcon(it) }
             }
         }
     }
 }
 
-/** "3 of 3": pieces of one long message that arrived. */
+/** A console line: "22:41 [XX0BBB] [rf] -4dB", then the text. */
 @Composable
-fun PiecesChip(heard: Int, of: Int, text: String = "$heard of $of") {
-    Chip(
-        text, small = true, container = colors().surfaceContainerHighest,
-        content = if (heard >= of) radioColors().ok else radioColors().warn, icon = Icons.Filled.Group,
-    )
+private fun ConsoleLine(l: Line, me: String) {
+    if (l.kind != LineKind.Message) {
+        Text("-- ${l.text} --", fontSize = 12.sp, color = colors().onSurfaceVariant)
+        return
+    }
+    val (tag, tagColor, textColor) = when {
+        !l.mine -> Triple(
+            if (l.via == Via.Internet) "[net]" else "[rf]" + (l.snrDb?.let { " ${it}dB" } ?: ""),
+            if (l.via == Via.Internet) Console.cyan else Console.gold, colors().onSurface,
+        )
+        l.sendingPiece > 0 -> Triple("[>>] part ${l.sendingPiece}/${l.pieces}", Console.orange, Console.pending)
+        else -> when (l.mark) {
+            Mark.Queued -> Triple("[..] waiting", Console.pending, Console.pending)
+            Mark.Sent -> Triple(if (l.keyed > 1) "[tx] sent x${l.keyed}" else "[tx] sent", Console.pending, colors().onSurface)
+            Mark.Relayed -> Triple("[rl] heard again", Console.pending, colors().onSurface)
+            Mark.Gateway -> Triple("[gw] at gateway", Console.cyan, colors().onSurface)
+            Mark.Delivered -> Triple("[ok]", Console.green, colors().onSurface)
+            Mark.AllMembers -> Triple("[all]", Console.green, colors().onSurface)
+            Mark.Refused -> Triple("[no] not delivered", Console.red, colors().onSurface)
+            null -> Triple("", Console.pending, colors().onSurface)
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(l.time, fontSize = 12.sp, color = colors().onSurfaceVariant)
+            Text("[${if (l.mine) me else l.from}]", Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = if (l.mine) Console.me else Console.peer, maxLines = 1)
+            Text(tag, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = tagColor, maxLines = 1)
+        }
+        Text(l.text, fontSize = 14.sp, lineHeight = 20.sp, color = textColor)
+        if (l.mine && l.sendingPiece > 0 && l.pieces > 1) {
+            val bar = (1..l.pieces).joinToString("|") { if (it < l.sendingPiece) "##" else if (it == l.sendingPiece) ">>" else ".." }
+            Text("[$bar]", fontSize = 12.sp, letterSpacing = 1.sp, color = Console.orange)
+        }
+    }
 }
 
 @Composable
 private fun Composer(hint: String, onSend: (String) -> Unit) {
     var text by rememberSaveable { mutableStateOf("") }
-    val send = { onSend(text); text = "" }
-    Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box(Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(24.dp)).background(colors().surfaceContainerHigh).padding(horizontal = 16.dp), contentAlignment = Alignment.CenterStart) {
-            if (text.isEmpty()) Text(hint, color = colors().onSurfaceVariant, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    val send = { if (text.isNotBlank()) { onSend(text); text = "" } }
+    Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(24.dp)).background(colors().surfaceContainerHigh).padding(horizontal = 20.dp), contentAlignment = Alignment.CenterStart) {
+            if (text.isEmpty()) Text(hint, color = colors().onSurfaceVariant, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             BasicTextField(
                 text, { text = it }, Modifier.fillMaxWidth(), singleLine = true,
-                textStyle = TextStyle(fontSize = 15.sp, color = colors().onSurface),
+                textStyle = TextStyle(fontSize = 16.sp, color = colors().onSurface),
                 cursorBrush = SolidColor(colors().primary),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = { send() }),
@@ -149,107 +278,59 @@ private fun Composer(hint: String, onSend: (String) -> Unit) {
     }
 }
 
-/** Design 03: channels sheet with rooms, direct chats and stations heard. */
+/** The console prompt: "$ [message] SEND". */
 @Composable
-fun ChannelsSheet(radio: Radio, onClose: () -> Unit) {
-    Sheet(onClose) {
-        Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Channels", fontSize = 22.sp, lineHeight = 28.sp, modifier = Modifier.weight(1f))
-            Chip(radio.status.mode.id, small = true, container = colors().primaryContainer, content = colors().onPrimaryContainer)
-        }
-        val pick = { name: String -> radio.openChannel(name); onClose() }
-        radio.channels.filter { it.kind != ChannelKind.Direct }.forEach { ch ->
-            ChannelRow(if (ch.kind == ChannelKind.Room) "#" else "group", ch.name, ch.summary, ch.time, ch.unread, ch.name == radio.channel) { pick(ch.name) }
-        }
-        Section("Direct", top = 12.dp)
-        radio.channels.filter { it.kind == ChannelKind.Direct }.forEach { ch ->
-            ChannelRow(ch.name.take(1), ch.name, ch.summary, ch.time, ch.unread, ch.name == radio.channel) { pick(ch.name) }
-        }
-        Label("Heard in the last 30 min", Modifier.padding(start = 24.dp, end = 24.dp, top = 10.dp, bottom = 2.dp))
-        Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            radio.heard.forEach { h ->
-                val col = when {
-                    h.snrDb >= 8 -> radioColors().ok
-                    h.snrDb >= 4 -> radioColors().warn
-                    else -> colors().error
-                }
-                Chip(h.call, mono = true, content = radioColors().otherCall, trail = { MonoText("${h.snrDb} dB", color = col, size = 12.sp) }, onClick = { pick(h.call) })
-            }
-        }
-        var call by rememberSaveable { mutableStateOf("") }
-        Row(Modifier.padding(start = 24.dp, end = 24.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                call, { call = it.uppercase() }, Modifier.weight(1f), label = { Text("Direct chat") }, placeholder = { Text("Callsign") },
-                singleLine = true, textStyle = TextStyle(fontFamily = Mono, fontSize = 15.sp),
-            )
-            FilledTonalButton({ if (call.isNotBlank()) pick(call.trim()) }) { Text("Open") }
-            OutlinedButton({}, contentPadding = PaddingValues(start = 10.dp, end = 14.dp)) {
-                Icon(Icons.Filled.Add, null, Modifier.size(18.dp)); Text("Room")
-            }
-        }
-    }
-}
-
-@Composable
-private fun ChannelRow(lead: String, name: String, summary: String, time: String, unread: Int, selected: Boolean, onClick: () -> Unit) {
-    val callsign = !name.startsWith("#")
+private fun ConsoleComposer(hint: String, onSend: (String) -> Unit) {
+    var text by rememberSaveable { mutableStateOf("") }
+    val send = { if (text.isNotBlank()) { onSend(text); text = "" } }
+    val line = colors().outline
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = if (selected) 8.dp else 0.dp)
-            .clip(RoundedCornerShape(28.dp)).background(if (selected) colors().secondaryContainer else Color.Transparent)
-            .clickable(onClick = onClick).heightIn(min = 64.dp).padding(horizontal = if (selected) 16.dp else 24.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth().drawBehind { drawLine(line, Offset(0f, 0f), Offset(size.width, 0f), 1.dp.toPx()) }
+            .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Box(Modifier.size(40.dp).clip(CircleShape).background(colors().primaryContainer), contentAlignment = Alignment.Center) {
-            when (lead) {
-                "#" -> Icon(Icons.Filled.Tag, null, Modifier.size(22.dp), tint = colors().onPrimaryContainer)
-                "group" -> Icon(Icons.Filled.Group, null, Modifier.size(22.dp), tint = colors().onPrimaryContainer)
-                else -> Text(lead, color = colors().onPrimaryContainer, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        Text("$", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Console.green)
+        Box(Modifier.weight(1f).height(40.dp).border(1.dp, line).background(colors().surfaceContainer).padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
+            if (text.isEmpty()) Text(hint, color = colors().onSurfaceVariant, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            BasicTextField(
+                text, { text = it }, Modifier.fillMaxWidth(), singleLine = true,
+                textStyle = TextStyle(fontFamily = Mono, fontSize = 14.sp, color = colors().onSurface),
+                cursorBrush = SolidColor(Console.green),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { send() }),
+            )
+        }
+        ConsoleButton("SEND", Modifier.height(40.dp), color = Console.green, border = Console.green, onClick = send)
+    }
+}
+
+/** New chat: type a callsign, or tap a station heard by radio. */
+@Composable
+fun NewChatSheet(radio: Radio, onClose: () -> Unit, onOpen: (String) -> Unit) {
+    var call by rememberSaveable { mutableStateOf("") }
+    val open = { if (call.isNotBlank()) onOpen(call.trim().uppercase()) }
+    Sheet(onClose) {
+        Text("New chat", Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp), fontSize = 22.sp, lineHeight = 28.sp)
+        Row(Modifier.padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                call, { call = it.uppercase() }, Modifier.weight(1f), label = { Text("Callsign") }, singleLine = true,
+                textStyle = TextStyle(fontFamily = Mono, fontSize = 15.sp),
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, imeAction = ImeAction.Go),
+                keyboardActions = KeyboardActions(onGo = { open() }),
+            )
+            Button(open) { Text("Open") }
+        }
+        if (radio.heard.isNotEmpty()) {
+            Text("Heard by radio", Modifier.padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 4.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = colors().onSurfaceVariant)
+            Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                radio.heard.forEach { h ->
+                    Chip(h.call, mono = true, content = radioColors().otherCall, trail = { MonoText("${h.snrDb} dB", color = colors().onSurfaceVariant, size = 12.sp) }, onClick = { onOpen(h.call) })
+                }
             }
         }
-        Column(Modifier.weight(1f)) {
-            if (callsign) MonoText(name, color = radioColors().otherCall, size = 16.sp) else Text(name, fontSize = 16.sp, lineHeight = 24.sp)
-            Text(summary, fontSize = 14.sp, color = colors().onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(time, fontSize = 12.sp, color = colors().onSurfaceVariant)
-            if (unread > 0) Badge { Text("$unread") }
-        }
     }
 }
 
-/** Design 04: what the receipt marks mean. */
-@Composable
-fun KeySheet(onClose: () -> Unit) {
-    Sheet(onClose) {
-        Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("What the marks mean", fontSize = 22.sp, lineHeight = 28.sp, modifier = Modifier.weight(1f))
-            IconBtn(Icons.Filled.Close, "Close", onClick = onClose)
-        }
-        Column(Modifier.verticalScrollIfNeeded()) {
-            KeyRow({ MarkIcon(Mark.Queued, 22.dp) }, "Waiting to go out")
-            KeyRow({ MarkIcon(Mark.Sent, 22.dp) }, "Sent, no receipt yet")
-            KeyRow({ MonoText("×2", color = colors().onSurfaceVariant, size = 12.sp) }, "Times it was keyed (×2)")
-            KeyRow({ MarkIcon(Mark.Relayed, 22.dp) }, "Heard again on the radio (a relay or an echo), not a receipt")
-            KeyRow({ MarkIcon(Mark.Gateway, 22.dp) }, "A gateway put it on the hub")
-            KeyRow({ MarkIcon(Mark.Delivered, 22.dp) }, "Delivered: they sent a receipt")
-            KeyRow({ MarkIcon(Mark.AllMembers, 22.dp) }, "Every member of the closed room got it")
-            KeyRow({ MarkIcon(Mark.Refused, 22.dp) }, "Refused, or no receipt after the last try")
-            KeyRow({ Icon(Icons.Filled.SettingsInputAntenna, null, Modifier.size(22.dp), tint = radioColors().tx) }, "Reached you by radio (rf)")
-            KeyRow({ Icon(Icons.Filled.Cloud, null, Modifier.size(22.dp), tint = colors().primary) }, "Reached you over the internet (net) or the local network (lan)")
-            KeyRow({ MonoText("-4 dB", color = colors().onSurfaceVariant, size = 12.sp) }, "Signal-to-noise of a radio line (/snr off hides it)")
-            KeyRow({ PiecesChip(2, 3, "2/3") }, "Pieces of one long message on the air; [1/3] tags are stripped")
-        }
-    }
-}
-
-@Composable
-private fun KeyRow(lead: @Composable () -> Unit, text: String) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.width(72.dp)) { lead() }
-        Text(text, fontSize = 14.sp, lineHeight = 19.sp)
-    }
-}
-
-@Composable
-fun Modifier.verticalScrollIfNeeded(): Modifier = this.then(Modifier.verticalScroll(rememberScrollState()))
+/** A 1 dp line under a row. */
+fun Modifier.underline(color: Color) = drawBehind { drawLine(color, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }

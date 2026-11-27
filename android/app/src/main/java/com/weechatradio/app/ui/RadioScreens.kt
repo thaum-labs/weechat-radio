@@ -16,6 +16,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -49,14 +51,11 @@ fun presetsFor(s: Status): List<String> = when {
 fun RadioScreen(radio: Radio, onStation: () -> Unit, onSettings: () -> Unit, onSetup: () -> Unit) {
     val s = radio.status
     val bt = s.link == Link.Bluetooth
+    if (radio is LiveRadio) return RealRadioScreen(radio, onSettings)
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            TopBar("Radio", if (s.linked) "${s.rig} · linked" else "no radio", lead = { LogoLead() }) {
+            TopBar("Radio", if (s.linked) "${s.rig} · linked" else "no radio") {
                 IconBtn(Icons.Filled.Settings, "Settings", onClick = onSettings)
-            }
-            if (radio is LiveRadio) {
-                RealRadioPanel(radio)
-                return@Column
             }
             if (!s.linked) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -95,34 +94,134 @@ fun RadioScreen(radio: Radio, onStation: () -> Unit, onSettings: () -> Unit, onS
     }
 }
 
-/** The real radio (Phase 0): one headline from hard evidence, the facts behind it, and the log. */
+/** One line of the Radio tab's facts; [edit] adds Change (Set in the console). */
+private data class Fact(val label: String, val value: String, val edit: Boolean = false, val meter: Float? = null, val tone: Color = Color.Unspecified)
+
+/**
+ * The Radio tab on the real radio (design canvas "Android app themes"): one big
+ * status from hard evidence, five plain facts, and Copy debug log. Everything
+ * else the station knows goes into the debug log, not on the screen.
+ */
 @Composable
-private fun RealRadioPanel(radio: LiveRadio) {
-    val s = radio.status
+private fun RealRadioScreen(radio: LiveRadio, onSettings: () -> Unit) {
     val context = LocalContext.current
-    val (word, why) = radio.headline
-    val tone = when (word) {
-        "TRANSMITTING", "SENDING TO RADIO" -> radioColors().tx
-        "LINKED" -> radioColors().ok
-        else -> radioColors().warn
+    val copyLog = {
+        val clip = context.getSystemService(android.content.ClipboardManager::class.java)
+        clip?.setPrimaryClip(android.content.ClipData.newPlainText("weechat-radio debug log", radio.debugLog()))
+        android.widget.Toast.makeText(context, "Debug log copied: paste it in the chat", android.widget.Toast.LENGTH_SHORT).show()
     }
-    Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        RestartForCallsign(radio)
-        Card(color = colors().surfaceContainer, padding = PaddingValues(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Dot(tone); Text(word, fontSize = 20.sp, fontWeight = FontWeight.Medium, color = tone)
+    val s = radio.status
+    val state = radioState(radio)
+    val m73 = console()
+    val facts = listOf(
+        Fact("Radio", if (s.radioUp) "${s.rig} · Bluetooth" else "${s.rig} · not reached", tone = if (s.radioUp) Color.Unspecified else colors().error),
+        Fact("Frequency", "${s.freq} MHz", edit = true),
+        Fact("Preset", s.preset, edit = true),
+        Fact("Audio in", if (radio.hearing) "${s.inDb} dB" else "none", meter = if (radio.hearing) s.inLevel else 0f),
+        Fact("Last heard", radio.lastHeard),
+    )
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            TopBar("Radio") {
+                if (m73) {
+                    ConsoleButton("LOG", Modifier.padding(end = 8.dp), onClick = copyLog)
+                    ConsoleButton("SETUP", onClick = onSettings)
+                } else IconBtn(Icons.Filled.Settings, "Settings", onClick = onSettings)
             }
-            Text(why, Modifier.padding(top = 4.dp), fontSize = 14.sp, lineHeight = 20.sp)
+            Column(
+                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(if (m73) 8.dp else 16.dp),
+            ) {
+                RestartForCallsign(radio)
+                StatusCard(state, radio.headline.first, radio.headline.second)
+                Column {
+                    facts.forEach { f ->
+                        Row(
+                            Modifier.fillMaxWidth().heightIn(min = if (m73) 36.dp else 44.dp)
+                                .drawBehindLine(colors().outlineVariant.takeUnless { m73 } ?: colors().outline),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            if (m73) {
+                                Text(f.label.uppercase().replace("FREQUENCY", "FREQ"), Modifier.width(80.dp), fontSize = 11.sp, letterSpacing = 1.sp, color = colors().onSurfaceVariant)
+                                f.meter?.let { lv ->
+                                    val n = (lv * 18).toInt().coerceIn(0, 18)
+                                    Text(
+                                        androidx.compose.ui.text.buildAnnotatedString {
+                                            append("[")
+                                            pushStyle(androidx.compose.ui.text.SpanStyle(color = radioColors().ok)); append("=".repeat(n)); pop()
+                                            pushStyle(androidx.compose.ui.text.SpanStyle(color = colors().onSurfaceVariant)); append("-".repeat(18 - n)); pop()
+                                            append("]")
+                                        },
+                                        fontSize = 13.sp, maxLines = 1,
+                                    )
+                                }
+                                Text(f.value, Modifier.weight(1f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (f.label == "Preset") com.weechatradio.app.ui.theme.Console.lilac else f.tone)
+                                if (f.edit) Text("[SET]", Modifier.clickable(onClick = onSettings).padding(horizontal = 8.dp, vertical = 8.dp), fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = radioColors().ok)
+                            } else {
+                                Text(f.label, Modifier.width(96.dp), fontSize = 14.sp, color = colors().onSurfaceVariant)
+                                Spacer(Modifier.weight(1f))
+                                f.meter?.let { Meter(it, Modifier.width(88.dp), height = 8.dp) }
+                                MonoText(f.value, color = f.tone, size = 14.sp)
+                                if (f.edit) Text("Change", Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onSettings).padding(horizontal = 8.dp, vertical = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = colors().primary)
+                            }
+                        }
+                    }
+                }
+                if (!m73) Outlined("Copy debug log", Modifier.fillMaxWidth().height(48.dp), icon = Icons.Filled.ContentCopy, onClick = copyLog)
+            }
         }
-        Button({
-            val clip = context.getSystemService(android.content.ClipboardManager::class.java)
-            clip?.setPrimaryClip(android.content.ClipData.newPlainText("weechat-radio debug log", radio.debugLog()))
-            android.widget.Toast.makeText(context, "Debug log copied: paste it in the chat", android.widget.Toast.LENGTH_SHORT).show()
-        }, Modifier.fillMaxWidth()) { Text("Copy debug log") }
-        Column {
-            radio.facts.forEach { (k, v) -> KvRow(k, v, mono = true, modifier = Modifier.padding(vertical = 5.dp)) }
+        radio.note?.let { Note(it, Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp)) }
+    }
+}
+
+/** A thin line under a row, as the design's fact list has. */
+private fun Modifier.drawBehindLine(color: Color) = this.then(
+    Modifier.drawBehind { drawLine(color, androidx.compose.ui.geometry.Offset(0f, size.height), androidx.compose.ui.geometry.Offset(size.width, size.height), 1.dp.toPx()) },
+)
+
+/** The one big status: LINKED, TRANSMITTING, NOT LINKED or what the station can prove in between. */
+@Composable
+private fun StatusCard(state: RadioState, word: String, why: String) {
+    val tone = state.color()
+    if (console()) {
+        val tint = when (state) {
+            RadioState.Linked -> radioColors().okContainer
+            RadioState.Tx -> radioColors().txContainer
+            RadioState.Waiting -> radioColors().warnContainer
+            RadioState.Off -> colors().errorContainer
         }
-        MeterRow("IN", s.inLevel, s.inDb)
+        Column(
+            Modifier.fillMaxWidth().heightIn(min = 72.dp).border(1.dp, tone).background(tint).padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text("${state.tag} $word", fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = tone)
+            Text(why, fontSize = 12.sp, lineHeight = 18.sp, color = if (state == RadioState.Tx) tone else colors().onSurface)
+        }
+        return
+    }
+    val (bg, fg, onTone) = when (state) {
+        RadioState.Linked -> Triple(radioColors().okContainer, radioColors().onOkContainer, radioColors().onOk)
+        RadioState.Tx -> Triple(radioColors().txContainer, radioColors().onTxContainer, radioColors().onTx)
+        RadioState.Waiting -> Triple(radioColors().warnContainer, radioColors().onWarnContainer, radioColors().warnContainer)
+        RadioState.Off -> Triple(colors().errorContainer, colors().onErrorContainer, colors().onError)
+    }
+    val icon = when (state) {
+        RadioState.Linked -> Icons.Filled.Check
+        RadioState.Tx -> Icons.Filled.SettingsInputAntenna
+        RadioState.Waiting -> Icons.Filled.HourglassTop
+        RadioState.Off -> Icons.Filled.Close
+    }
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 80.dp).clip(RoundedCornerShape(20.dp)).background(bg).padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.size(40.dp).clip(CircleShape).background(tone), contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(22.dp), tint = onTone) }
+        Column(Modifier.weight(1f)) {
+            Text(word, fontSize = 18.sp, lineHeight = 24.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp, color = fg)
+            Text(why, fontSize = 14.sp, lineHeight = 20.sp, color = fg, maxLines = 3, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 

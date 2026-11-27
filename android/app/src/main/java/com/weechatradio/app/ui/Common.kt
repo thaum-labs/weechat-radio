@@ -105,7 +105,10 @@ fun IconBtn(icon: ImageVector, label: String, tonal: Boolean = false, tint: Colo
     }
 }
 
-/** The 64 dp top bar: a lead (logo or back), title and subtitle, actions. */
+/**
+ * The top bar: a lead (back or close), title and subtitle, actions. 64 dp in
+ * the stock look; in the modem73 console a 48 dp "> TITLE" line.
+ */
 @Composable
 fun TopBar(
     title: String,
@@ -117,6 +120,23 @@ fun TopBar(
     titleTrail: (@Composable () -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
+    if (console()) {
+        Row(
+            Modifier.fillMaxWidth().height(48.dp).padding(start = if (lead != null) 4.dp else 16.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            lead?.invoke()
+            Text(
+                if (lead == null) "> " + title.uppercase() else title,
+                Modifier.then(if (onTitle != null) Modifier.clickable(onClick = onTitle) else Modifier),
+                fontSize = 14.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            Text(sub.orEmpty(), Modifier.weight(1f), fontSize = 12.sp, color = colors().onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.End)
+            actions()
+        }
+        return
+    }
     Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         if (lead != null) lead() else Spacer(Modifier.width(12.dp))
         Column(
@@ -136,11 +156,55 @@ fun TopBar(
     }
 }
 
+/** True in the modem73 console look: lines and brackets instead of cards and pills. */
+@Composable fun console() = com.weechatradio.app.ui.theme.LocalModem73.current
+
+/** A console button: square, outlined, capitals. */
+@Composable
+fun ConsoleButton(text: String, modifier: Modifier = Modifier, color: Color = colors().onSurface, border: Color = colors().outline, onClick: () -> Unit) {
+    Box(
+        modifier.heightIn(min = 36.dp).border(1.dp, border).clickable(onClick = onClick).padding(horizontal = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) { Text(text, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = color, maxLines = 1) }
+}
+
+/**
+ * What the radio is doing, in four states for colours and tags. On the real
+ * radio it comes from [com.weechatradio.app.radio.LiveRadio.headline], which
+ * only says what the station can prove.
+ */
+enum class RadioState(val tag: String) { Linked("[RX]"), Tx("[TX]"), Waiting("[..]"), Off("[--]") }
+
+fun radioState(radio: Radio): RadioState {
+    if (radio is com.weechatradio.app.radio.LiveRadio) return when (radio.headline.first) {
+        "TRANSMITTING", "SENDING TO RADIO" -> RadioState.Tx
+        "LINKED" -> RadioState.Linked
+        "CHANNEL OPEN", "LINKED, RADIO QUIET" -> RadioState.Waiting
+        else -> RadioState.Off
+    }
+    return when {
+        radio.onAir != null -> RadioState.Tx
+        radio.status.linked -> RadioState.Linked
+        else -> RadioState.Off
+    }
+}
+
+@Composable
+fun RadioState.color(): Color = when (this) {
+    RadioState.Linked -> radioColors().ok
+    RadioState.Tx -> radioColors().tx
+    RadioState.Waiting -> radioColors().warn
+    RadioState.Off -> colors().error
+}
+
 @Composable
 fun LogoLead() = Box(Modifier.width(48.dp), contentAlignment = Alignment.Center) { BrandMark() }
 
 @Composable
-fun BackLead(onBack: () -> Unit) = IconBtn(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = onBack)
+fun BackLead(onBack: () -> Unit) {
+    if (console()) Text("<", Modifier.clickable(onClick = onBack).padding(horizontal = 12.dp, vertical = 12.dp), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+    else IconBtn(Icons.AutoMirrored.Filled.ArrowBack, "Back", onClick = onBack)
+}
 
 /** A Material-style chip drawn by hand so every look in the mockups fits one helper. */
 @Composable
