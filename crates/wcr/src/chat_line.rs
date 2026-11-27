@@ -24,8 +24,8 @@ pub(crate) struct ChatLine {
     pub(crate) piece: Option<(usize, usize)>,
     /// A long message received as pieces: one entry, updated in place.
     pub(crate) parts: Option<crate::chat_parts::Parts>,
-    /// A long message we send as pieces: pieces on the air of all.
-    pub(crate) sending: Option<(usize, usize)>,
+    /// A long message we send as pieces: how far each piece got.
+    pub(crate) sending: Option<Sending>,
     /// Ids of the later pieces folded into this entry (the first piece's id
     /// is `msgid`), so a history replay does not add them again.
     pub(crate) piece_ids: Vec<String>,
@@ -427,8 +427,90 @@ pub(crate) enum FooterTone {
     Missing,
 }
 
+/// How far the pieces of a long message we send got (#365, #403), from the
+/// station's delivery marks.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct Sending {
+    /// Pieces on the air (`+radio/parts=k/n`).
+    pub(crate) on_air: usize,
+    pub(crate) total: usize,
+    /// Pieces whose own receipt came back (`+radio/acked=k/n`). None from a
+    /// station older than #403.
+    pub(crate) acked: Option<usize>,
+    /// One block per piece (`+radio/part-states`). Empty from a station
+    /// older than #403.
+    pub(crate) blocks: Vec<PartBlock>,
+}
+
+/// One piece of a long message we send, as its block shows it (#403):
+/// grey while it waits for the air, yellow on the air, green when its own
+/// receipt is back, red when it failed after every retry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PartBlock {
+    Queued,
+    Sending,
+    Confirmed,
+    Failed,
+}
+
+impl PartBlock {
+    fn from_letter(c: char) -> Option<Self> {
+        match c {
+            'q' => Some(Self::Queued),
+            's' => Some(Self::Sending),
+            'a' => Some(Self::Confirmed),
+            'f' => Some(Self::Failed),
+            _ => None,
+        }
+    }
+
+    /// The letter the web page gets for this block.
+    pub(crate) fn letter(self) -> char {
+        match self {
+            Self::Queued => 'q',
+            Self::Sending => 's',
+            Self::Confirmed => 'a',
+            Self::Failed => 'f',
+        }
+    }
+}
+
+/// The blocks of our long message `line`, one per piece, in order (#403).
+/// A station older than #403 sends no per-piece states: the blocks then
+/// follow the on-air count, all green once the whole message is delivered.
+pub(crate) fn part_blocks(line: &ChatLine) -> Vec<PartBlock> {
+    line.sending
+        .as_ref()
+        .map(|s| sending_blocks(s, &line.ticks))
+        .unwrap_or_default()
+}
+
+/// [`part_blocks`] from the pieces' progress and the line's marks.
+pub(crate) fn sending_blocks(s: &Sending, ticks: &str) -> Vec<PartBlock> {
+    if s.blocks.len() == s.total {
+        return s.blocks.clone();
+    }
+    let delivered = ticks_delivered(ticks);
+    (0..s.total)
+        .map(|i| match i < s.on_air {
+            true if delivered => PartBlock::Confirmed,
+            true => PartBlock::Sending,
+            false => PartBlock::Queued,
+        })
+        .collect()
+}
+
+fn ticks_delivered(ticks: &str) -> bool {
+    matches!(
+        ticks_delivery(ticks),
+        Some(crate::store::Delivery::Delivered | crate::store::Delivery::All)
+    )
+}
+
 /// The badge (`1/3`) and footer line under a long message, received or
-/// sent as pieces (#365). None for an ordinary line.
+/// sent as pieces (#365). None for an ordinary line. For a message we send,
+/// the footer is the confirmation count, `2 of 4 parts confirmed`, and the
+/// blocks ([`part_blocks`]) are drawn beside it by each screen (#403).
 pub(crate) fn group_footer(line: &ChatLine, now: u64) -> Option<(String, String, FooterTone)> {
     use crate::chat_parts::Status;
     if let Some(p) = &line.parts {
@@ -440,41 +522,85 @@ pub(crate) fn group_footer(line: &ChatLine, now: u64) -> Option<(String, String,
         let badge = format!("{}/{}", p.received(), p.total());
         return Some((badge, p.footer(now), tone));
     }
-    let (k, n) = line.sending?;
-    let delivered = crate::chat_line::ticks_delivery(&line.ticks)
-        .is_some_and(|d| d == crate::store::Delivery::Delivered);
-    let failed = line.ticks.contains("[no]");
+    let s = line.sending.as_ref()?;
+    Some(sending_footer(s, &line.ticks))
+}
+
+/// The badge and footer of a long message we send, from the pieces'
+/// progress and the line's marks (#403).
+pub(crate) fn sending_footer(s: &Sending, ticks: &str) -> (String, String, FooterTone) {
+    let (k, n) = (s.on_air.min(s.total), s.total);
+    let blocks = sending_blocks(s, ticks);
+    let failed_parts: Vec<String> = blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| **b == PartBlock::Failed)
+        .map(|(i, _)| (i + 1).to_string())
+        .collect();
+    let all_confirmed = blocks.iter().all(|b| *b == PartBlock::Confirmed);
+    let delivered = ticks_delivered(ticks) && all_confirmed;
+    let failed = !failed_parts.is_empty() || ticks.contains("[no]");
     let tone = if failed {
         FooterTone::Missing
-    } else if k >= n && delivered {
+    } else if delivered {
         FooterTone::Done
     } else {
         FooterTone::InProgress
     };
-    let tail = if failed {
-        "  ⚠ not all pieces delivered"
-    } else if delivered {
-        "  delivered"
-    } else {
-        "  … awaiting receipt"
+    let footer = match s.acked {
+        _ if delivered => "delivered".to_string(),
+        Some(a) if failed && !failed_parts.is_empty() => {
+            let word = if failed_parts.len() == 1 {
+                "part"
+            } else {
+                "parts"
+            };
+            format!(
+                "{a} of {n} parts confirmed · ⚠ {word} {} not delivered",
+                failed_parts.join(", ")
+            )
+        }
+        Some(a) if failed => format!("{a} of {n} parts confirmed · ⚠ not all pieces delivered"),
+        Some(a) => format!("{a} of {n} parts confirmed"),
+        // A station older than #403: on-air count only.
+        None if failed => "⚠ not all pieces delivered".to_string(),
+        None if k >= n => format!("sent {n}/{n} · awaiting receipt"),
+        None => format!("sending {k}/{n} · awaiting receipt"),
     };
-    Some((
-        format!("{k}/{n}"),
-        format!("{}{tail}", crate::chat_parts::sending_line(k, n)),
-        tone,
-    ))
+    (format!("{k}/{n}"), footer, tone)
 }
 
-/// `+radio/parts=k/n` on a delivery mark: k of the n pieces of our long
-/// message are on the air (#365).
-pub(crate) fn delivery_parts(line: &str) -> Option<(usize, usize)> {
-    irc_tags(line)
+/// The pieces of our long message from a delivery mark: `+radio/parts=k/n`
+/// (on the air, #365), `+radio/acked=k/n` and `+radio/part-states` (#403).
+pub(crate) fn delivery_parts(line: &str) -> Option<Sending> {
+    let tags = irc_tags(line);
+    let (on_air, total) = tags
         .get("radio/parts")
+        .and_then(|v| crate::chat_parts::parse_progress(v))?;
+    let acked = tags
+        .get("radio/acked")
         .and_then(|v| crate::chat_parts::parse_progress(v))
+        .filter(|(_, n)| *n == total)
+        .map(|(k, _)| k);
+    let blocks: Vec<PartBlock> = tags
+        .get("radio/part-states")
+        .map(|v| v.chars().filter_map(PartBlock::from_letter).collect())
+        .unwrap_or_default();
+    let blocks = if blocks.len() == total {
+        blocks
+    } else {
+        Vec::new()
+    };
+    Some(Sending {
+        on_air,
+        total,
+        acked,
+        blocks,
+    })
 }
 
-/// Notes the pieces-on-air count on our long message `msgid`.
-pub(crate) fn apply_sending(chat: &mut [ChatLine], msgid: &str, parts: (usize, usize)) {
+/// Notes how far the pieces of our long message `msgid` got.
+pub(crate) fn apply_sending(chat: &mut [ChatLine], msgid: &str, parts: Sending) {
     if let Some(line) = chat
         .iter_mut()
         .rev()
@@ -482,6 +608,20 @@ pub(crate) fn apply_sending(chat: &mut [ChatLine], msgid: &str, parts: (usize, u
     {
         line.sending = Some(parts);
     }
+}
+
+/// True while our own line has no receipt yet: queued, on the air or
+/// relayed (#403). Shown in its own colour, apart from system lines and
+/// timestamps.
+pub(crate) fn unconfirmed(line: &ChatLine, me: &str) -> bool {
+    use crate::store::Delivery;
+    !line.sys
+        && line.nick.eq_ignore_ascii_case(me)
+        && (line.ticks.contains("waiting on acks")
+            || matches!(
+                ticks_delivery(&line.ticks),
+                Some(Delivery::Queued | Delivery::Sent | Delivery::Relayed)
+            ))
 }
 
 pub(crate) fn parse_delivery(line: &str) -> Option<(String, String, u32)> {
